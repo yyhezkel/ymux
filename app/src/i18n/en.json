@@ -148,6 +148,7 @@
   "ws_header.view_mode.tabs": "Tabs",
   "ws_header.view_mode.split": "Split",
   "ws_header.view_mode.tooltip": "Show panes as tabs — one pane fills the workspace, the rest keep running in the background",
+  "ws_header.more": "More",
   "pane.agent.state.running": "Claude is working",
   "pane.agent.state.done": "Claude finished — your turn",
   "pane.agent.state.needs_input": "Claude needs your input",

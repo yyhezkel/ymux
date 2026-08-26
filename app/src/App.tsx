@@ -34,6 +34,7 @@ import {
   IconBug,
   IconGitCompare,
   IconColumns,
+  IconMore,
   IconRows,
 } from "./icons";
 import { createNarrow } from "./useNarrow";
@@ -425,6 +426,21 @@ function App() {
   // (the native Webview is hidden on close, not destroyed — page state
   // survives across open/close cycles).
   const [showBrowserWindow, setShowBrowserWindow] = createSignal(false);
+  // Header ⋯ overflow menu: view-mode toggle, + diff, Insights, Tickets.
+  // Browser / Files / the notification bell stay as visible buttons.
+  const [wsMenuOpen, setWsMenuOpen] = createSignal(false);
+  let wsMenuRef: HTMLDivElement | undefined;
+  // Click-away: pointerdown, not click — a press that lands in a terminal
+  // pane never bubbles a click back up here.
+  createEffect(() => {
+    if (!wsMenuOpen()) return;
+    const onDown = (e: PointerEvent) => {
+      if (wsMenuRef && e.target instanceof Node && wsMenuRef.contains(e.target)) return;
+      setWsMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onDown);
+    onCleanup(() => document.removeEventListener("pointerdown", onDown));
+  });
   // Phase 85.C: workspaces whose Browser currently lives in its own OS
   // window. Their native Webview is a child of THAT window, so nothing
   // here may hide, show, or reposition it — see the modal broadcast
@@ -2580,12 +2596,15 @@ function App() {
     rec
       .start()
       .then((text) => {
+        // Chars only, never the transcript itself (Rule #1).
+        log.info(`stt result: backend=${stt.backend} chars=${text.length}`);
         if (text && text.length > 0) {
           pasteIntoActiveTerminal(text);
         }
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
+        log.error(`stt failed: backend=${stt.backend} — ${msg}`);
         setSttError(msg);
         // Auto-clear after 5s so the toast doesn't linger forever.
         setTimeout(() => setSttError(null), 5000);
@@ -3878,36 +3897,6 @@ function App() {
               </span>
             </Show>
             <Show when={activeWs()!.layout && activePaneId()}>
-              {/* Phase 50: add a Diff pane (#2.4). Same split mechanic
-                  as the other kinds. */}
-              <button
-                class="ws-header-btn"
-                title={t("ws_header.split_diff_title")}
-                onClick={() => {
-                  const pid = activePaneId();
-                  if (pid) splitPane(pid, "horizontal", "diff");
-                }}
-              >
-                <IconGitCompare />
-                <span class="ws-header-btn-label">{t("ws_header.add_diff")}</span>
-              </button>
-              {/* Phase 84.A: split ⇄ tabs. Per-workspace, persisted; the
-                  layout tree is untouched either way, so this is a safe
-                  toggle rather than a conversion. */}
-              <button
-                class="ws-header-btn"
-                title={t("ws_header.view_mode.tooltip")}
-                onClick={() => void setTabsMode(!tabsMode())}
-              >
-                <Show when={tabsMode()} fallback={<IconRows />}>
-                  <IconColumns />
-                </Show>
-                <span class="ws-header-btn-label">
-                  {tabsMode()
-                    ? t("ws_header.view_mode.split")
-                    : t("ws_header.view_mode.tabs")}
-                </span>
-              </button>
               {/* Phase 60 (smoke-test 2a): Browser + Files buttons
                   live HERE, next to + diff — they're workspace-scoped
                   tools, so they belong in the workspace header, not
@@ -3930,25 +3919,6 @@ function App() {
                 <IconFolder />
                 <span class="ws-header-btn-label">{t("sidebar.files.label")}</span>
               </button>
-              {/* Phase 68 (UX): Server Insights monitor, right after Files. */}
-              <button
-                class="ws-header-btn"
-                title={t("sidebar.insights.tooltip")}
-                onClick={() => void openPanelConnected("monitor")}
-              >
-                <IconActivity />
-                <span class="ws-header-btn-label">{t("sidebar.insights.label")}</span>
-              </button>
-              {/* Dev-Mode tickets. Local files, no connection needed —
-                  openPanel, not openPanelConnected. */}
-              <button
-                class="ws-header-btn"
-                title={t("sidebar.tickets.tooltip")}
-                onClick={() => openPanel("tickets")}
-              >
-                <IconBug />
-                <span class="ws-header-btn-label">{t("sidebar.tickets.label")}</span>
-              </button>
               {/* Feedback reorg: Notifications button lives at the header edge,
                   after Monitor. Moved here from the sidebar so all workspace
                   tools sit together. Badge shows the unread count. */}
@@ -3963,6 +3933,74 @@ function App() {
                   <span class="notif-bell-badge">{unreadNotifs() > 99 ? "99+" : unreadNotifs()}</span>
                 </Show>
               </button>
+              {/* Header ⋯ menu (tabs-toggle declutter): the less-frequent
+                  workspace actions — view mode (Phase 84.A), + diff
+                  (Phase 50), Insights (Phase 68), Tickets — collapsed
+                  behind one button. Every item calls the exact handler
+                  its old standalone button (and the command palette)
+                  used; this is a second entry point, not a fork. */}
+              <div class="ws-header-more" ref={wsMenuRef}>
+                <button
+                  class="ws-header-btn"
+                  title={t("ws_header.more")}
+                  aria-label={t("ws_header.more")}
+                  aria-expanded={wsMenuOpen()}
+                  onClick={() => setWsMenuOpen(!wsMenuOpen())}
+                >
+                  <IconMore />
+                </button>
+                <Show when={wsMenuOpen()}>
+                  <div class="ws-header-menu">
+                    <button
+                      title={t("ws_header.view_mode.tooltip")}
+                      onClick={() => {
+                        setWsMenuOpen(false);
+                        void setTabsMode(!tabsMode());
+                      }}
+                    >
+                      <Show when={tabsMode()} fallback={<IconRows />}>
+                        <IconColumns />
+                      </Show>
+                      {tabsMode()
+                        ? t("ws_header.view_mode.split")
+                        : t("ws_header.view_mode.tabs")}
+                    </button>
+                    <button
+                      title={t("ws_header.split_diff_title")}
+                      onClick={() => {
+                        setWsMenuOpen(false);
+                        const pid = activePaneId();
+                        if (pid) splitPane(pid, "horizontal", "diff");
+                      }}
+                    >
+                      <IconGitCompare />
+                      {t("ws_header.add_diff")}
+                    </button>
+                    <button
+                      title={t("sidebar.insights.tooltip")}
+                      onClick={() => {
+                        setWsMenuOpen(false);
+                        void openPanelConnected("monitor");
+                      }}
+                    >
+                      <IconActivity />
+                      {t("sidebar.insights.label")}
+                    </button>
+                    {/* Tickets stays openPanel, not openPanelConnected —
+                        local files, no connection needed. */}
+                    <button
+                      title={t("sidebar.tickets.tooltip")}
+                      onClick={() => {
+                        setWsMenuOpen(false);
+                        openPanel("tickets");
+                      }}
+                    >
+                      <IconBug />
+                      {t("sidebar.tickets.label")}
+                    </button>
+                  </div>
+                </Show>
+              </div>
               {/* Phase 24.D: removed + chat / + claude log buttons.
                   The two pane kinds + their backends are rolled back
                   pending a future unified-view rebuild. */}

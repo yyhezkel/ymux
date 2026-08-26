@@ -77,7 +77,22 @@ maximized pane exists and otherwise falls through so the escape sequence reaches
 PTY; making it rebindable would let a user strand themselves in a maximized pane. Both
 run before the table so no rebind can shadow them. STT push-to-talk runs after it,
 because it is stored in `settings.stt` rather than `settings.shortcuts`. All three are
-listed read-only in Settings → Shortcuts so they are at least visible.
+listed read-only in Settings → Shortcuts so they are at least visible. Every
+push-to-talk outcome now lands in the unified log: success as `log.info` with backend +
+char count only (never the transcript — Rule #1; chars=0 catches the "pressed PTT,
+nothing happened" case), and every recorder rejection as `log.error` before the 5-second
+toast, so a missed toast is no longer a lost error.
+
+**The workspace header keeps four buttons, not seven.** Browser, Files and the
+notification bell (which carries the unread badge) stay visible; view mode, `+ diff`,
+Insights and Tickets live behind a single `⋯` (`.ws-header-more` / `.ws-header-menu`,
+sharing `.diff-pane-menu`'s CSS rather than a second dropdown component). Each item
+calls the **same handler its old standalone button called** — `setTabsMode`,
+`splitPane(pid, "horizontal", "diff")`, `openPanelConnected("monitor")`,
+`openPanel("tickets")` — so the menu, the palette command `pane.viewMode.toggle` and
+the keyboard path can never diverge. Click-away is a `createEffect` on `wsMenuOpen()`
+listening for `pointerdown`, not `click`: a press landing in a terminal pane never
+bubbles a click back to the header.
 
 **State lives here and flows down as props.** Child components are mostly
 presentational; when a child needs to mutate, it calls a handler App passed it. The two
