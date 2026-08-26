@@ -32,7 +32,7 @@
 use serde::Deserialize;
 use tauri::State;
 
-use crate::{log_debug, AppState};
+use crate::{log_debug, log_error, AppState};
 
 #[derive(Deserialize)]
 struct TranscribeResponse {
@@ -101,6 +101,25 @@ fn truncate_chars(s: &str) -> String {
 
 #[tauri::command]
 pub(crate) async fn stt_transcribe_local(
+    state: State<'_, AppState>,
+    audio_bytes: Vec<u8>,
+    language: String,
+) -> Result<String, String> {
+    let audio_len = audio_bytes.len();
+    let res = transcribe_inner(state, audio_bytes, language).await;
+    if let Err(e) = &res {
+        // One log site covers every failure path below. Error strings
+        // carry no transcript content (server error bodies only, already
+        // char-truncated), so this stays inside Rule #1.
+        log_error(
+            "STT",
+            &format!("stt_transcribe_local failed: audio_bytes={audio_len} err={e}"),
+        );
+    }
+    res
+}
+
+async fn transcribe_inner(
     state: State<'_, AppState>,
     audio_bytes: Vec<u8>,
     language: String,

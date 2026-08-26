@@ -77,7 +77,11 @@ maximized pane exists and otherwise falls through so the escape sequence reaches
 PTY; making it rebindable would let a user strand themselves in a maximized pane. Both
 run before the table so no rebind can shadow them. STT push-to-talk runs after it,
 because it is stored in `settings.stt` rather than `settings.shortcuts`. All three are
-listed read-only in Settings → Shortcuts so they are at least visible.
+listed read-only in Settings → Shortcuts so they are at least visible. Every
+push-to-talk outcome now lands in the unified log: success as `log.info` with backend +
+char count only (never the transcript — Rule #1; chars=0 catches the "pressed PTT,
+nothing happened" case), and every recorder rejection as `log.error` before the 5-second
+toast, so a missed toast is no longer a lost error.
 
 **The workspace header keeps four buttons, not seven.** Browser, Files and the
 notification bell (which carries the unread badge) stay visible; view mode, `+ diff`,
