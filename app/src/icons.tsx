@@ -36,6 +36,7 @@ import {
   Container,
   Copy,
   Download,
+  Ellipsis,
   ExternalLink,
   Eye,
   EyeOff,
@@ -134,6 +135,7 @@ export const IconLink = mk(Link);
 export const IconMaximize = mk(Maximize);
 export const IconMic = mk(Mic);
 export const IconMinimize = mk(Minimize2);
+export const IconMore = mk(Ellipsis);
 export const IconNotes = mk(NotebookPen);
 export const IconPanelClose = mk(PanelRightClose);
 export const IconPencil = mk(Pencil);

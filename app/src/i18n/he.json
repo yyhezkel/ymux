@@ -148,6 +148,7 @@
   "ws_header.view_mode.tabs": "טאבים",
   "ws_header.view_mode.split": "פיצול",
   "ws_header.view_mode.tooltip": "הצגת חלוניות כטאבים — חלונית אחת על כל המסך, השאר ממשיכות לרוץ ברקע",
+  "ws_header.more": "עוד",
   "pane.agent.state.running": "קלוד עובד",
   "pane.agent.state.done": "קלוד סיים — תורך",
   "pane.agent.state.needs_input": "קלוד ממתין לתשובה שלך",

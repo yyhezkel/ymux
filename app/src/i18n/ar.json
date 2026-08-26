@@ -148,6 +148,7 @@
   "ws_header.view_mode.tabs": "علامات تبويب",
   "ws_header.view_mode.split": "تقسيم",
   "ws_header.view_mode.tooltip": "عرض اللوحات كعلامات تبويب — لوحة واحدة تملأ مساحة العمل، والبقية تستمر في الخلفية",
+  "ws_header.more": "المزيد",
   "pane.agent.state.running": "كلود يعمل",
   "pane.agent.state.done": "كلود انتهى — دورك",
   "pane.agent.state.needs_input": "كلود ينتظر ردك",
