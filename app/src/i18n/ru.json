@@ -148,6 +148,7 @@
   "ws_header.view_mode.tabs": "Вкладки",
   "ws_header.view_mode.split": "Разделение",
   "ws_header.view_mode.tooltip": "Показывать панели как вкладки — одна панель занимает всё рабочее пространство, остальные работают в фоне",
+  "ws_header.more": "Ещё",
   "pane.agent.state.running": "Клод работает",
   "pane.agent.state.done": "Клод закончил — ваш ход",
   "pane.agent.state.needs_input": "Клоду нужен ваш ответ",

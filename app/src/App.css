@@ -776,10 +776,12 @@ body {
   background: rgba(248, 81, 73, 0.15);
 }
 .dl-del .dl-gutter, .dl-del .dl-text { color: #f85149; }
-.diff-pane-source {
+.diff-pane-source,
+.ws-header-more {
   position: relative;
 }
-.diff-pane-menu {
+.diff-pane-menu,
+.ws-header-menu {
   position: absolute;
   top: 100%;
   inset-inline-start: 0;
@@ -793,7 +795,13 @@ body {
   min-width: 200px;
   z-index: 20;
 }
-.diff-pane-menu button {
+/* The ⋯ button sits at the header's trailing edge — open inward. */
+.ws-header-menu {
+  inset-inline-start: auto;
+  inset-inline-end: 0;
+}
+.diff-pane-menu button,
+.ws-header-menu button {
   background: none;
   border: none;
   text-align: start;
@@ -802,7 +810,14 @@ body {
   font-size: var(--w-fs-sm);
   cursor: pointer;
 }
-.diff-pane-menu button:hover {
+/* Header-menu items carry an icon before the label. */
+.ws-header-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.diff-pane-menu button:hover,
+.ws-header-menu button:hover {
   background: rgba(122, 162, 247, 0.12);
 }
 .diff-pane-ref-row {

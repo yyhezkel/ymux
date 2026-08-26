@@ -6998,3 +6998,36 @@ this worktree does not have — unrelated to this change.
 Status: NOT VERIFIED LIVE (Rule #14). Needs a real SSH pane: switch the remote
 profile to Full RTL and check Hebrew, pure-Latin `ls`, drag-select, copy,
 arrows, and that a local pane open alongside is untouched.
+
+================================================================================
+2026-08-26 — Phase 89: ws-header declutter — one ⋯ menu instead of four buttons
+================================================================================
+Trigger: Yossi — "ההגדרה של הטאבים היא כפתור נפרד למעלה, וזה יוצר עומס".
+
+The workspace header carried seven buttons in a row: + diff, the split⇄tabs
+toggle (Phase 84.A), Browser, Files, Insights, Tickets, notification bell. The
+tabs toggle was the complaint, but it was one symptom of the row.
+
+Decision (asked): an overflow menu, not a relocated toggle. Four items moved
+behind a single ⋯ at the header's trailing edge — view mode, + diff, Insights,
+Tickets. Browser, Files and the bell stay visible (the bell because of its
+unread badge). Seven buttons -> four.
+
+Every menu item calls the SAME handler its standalone button called
+(setTabsMode / splitPane(pid,"horizontal","diff") / openPanelConnected("monitor")
+/ openPanel("tickets")), so the menu, the palette command pane.viewMode.toggle
+and the keyboard paths cannot diverge. No new dropdown component: .ws-header-menu
+reuses .diff-pane-menu's CSS block, with inset-inline-end:0 so it opens inward
+from the header edge (correct in RTL too). Click-away is a createEffect on
+wsMenuOpen() listening for pointerdown, not click — a press landing in a
+terminal pane never bubbles a click back to the header.
+
+Files: app/src/App.tsx (signal + click-away effect, 4 buttons removed, ⋯ menu
+added), app/src/icons.tsx (IconMore = lucide Ellipsis), app/src/App.css
+(.ws-header-more / .ws-header-menu folded into the diff-pane-menu rules),
+app/src/i18n/{en,he,ar,ru}.json (+1 key: ws_header.more).
+Docs: docs/vault/frontend-shell.md (header paragraph), .vault-lock.json re-stamped.
+Vault: green.
+Status: NOT VERIFIED LIVE (Rule #14). CI is the type/build check; needs a real
+run to confirm the menu opens, the four items work, click-away closes it, and
+it doesn't overflow the window in Hebrew or in compact header mode.
