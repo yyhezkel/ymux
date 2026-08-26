@@ -66,9 +66,13 @@ agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
 is not hypothetical — a move left an entry pointing at the old absolute path, the hook
-then failed silently, and the desktop simply never heard from that agent again. The check
-is deliberately narrow: it repairs only entries it can prove are dead, because guessing
-wrong would rewrite a working hook on every single run.
+then failed silently, and the desktop simply never heard from that agent again. Phase 86.E widened it
+with `ymux_entry_points_at`: an entry of ours whose executable is not the binary being
+installed is stale too. That is the winmux→ymux migration case seen live — four entries
+on `~/.winmux/bin/winmux` (exists, runs, has no `last.env` fallback) and a 1.5.0 stamp.
+Because the bootstrap runs `setup-hooks --source bundled` on **every connect**, this is
+what makes every migrated install converge on the current CLI with no user action. The
+same rule rewrites an entry missing the spec's `timeout` (`ymux_entry_has_timeout`).
 
 The hook spec used to be a hardcoded `&[(event, subcmd, matcher)]` slice. It now ships as
 JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
@@ -76,15 +80,27 @@ JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
 time, with `~/.ymux/cache/hooks/` as a fallback and the bundled spec as the final
 fallback. So a hook change reaches existing installs without a CLI rebuild.
 
-## `port_watch.rs` (276) — the LISTEN watcher
+## `port_watch.rs` — the LISTEN watcher
 
-Runs on the remote. Every 500ms it reads `/proc/net/tcp` + `/proc/net/tcp6`, extracts
-sockets in LISTEN state, and diffs against the previous tick. A new port sends
-`port.opened` (the desktop opens an SSH local-forward); a vanished one sends
-`port.closed`.
+Runs on the remote. Every **1s** it reads `/proc/net/tcp` + `/proc/net/tcp6`; if the raw
+bytes are identical to the previous tick it does nothing, otherwise it extracts LISTEN
+sockets and diffs against the previous set. A new port sends `port.opened`, a vanished
+one `port.closed`. **Both are detection-only on the desktop** — `rpc_server.rs` records
+the port in `detected_ports` and emits `port-detected`; the SSH local-forward is opened
+only when the user clicks (`forward_port_start`).
 
-**There should be exactly one of these per workspace** — duplicates are one of the two
-leaks `insights/hygiene.go` reaps.
+**It owns its own death (Phase 86.A).** The process is an SSH exec child with no PTY, so
+nothing external ever killed it — on 2026-08-23 Yossi's server had 15 of them with
+ppid=1, some 3 days old, each burning ~5% CPU on a 2,589-line `/proc/net/tcp`. Two
+exits now: a `std::thread` reading stdin to EOF (sshd closes it when the channel dies),
+and `rpc_call_pinned` — the watcher does NOT use `rpc_call`'s `last.env` fallback
+(its tunnel is fixed for life; the fallback is for hooks inherited by a long-lived
+`claude`), and three consecutive dial failures end it. Start/exit are logged as
+metadata only.
+
+**One per host, not per workspace** (`lib.rs` `port_watcher_hosts`, Phase 86.C) — sibling
+workspaces on the same (host, port, user) subscribe to the owner's events. Duplicates
+and ppid=1 orphans are the two things `insights/hygiene.go` reaps.
 
 ## `session_meta.rs` (818) — multi-machine session labels
 

@@ -145,6 +145,11 @@ succeeds and before the user's shell channel opens.
 passes in the manifest plus a resource-loader closure; `bootstrap()` does all the russh +
 SFTP work without ever touching an `AppHandle`.
 
+It also runs the zombie `port-watch` reap from a prior session. Until Phase 86.B the
+pattern was `[w]inmux-linux-x64$` — the pre-rename binary name, anchored at end of
+line — which never matched the real cmdline `…/ymux port-watch --workspace <id>`, so
+the reap had been a no-op since the rename. Now `/([w]inmux|[y]mux) port-watch `.
+
 ## Invariants
 
 - **Rule #4** — no `unwrap`/`expect` outside tests anywhere in these crates. They have no

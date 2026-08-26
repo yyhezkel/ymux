@@ -54,7 +54,11 @@ put logic there.
   state, `Clone` because every field is an `Arc<Mutex<…>>` and the RPC server task needs
   its own handle. It **wraps** `ymux_core::CoreState` at `state.core`: `sessions`,
   `pane_sessions`, `forwards`, `port_watchers`, `detected_ports`, `port_watcher_tasks`,
-  `diff_pane_watchers`. Everything else — `workspaces`, `load_state`, `notifications`,
+  `diff_pane_watchers`. Next to those, `port_watcher_hosts` (Phase 86.C, on `AppState`
+  itself): one remote `port-watch` per (host, port, user) — the first workspace to connect
+  is the *owner*, siblings are *subscribers*, and the owner slot is released when the
+  watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
+  from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
   `pane_status`, `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and

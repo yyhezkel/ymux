@@ -108,6 +108,16 @@ The explicit `.devtools(false)` calls on the main-window and popout builders in 
 are what keep that from happening. They are not optional, and they are not cleanup. See
 `backend-core.md` § Gotchas and `backend-panes.md` § Panes.
 
+The feature list is now `["unstable", "tray-icon", "image-png", "devtools"]`. `devtools`
+(Phase 82.E) is the only thing that makes wry call `setInspectable(true)` on macOS, i.e.
+the only way any inspector can attach to the workspace Browser webview in a release
+build. **It is dangerous on its own:** tauri-runtime-wry reads it as
+`devtools.unwrap_or(true)`, so turning it on makes every webview inspectable by default
+— including `main`, which renders live PTY output (Rule #1). The explicit
+`.devtools(false)` on the main and popout window builders in `lib.rs` and the
+`.devtools(true)` in `workspace_browser.rs` are one unit with this line; a window added
+later inherits `true` unless it opts out.
+
 `build.rs` runs `tauri_build`, which is what embeds `frontendDist` — the whole reason
 Rule #13 exists.
 

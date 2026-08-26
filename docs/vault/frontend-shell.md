@@ -110,6 +110,13 @@ here.
 An `ErrorBoundary` wraps the tree — a thrown render error shows a recovery panel rather
 than a white window.
 
+The Monitor mount passes `local={activeWs()?.connection?.type === "local"}` (Phase
+84.E) — `InsightsWindow` needs it only to print the right file paths in its
+"copy investigation commands" blocks; the fetch routing itself stays in Rust. The F12 /
+Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Cargo
+feature: the main window opts out of inspection because it renders live PTY output;
+only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
+
 ## `Sidebar.tsx` (1,265)
 
 Workspace tree with groups, nesting, pinned project folders, and worktree children.

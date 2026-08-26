@@ -65,7 +65,11 @@ and **is** the canonical list — nothing else enumerates these:
 - **Settings / updates** — `settings.load|save|set|preset|get-presets`, `updates.check`
 - **Claude** — `claude.sessions.list`
 - **Ports** — `port.opened`, `port.closed` (the remote `/proc/net/tcp` watcher calls
-  these through the reverse tunnel)
+  these through the reverse tunnel). Detection-only: record in `detected_ports` + emit
+  `port-detected` / `port-undetected`; no forward is opened here. Since Phase 86.C one
+  watcher serves every workspace on the same host, so both handlers fan out to all
+  `port_watcher_subscribers` of the event's host, and a port is "internal" if it is any
+  subscriber's tunnel port.
 - **Diagnostics** — `doctor`, `dev.get-state`, `dev.console-tail`,
   `dev.debug-log-tail`, `dev.report-bug`
 
@@ -89,7 +93,8 @@ on their own path; the rest also move the timer and emit further down. If you ad
 subkind that should affect the traffic light, it goes through `apply_hook`, not through a
 second state machine here.
 
-`feed.push` with `blocking: true` parks the caller on a
+`feed.push` reads `settings::load_from_disk()` once per call (it used to re-read for
+the policy, the Block branch and Stop separately). With `blocking: true` it parks the caller on a
 `tokio::sync::oneshot::Sender` held in `FeedStore.pending`, and `decide_feed` (shared
 with the Tauri `feed_decide` command, defined in `lib.rs`) is what wakes it. That is the
 allow/deny prompt loop. `FEED_MAX_ITEMS_LIMIT = 50` — `lib.rs` has its own copy of the

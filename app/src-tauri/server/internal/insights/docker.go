@@ -152,6 +152,15 @@ func dockerHTTP() *http.Client {
 	return dockerClientPtr
 }
 
+// dockerListEntry is the subset of `GET /containers/json` we decode.
+type dockerListEntry struct {
+	Id     string   `json:"Id"`
+	Names  []string `json:"Names"`
+	Image  string   `json:"Image"`
+	State  string   `json:"State"`
+	Status string   `json:"Status"`
+}
+
 func dockerList() ([]DockerContainer, error) {
 	resp, err := dockerHTTP().Get("http://d/containers/json?all=1")
 	if err != nil {
@@ -166,13 +175,7 @@ func dockerList() ([]DockerContainer, error) {
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("docker list: %d", resp.StatusCode)
 	}
-	var raw []struct {
-		Id     string   `json:"Id"`
-		Names  []string `json:"Names"`
-		Image  string   `json:"Image"`
-		State  string   `json:"State"`
-		Status string   `json:"Status"`
-	}
+	var raw []dockerListEntry
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
 		return nil, err
 	}
@@ -202,13 +205,43 @@ func dockerList() ([]DockerContainer, error) {
 		}
 	}
 	wg.Wait()
+	evictCPUPrev(raw)
 	return out, nil
 }
 
-// dockerStats fetches a one-shot (non-streaming) stats sample and computes
-// CPU% the same way `docker stats` does.
+// cpuPrev is the previous CPU counters of one container, kept so CPU% can be
+// computed from OUR delta between polls (see dockerStats).
+type cpuPrev struct {
+	total, system uint64
+}
+
+// dockerCPUPrev: container id → cpuPrev. Package-level (not on the Sampler)
+// because dockerList is also called live by the /docker endpoint and both
+// callers must share the same baseline.
+var dockerCPUPrev sync.Map
+
+// evictCPUPrev drops baselines for containers that no longer exist.
+func evictCPUPrev(listed []dockerListEntry) {
+	alive := make(map[string]bool, len(listed))
+	for _, r := range listed {
+		alive[r.Id] = true
+	}
+	dockerCPUPrev.Range(func(k, _ any) bool {
+		if id, _ := k.(string); !alive[id] {
+			dockerCPUPrev.Delete(k)
+		}
+		return true
+	})
+}
+
+// dockerStats fetches a one-shot stats sample and computes CPU% the same way
+// `docker stats` does. Phase 86: `one-shot=true` — without it dockerd sleeps
+// ~1-2s per call to fill `precpu_stats` itself (measured: 2.8s of a 3.1s
+// sample on a 23-container host). In one-shot mode precpu_stats is empty, so
+// the delta comes from the counters we saw on the previous poll; the first
+// sample for a container reports 0%.
 func dockerStats(id string) (cpuPct float64, memUsed uint64, memPct float64, ok bool) {
-	resp, err := dockerHTTP().Get("http://d/containers/" + id + "/stats?stream=false")
+	resp, err := dockerHTTP().Get("http://d/containers/" + id + "/stats?stream=false&one-shot=true")
 	if err != nil {
 		return 0, 0, 0, false
 	}
@@ -226,10 +259,6 @@ func dockerStats(id string) (cpuPct float64, memUsed uint64, memPct float64, ok 
 			SystemUsage uint64 `json:"system_cpu_usage"`
 			OnlineCPUs  uint64 `json:"online_cpus"`
 		} `json:"cpu_stats"`
-		PreCPUStats struct {
-			CPUUsage    struct{ TotalUsage uint64 `json:"total_usage"` } `json:"cpu_usage"`
-			SystemUsage uint64 `json:"system_cpu_usage"`
-		} `json:"precpu_stats"`
 		MemoryStats struct {
 			Usage uint64 `json:"usage"`
 			Limit uint64 `json:"limit"`
@@ -238,14 +267,9 @@ func dockerStats(id string) (cpuPct float64, memUsed uint64, memPct float64, ok 
 	if err := json.NewDecoder(resp.Body).Decode(&s); err != nil {
 		return 0, 0, 0, false
 	}
-	cpuDelta := float64(s.CPUStats.CPUUsage.TotalUsage) - float64(s.PreCPUStats.CPUUsage.TotalUsage)
-	sysDelta := float64(s.CPUStats.SystemUsage) - float64(s.PreCPUStats.SystemUsage)
-	cpus := float64(s.CPUStats.OnlineCPUs)
-	if cpus == 0 {
-		cpus = 1
-	}
-	if sysDelta > 0 && cpuDelta > 0 {
-		cpuPct = round1(cpuDelta / sysDelta * cpus * 100)
+	cur := cpuPrev{total: s.CPUStats.CPUUsage.TotalUsage, system: s.CPUStats.SystemUsage}
+	if prev, had := dockerCPUPrev.Swap(id, cur); had {
+		cpuPct = cpuPctFromDelta(prev.(cpuPrev), cur, s.CPUStats.OnlineCPUs)
 	}
 	memUsed = s.MemoryStats.Usage
 	if s.MemoryStats.Limit > 0 {
@@ -270,6 +294,20 @@ func dockerAction(id, cmd string) error {
 		return fmt.Errorf("docker %s: HTTP %d", cmd, resp.StatusCode)
 	}
 	return nil
+}
+
+// cpuPctFromDelta is the `docker stats` formula over two consecutive
+// readings: cpuDelta/systemDelta*onlineCPUs*100. Pure — unit-tested. A
+// counter that went backwards (container restarted under the same id) yields 0.
+func cpuPctFromDelta(prev, cur cpuPrev, onlineCPUs uint64) float64 {
+	if cur.total <= prev.total || cur.system <= prev.system {
+		return 0
+	}
+	cpus := float64(onlineCPUs)
+	if cpus == 0 {
+		cpus = 1
+	}
+	return round1(float64(cur.total-prev.total) / float64(cur.system-prev.system) * cpus * 100)
 }
 
 func shortID(id string) string {

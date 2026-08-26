@@ -11,7 +11,7 @@
   "min_supported_version": "0.1.0",
   "hooks": {
     "claude-code": {
-      "version": "1.1.0",
+      "version": "1.6.0",
       "url": "https://raw.githubusercontent.com/yyhezkel/winmux/main/hooks/claude-code.json",
       "min_winmux_version": "0.1.0"
     },

@@ -120,11 +120,20 @@ here because nobody controls the size of `~/.claude/projects` — hundreds of MB
 — and this runs inside a 6-second curl, so lines are rejected on a `"usage"` byte scan
 before the JSON decoder sees them.
 
-**`insights/hygiene.go`** — detects the two leaks Yossi hit: duplicate
-`ymux port-watch` processes (there should be exactly one per workspace) and orphaned
-long-running `claude` sessions with no terminal. Reaps the safe ones on request; the
-desktop's Monitor → Cleanup tab is the UI. Uses gopsutil so `go test` still runs on the
-dev box.
+**`insights/hygiene.go`** — detects the leaks Yossi hit: duplicate `ymux port-watch`
+processes (one per workspace at most), **orphaned ones (ppid==1 for >60s — the SSH
+channel died and nothing else ever kills an exec child; Phase 86.B)**, and orphaned
+long-running `claude` sessions with no terminal. `PortWatchReaper` SIGTERMs duplicates +
+orphans every 5 minutes; claude sessions are only ever flagged. `POST /hygiene/kill`
+accepts only pids the daemon itself classifies `reapable`. The desktop's Monitor →
+Cleanup tab is the UI. Uses gopsutil so `go test` still runs on the dev box.
+
+**`insights/sampler.go` + `docker.go`** — the 5s sample used to take ~3s on a 23-container
+host because Docker's `stats?stream=false` sleeps to compute its own CPU%. Phase 86.D:
+`one-shot=true` and our own delta (`dockerCPUPrev`, package-level because `/docker`
+calls `dockerList()` live too), Docker only every 6th tick and `top` every 2nd, with
+the last result carried forward on the other ticks. The "sample slow" WARN stays as the
+regression alarm.
 
 **`push/push.go`** — no Firebase, no FCM, no APNs. A paired device holds a long-lived
 WebSocket (`GET /api/v2/push/subscribe`) from an Android foreground service; the server

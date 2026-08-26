@@ -25,7 +25,9 @@ import (
 // 2.2.0: the winmux -> ymux rename. The binary, the systemd unit and the
 // data dir all move, so every existing remote needs this update offer to
 // pick up the daemon that knows about the new paths.
-const Version = "2.2.0"
+// 2.2.1 (Phase 86): server load — docker stats one-shot + 30s cadence, top
+// every 10s, hygiene reaper also kills orphaned (ppid 1) port-watchers.
+const Version = "2.2.1"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

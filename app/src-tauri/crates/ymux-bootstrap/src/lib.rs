@@ -397,14 +397,18 @@ pub async fn bootstrap(
     // still hold the binary's inode (e.g. orphaned by the pre-39.C pipe
     // crash). Non-fatal — pkill exits 1 when nothing matches, which is the
     // normal case; the trailing `true` keeps the channel exit clean.
-    // The pattern is anchored and uses the `[w]` glob trick (same as the
-    // port-watch reaper) for two reasons: an unanchored `ymux-linux-x64`
-    // matches ANY process whose command line merely mentions the path, and
-    // without the bracket the `sh -c` running this very command matches
-    // itself. Narrow beats broad — this runs on the user's server.
+    // Phase 86: the pattern used to be `[w]inmux-linux-x64$`, the pre-rename
+    // binary name — it never matched the real cmdline
+    // (`$HOME/.ymux/bin/ymux port-watch --workspace <id>`), which is how 15
+    // orphans piled up on one server. It now matches the `<dir>/ymux
+    // port-watch ` (and legacy `winmux`) invocation: the leading `/` plus the
+    // verb keep it off tmux/claude/anything that merely mentions the path,
+    // and the `[w]`/`[y]` bracket trick (same as the port-watch reaper)
+    // stops the `sh -c` running this very command from matching itself.
+    // Narrow beats broad — this runs on the user's server.
     let _ = ssh_exec(
         handle,
-        "pkill -f '[w]inmux-linux-x64$' 2>/dev/null; sleep 0.1; true",
+        "pkill -f '/([w]inmux|[y]mux) port-watch ' 2>/dev/null; sleep 0.1; true",
     )
     .await;
 

@@ -299,6 +299,14 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-08-23 — Phase 86: server + port-watch + hooks load
+- **Context:** measured on Yossi's server — 18 `ymux port-watch` at ~4.7% CPU each, 15 orphans (ppid=1); hook-debug.log 100% stale-reconnect noise from them; ymux-server sampling 3.1s every 5s because Docker one-shot stats block 1-2s per container. Full numbers in PROGRESS.txt (2026-08-23 ~20:30).
+- **Decided — the watcher owns its own death.** stdin-EOF watchdog + no last.env fallback + exit after 3 connect failures. Hooks KEEP the fallback (Phase 80 (f)); only the watcher's tunnel is fixed for life.
+- **Decided — one watcher per host, not per workspace.** Sibling workspaces on the same (host,port,user) subscribe to the owner's events; the desktop fans `port.opened/closed` out. The remote process never learns about workspaces beyond the owner's id.
+- **Decided — orphans are reaped server-side by ppid, not by any "connected" registry.** There is no remote record of live workspaces (last.env is a single global file); ppid==1 on an SSH exec child is the one reliable signal, verified on 15 real cases.
+- **Deferred — netlink `sock_diag` (LISTEN-only query) instead of /proc/net/tcp.** That is the fix for the kernel half of the tick cost; needs raw netlink code. BACKLOG.
+- **Deferred — a resident hook agent / connection pooling.** Each hook is its own process by Claude Code's design; one connection per hook is the floor without a daemon in the loop. BACKLOG.
+- **Decided (Yossi, same day) — `manifest.json` hooks version goes to 1.6.0 in this PR, not the release checklist.** The reason it was held back (bannering installs before a CLI that honours the spec exists) no longer bites: the bootstrap's every-connect `setup-hooks` now rewrites stale entries by itself, so the banner is only the path for users who turned `hooks.auto_install` off.
 ### 2026-08-23 — Phase 85.C: the Browser pops out with the FULL chrome, and its X just closes
 
 - **Context:** three Browser complaints from Yossi in one message — the DevTools button

@@ -281,35 +281,6 @@ fn print_pre_tool_use(decision: &str, reason: Option<&str>) {
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
 }
 
-/// Phase 66 (66.D.2): quick liveness probe of the desktop RPC endpoint.
-/// Two short attempts; returns false fast when the tunnel / pipe is down
-/// so the caller can fall back to the static policy instead of burning the
-/// full blocking timeout.
-async fn tunnel_healthy() -> bool {
-    for attempt in 0..2u32 {
-        let r = tokio::time::timeout(
-            std::time::Duration::from_millis(1800),
-            rpc_call("ping", json!({})),
-        )
-        .await;
-        match r {
-            Ok(Ok(_)) => return true,
-            Ok(Err(e)) => hook_log(
-                HookLevel::Warn,
-                &format!("claude-hook ping attempt={attempt} err={e}"),
-            ),
-            Err(_) => hook_log(
-                HookLevel::Warn,
-                &format!("claude-hook ping attempt={attempt} timed out"),
-            ),
-        }
-        if attempt == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        }
-    }
-    false
-}
-
 /// Phase 66 (66.D.2): feed.push with a small retry on *connection* failure.
 /// Only connection errors retry — a returned `timeout` verdict means we DID
 /// reach the desktop, so it's surfaced as-is (retrying would double the
@@ -1270,6 +1241,22 @@ fn render_dev_state_text(v: &Value) -> String {
 }
 
 async fn rpc_call(method: &str, params: Value) -> Result<Value, String> {
+    rpc_call_with(method, params, true).await
+}
+
+/// Phase 86: `rpc_call` without the last.env retry. For the port watcher,
+/// whose tunnel is fixed for its whole life: a connect failure there means
+/// *its* tunnel is gone, and following last.env would attach it to a
+/// newer tunnel while a fresh watcher is already being spawned for it.
+async fn rpc_call_pinned(method: &str, params: Value) -> Result<Value, String> {
+    rpc_call_with(method, params, false).await
+}
+
+async fn rpc_call_with(
+    method: &str,
+    params: Value,
+    refresh_on_stale: bool,
+) -> Result<Value, String> {
     load_fallback_env_file();
 
     // Prefer TCP if YMUX_SOCKET_ADDR is set (works on any OS, including remote tunnels).
@@ -1279,6 +1266,7 @@ async fn rpc_call(method: &str, params: Value) -> Result<Value, String> {
                 let token = std::env::var("YMUX_TUNNEL_TOKEN").ok();
                 return rpc_via(stream, method, params, token.as_deref()).await;
             }
+            Err(e) if !refresh_on_stale => return Err(format!("connect tcp {addr}: {e}")),
             Err(e) => {
                 // Phase 80: the address we inherited may be stale. `claude`
                 // is long-lived and its hooks are its children, so both keep
@@ -2667,25 +2655,9 @@ async fn real_main() -> ExitCode {
                 push_params["tmux_session"] = json!(s);
             }
 
-            // Phase 66 (66.D.2): for pre-tool-use, probe the tunnel first.
-            // If the desktop is unreachable, use the static policy NOW
-            // instead of burning the full blocking timeout and then denying
-            // — the exact stall that wedged Claude historically.
-            if subcommand == "pre-tool-use" && !tunnel_healthy().await {
-                let (decision, reason) = static_fallback_decision(&payload);
-                // Rule #1: `reason` can embed a truncated segment of the tool
-                // command (ymux_policy) — never write it to the log file.
-                // Metadata only. (It still goes to Claude via print below.)
-                hook_log(
-                    HookLevel::Warn,
-                    &format!(
-                        "static-fallback decision={decision} req_id={request_id} \
-                         (desktop unreachable)"
-                    ),
-                );
-                print_pre_tool_use(decision, Some(&reason));
-                return ExitCode::SUCCESS;
-            }
+            // Phase 86: no pre-flight ping. A connect failure surfaces from
+            // feed_push_with_retry below and lands in the static-fallback
+            // arm of the match — one code path, one connection attempt set.
 
             // B path (Phase 77 push): also forward a pre-tool-use hook to the
             // LOCAL ymux-server so paired phones get a push. Fire-and-forget —
@@ -2821,7 +2793,7 @@ async fn real_main() -> ExitCode {
                     match subcommand.as_str() {
                         "pre-tool-use" => {
                             // Phase 66 (66.D.1): desktop unreachable even
-                            // after the healthcheck + retry — decide with the
+                            // after the connect retry — decide with the
                             // CLI's static policy so Claude keeps moving on
                             // safe defaults rather than denying everything.
                             let (decision, reason) = static_fallback_decision(&payload);

@@ -1,9 +1,15 @@
 {
-  "ymux_hooks_version": "1.5.0",
+  "ymux_hooks_version": "1.6.0",
   "agent": "claude-code",
   "min_ymux_version": "0.1.0",
   "settings_file": "~/.claude/settings.json",
   "_notes": [
+    "v1.6.0 (2026-08, Phase 86): PreToolUse carries `timeout: 600` (Claude",
+    "  Code's per-hook timeout, seconds). Its default is 60s, while the",
+    "  desktop Gate waits up to 120s (600 clamp) for the human - so Claude",
+    "  Code was killing the hook before the answer came back. The CLI",
+    "  writes `timeout` through only when a spec entry has one. Existing",
+    "  machines must re-run setup-hooks to pick it up.",
     "v1.2.0 (2026-07): dropped Notification + SessionStart — observability-only",
     "  noise (the agent is driven by the main session, not by these alerts).",
     "  Only actionable lifecycle signals remain: Stop ('your turn') and",
@@ -73,7 +79,8 @@
     },
     "PreToolUse": {
       "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Task",
-      "command": "${YMUX_BIN} claude-hook pre-tool-use"
+      "command": "${YMUX_BIN} claude-hook pre-tool-use",
+      "timeout": 600
     },
     "SessionEnd": {
       "matcher": "",

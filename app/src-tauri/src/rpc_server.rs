@@ -1509,6 +1509,10 @@ async fn dispatch(
             }
 
             let blocking = matches!(kind.as_str(), "permission_request");
+            // Phase 86: one settings read per event. Was three disk reads
+            // (policy, block toast, stop toast) on the same request. Not
+            // cached across events — settings can change mid-session.
+            let cfg = settings::load_from_disk().unwrap_or_default();
 
             // ── Phase 66 (66.D): 3-state policy engine ──────────────────
             // Before a pre-tool-use request becomes a blocking approval
@@ -1527,7 +1531,7 @@ async fn dispatch(
                 // custom block/gate patterns ride along with the master
                 // switch. Desktop-side enforcement only — the CLI's static
                 // fallback (desktop unreachable) keeps the built-ins.
-                let hooks_cfg = settings::load_from_disk().unwrap_or_default().hooks;
+                let hooks_cfg = &cfg.hooks;
                 if hooks_cfg.policy_enabled {
                     let tool_name = payload
                         .get("tool_name")
@@ -1578,7 +1582,7 @@ async fn dispatch(
                             );
                             // Phase 66 (KK): gate the block toast by the
                             // per-event toggle (default ON — security insight).
-                            let bn = settings::load_from_disk().unwrap_or_default().notifications;
+                            let bn = &cfg.notifications;
                             if bn.toast_enabled && bn.toast_block {
                                 show_toast(&format!("⛔ Blocked: {tool_name}"), &verdict.reason);
                             }
@@ -1643,7 +1647,7 @@ async fn dispatch(
             // are still used for the feed card; the TOAST text is humanized
             // from the payload here.
             {
-                let s = settings::load_from_disk().unwrap_or_default();
+                let s = &cfg;
                 if hook_toast_enabled(&s.notifications, &s.hook_notifications, &subkind) {
                     // beta.3 Fix 1: sound-gated by hook_notifications.
                     let sound = hook_toast_should_sound(&s.hook_notifications, &subkind);
@@ -2234,42 +2238,59 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .unwrap_or("v4")
                 .to_string();
+            // Phase 86: the watcher is shared per host — fan out to every
+            // subscriber workspace, each with its own auto_port_forward gate
+            // and its own `port-detected` payload.
+            let subscribers = crate::port_watcher_subscribers(state, &workspace_id);
             // Phase 39: never report ymux's own reverse-tunnel port.
             // Phase 80: every LIVE registration, headless and pane-backed —
             // both are ours. The set this replaced only ever grew, so after a
             // few reconnects it was suppressing ports the remote had since
             // recycled to a real user server.
-            let is_internal = state.tunnel_registry.ports_for(&workspace_id).contains(&port);
+            // Phase 86: any subscriber's tunnel port is internal — they all
+            // sit on the same host.
+            let is_internal = subscribers
+                .iter()
+                .any(|ws| state.tunnel_registry.ports_for(ws).contains(&port));
             if is_internal {
                 return Ok(json!({ "ok": true, "skipped": "ymux internal port" }));
             }
-            let enabled = {
+            let enabled: Vec<String> = {
                 let file = state.workspaces.lock().unwrap();
-                file.workspaces
-                    .iter()
-                    .find(|w| w.id == workspace_id)
-                    .map(|w| w.auto_port_forward)
-                    .unwrap_or(false)
+                subscribers
+                    .into_iter()
+                    .filter(|ws| {
+                        file.workspaces
+                            .iter()
+                            .find(|w| &w.id == ws)
+                            .map(|w| w.auto_port_forward)
+                            .unwrap_or(false)
+                    })
+                    .collect()
             };
-            if !enabled {
+            if enabled.is_empty() {
                 return Ok(json!({ "ok": true, "skipped": "detection off" }));
             }
             // Record + notify FE. No forward is opened.
             {
                 let mut m = state.core.detected_ports.lock().unwrap();
-                m.entry(workspace_id.clone())
-                    .or_default()
-                    .insert(port, (addr.clone(), family.clone()));
+                for ws in &enabled {
+                    m.entry(ws.clone())
+                        .or_default()
+                        .insert(port, (addr.clone(), family.clone()));
+                }
             }
-            let _ = app.emit(
-                "port-detected",
-                json!({
-                    "workspace_id": workspace_id,
-                    "addr": addr,
-                    "remote_port": port,
-                    "family": family,
-                }),
-            );
+            for ws in &enabled {
+                let _ = app.emit(
+                    "port-detected",
+                    json!({
+                        "workspace_id": ws,
+                        "addr": addr,
+                        "remote_port": port,
+                        "family": family,
+                    }),
+                );
+            }
             Ok(json!({ "ok": true, "detected": true }))
         }
 
@@ -2283,25 +2304,28 @@ async fn dispatch(
                 .get("port")
                 .and_then(|v| v.as_u64())
                 .ok_or("missing port")? as u16;
-            // Drop from detected set + tell the FE.
-            let was_detected = {
-                let mut m = state.core.detected_ports.lock().unwrap();
-                m.get_mut(&workspace_id)
-                    .map(|ports| ports.remove(&port).is_some())
-                    .unwrap_or(false)
-            };
-            if was_detected {
-                let _ = app.emit(
-                    "port-undetected",
-                    json!({
-                        "workspace_id": workspace_id,
-                        "remote_port": port,
-                    }),
-                );
+            // Phase 86: shared watcher — drop from every subscriber.
+            for ws in crate::port_watcher_subscribers(state, &workspace_id) {
+                // Drop from detected set + tell the FE.
+                let was_detected = {
+                    let mut m = state.core.detected_ports.lock().unwrap();
+                    m.get_mut(&ws)
+                        .map(|ports| ports.remove(&port).is_some())
+                        .unwrap_or(false)
+                };
+                if was_detected {
+                    let _ = app.emit(
+                        "port-undetected",
+                        json!({
+                            "workspace_id": ws,
+                            "remote_port": port,
+                        }),
+                    );
+                }
+                // If this port was actually forwarded, tear that down too.
+                // close_one_forward is a no-op if no entry exists.
+                crate::close_one_forward(state, app, &ws, port);
             }
-            // If this port was actually forwarded, tear that down too.
-            // close_one_forward is a no-op if no entry exists.
-            crate::close_one_forward(state, app, &workspace_id, port);
             Ok(json!({ "ok": true }))
         }
 

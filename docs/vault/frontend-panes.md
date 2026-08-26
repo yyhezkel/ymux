@@ -182,7 +182,9 @@ against each other; wrong for predicting a charge. Prices come from `claudePrici
 
 **`HygienePanel.tsx` (159)** — the Monitor's Cleanup tab. Surfaces the two server-side
 leaks Yossi hit (duplicate ymux port-watchers, orphaned claude sessions) from the
-daemon's `/hygiene` endpoint, and reaps the safe ones via `/hygiene/kill`.
+daemon's `/hygiene` endpoint, and reaps the safe ones via `/hygiene/kill`. Phase 86: a
+port-watcher row also carries `orphan` (ppid=1, its SSH channel gone), rendered like a
+duplicate and reaped by the same button — "Kill duplicates & orphans".
 
 **`PortsWindow.tsx` (267)** — detect-only plus click-to-forward. The remote watcher
 reports a LISTEN port → a row appears with **[Forward]** → the backend opens the tunnel

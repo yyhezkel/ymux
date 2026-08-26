@@ -19,6 +19,7 @@ use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 
+#[derive(Debug)]
 pub enum AgentStatus {
     NotDetected,
     Stub(String),
@@ -82,13 +83,28 @@ pub struct HookSpec {
 pub struct HookEvent {
     pub matcher: String,
     pub command: String,
+    /// Phase 86: per-hook timeout in seconds, written through to the
+    /// agent's settings verbatim. Claude Code kills a hook after 60s by
+    /// default; the desktop Gate waits up to 120s (600 clamp), so
+    /// PreToolUse needs more or Claude Code gives up on it first.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout: Option<u64>,
+}
+
+/// One settings entry for an event: `{ matcher, hooks: [{type, command[, timeout]}] }`.
+fn hook_entry(matcher: &str, command: &str, timeout: Option<u64>) -> Value {
+    let mut hook = json!({ "type": "command", "command": command });
+    if let Some(t) = timeout {
+        hook["timeout"] = json!(t);
+    }
+    json!({ "matcher": matcher, "hooks": [hook] })
 }
 
 /// The version this CLI was built with, used as the spec returned by
 /// `source=bundled` AND as the version recorded when no fetched spec
 /// was applied. Bump whenever you ship a new hook in a release with a
 /// matching `hooks/claude-code.json` change.
-const BUNDLED_CLAUDE_VERSION: &str = "1.5.0";
+const BUNDLED_CLAUDE_VERSION: &str = "1.6.0";
 
 /// The bundled fallback spec for Claude Code. Mirrors what
 /// `hooks/claude-code.json` carries at the same `ymux_hooks_version`
@@ -102,6 +118,8 @@ fn bundled_claude_spec() -> HookSpec {
         HookEvent {
             matcher: "Bash|Write|Edit|MultiEdit|NotebookEdit|Task".into(),
             command: "${YMUX_BIN} claude-hook pre-tool-use".into(),
+            // v1.6.0 (Phase 86): outlive Claude Code's 60s default.
+            timeout: Some(600),
         },
     );
     // v0.4.4 dropped Notification and SessionStart as observability-only
@@ -132,6 +150,7 @@ fn bundled_claude_spec() -> HookSpec {
                 // documented wildcard (it's a literal), so avoid it.
                 matcher: "".into(),
                 command: format!("${{YMUX_BIN}} claude-hook {sub}"),
+                timeout: None,
             },
         );
     }
@@ -376,7 +395,7 @@ fn apply_to_settings(
 
     let mut would_register: Vec<String> = Vec::new();
     let mut already_present: Vec<String> = Vec::new();
-    let mut to_apply: Vec<(String, String, String)> = Vec::new();
+    let mut to_apply: Vec<(String, String, String, Option<u64>)> = Vec::new();
 
     for (event, ev_spec) in &spec.events {
         let cmd = expand_command(&ev_spec.command, exe_path);
@@ -388,12 +407,17 @@ fn apply_to_settings(
         // Phase 84.B: "present" is not enough — the command has to still
         // exist, or a rename leaves a permanently dead hook that
         // setup-hooks refuses to repair. See ymux_entry_is_runnable.
-        if has_ymux && !force && ymux_entry_is_runnable(&entries) {
+        if has_ymux
+            && !force
+            && ymux_entry_is_runnable(&entries)
+            && ymux_entry_points_at(&entries, exe_path)
+            && ymux_entry_has_timeout(&entries, ev_spec.timeout)
+        {
             already_present.push(event.clone());
             continue;
         }
         would_register.push(event.clone());
-        to_apply.push((event.clone(), cmd, ev_spec.matcher.clone()));
+        to_apply.push((event.clone(), cmd, ev_spec.matcher.clone(), ev_spec.timeout));
     }
 
     if dry {
@@ -440,16 +464,13 @@ fn apply_to_settings(
         None
     };
 
-    for (event, cmd, matcher) in &to_apply {
+    for (event, cmd, matcher, timeout) in &to_apply {
         let mut entries = root["hooks"][event.as_str()]
             .as_array()
             .cloned()
             .unwrap_or_default();
         entries.retain(|e| !is_ymux_entry(e));
-        entries.push(json!({
-            "matcher": matcher,
-            "hooks": [{ "type": "command", "command": cmd }]
-        }));
+        entries.push(hook_entry(matcher, cmd, *timeout));
         root["hooks"][event.as_str()] = json!(entries);
     }
 
@@ -481,7 +502,7 @@ fn apply_to_settings(
     }
 
     AgentStatus::Done {
-        registered: to_apply.into_iter().map(|(e, _, _)| e).collect(),
+        registered: to_apply.into_iter().map(|(e, _, _, _)| e).collect(),
         backup,
         path: path.to_path_buf(),
         unchanged: false,
@@ -505,15 +526,19 @@ fn apply_to_legacy(
         config = json!({});
     }
 
-    let mut to_apply: Vec<(String, String, String)> = Vec::new();
+    let mut to_apply: Vec<(String, String, String, Option<u64>)> = Vec::new();
     for (event, ev_spec) in &spec.events {
         let cmd = expand_command(&ev_spec.command, exe_path);
         let entries = config[event].as_array().cloned().unwrap_or_default();
         let has_ymux = entries.iter().any(is_ymux_entry);
-        if has_ymux && !force {
+        if has_ymux
+            && !force
+            && ymux_entry_points_at(&entries, exe_path)
+            && ymux_entry_has_timeout(&entries, ev_spec.timeout)
+        {
             continue;
         }
-        to_apply.push((event.clone(), cmd, ev_spec.matcher.clone()));
+        to_apply.push((event.clone(), cmd, ev_spec.matcher.clone(), ev_spec.timeout));
     }
     if dry || to_apply.is_empty() {
         return AgentStatus::Done {
@@ -534,16 +559,13 @@ fn apply_to_legacy(
         None
     };
 
-    for (event, cmd, matcher) in &to_apply {
+    for (event, cmd, matcher, timeout) in &to_apply {
         let mut entries = config[event.as_str()]
             .as_array()
             .cloned()
             .unwrap_or_default();
         entries.retain(|e| !is_ymux_entry(e));
-        entries.push(json!({
-            "matcher": matcher,
-            "hooks": [{ "type": "command", "command": cmd }]
-        }));
+        entries.push(hook_entry(matcher, cmd, *timeout));
         config[event.as_str()] = json!(entries);
     }
 
@@ -551,7 +573,7 @@ fn apply_to_legacy(
     let _ = fs::write(path, text);
 
     AgentStatus::Done {
-        registered: to_apply.into_iter().map(|(e, _, _)| e).collect(),
+        registered: to_apply.into_iter().map(|(e, _, _, _)| e).collect(),
         backup,
         path: path.to_path_buf(),
         unchanged: false,
@@ -612,6 +634,51 @@ fn is_ymux_entry(entry: &Value) -> bool {
 /// Windows a POSIX-style `/home/y/.winmux/bin/winmux` is NOT absolute
 /// (no drive prefix) but is rooted, and settings.json written under WSL
 /// or copied between machines carries exactly that shape.
+/// Phase 86: "present" also means "carries the spec's `timeout`". Without
+/// this, a 1.5.0 install would keep its 60s-default PreToolUse entry
+/// forever — the skip path never rewrites an entry it considers present,
+/// yet the version stamp would still move to 1.6.0 and silence the
+/// outdated-hooks banner. Only checks the spec's direction (a spec with no
+/// timeout accepts any entry).
+/// Phase 86: "present" also means "points at THIS binary". Found live on
+/// Yossi's server: 4 of 5 entries still ran `~/.winmux/bin/winmux` (a
+/// pre-rename build with no last.env fallback, failing on every prompt
+/// with `connect tcp 127.0.0.1:<dead port>`), the file existed so
+/// `ymux_entry_is_runnable` was happy, and the stamp said 1.5.0. The
+/// compat symlink keeps the old binary alive forever, so the only way an
+/// install converges on the current CLI is to rewrite any of our entries
+/// whose executable differs from the one being installed.
+fn ymux_entry_points_at(entries: &[Value], exe_path: &str) -> bool {
+    let norm = |p: &str| p.replace('\\', "/").trim_matches('"').to_string();
+    let want = norm(exe_path);
+    entries.iter().filter(|e| is_ymux_entry(e)).all(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|v| v.as_array())
+            .map(|hooks| {
+                hooks.iter().all(|h| {
+                    h.get("command")
+                        .and_then(|c| c.as_str())
+                        .and_then(executable_token)
+                        .map(|exe| norm(&exe) == want)
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
+    })
+}
+
+fn ymux_entry_has_timeout(entries: &[Value], want: Option<u64>) -> bool {
+    let Some(want) = want else { return true };
+    entries.iter().filter(|e| is_ymux_entry(e)).all(|entry| {
+        entry
+            .get("hooks")
+            .and_then(|v| v.as_array())
+            .map(|hooks| hooks.iter().all(|h| h.get("timeout").and_then(|t| t.as_u64()) == Some(want)))
+            .unwrap_or(false)
+    })
+}
+
 fn ymux_entry_is_runnable(entries: &[Value]) -> bool {
     entries.iter().filter(|e| is_ymux_entry(e)).all(|entry| {
         entry
@@ -865,6 +932,94 @@ mod tests {
         let me = std::env::current_exe().expect("test binary path");
         let live = entry(&format!("\"{}\" claude-hook stop", me.display()));
         assert!(ymux_entry_is_runnable(&[live]));
+    }
+
+    /// The migration case end-to-end, as the bootstrap runs it on every
+    /// connect (`setup-hooks --agent claude --source bundled`, no --force):
+    /// a settings.json whose entries still point at the OLD binary must
+    /// come back as `would_register`, not `already_present`. The old
+    /// binary exists (the compat symlink keeps it alive), so the
+    /// runnable check alone is satisfied — this is what
+    /// `ymux_entry_points_at` adds.
+    #[test]
+    fn bootstrap_rerun_replaces_entries_on_the_old_binary() {
+        let dir = std::env::temp_dir().join(format!(
+            "ymux-hooks-migrate-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmp dir");
+        let old_exe = dir.join("winmux");
+        let new_exe = dir.join("ymux");
+        fs::write(&old_exe, b"").expect("old exe");
+        fs::write(&new_exe, b"").expect("new exe");
+        let settings = dir.join("settings.json");
+        let old_cmd = |ev: &str| format!("{} claude-hook {ev}", old_exe.display());
+        fs::write(
+            &settings,
+            serde_json::to_string(&json!({
+                "hooks": {
+                    "Stop": [entry(&old_cmd("stop"))],
+                    "PreToolUse": [entry(&old_cmd("pre-tool-use"))],
+                    "UserPromptSubmit": [entry(&old_cmd("user-prompt-submit"))],
+                },
+                "ymux_meta": { "hooks_version": "1.5.0", "agent": "claude-code" }
+            }))
+            .expect("json"),
+        )
+        .expect("settings");
+
+        let spec = bundled_claude_spec();
+        let status = apply_to_settings(
+            &dir,
+            &settings,
+            &new_exe.display().to_string(),
+            &spec,
+            true,
+            false,
+        );
+        let AgentStatus::DryRun { would_register, already_present, .. } = status else {
+            panic!("expected DryRun, got {status:?}");
+        };
+        assert!(already_present.is_empty(), "nothing on the old binary is 'present': {already_present:?}");
+        for ev in ["Stop", "PreToolUse", "UserPromptSubmit"] {
+            assert!(would_register.iter().any(|e| e == ev), "{ev} must be rewritten");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn entry_pointing_at_another_binary_is_stale() {
+        let exe = "/home/u/.ymux/bin/ymux";
+        let old = vec![hook_entry("", "/home/u/.winmux/bin/winmux claude-hook stop", None)];
+        assert!(!ymux_entry_points_at(&old, exe));
+        let cur = vec![hook_entry("", "/home/u/.ymux/bin/ymux claude-hook stop", None)];
+        assert!(ymux_entry_points_at(&cur, exe));
+        // Windows quoting + backslashes normalise to the same thing.
+        let win = vec![hook_entry("", "\"C:\\Users\\y\\ymux-cli.exe\" claude-hook stop", None)];
+        assert!(ymux_entry_points_at(&win, "C:\\Users\\y\\ymux-cli.exe"));
+    }
+
+    #[test]
+    fn entry_without_spec_timeout_is_stale() {
+        let old = vec![hook_entry("Bash", "/home/u/.ymux/bin/ymux claude-hook pre-tool-use", None)];
+        assert!(!ymux_entry_has_timeout(&old, Some(600)));
+        let new = vec![hook_entry("Bash", "/home/u/.ymux/bin/ymux claude-hook pre-tool-use", Some(600))];
+        assert!(ymux_entry_has_timeout(&new, Some(600)));
+        assert!(ymux_entry_has_timeout(&old, None));
+    }
+
+    #[test]
+    fn timeout_is_written_only_when_the_spec_has_one() {
+        let with = hook_entry("Bash", "/home/u/.ymux/bin/ymux claude-hook pre-tool-use", Some(600));
+        assert_eq!(with["hooks"][0]["timeout"], json!(600));
+        assert!(is_ymux_entry(&with));
+        let without = hook_entry("", "/home/u/.ymux/bin/ymux claude-hook stop", None);
+        assert!(without["hooks"][0].get("timeout").is_none());
+        // The bundled spec carries it on PreToolUse alone.
+        let spec = bundled_claude_spec();
+        assert_eq!(spec.events["PreToolUse"].timeout, Some(600));
+        assert_eq!(spec.events["Stop"].timeout, None);
     }
 
     #[test]

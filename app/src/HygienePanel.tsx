@@ -13,6 +13,9 @@ interface PortWatcher {
   etime_sec: number;
   cpu_time_sec: number;
   duplicate: boolean;
+  // Phase 86: ppid=1 and its SSH channel is gone — the desktop that launched
+  // it is no longer listening. Reaped together with duplicates.
+  orphan: boolean;
 }
 interface OrphanSession {
   pid: number;
@@ -78,7 +81,9 @@ export function HygienePanel(p: { workspaceId?: string }) {
     }
   };
 
-  const dupPids = () => (data()?.port_watchers ?? []).filter((w) => w.duplicate).map((w) => w.pid);
+  // Phase 86: orphans (ppid=1, SSH gone) are reaped with the duplicates.
+  const stale = () => (data()?.port_watchers ?? []).filter((w) => w.duplicate || w.orphan);
+  const dupPids = () => stale().map((w) => w.pid);
 
   return (
     <div class="hyg-tab">
@@ -104,11 +109,11 @@ export function HygienePanel(p: { workspaceId?: string }) {
         fallback={<div class="settings-hint">{loading() ? "…" : t("hygiene.no_data")}</div>}
       >
         <Show
-          when={data()!.duplicate_count > 0}
+          when={stale().length > 0}
           fallback={<div class="settings-hint">{t("hygiene.no_dups")}</div>}
         >
           <div class="hyg-alert">
-            <span>{t("hygiene.dups", { n: String(data()!.duplicate_count) })}</span>
+            <span>{t("hygiene.dups", { n: String(stale().length) })}</span>
             <button class="primary" disabled={busy()} onClick={() => void kill(dupPids())}>
               {t("hygiene.kill_dups")}
             </button>
@@ -117,10 +122,11 @@ export function HygienePanel(p: { workspaceId?: string }) {
         <div class="hyg-list">
           <For each={data()!.port_watchers ?? []}>
             {(w) => (
-              <div class={`hyg-row${w.duplicate ? " dup" : ""}`}>
+              <div class={`hyg-row${w.duplicate || w.orphan ? " dup" : ""}`}>
                 <span class="hyg-main">
-                  {w.duplicate ? <IconWarning size={14} /> : <IconCircle size={14} />}{" "}
+                  {w.duplicate || w.orphan ? <IconWarning size={14} /> : <IconCircle size={14} />}{" "}
                   {w.workspace || "?"}
+                  {w.orphan ? <span class="settings-hint"> · {t("hygiene.orphan")}</span> : null}
                 </span>
                 <span class="hyg-meta settings-hint">
                   pid {w.pid} · {t("hygiene.uptime")} {fmtDur(w.etime_sec)} · cpu {w.cpu_time_sec}s

@@ -621,7 +621,7 @@
   "info": {
     "description": "ymux server daemon API — the client-SDK surface (version negotiation, Files, Logs). Streaming WebSocket frames are described in asyncapi.json (PHASE-77-DESIGN §4.4). Generated from the huma handlers (S4); the Insights metrics API is desktop-internal and documented separately.",
     "title": "ymux-server",
-    "version": "2.2.0"
+    "version": "2.2.1"
   },
   "openapi": "3.1.0",
   "paths": {

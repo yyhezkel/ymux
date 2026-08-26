@@ -199,6 +199,14 @@ pub(crate) struct AppState {
     /// and the port/token/owning-session triple that replaced two maps read
     /// independently. See `tunnel_registry`.
     pub(crate) tunnel_registry: tunnel_registry::TunnelRegistry,
+    /// Phase 86: one remote `ymux port-watch` per HOST, not per workspace.
+    /// Keyed by `bootstrap_guard::host_key(user, host, port)`. The `owner`
+    /// is the workspace whose session actually spawned the process (its
+    /// slot lives in `core.port_watchers` / `core.port_watcher_tasks` as
+    /// before); `subscribers` (owner included) are fanned out to by
+    /// `port.opened` / `port.closed`. LOCK ORDER: always taken ALONE — never
+    /// while holding any `core.*` lock, and nothing is taken under it.
+    pub(crate) port_watcher_hosts: PortWatcherHosts,
 }
 
 /// issue #4: per-pane agent turn timing for the ymux-tools chrome Ticker.
@@ -4452,6 +4460,7 @@ async fn spawn_ssh(
     // work session.
     let port_watchers_for_task = state.core.port_watchers.clone();
     let port_watcher_tasks_for_task = state.core.port_watcher_tasks.clone();
+    let hosts_for_task = state.port_watcher_hosts.clone();
     let bidi_for_task = state.bidi_filters.clone();
     // beta.3 (netfree, Track 1b): capture the connection metadata so the
     // io-loop can emit a structured `ssh:disconnected` event on transport
@@ -4615,6 +4624,7 @@ async fn spawn_ssh(
                 .lock()
                 .unwrap()
                 .remove(&workspace_for_task);
+            port_watcher_release_owner(&hosts_for_task, &workspace_for_task);
             if aborted {
                 log_info("TUNNEL", &format!(
                     "port-watch[{workspace_for_task}]: workspace disconnected, watcher stopped"
@@ -4831,6 +4841,7 @@ pub(crate) fn kill_session_inner(s: &mut Session) {
 struct TunnelLease {
     registry: tunnel_registry::TunnelRegistry,
     core: CoreState,
+    hosts: PortWatcherHosts,
     workspace_id: String,
     session_id: String,
     committed: bool,
@@ -4872,6 +4883,7 @@ impl Drop for TunnelLease {
                     e.into_inner().remove(&self.workspace_id);
                 }
             }
+            port_watcher_release_owner(&self.hosts, &self.workspace_id);
             if aborted {
                 log_debug("TUNNEL", &format!(
                     "tunnel-lease[{}]: rolled back, watcher stopped",
@@ -4927,6 +4939,7 @@ mod tunnel_lease_tests {
         TunnelLease {
             registry: registry.clone(),
             core: core.clone(),
+            hosts: PortWatcherHosts::default(),
             workspace_id: ws.to_string(),
             session_id: session.to_string(),
             committed: false,
@@ -5056,6 +5069,7 @@ async fn setup_workspace_reverse_tunnel(
     let lease = TunnelLease {
         registry: state.tunnel_registry.clone(),
         core: state.core.clone(),
+        hosts: state.port_watcher_hosts.clone(),
         workspace_id: workspace_id.to_string(),
         session_id: session_id.to_string(),
         committed: false,
@@ -5090,6 +5104,81 @@ async fn setup_workspace_reverse_tunnel(
     Some((remote_port, lease))
 }
 
+/// Phase 86: per-host port-watcher sharing state. See `AppState::port_watcher_hosts`.
+#[derive(Default, Debug)]
+pub(crate) struct PortWatcherHost {
+    /// Workspace whose watcher task is (or was) the live process. `None`
+    /// once that task ended — the next `try_ensure_port_watcher` from any
+    /// subscriber respawns and takes ownership.
+    pub(crate) owner: Option<String>,
+    pub(crate) subscribers: std::collections::HashSet<String>,
+}
+pub(crate) type PortWatcherHosts = Arc<Mutex<HashMap<String, PortWatcherHost>>>;
+
+/// Phase 86: the host a workspace's port-watcher runs on. Workspace-level
+/// `connection` first (canonical since 23.D), live SSH session as fallback
+/// (the connection may still live only on a pane). `None` for anything
+/// that isn't SSH — those never had a watcher.
+fn port_watcher_host_key(state: &AppState, workspace_id: &str) -> Option<String> {
+    let conn = state
+        .workspaces
+        .lock()
+        .ok()
+        .and_then(|f| f.workspaces.iter().find(|w| w.id == workspace_id)?.connection.clone())
+        .or_else(|| live_ssh_connection_for_workspace(state, workspace_id));
+    match conn {
+        Some(Connection::Ssh { user, host, port, .. }) => {
+            Some(bootstrap_guard::host_key(&user, &host, port))
+        }
+        _ => None,
+    }
+}
+
+/// Phase 86: every workspace that should receive a port event reported
+/// under `workspace_id` — the host's subscribers if it is known, otherwise
+/// just itself (pre-sharing behaviour).
+pub(crate) fn port_watcher_subscribers(state: &AppState, workspace_id: &str) -> Vec<String> {
+    let hosts = match state.port_watcher_hosts.lock() {
+        Ok(h) => h,
+        Err(e) => e.into_inner(),
+    };
+    hosts
+        .values()
+        .find(|h| h.subscribers.contains(workspace_id))
+        .map(|h| h.subscribers.iter().cloned().collect())
+        .unwrap_or_else(|| vec![workspace_id.to_string()])
+}
+
+/// Phase 86: the owner's watcher task is gone — free the owner slot but
+/// keep the subscribers, so the next ensure from any of them respawns.
+fn port_watcher_release_owner(hosts: &PortWatcherHosts, workspace_id: &str) {
+    let mut hosts = match hosts.lock() {
+        Ok(h) => h,
+        Err(e) => e.into_inner(),
+    };
+    for h in hosts.values_mut() {
+        if h.owner.as_deref() == Some(workspace_id) {
+            h.owner = None;
+        }
+    }
+}
+
+/// Phase 86: the workspace stops taking part — unsubscribe everywhere, drop
+/// ownership (caller has already aborted the task), drop empty hosts.
+fn port_watcher_forget(hosts: &PortWatcherHosts, workspace_id: &str) {
+    let mut hosts = match hosts.lock() {
+        Ok(h) => h,
+        Err(e) => e.into_inner(),
+    };
+    for h in hosts.values_mut() {
+        h.subscribers.remove(workspace_id);
+        if h.owner.as_deref() == Some(workspace_id) {
+            h.owner = None;
+        }
+    }
+    hosts.retain(|_, h| h.owner.is_some() || !h.subscribers.is_empty());
+}
+
 /// Guard for interpolating a workspace id into a remote shell command
 /// (Rule #3). Ids are internally generated as `w_<hex>`; accept only
 /// `[A-Za-z0-9_-]` so a malformed id can never inject shell/regex syntax.
@@ -5113,16 +5202,39 @@ async fn spawn_port_watcher(
     remote_port: u16,
     token: &Arc<String>,
 ) -> Result<(), String> {
-    // The watcher IS the remote CLI (`ymux port-watch`), talking the RPC
-    // protocol this desktop compiled against. Launching a binary we know is
-    // the wrong build produces failures far from their cause — the repeating
-    // reverse-tunnel handshake rejections in Yossi's log are what that looks
-    // like. Refuse clearly instead.
-    if !state.bootstrap_guard.is_aligned(workspace_id) {
-        log_warn("TUNNEL", &format!(
-            "port-watch[{workspace_id}]: skipped — remote ymux CLI is not the build this desktop embeds"
-        ));
-        return Err("remote ymux CLI out of sync".into());
+    // Phase 86: one watcher per HOST. If a sibling workspace on the same
+    // host already owns a live watcher, subscribe to it and stop here —
+    // `port.opened` / `port.closed` fan out to every subscriber.
+    let hkey = port_watcher_host_key(state, workspace_id);
+    if let Some(hk) = hkey.as_deref() {
+        let owner = {
+            let hosts = state.port_watcher_hosts.lock().map_err(|e| e.to_string())?;
+            hosts.get(hk).and_then(|h| h.owner.clone())
+        };
+        if let Some(owner) = owner.filter(|o| o != workspace_id) {
+            let alive = state
+                .core
+                .port_watcher_tasks
+                .lock()
+                .map_err(|e| e.to_string())?
+                .get(&owner)
+                .map(|h| !h.is_finished())
+                .unwrap_or(false);
+            if alive {
+                let mut hosts = state.port_watcher_hosts.lock().map_err(|e| e.to_string())?;
+                hosts
+                    .entry(hk.to_string())
+                    .or_default()
+                    .subscribers
+                    .insert(workspace_id.to_string());
+                log_info("PORTWATCH", &format!(
+                    "port-watch[{workspace_id}]: shares watcher of {owner} (host {hk})"
+                ));
+                return Ok(());
+            }
+            // Owner's task is dead but nobody freed the slot — take over.
+            port_watcher_release_owner(&state.port_watcher_hosts, &owner);
+        }
     }
     // Dedup, self-healing (Phase JJ). Skip ONLY if a LIVE watcher is
     // already running for this workspace. If the set still has the entry
@@ -5179,6 +5291,10 @@ async fn spawn_port_watcher(
     // pinning the CPU. Before launching a fresh watcher, reap any stale remote
     // ones for THIS workspace so exactly one runs server-side. The `[-]` glob
     // trick keeps pkill from matching (and killing) its own launching shell.
+    // Phase 86: runs BEFORE the CLI-version gate on purpose — a host whose
+    // CLI is out of sync still gets its stale watchers reaped. It must stay
+    // AFTER the live-dedup above: the pattern matches this workspace's own
+    // live watcher too.
     if is_safe_workspace_id(workspace_id) {
         if let Ok(mut kchan) = handle.channel_open_session().await {
             let kill = format!(
@@ -5193,6 +5309,18 @@ async fn spawn_port_watcher(
                 }
             }
         }
+    }
+    // The watcher IS the remote CLI (`ymux port-watch`), talking the RPC
+    // protocol this desktop compiled against. Launching a binary we know is
+    // the wrong build produces failures far from their cause — the repeating
+    // reverse-tunnel handshake rejections in Yossi's log are what that looks
+    // like. Refuse clearly instead.
+    if !state.bootstrap_guard.is_aligned(workspace_id) {
+        log_warn("TUNNEL", &format!(
+            "port-watch[{workspace_id}]: skipped — remote ymux CLI is not the build this desktop embeds"
+        ));
+        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        return Err("remote ymux CLI out of sync".into());
     }
     let mut wchan = match handle.channel_open_session().await {
         Ok(c) => c,
@@ -5221,6 +5349,7 @@ async fn spawn_port_watcher(
     let ws_guard = workspace_id.to_string();
     let watchers = state.core.port_watchers.clone();
     let tasks = state.core.port_watcher_tasks.clone();
+    let hosts = state.port_watcher_hosts.clone();
     let task = tokio::spawn(async move {
         loop {
             match wchan.wait().await {
@@ -5230,6 +5359,9 @@ async fn spawn_port_watcher(
         }
         watchers.lock().unwrap().remove(&ws_guard);
         tasks.lock().unwrap().remove(&ws_guard);
+        // Phase 86: subscribers stay; the next ensure from any of them
+        // respawns and becomes owner.
+        port_watcher_release_owner(&hosts, &ws_guard);
         log_debug("TUNNEL", &format!(
             "port-watch[{ws_guard}]: channel closed, watcher slot freed"
         ));
@@ -5239,6 +5371,12 @@ async fn spawn_port_watcher(
         .lock()
         .unwrap()
         .insert(workspace_id.to_string(), task);
+    if let Some(hk) = hkey {
+        let mut hosts = state.port_watcher_hosts.lock().map_err(|e| e.to_string())?;
+        let h = hosts.entry(hk).or_default();
+        h.owner = Some(workspace_id.to_string());
+        h.subscribers.insert(workspace_id.to_string());
+    }
     log_info("TUNNEL", &format!(
         "port-watch[{workspace_id}]: launched (remote_port={remote_port})"
     ));
@@ -5259,6 +5397,8 @@ fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &s
     if aborted.is_some() {
         state.core.port_watchers.lock().unwrap().remove(workspace_id);
     }
+    // Phase 86: leave the host's sharing group (drops ownership too).
+    port_watcher_forget(&state.port_watcher_hosts, workspace_id);
     state.core
         .detected_ports
         .lock()
@@ -7188,6 +7328,9 @@ fn teardown_workspace_runtime(
     // here, never on a mere disconnect — the whole value of the sticky port
     // is that it outlives the connection that held it.
     state.tunnel_registry.forget_workspace(workspace_id);
+    // Phase 86: abort its port-watcher (this path never did — the task and
+    // the `port_watchers` slot leaked past delete) and leave the host group.
+    clear_workspace_detection(state, app, workspace_id);
     for pane_id in panes_to_kill {
         if let Some(sid) = state.core.pane_sessions.lock().unwrap().remove(pane_id) {
             if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {

@@ -1,11 +1,21 @@
 //! Phase 36 (#2.2): listening-port watcher.
 //!
 //! Runs on the remote Linux box (this binary cross-compiles to
-//! `ymux-linux-x64`). Every 500ms it reads `/proc/net/tcp` +
-//! `/proc/net/tcp6`, extracts sockets in the LISTEN state, and diffs
-//! the set against the previous tick. New ports trigger a `port.opened`
-//! RPC notification to the Windows backend (which opens an SSH
-//! local-forward); vanished ports trigger `port.closed`.
+//! `ymux-linux-x64`). Every 1s it reads `/proc/net/tcp` +
+//! `/proc/net/tcp6`; when either file changed since the last tick it
+//! extracts sockets in the LISTEN state and diffs the set against the
+//! previous tick. New ports send a `port.opened` RPC notification to the
+//! desktop, vanished ports `port.closed`. On the desktop `port.opened` is
+//! **detection only**: `rpc_server.rs` records the port and emits a
+//! `port-detected` event for the UI; the forward itself is opened by the
+//! user (or a rule) from there — the watcher never opens anything.
+//!
+//! Lifetime (Phase 86): the watcher is an SSH exec child with no PTY, so
+//! nothing signals it when its channel dies. Two exits cover that: a
+//! stdin watchdog (sshd closes stdin when the channel goes — EOF → exit 0)
+//! and a connect-failure counter on the pinned tunnel (3 in a row → exit
+//! 0, never the last.env fallback — that would attach a stale watcher to
+//! a newer tunnel).
 //!
 //! Only loopback (127.0.0.1 / ::1) and bind-any (0.0.0.0 / ::) listeners
 //! are considered — those are what dev servers use. Specific-LAN-IP
@@ -149,63 +159,120 @@ fn parse_exclude_env() -> HashSet<u16> {
     set
 }
 
-fn read_snapshot(exclude: &HashSet<u16>) -> HashSet<ListenPort> {
+/// Raw `/proc/net/tcp{,6}` bodies from one tick. Kept verbatim so the next
+/// tick can skip parsing when nothing moved (the common case, 1/s forever).
+#[derive(Default, PartialEq, Eq)]
+struct RawSnapshot {
+    v4: String,
+    v6: String,
+}
+
+fn read_raw() -> RawSnapshot {
+    RawSnapshot {
+        v4: std::fs::read_to_string("/proc/net/tcp").unwrap_or_default(),
+        v6: std::fs::read_to_string("/proc/net/tcp6").unwrap_or_default(),
+    }
+}
+
+fn parse_snapshot(raw: &RawSnapshot, exclude: &HashSet<u16>) -> HashSet<ListenPort> {
     let mut set = HashSet::new();
-    for (path, is_v6) in [("/proc/net/tcp", false), ("/proc/net/tcp6", true)] {
-        if let Ok(content) = std::fs::read_to_string(path) {
-            for lp in parse_proc_net_tcp(&content, is_v6) {
-                if should_forward(lp.port, exclude) {
-                    set.insert(lp);
-                }
+    for (content, is_v6) in [(&raw.v4, false), (&raw.v6, true)] {
+        for lp in parse_proc_net_tcp(content, is_v6) {
+            if should_forward(lp.port, exclude) {
+                set.insert(lp);
             }
         }
     }
     set
 }
 
-/// The watch loop. Runs until the process is killed (the SSH exec
-/// channel dies when the workspace disconnects, which terminates us).
-/// Each `rpc_call` opens a fresh tunnel connection — chatty but simple,
-/// and the backend's open_forward is idempotent so duplicate opens
-/// (e.g. two watchers from two panes) are harmless.
+/// Consecutive tunnel connect failures before the watcher gives up.
+const MAX_CONNECT_FAILURES: u32 = 3;
+
+/// Send one port event on the pinned tunnel. Returns false only when the
+/// tunnel could not be reached (a transport error, not an RPC error).
+async fn notify(method: &str, workspace_id: &str, lp: &ListenPort) -> bool {
+    match crate::rpc_call_pinned(
+        method,
+        json!({
+            "workspace_id": workspace_id,
+            "addr": lp.addr,
+            "port": lp.port,
+            "family": lp.family,
+        }),
+    )
+    .await
+    {
+        Ok(_) => true,
+        // Both transports (`rpc_call_with`) prefix a dial failure with
+        // "connect"; anything else reached the desktop and got an answer.
+        Err(e) => !e.starts_with("connect "),
+    }
+}
+
+/// The watch loop. Diverges: it only leaves via `std::process::exit` —
+/// stdin EOF (the SSH channel died) or three consecutive failures to
+/// connect to the tunnel it was born with. Each RPC opens a fresh tunnel
+/// connection — chatty but simple — and `port.opened` is idempotent on
+/// the desktop (a repeat just re-records the same port), so two watchers
+/// from two panes are harmless.
 pub async fn run(workspace_id: &str) -> ! {
+    crate::hook_log(
+        crate::HookLevel::Info,
+        &format!("port-watch start workspace={workspace_id}"),
+    );
+    // Stdin watchdog: this is an SSH exec child without a PTY, so the
+    // only thing that tells us the channel is gone is sshd closing stdin.
+    // A plain thread, not tokio::io::stdin: that needs the `io-std`
+    // feature, and a blocking read on a dedicated thread costs nothing.
+    std::thread::spawn(|| {
+        let mut sink = [0u8; 256];
+        let mut stdin = std::io::stdin().lock();
+        loop {
+            match std::io::Read::read(&mut stdin, &mut sink) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+        crate::hook_log(crate::HookLevel::Info, "port-watch exit: stdin eof");
+        std::process::exit(0);
+    });
+
     let exclude = parse_exclude_env();
+    let mut prev_raw = RawSnapshot::default();
     let mut prev: HashSet<ListenPort> = HashSet::new();
-    // Prime the pump: report everything already listening on the first
-    // tick so a server started before connect still gets forwarded.
-    let mut first = true;
+    let mut connect_failures: u32 = 0;
     loop {
-        let cur = read_snapshot(&exclude);
-        if !first {
-            // unchanged fast-path handled implicitly by the diffs below.
+        let raw = read_raw();
+        // Byte-identical /proc files → nothing to parse or diff. The first
+        // tick always differs from the empty default, so everything already
+        // listening at connect time is reported.
+        if raw != prev_raw {
+            let cur = parse_snapshot(&raw, &exclude);
+            let events: Vec<(&str, &ListenPort)> = cur
+                .difference(&prev)
+                .map(|lp| ("port.opened", lp))
+                .chain(prev.difference(&cur).map(|lp| ("port.closed", lp)))
+                .collect();
+            if !events.is_empty() {
+                let mut reached = true;
+                for (method, lp) in &events {
+                    reached &= notify(method, workspace_id, lp).await;
+                }
+                if reached {
+                    connect_failures = 0;
+                } else {
+                    connect_failures += 1;
+                    if connect_failures >= MAX_CONNECT_FAILURES {
+                        crate::hook_log(crate::HookLevel::Info, "port-watch exit: tunnel gone");
+                        std::process::exit(0);
+                    }
+                }
+            }
+            prev = cur;
+            prev_raw = raw;
         }
-        for lp in cur.difference(&prev) {
-            let _ = crate::rpc_call(
-                "port.opened",
-                json!({
-                    "workspace_id": workspace_id,
-                    "addr": lp.addr,
-                    "port": lp.port,
-                    "family": lp.family,
-                }),
-            )
-            .await;
-        }
-        for lp in prev.difference(&cur) {
-            let _ = crate::rpc_call(
-                "port.closed",
-                json!({
-                    "workspace_id": workspace_id,
-                    "addr": lp.addr,
-                    "port": lp.port,
-                    "family": lp.family,
-                }),
-            )
-            .await;
-        }
-        prev = cur;
-        first = false;
-        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     }
 }
 
@@ -272,5 +339,17 @@ mod tests {
         assert!(!should_forward(22, &ex)); // ssh
         assert!(!should_forward(9000, &ex)); // excluded
         assert!(should_forward(3000, &ex)); // ok
+    }
+
+    #[test]
+    fn identical_raw_snapshot_skips_reparse() {
+        // Phase 86: the loop parses only when the raw bodies changed.
+        let a = RawSnapshot { v4: "x".into(), v6: "y".into() };
+        let b = RawSnapshot { v4: "x".into(), v6: "y".into() };
+        let c = RawSnapshot { v4: "x".into(), v6: "z".into() };
+        assert!(a == b);
+        assert!(a != c);
+        // The first tick always differs from the empty default.
+        assert!(a != RawSnapshot::default());
     }
 }

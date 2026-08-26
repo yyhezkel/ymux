@@ -8,6 +8,7 @@ package insights
 // for `go test` on the dev box.
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -17,13 +18,18 @@ import (
 
 // PortWatcher is one `ymux port-watch --workspace X` process. Duplicate is
 // true for every instance of a workspace EXCEPT the newest (smallest etime) —
-// those are the safe-to-kill leaks.
+// those are the safe-to-kill leaks. Orphan is true when the process has been
+// reparented to init (ppid 1) for more than a minute: the SSH channel that
+// spawned it is gone, so nobody will ever read its output (Phase 86 — 15 of
+// these were found on a real server, each living forever because the reaper
+// only handled duplicates).
 type PortWatcher struct {
 	PID        int32   `json:"pid"`
 	Workspace  string  `json:"workspace"`
 	EtimeSec   int64   `json:"etime_sec"`
 	CPUTimeSec float64 `json:"cpu_time_sec"`
 	Duplicate  bool    `json:"duplicate"`
+	Orphan     bool    `json:"orphan"`
 }
 
 // OrphanSession is a `claude` process that LOOKS abandoned: no controlling
@@ -46,6 +52,16 @@ type Hygiene struct {
 
 // orphanEtimeThreshold: a claude with no tty older than this is flagged.
 const orphanEtimeThreshold int64 = 24 * 3600
+
+// orphanWatcherEtime: a port-watcher under init older than this is an orphan.
+// The grace period covers the brief window where a freshly spawned watcher is
+// still being adopted by its SSH session.
+const orphanWatcherEtime int64 = 60
+
+// isOrphan classifies a port-watcher by parent pid + age. Pure — unit-tested.
+func isOrphan(ppid int32, etimeSec int64) bool {
+	return ppid == 1 && etimeSec > orphanWatcherEtime
+}
 
 // argAfter returns the token following `flag` in an argv slice ("" if absent).
 func argAfter(args []string, flag string) string {
@@ -108,11 +124,13 @@ func collectHygiene() Hygiene {
 			if t, err := p.Times(); err == nil {
 				cpu = t.User + t.System
 			}
+			ppid, _ := p.Ppid() // 0 on error → never an orphan
 			watchers = append(watchers, PortWatcher{
 				PID:        p.Pid,
 				Workspace:  argAfter(args, "--workspace"),
 				EtimeSec:   etime,
 				CPUTimeSec: round1(cpu),
+				Orphan:     isOrphan(ppid, etime),
 			})
 		case strings.Contains(joined, "claude"):
 			sid := argAfter(args, "--session-id")
@@ -134,17 +152,32 @@ func collectHygiene() Hygiene {
 	return Hygiene{PortWatchers: watchers, DuplicateCount: dupCount, OrphanSessions: orphans}
 }
 
-// autoReapDuplicates SIGTERMs duplicate port-watchers automatically — exactly
-// one per workspace is ever correct, so this is safe to do unattended. It
+// reapable is the auto-kill / user-kill policy for a port-watcher: a
+// duplicate (a newer one exists for the workspace) or an orphan (parent is
+// init, SSH channel long gone). Exactly one live watcher per connected
+// workspace is ever correct, so both are safe unattended.
+func reapable(w PortWatcher) bool { return w.Duplicate || w.Orphan }
+
+// autoReap SIGTERMs duplicate and orphaned port-watchers automatically. It
 // NEVER touches claude sessions (those are report-only; the user may keep a
 // long-running loop alive and kills them manually from the Cleanup tab).
 // Returns how many were reaped. Kills by PID, never `pkill -f`.
-func autoReapDuplicates() int {
+func autoReap() int {
 	h := collectHygiene()
 	var pids []int32
+	reasons := map[int32]string{}
 	for _, w := range h.PortWatchers {
-		if w.Duplicate {
-			pids = append(pids, w.PID)
+		if !reapable(w) {
+			continue
+		}
+		pids = append(pids, w.PID)
+		switch {
+		case w.Duplicate && w.Orphan:
+			reasons[w.PID] = "duplicate+orphan"
+		case w.Duplicate:
+			reasons[w.PID] = "duplicate"
+		default:
+			reasons[w.PID] = "orphan"
 		}
 	}
 	if len(pids) == 0 {
@@ -152,16 +185,21 @@ func autoReapDuplicates() int {
 	}
 	killed := killPids(pids)
 	if len(killed) > 0 {
-		logger.Info("hygiene auto-reaped duplicate port-watchers", "count", len(killed), "pids", killed)
+		why := make([]string, 0, len(killed))
+		for _, pid := range killed {
+			why = append(why, fmt.Sprintf("%d=%s", pid, reasons[pid]))
+		}
+		logger.Info("hygiene auto-reaped port-watchers", "count", len(killed), "pids", killed, "reasons", strings.Join(why, ","))
 	}
 	return len(killed)
 }
 
-// PortWatchReaper auto-reaps duplicate port-watchers every 5 minutes so the
-// leak self-heals server-side even for a workspace the desktop hasn't
-// reconnected. Only port-watchers — claude sessions are never auto-killed.
+// PortWatchReaper auto-reaps leaked port-watchers every 5 minutes: duplicates
+// (more than one per workspace) and orphans (reparented to init because the
+// SSH channel that spawned them died without the desktop reconnecting). Only
+// port-watchers — claude sessions are never auto-killed.
 func PortWatchReaper(stop <-chan struct{}) {
-	autoReapDuplicates() // once at boot
+	autoReap() // once at boot
 	t := time.NewTicker(5 * time.Minute)
 	defer t.Stop()
 	for {
@@ -169,19 +207,19 @@ func PortWatchReaper(stop <-chan struct{}) {
 		case <-stop:
 			return
 		case <-t.C:
-			autoReapDuplicates()
+			autoReap()
 		}
 	}
 }
 
 // killPids terminates (SIGTERM) only PIDs that are currently classified as a
-// duplicate port-watcher or an orphan session — a caller can't ask us to kill
-// an arbitrary process. Returns the PIDs actually signalled.
+// duplicate/orphan port-watcher or an orphan session — a caller can't ask us
+// to kill an arbitrary process. Returns the PIDs actually signalled.
 func killPids(requested []int32) []int32 {
 	h := collectHygiene()
 	allowed := map[int32]bool{}
 	for _, w := range h.PortWatchers {
-		if w.Duplicate {
+		if reapable(w) {
 			allowed[w.PID] = true
 		}
 	}

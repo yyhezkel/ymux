@@ -45,3 +45,31 @@ func TestMarkDuplicates(t *testing.T) {
 		}
 	}
 }
+
+func TestIsOrphan(t *testing.T) {
+	cases := []struct {
+		ppid  int32
+		etime int64
+		want  bool
+	}{
+		{1, 61, true},     // under init, past the grace period
+		{1, 60, false},    // under init, still inside the grace period
+		{1, 0, false},     // just spawned
+		{4242, 86400, false}, // old but still owned by its SSH session
+		{0, 86400, false}, // ppid unknown (gopsutil error) → never an orphan
+	}
+	for _, c := range cases {
+		if got := isOrphan(c.ppid, c.etime); got != c.want {
+			t.Fatalf("isOrphan(%d, %d) = %v, want %v", c.ppid, c.etime, got, c.want)
+		}
+	}
+}
+
+func TestReapablePolicy(t *testing.T) {
+	if reapable(PortWatcher{}) {
+		t.Fatal("a healthy watcher must not be reapable")
+	}
+	if !reapable(PortWatcher{Duplicate: true}) || !reapable(PortWatcher{Orphan: true}) {
+		t.Fatal("duplicates and orphans must both be reapable")
+	}
+}

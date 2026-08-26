@@ -186,9 +186,7 @@ const MAX_TITLE_CHARS: usize = 80;
 /// truncated. Scans only the head of the file — summaries live at the
 /// top, and a bounded read keeps the per-turn hook cheap on huge logs.
 pub fn extract_transcript_title(path: &str) -> Option<String> {
-    let scan = scan_transcript(path)?;
-    let title = scan.summary.or(scan.first_user)?;
-    Some(truncate_chars(&title, MAX_TITLE_CHARS))
+    scan_transcript(path)?.title()
 }
 
 /// What one bounded pass over a transcript yields. Kept as a struct so
@@ -201,6 +199,26 @@ pub struct TranscriptScan {
     /// ISO timestamp Claude Code stamps on the first user entry — the
     /// session's true start. Absent on very old transcripts.
     pub first_user_at: Option<String>,
+}
+
+impl TranscriptScan {
+    /// The display title: last summary, else the first user message.
+    fn title(&self) -> Option<String> {
+        let title = self.summary.as_deref().or(self.first_user.as_deref())?;
+        Some(truncate_chars(title, MAX_TITLE_CHARS))
+    }
+
+    /// See `recover_session_name`.
+    fn session_name(&self) -> Option<String> {
+        let prompt = self.first_user.as_deref()?;
+        if !prompt_can_name(prompt) {
+            return None;
+        }
+        Some(match self.first_user_at.as_deref().and_then(parse_stamp) {
+            Some(stamp) => compose_session_name(prompt, &stamp),
+            None => derive_session_name(prompt),
+        })
+    }
 }
 
 fn scan_transcript(path: &str) -> Option<TranscriptScan> {
@@ -252,15 +270,7 @@ fn scan_transcript(path: &str) -> Option<TranscriptScan> {
 /// avoid. It also gives sessions that predate the feature their real
 /// opening line instead of a mid-conversation prompt.
 pub fn recover_session_name(transcript_path: &str) -> Option<String> {
-    let scan = scan_transcript(transcript_path)?;
-    let prompt = scan.first_user?;
-    if !prompt_can_name(&prompt) {
-        return None;
-    }
-    Some(match scan.first_user_at.as_deref().and_then(parse_stamp) {
-        Some(stamp) => compose_session_name(&prompt, &stamp),
-        None => derive_session_name(&prompt),
-    })
+    scan_transcript(transcript_path)?.session_name()
 }
 
 /// ISO-8601 (what Claude Code writes) → the same local `%Y-%m-%d %H:%M`
@@ -504,17 +514,21 @@ pub fn handle_hook(
             }
             entry.updated_at = Some(now_rfc3339());
             let display = entry.auto_name.clone();
-            prune(&mut meta);
+            // Phase 86: no prune here — it forks `tmux list-sessions`, and
+            // `stop` (every turn) plus `session-end` already cover it.
             save_meta_atomic(&meta).map_err(|_| "save-failed".to_string())?;
             Ok((display, Some(name)))
         }
         "stop" => {
             let Some(name) = name else { return Err("no-session-name".into()) };
             let session_id = payload.get("session_id").and_then(|v| v.as_str());
-            let title = payload
+            // Phase 86: ONE bounded read of the transcript feeds both the
+            // title and the auto_name heal below.
+            let scan = payload
                 .get("transcript_path")
                 .and_then(|v| v.as_str())
-                .and_then(extract_transcript_title);
+                .and_then(scan_transcript);
+            let title = scan.as_ref().and_then(TranscriptScan::title);
             let mut meta = load_meta();
             let entry = meta.sessions.entry(name.clone()).or_default();
             if let Some(sid) = session_id {
@@ -530,10 +544,7 @@ pub fn handle_hook(
             // Idempotent: the name is rebuilt from the first user message
             // and ITS timestamp, so re-healing reproduces the same string.
             if entry.auto_name.is_none() {
-                entry.auto_name = payload
-                    .get("transcript_path")
-                    .and_then(|v| v.as_str())
-                    .and_then(recover_session_name);
+                entry.auto_name = scan.as_ref().and_then(TranscriptScan::session_name);
             }
             entry.updated_at = Some(now_rfc3339());
             // The stable name wins over the freshly-extracted title —

@@ -6016,6 +6016,78 @@ thing that exercises cache@v6 and the rust-toolchain SHA on the release
 path, and warm-rust-cache must run once or the windows-release cache stays
 cold (~813s vs ~420s on the next release build).
 
+[2026-08-23 ~20:30 IDT] Phase 86: server + port-watch + hooks load (worktree wt-phase85, branch phase85-server-load)
+
+Measured on Yossi's server BEFORE touching anything: 18 `ymux port-watch`
+processes at ~4.7% CPU each (~85% of a core), 10-then-15 of them ppid=1 —
+SSH channel dead for up to 3 days. /proc/net/tcp+tcp6 = 2,589 lines parsed
+every 500ms by each. ~/.ymux/hook-debug.log was 100% `was stale, reconnected
+... from last.env` (11,155 lines in 3h, bursts of 12/s) — the orphans falling
+through rpc_call's last.env fallback onto the one live tunnel on every LISTEN
+diff, each a fresh TCP + forwarded channel + HMAC on the desktop. ymux-server
+at 7% CPU: sample every 5s took 3.1s avg, 2.8s of it docker stats (23
+containers, Docker sleeps 1-2s per ?stream=false call); 5,024 "sample slow"
+WARNs since noon.
+
+Why nothing killed the watchers (read, not guessed): the desktop keeps no
+remote PID and only aborts its local tokio task; the `!still_alive` branch in
+the session-end task never runs because the `__headless__<ws>` session is
+never removed; the Go reaper only kills duplicates-per-workspace, a lone
+orphan is never `Duplicate`; the bootstrap pkill pattern is
+`[w]inmux-linux-x64$` which never matched the renamed cmdline. The watcher's
+own docstring ("the SSH exec channel dies ... terminates us") was false — no
+PTY, never reads stdin, never writes stdout.
+
+Step 0 (runtime, this server): killed the 15 ppid=1 watchers. 2 live ones left.
+
+Code (CI-only per Rule #17, untested until the PR runs):
+  86.A cli/port_watch.rs + main.rs — stdin-EOF watchdog, pinned rpc (no
+       last.env fallback for the watcher), exit after 3 connect failures,
+       1s tick, skip parse when /proc bytes unchanged, honest docstrings.
+  86.B server/insights/hygiene.go — ppid==1 && etime>60s => orphan, auto-reaped
+       with duplicates; bootstrap pkill pattern fixed; server 2.2.1.
+  86.C lib.rs/rpc_server.rs — one watcher per (host,port,user); sibling
+       workspaces subscribe and port.opened/closed fan out to all of them.
+  86.D server/insights/docker.go + sampler.go — one-shot stats with our own
+       CPU delta; docker every 6th tick, top every 2nd.
+  86.E hooks/claude-code.json 1.6.0 (+timeout 600 on PreToolUse), hooks.rs
+       passes timeout through; tunnel_healthy() pre-flight pings removed;
+       session_meta prune only on stop + single transcript scan; rpc_server
+       reads settings once per feed.push.
+
+Also in this PR: main was RED on ci-windows before any of this — PRs #22/#23
+merged without updating the vault (7 pages stale, 8 new files uncovered).
+Fixed here: prose for insights_local.rs / claude_usage_local.rs,
+workspace_browser.rs / browser_diag.js, Cargo.toml `devtools`,
+BrowserWindow/InsightsWindow + the 6 new Analytics/usage files, App.tsx,
+analytics.go / claudeusage.go / service.go; covers: lists extended; lock
+re-stamped (225 files, 95%).
+
+Review found one real gap in 86.E after the agents finished: setup-hooks'
+skip path treats an existing ymux entry as "present" and never rewrites it,
+so a 1.5.0 install would have kept its timeout-less PreToolUse entry while
+the version stamp moved to 1.6.0 and silenced the banner. Added
+`ymux_entry_has_timeout` to both writers' skip conditions + a test.
+
+Live on Yossi's server, mid-session: `UserPromptSubmit hook error … winmux
+claude-hook: pipe error: connect tcp 127.0.0.1:38755: Connection refused`.
+~/.claude/settings.json had 4 of 5 entries on `~/.winmux/bin/winmux` (Aug 19
+build, no last.env fallback) and only Notification on ymux, stamp 1.5.0.
+setup-hooks kept them because the old file exists. Added
+`ymux_entry_points_at(entries, exe_path)` to both writers' skip path: an
+entry of ours whose executable is not the one being installed is stale.
+Repaired this server with `ymux setup-hooks --agent claude --force`.
+Yossi: "this will hit every user who migrated winmux -> ymux". Checked the
+trigger: crates/ymux-bootstrap runs `setup-hooks --agent claude --source
+bundled` on EVERY connect (settings.hooks.auto_install defaults true), so
+the new skip rule is enough — first connect after the CLI update rewrites
+the old entries for everyone. Added an end-to-end dry-run test
+(`bootstrap_rerun_replaces_entries_on_the_old_binary`) that builds a
+settings.json on an existing old binary and asserts all three events come
+back as would_register.
+Yossi pulled the manifest bump into scope: manifest.json hooks.claude-code
+1.1.0 -> 1.6.0. Both raw URLs (yyhezkel/winmux and /ymux) return 200, so
+the old URL in the manifest is left alone. FOLLOWUPS P2 closed.
 2026-08-23 | Phase 84.F - a pane title could inject a command into its own shell
 Files: app/src-tauri/src/lib.rs, FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md
 Closes FOLLOWUPS P1 of 2026-08-20 ("A PANE TITLE CAN BREAK ITS OWN SESSION NAME")
@@ -6999,9 +7071,26 @@ Status: NOT VERIFIED LIVE (Rule #14). Needs a real SSH pane: switch the remote
 profile to Full RTL and check Hebrew, pure-Latin `ls`, drag-select, copy,
 arrows, and that a local pane open alongside is untouched.
 
-================================================================================
+[2026-08-24 ~09:45 IDT] Phase 86 — LIVE VERIFICATION on Yossi's server (Rule #14)
+
+CI: both gates green (ci-windows 32701394231, build-macos 32701394350) after
+three fixes on the way: the parallel session's go-vet fixture mismatch
+(evictCPUPrev now takes []dockerListEntry), the 45-commit main merge that had
+the PR CONFLICTING (checks don't even run in that state), the server rebake +
+the 3-line SDK 2.2.1 stamp.
+
+Deployed ymux-server 2.2.1 (the rebaked x64 blob) on the server itself,
+old binary kept as ~/.ymux/bin/ymux-server.bak-2.2.0. Verified live:
+  86.B  planted a setsid (ppid=1) port-watch for a fake workspace ->
+        auto-reaped in <5 min: "hygiene auto-reaped port-watchers count=1
+        pids=[299357] reasons=299357=orphan". /hygiene JSON carries `orphan`.
+  86.D  zero "sample slow" WARNs since the restart (the old 2.2.0 process
+        was logging one EVERY 5s tick, 2.8-3.9s each, all docker_ms).
+        /hygiene answers in 0.1s.
+NOT yet verified live (needs the desktop + new CLI on a remote):
+  86.A stdin watchdog + pinned rpc, 86.C per-host sharing, 86.E timeout-600
+  behaviour under a real Gate. Smoke steps are in the plan/PR.
 2026-08-26 — Phase 89: ws-header declutter — one ⋯ menu instead of four buttons
-================================================================================
 Trigger: Yossi — "ההגדרה של הטאבים היא כפתור נפרד למעלה, וזה יוצר עומס".
 
 The workspace header carried seven buttons in a row: + diff, the split⇄tabs

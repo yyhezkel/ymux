@@ -68,6 +68,15 @@ type Sampler struct {
 	lastNetT    time.Time
 	dockerLogAt time.Time // rate-limit the docker-unavailable log
 
+	// Phase 86 cadence. Docker list+stats and the top-processes walk are the
+	// two expensive phases (measured 2.8s of a 3.1s sample on a 23-container
+	// host), so they run on a sub-cadence of the ticker and the previous
+	// result is carried forward on the other ticks. A call counter, not a
+	// clock, so tests are deterministic. Guarded by mu.
+	calls      uint64
+	lastDocker []DockerContainer // nil until the first successful list (or after docker went away)
+	lastTop    []ProcInfo
+
 	// last holds the freshest snapshot produced by the background ticker.
 	// /current serves it without blocking on live collection (Phase 72.3).
 	last atomic.Pointer[Snapshot]
@@ -76,6 +85,12 @@ type Sampler struct {
 func NewSampler() *Sampler {
 	return &Sampler{lastNet: map[string][2]uint64{}}
 }
+
+// Sub-cadences in Sample calls (5s ticker → docker every 30s, top every 10s).
+const (
+	dockerEvery = 6
+	topEvery    = 2
+)
 
 // Current returns the freshest cached snapshot for the /current endpoint.
 // The background ticker refreshes it every interval, so this NEVER blocks on
@@ -110,10 +125,22 @@ func (s *Sampler) logDockerOnce() {
 
 // Sample collects one snapshot. includeTop adds the top-processes list
 // (slightly heavier — only done for on-demand /current, not stored ticks).
+//
+// Docker and top run every dockerEvery / topEvery calls; in between the
+// snapshot carries the previous result (so /current and the docker_samples
+// rows never go blank). Call 0 runs everything, which also covers the
+// pre-first-tick live fallback in Current().
 func (s *Sampler) Sample(includeTop bool) *Snapshot {
 	now := time.Now()
 	snap := &Snapshot{TS: now.Unix()}
 	t0 := now
+
+	s.mu.Lock()
+	n := s.calls
+	s.calls++
+	doDocker := n%dockerEvery == 0 || s.lastDocker == nil
+	doTop := includeTop && (n%topEvery == 0 || s.lastTop == nil)
+	s.mu.Unlock()
 
 	// CPU: overall % since last call (non-blocking), + per-core, + load avg.
 	if pct, err := cpu.Percent(0, false); err == nil && len(pct) > 0 {
@@ -161,21 +188,40 @@ func (s *Sampler) Sample(includeTop bool) *Snapshot {
 
 	// Docker (best-effort; skipped if the socket is unreachable). Bounded
 	// internally (concurrent per-container stats) so it can't stall a sample.
-	if conts, err := dockerList(); err == nil {
-		snap.Docker = conts
-		snap.DockerTotal = len(conts)
-		for _, c := range conts {
-			if c.State == "running" {
-				snap.DockerRunning++
-			}
+	var conts []DockerContainer
+	if doDocker {
+		var err error
+		if conts, err = dockerList(); err != nil {
+			s.logDockerOnce()
+			conts = nil // docker down: report empty, retry next tick (nil forces doDocker)
 		}
+		s.mu.Lock()
+		s.lastDocker = conts
+		s.mu.Unlock()
 	} else {
-		s.logDockerOnce()
+		s.mu.Lock()
+		conts = s.lastDocker
+		s.mu.Unlock()
+	}
+	snap.Docker = conts
+	snap.DockerTotal = len(conts)
+	for _, c := range conts {
+		if c.State == "running" {
+			snap.DockerRunning++
+		}
 	}
 	tDocker := time.Now()
 
-	if includeTop {
-		snap.Top = topProcesses(10)
+	if doTop {
+		top := topProcesses(10)
+		s.mu.Lock()
+		s.lastTop = top
+		s.mu.Unlock()
+		snap.Top = top
+	} else if includeTop {
+		s.mu.Lock()
+		snap.Top = s.lastTop
+		s.mu.Unlock()
 	}
 
 	// Timing self-diagnostic: if a sample is slow, log which phase ate the
@@ -185,7 +231,7 @@ func (s *Sampler) Sample(includeTop bool) *Snapshot {
 		logger.Warn("sample slow",
 			"total_ms", d.Milliseconds(), "cpu_mem_disk_ms", tDisk.Sub(t0).Milliseconds(),
 			"docker_ms", tDocker.Sub(tDisk).Milliseconds(), "top_ms", tEnd.Sub(tDocker).Milliseconds(),
-			"include_top", includeTop)
+			"include_top", includeTop, "did_docker", doDocker, "did_top", doTop)
 	}
 
 	s.last.Store(snap) // publish for /current (Phase 72.3)
