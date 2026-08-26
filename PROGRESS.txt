@@ -7031,3 +7031,17 @@ Vault: green.
 Status: NOT VERIFIED LIVE (Rule #14). CI is the type/build check; needs a real
 run to confirm the menu opens, the four items work, click-away closes it, and
 it doesn't overflow the window in Hebrew or in compact header mode.
+
+=== 2026-08-26 — Phase 59.G: log every STT failure path ===
+Yossi reported voice input broke; nothing about it in debug.log — STT failures
+were toast-only (5s), zero trace. Now every path lands in the unified log:
+- app/src/App.tsx startPushToTalk: .then logs stt result (backend + char count
+  ONLY, never transcript — Rule #1; chars=0 catches "PTT did nothing"), .catch
+  logs log.error before the toast. One site covers both backends + Rust errors.
+- app/src-tauri/src/stt.rs: command body renamed transcribe_inner; the command
+  wrapper logs a single log_error("STT") on any Err (9 failure paths funneled).
+- app/src/stt.ts: unchanged on purpose — all failures reject up to App.tsx.
+Docs: docs/vault/backend-panes.md (stt.rs entry), frontend-shell.md (PTT
+paragraph), .vault-lock.json re-stamped. Vault: green.
+Status: NOT VERIFIED LIVE (Rule #14). CI = compiles. Real proof: Yossi repros
+the voice failure, then greps debug.log for [STT] / "stt failed".

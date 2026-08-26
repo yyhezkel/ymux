@@ -195,11 +195,14 @@ registry at `config_dir()/ymux-tools/skills/<name>/` onto a workspace's
 `~/.claude/skills/<name>/`: filesystem copy for local, SFTP over the existing session for
 remote. Populating the source registry is out of scope for this module.
 
-**`stt.rs` (243)** — **local-endpoint** speech-to-text only. The Web Speech API backend
+**`stt.rs` (262)** — **local-endpoint** speech-to-text only. The Web Speech API backend
 is entirely frontend (`window.SpeechRecognition` ships in WebView2). This posts audio to
 a user-configured HTTP endpoint using a multipart shape that mirrors OpenAI's
 `/v1/audio/transcriptions`, so whisper.cpp's server, faster-whisper-server, and
-OpenAI-compatible proxies all work with no per-server adapter.
+OpenAI-compatible proxies all work with no per-server adapter. The command is a thin
+wrapper around `transcribe_inner`: every one of its failure paths (empty buffer, missing
+endpoint, HTTP/transport/parse errors) funnels through a single `log_error("STT")` at
+the wrapper — error strings carry no transcript content, only metadata.
 
 ## Shell chrome
 

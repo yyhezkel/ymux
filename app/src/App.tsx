@@ -2596,12 +2596,15 @@ function App() {
     rec
       .start()
       .then((text) => {
+        // Chars only, never the transcript itself (Rule #1).
+        log.info(`stt result: backend=${stt.backend} chars=${text.length}`);
         if (text && text.length > 0) {
           pasteIntoActiveTerminal(text);
         }
       })
       .catch((err: unknown) => {
         const msg = err instanceof Error ? err.message : String(err);
+        log.error(`stt failed: backend=${stt.backend} — ${msg}`);
         setSttError(msg);
         // Auto-clear after 5s so the toast doesn't linger forever.
         setTimeout(() => setSttError(null), 5000);
