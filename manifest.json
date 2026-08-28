@@ -1,27 +1,27 @@
 {
   "version": "0.4.5-beta.1",
   "released_at": "2026-08-03T09:32:07Z",
-  "notes_url": "https://github.com/yyhezkel/winmux/releases/tag/v0.4.5-beta.1",
-  "msi_url": "https://github.com/yyhezkel/winmux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64_en-US.msi",
+  "notes_url": "https://github.com/yyhezkel/ymux/releases/tag/v0.4.5-beta.1",
+  "msi_url": "https://github.com/yyhezkel/ymux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64_en-US.msi",
   "msi_sha256": "e7f64eb47d7e068e6de573ebad4f5b1521f015d3610a0052eb8ad7faac3ad47e",
   "msi_size": 22642688,
-  "nsis_url": "https://github.com/yyhezkel/winmux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64-setup.exe",
+  "nsis_url": "https://github.com/yyhezkel/ymux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64-setup.exe",
   "nsis_sha256": "aafcf8a4c1200bbc215a4224e55b32314a3ae2e2f706c82f46e3b53f05b3072f",
   "nsis_size": 16324319,
   "min_supported_version": "0.1.0",
   "hooks": {
     "claude-code": {
       "version": "1.6.0",
-      "url": "https://raw.githubusercontent.com/yyhezkel/winmux/main/hooks/claude-code.json",
-      "min_winmux_version": "0.1.0"
+      "url": "https://raw.githubusercontent.com/yyhezkel/ymux/main/hooks/claude-code.json",
+      "min_ymux_version": "0.1.0"
     },
     "codex": {
       "version": "0.0.1",
-      "url": "https://raw.githubusercontent.com/yyhezkel/winmux/main/hooks/codex.json"
+      "url": "https://raw.githubusercontent.com/yyhezkel/ymux/main/hooks/codex.json"
     },
     "gemini": {
       "version": "0.0.1",
-      "url": "https://raw.githubusercontent.com/yyhezkel/winmux/main/hooks/gemini.json"
+      "url": "https://raw.githubusercontent.com/yyhezkel/ymux/main/hooks/gemini.json"
     }
   }
 }
