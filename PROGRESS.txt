@@ -7263,3 +7263,21 @@ Files: docs/DECISIONS.md (new Open entry, full write-up), FOLLOWUPS.md (P3),
 PROGRESS.txt (this).
 Result: research only. NO fork code merged, no build run. The four fork remotes
 were removed from the working copy afterwards.
+
+================================================================================
+2026-09-01 — Repo cleanup: merged the 4 stray docs commits, pruned worktrees + branches
+================================================================================
+Task: "נטפל וננקה את כל הבלאגן" — everything unmerged was bookkeeping-only.
+Merged into main (append-only conflict resolution in PROGRESS/FOLLOWUPS/DECISIONS,
+kept both sides everywhere):
+- 3aa6bfe (yos/delete-irrelevant-worktrees-8896d7) — worktree-cleanup log entry
+- origin/claude/monitor-card-similar-screen-c5dbf5 — 1-line PROGRESS restore
+- origin/claude/valte-diff-validation-237bbd — PR #21 gate log entry
+- origin/claude/check-interesting-forks-ih233q — fork scan (PROGRESS + DECISIONS
+  entry + the ymux-ssh auth-ladder P3 in FOLLOWUPS)
+Then: removed the dead worktrees (vaults-update-before-push-4ef7b3,
+worktrees-branches-cleanup-7f7849 — both detached on merged commits, clean —
+and monitor-card-similar-screen-c5dbf5 once its branch content landed),
+deleted local branches with gone upstreams / ahead=0, and deleted the
+now-merged remote branches. Vault: green — diff vs main is PROGRESS/FOLLOWUPS/
+DECISIONS only, no covered source touched.
