@@ -5,14 +5,11 @@ import { paneDragStore, startPaneDrag } from "./paneDrag";
 import { TechText } from "./TechText";
 import { AgentLight } from "./AgentLight";
 import type { TrafficLight } from "./paneAgentState";
+import { paneLabel, type PaneNode } from "./paneTitle";
 import {
-  describeConnection,
   effectiveIdentity,
   type Connection,
-  type LayoutNode,
 } from "./types";
-
-type PaneNode = Extract<LayoutNode, { kind: "pane" }>;
 
 interface Props {
   panes: PaneNode[];
@@ -50,15 +47,13 @@ interface Props {
 // the strip itself stays LTR so tab positions don't jump when the app
 // language flips, while each label carries dir="auto".
 export function PaneTabs(p: Props) {
+  // BRIEF (commit 2): precedence lifted to paneTitle.ts so the Queue and
+  // the Briefing card call the exact same label logic.
   const label = (pane: PaneNode): string =>
-    pane.title
-    ?? pane.auto_title
-    ?? p.workspaceName
-    ?? (pane.connection
-      ? describeConnection(pane.connection)
-      : p.workspaceConnection
-        ? describeConnection(p.workspaceConnection)
-        : "—");
+    paneLabel(pane, {
+      workspaceName: p.workspaceName,
+      workspaceConnection: p.workspaceConnection,
+    });
 
   // Precedence mirrors the sidebar's two-tier dot (Sidebar.tsx
   // `ws-waiting-dot`): blocking outranks activity outranks connected.

@@ -851,6 +851,8 @@ pub(crate) struct Shortcuts {
     /// Tab cycling. Only fires in a tabs-mode workspace.
     pub tab_next: String,
     pub tab_prev: String,
+    /// BRIEF: toggle the cross-workspace agent Queue panel.
+    pub toggle_queue: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -966,6 +968,7 @@ impl Default for Shortcuts {
             quadrant_bottom_right: "Ctrl+Alt+L".into(),
             tab_next: "Ctrl+Tab".into(),
             tab_prev: "Ctrl+Shift+Tab".into(),
+            toggle_queue: "Ctrl+Shift+Q".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }

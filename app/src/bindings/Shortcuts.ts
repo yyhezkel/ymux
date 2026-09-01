@@ -21,7 +21,11 @@ toggle_sidebar_soft: string, toggle_maximize: string, focus_zoom: string, reset_
 /**
  * Tab cycling. Only fires in a tabs-mode workspace.
  */
-tab_next: string, tab_prev: string, 
+tab_next: string, tab_prev: string,
+/**
+ * BRIEF: toggle the cross-workspace agent Queue panel.
+ */
+toggle_queue: string,
 /**
  * When true and the terminal has a selection, plain Ctrl+C copies
  * to clipboard instead of sending SIGINT. Matches Windows Terminal

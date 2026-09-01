@@ -185,7 +185,8 @@ past installs), `fontInstall`, and `fontUninstall`.
   atomic-write surface small.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
-  `SHORTCUT_GROUPS` (the Settings tab's row order), parses
+  `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`,
+  default Ctrl+Shift+Q, in the general group), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,

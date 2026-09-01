@@ -7321,3 +7321,9 @@ carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
   - Bindings: BriefStatus.ts, PaneBrief.ts, PaneBriefEntry.ts (hand-authored ts-rs shape; CI regenerates/verifies).
   - Vault: backend-rpc.md (+brief.rs coverage + Briefs section), backend-core.md. FOLLOWUPS +P3 (claude_summary doc-comment lie). BACKLOG +2 (LLM refresh v2, skill seeding v2).
   - Compiles-untested until CI (Rule #17).
+
+[2026-09-01] BRIEF commit 2/5: Queue panel (frontend)
+  - queueModel.ts (pure: queueStatus/QUEUE_BUCKET/whatsHappening/groupQueueRows, 10 node tests), paneTitle.ts (label precedence lifted from PaneTabs), QueuePanel.tsx (Shape B panel, grouped by workspace, statuses emoji per the reference table).
+  - App.tsx: briefs signal + pane:brief listener + pane_briefs hydration; allPaneAgentRows() generalizes paneAgentLights to all workspaces; queueAttentionWorkspaceIds -> new Sidebar prop (shared dot, .brief-attn); QueuePanel mount; toggle_queue keybinding (Ctrl+Shift+Q) + palette cmd.
+  - shortcuts.ts + settings.rs Shortcuts + bindings/Shortcuts.ts + SHORTCUT_GROUPS; i18n x4 (queue.*); CSS queue-* + brief-attn dot.
+  - Vault: frontend-shell/panes/lib + backend-wizards. Compiles-untested until CI.

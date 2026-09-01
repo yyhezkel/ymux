@@ -46,6 +46,8 @@ export interface ShortcutsSettings {
   quadrant_bottom_right: string;
   tab_next: string;
   tab_prev: string;
+  // BRIEF: the cross-workspace agent Queue panel.
+  toggle_queue: string;
   copy_on_select_with_ctrl_c: boolean;
 }
 
@@ -78,6 +80,7 @@ export const DEFAULT_SHORTCUTS: ShortcutsSettings = {
   quadrant_bottom_right: "Ctrl+Alt+L",
   tab_next: "Ctrl+Tab",
   tab_prev: "Ctrl+Shift+Tab",
+  toggle_queue: "Ctrl+Shift+Q",
   copy_on_select_with_ctrl_c: true,
 };
 
@@ -109,6 +112,7 @@ export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
       "toggle_sidebar",
       "toggle_sidebar_soft",
       "summarize_claude",
+      "toggle_queue",
     ],
   },
   { key: "clipboard", ids: ["copy", "paste", "select_all", "find"] },

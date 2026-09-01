@@ -40,8 +40,9 @@ Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well
 Tauri.
 
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
-28 accelerator fields as of Phase 87 (it was 8 — the rest were hardcoded in the
-frontend), and per-field `#[serde(default = "...")]` would have meant twenty
+29 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
+frontend — plus BRIEF's `toggle_queue`, Ctrl+Shift+Q), and per-field
+`#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
 the single source of truth instead, so a `settings.json` written by an older build
 simply lacks the new keys and picks them up. Add a field there and to the `Default`

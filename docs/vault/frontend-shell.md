@@ -9,6 +9,8 @@ covers:
   - app/src/PaneTabs.tsx
   - app/src/AgentLight.tsx
   - app/src/paneAgentState.ts
+  - app/src/queueModel.ts
+  - app/src/paneTitle.ts
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -180,6 +182,25 @@ it is your move, red = it is blocked on you, **nothing at all = unknown**, which
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
 untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
 greyscale, 8px, and red-green deficiency.
+
+**`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
+(needs-input / stuck / waiting / working / done / ended — live hook state always
+outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
+`whatsHappening` (running rows show the user's last prompt, ended rows show
+`ask · rec` → delta → next), and `groupQueueRows` (group by workspace, the
+reference-table "CRM — 5" shape). Solid-free and unit-tested in
+`queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
+input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
+every workspace; the active-workspace lights, the Queue panel and the sidebar
+attention set (`queueAttentionWorkspaceIds`, a fifth Sidebar prop that shares the
+row's one dot as `.brief-attn`, precedence blocking > brief > activity) all derive
+from those rows, so they cannot disagree. Per-pane brief entries live in the
+`briefs` signal, mirrored off `pane:brief` (seq-guarded like `pane:agent-run`)
+and hydrated by `pane_briefs`.
+
+**`paneTitle.ts`** — the pane display-label precedence
+(`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
+the tab strip, the Queue panel and the Briefing card call one function.
 
 ## Panel chrome — "one body, three surfaces"
 
