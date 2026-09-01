@@ -7319,3 +7319,5 @@ manifest.json: new dmg_x64_* / dmg_aarch64_* fields (url/sha256/size) —
 updater.rs ignores unknown fields (serde, all-optional), banner already works
 on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
+
+[2026-09-01 14:30] Vault-first session hook: added .claude/settings.json with a SessionStart hook that cats docs/vault/INDEX.md into context at session start, so agents read the vault map before grepping source (Yossi flagged code-first behavior). Files: .claude/settings.json (new). Result: JSON validated with node, command pipe-tested in bash + PowerShell 5.1; fires from next session.

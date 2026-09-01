@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '=== docs/vault/INDEX.md (vault map - read the covering vault page BEFORE opening source) ==='; cat docs/vault/INDEX.md",
+            "timeout": 10,
+            "statusMessage": "Loading vault index"
+          }
+        ]
+      }
+    ]
+  }
+}
