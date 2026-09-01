@@ -89,6 +89,29 @@ gh release create vX.Y.Z `
   app/src-tauri/target/release/bundle/nsis/ymux_X.Y.Z_x64-setup.exe
 ```
 
+## 4¼. Attach the macOS dmgs
+
+`build-macos-intel.yml` is NOT tag-triggered — it runs on push to `main` and
+`workflow_dispatch`. Grab the dmgs from the most recent green run on `main`
+whose commit matches the tag's tree (a docs/manifest-only diff is fine — those
+files are not embedded in the app), or dispatch it fresh:
+
+```pwsh
+gh run download <run-id> -D mac-dmgs
+# artifacts: ymux-macos-{x64,arm64}-dmg/ymux_{x64,arm64}_macos13.dmg
+```
+
+Rename to `ymux_X.Y.Z_x64.dmg` / `ymux_X.Y.Z_aarch64.dmg` and
+`gh release upload vX.Y.Z <both>`. The release notes' macOS section must carry
+the `xattr -dr com.apple.quarantine` step — the bundles are ad-hoc signed and
+Gatekeeper blocks the first launch without it.
+
+In step 5, also fill the `dmg_x64_*` / `dmg_aarch64_*` manifest fields (url,
+sha256, size — same `gh release view` digest workflow). The desktop updater
+does not consume them yet (in-app update is Windows-only; the macOS banner
+links to the release page), but the manifest is the record a future macOS
+self-update will read.
+
 ## 4½. Bump hook specs (only when hooks changed)
 
 If this release changes any of `hooks/*.json` (added a Claude Code
