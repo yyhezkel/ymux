@@ -92,7 +92,10 @@ The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hoo
 notifications, logs, Claude, updates, shortcuts. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
-modal.
+modal. The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
+toggles + two minute thresholds); its writes always spread the COMPLETE `brief`
+group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
+group.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the

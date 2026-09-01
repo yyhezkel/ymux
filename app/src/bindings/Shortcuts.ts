@@ -27,6 +27,10 @@ tab_next: string, tab_prev: string,
  */
 toggle_queue: string,
 /**
+ * BRIEF: show the Briefing card for the active workspace.
+ */
+show_briefing: string,
+/**
  * When true and the terminal has a selection, plain Ctrl+C copies
  * to clipboard instead of sending SIGINT. Matches Windows Terminal
  * + most modern terminal apps. Set to false to always send SIGINT.

@@ -32,7 +32,7 @@ interface Props {
   onFullscreen: () => void;
 }
 
-const STATUS_EMOJI: Record<QueueStatus, string> = {
+export const STATUS_EMOJI: Record<QueueStatus, string> = {
   "needs-input": "⏸️",
   stuck: "⚠️",
   waiting: "⏸️",
@@ -41,7 +41,7 @@ const STATUS_EMOJI: Record<QueueStatus, string> = {
   ended: "✅",
 };
 
-function relAge(ms: number | null, now: number): string {
+export function relAge(ms: number | null, now: number): string {
   if (ms == null) return "";
   const s = Math.max(0, Math.round((now - ms) / 1000));
   if (s < 60) return t("notif.time.now");

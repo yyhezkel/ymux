@@ -22,6 +22,7 @@ import {
   checkForUpdates,
   loadSettings,
   DEFAULT_SHORTCUTS,
+  DEFAULT_BRIEF_SETTINGS,
   DEFAULT_CLAUDE_SETTINGS,
   DEFAULT_CLAUDE_USAGE_SETTINGS,
   DEFAULT_HOOK_NOTIFICATIONS,
@@ -746,6 +747,78 @@ export function SettingsModal(p: Props) {
                         const raw = e.currentTarget.value.trim();
                         const n = raw === "" ? null : Math.min(90, Math.max(1, parseInt(raw, 10) || 0)) || null;
                         update("auto_destroy_empty_workspaces_days", n ?? undefined);
+                      }}
+                    />
+                  </label>
+                </section>
+                {/* BRIEF: Briefing-card triggers. All opt-in (=== true).
+                    Writes always carry the COMPLETE group object — the
+                    setRtlField lesson: a partial sub-object makes Rust's
+                    per-field serde defaults resurrect TYPE defaults, not
+                    this group's. */}
+                <section>
+                  <h4>{t("settings.brief.title")}</h4>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.brief?.entry_card_on_return === true}
+                      onChange={(e) =>
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          entry_card_on_return: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t("settings.brief.entryOnReturn.label")}</span>
+                  </label>
+                  <label>
+                    <span>{t("settings.brief.absenceMinutes.label")}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="720"
+                      value={p.settings.brief?.absence_minutes ?? DEFAULT_BRIEF_SETTINGS.absence_minutes}
+                      onInput={(e) => {
+                        const n = Math.min(720, Math.max(1, parseInt(e.currentTarget.value, 10)
+                          || DEFAULT_BRIEF_SETTINGS.absence_minutes));
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          absence_minutes: n,
+                        });
+                      }}
+                    />
+                  </label>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.brief?.entry_card_on_idle === true}
+                      onChange={(e) =>
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          entry_card_on_idle: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t("settings.brief.entryOnIdle.label")}</span>
+                  </label>
+                  <label>
+                    <span>{t("settings.brief.idleMinutes.label")}</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="720"
+                      value={p.settings.brief?.idle_minutes ?? DEFAULT_BRIEF_SETTINGS.idle_minutes}
+                      onInput={(e) => {
+                        const n = Math.min(720, Math.max(1, parseInt(e.currentTarget.value, 10)
+                          || DEFAULT_BRIEF_SETTINGS.idle_minutes));
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          idle_minutes: n,
+                        });
                       }}
                     />
                   </label>

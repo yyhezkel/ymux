@@ -5846,6 +5846,40 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
 }
 .queue-dim { opacity: 0.6; }
 
+/* BRIEF: the workspace-entry Briefing card (modal chrome comes from
+   .modal-backdrop/.modal; queue-row styles are shared with the panel). */
+.briefing-card {
+  width: min(560px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.briefing-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.briefing-ws { font-size: 16px; font-weight: 600; color: var(--w-text, #e6edf3); }
+.briefing-intent { display: flex; flex-direction: column; gap: 4px; }
+.briefing-intent-label { font-size: 12px; color: var(--w-text-dim, #9aa5ce); }
+.briefing-intent input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--w-surface-hi, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--w-border, #2a2e44);
+  border-radius: 6px;
+  color: var(--w-text, #e6edf3);
+  padding: 7px 9px;
+  font-size: 13px;
+}
+.briefing-rows { max-height: 46vh; overflow-y: auto; }
+.briefing-none {
+  font-size: 12px;
+  color: var(--w-text-dim, #9aa5ce);
+  padding: 12px 4px;
+}
+
 /* ── Phase 68.D: Server Insights monitor (reuses .fm-window chrome) ──── */
 .insights-window { min-width: 460px; min-height: 360px; z-index: 95; }
 .addons-window { min-width: 420px; min-height: 320px; z-index: 95; }

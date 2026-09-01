@@ -258,6 +258,23 @@ export const DEFAULT_CLAUDE_USAGE_SETTINGS: ClaudeUsageSettings = {
   auto_refresh_minutes: 10,
 };
 
+// BRIEF: Briefing-card triggers (mirrors the Rust BriefOptions struct in
+// app/src-tauri/src/settings.rs). Everything opt-in; the manual shortcut
+// works regardless of these.
+export interface BriefSettings {
+  entry_card_on_return: boolean;
+  entry_card_on_idle: boolean;
+  absence_minutes: number;
+  idle_minutes: number;
+}
+
+export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
+  entry_card_on_return: false,
+  entry_card_on_idle: false,
+  absence_minutes: 30,
+  idle_minutes: 15,
+};
+
 export interface I18nSettings {
   language: "en" | "he" | "ar" | "ru" | string;
   direction: "auto" | "ltr" | "rtl" | string;
@@ -292,6 +309,10 @@ export interface Settings {
   claude?: ClaudeSettings;
   // Phase 78: Claude usage % indicator display + auto-refresh.
   claude_usage?: ClaudeUsageSettings;
+  // BRIEF: Briefing-card triggers. Backend defaults everything to opt-out
+  // via serde(default); this mirror MUST round-trip through SettingsModal
+  // or settings_save wipes the group (the terminal.rtl incident).
+  brief?: BriefSettings;
   hooks_updates?: HooksUpdatesSettings;
   // Phase 41: auto-connect a background SSH session on workspace select.
   // Backend defaults to true; always serialized.

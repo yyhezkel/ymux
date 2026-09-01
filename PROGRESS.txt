@@ -7331,3 +7331,8 @@ carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
 [2026-09-01] BRIEF commit 3/5: Workspace.intent
   - ymux-types: intent field (elided when unset) + elision-test key; app lib.rs: WORKSPACES_SCHEMA_VERSION 2->3 (+doc), workspace_set_intent command (returns Workspace, logs length only); bindings/Workspace.ts.
   - Vault: crates.md, backend-core.md. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 4/5: Briefing card + BriefOptions
+  - settings.rs BriefOptions (+Settings.brief, Default impl) + bindings (BriefOptions.ts, Settings.ts) + settings.ts mirror (BriefSettings, DEFAULT) + SettingsModal General section (whole-group writes, setRtlField lesson).
+  - BriefingCard.tsx (intent inline edit -> workspace_set_intent; queue-row markup shared); App.tsx: briefingWs in anyModalOpen, absence trigger INSIDE handleSetActive (reads last_active_at pre-stamp, seconds), idle-return via capture-phase input stamps + pulseTick arming, show_briefing shortcut (Ctrl+Alt+Q) + palette.
+  - i18n x4, CSS. Vault: frontend-shell/flows/lib, backend-wizards. Compiles-untested until CI.

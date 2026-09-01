@@ -14,6 +14,7 @@ import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgen
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
+import { BriefingCard } from "./BriefingCard";
 import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel";
 import { paneLabel, type PaneNode } from "./paneTitle";
 import { setPaneSwapHandler } from "./paneDrag";
@@ -334,6 +335,11 @@ function App() {
   // mirrored off `pane:brief` events and hydrated by `pane_briefs` on
   // reload. Same lifecycle as agentRuns above.
   const [briefs, setBriefs] = createSignal<Record<string, PaneBriefEntry>>({});
+  // BRIEF: the Briefing card — which workspace it is showing, null = none.
+  // Fed by three triggers: return-after-absence (in handleSetActive, which
+  // must read last_active_at BEFORE workspace_set_active stamps it),
+  // idle-return (below), and the show_briefing shortcut/palette command.
+  const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
   // cmux-A A1: pane_ids that received an OSC 9/99/777 notification and
   // haven't been focused since. Drives the amber pulse ring on the pane
   // + the sidebar aggregate badge. Cleared when the pane is focused.
@@ -623,7 +629,9 @@ function App() {
     // Dev-Mode ticket modal — same reason as the rest: the native
     // Browser Webview paints above HTML and must be hidden for it.
     pendingCapture() !== null || projectFolderModal() !== null ||
-    dirPickerFor() !== null;
+    dirPickerFor() !== null ||
+    // BRIEF: the Briefing card is a backdrop modal like the rest.
+    briefingWs() !== null;
   createEffect(() => {
     if (!anyModalOpen()) return;
     // Broadcast hide to every workspace's Browser Webview. At most
@@ -1076,6 +1084,7 @@ function App() {
     return [
       { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
       { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
       { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
       { id: "workspace.delete", label: t("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
@@ -1281,6 +1290,34 @@ function App() {
   const [pulseTick, setPulseTick] = createSignal(0);
   const pulseTimer = setInterval(() => setPulseTick((n) => n + 1), 250);
   onCleanup(() => clearInterval(pulseTimer));
+  // BRIEF: idle-return trigger. `lastInputMs` is stamped by cheap
+  // capture-phase listeners (registered in onMount); the existing 250ms
+  // pulse — no second timer — arms the flag once the gap exceeds the
+  // configured idle window, and the FIRST input after that shows the
+  // Briefing card for the active workspace. Opt-in is checked at both
+  // ends so flipping the setting mid-idle behaves.
+  let lastInputMs = Date.now();
+  let idleReturnArmed = false;
+  const stampUserInput = () => {
+    if (idleReturnArmed) {
+      idleReturnArmed = false;
+      const wsId = activeWs()?.id;
+      if (settings()?.brief?.entry_card_on_idle === true && wsId && !anyModalOpen()) {
+        setBriefingWs(wsId);
+      }
+    }
+    lastInputMs = Date.now();
+  };
+  createEffect(() => {
+    void pulseTick();
+    const b = settings()?.brief;
+    if (b?.entry_card_on_idle !== true) {
+      idleReturnArmed = false;
+      return;
+    }
+    const idleMin = b.idle_minutes || 15;
+    if (Date.now() - lastInputMs > idleMin * 60_000) idleReturnArmed = true;
+  });
   // issue #4: a reactive wall-clock the Ticker label reads through, so the
   // "M:SS" elapsed re-renders every pulse without any per-second backend event.
   const agentClockMs = (): number => {
@@ -1559,6 +1596,14 @@ function App() {
   };
 
   const handleSetActive = async (id: string) => {
+    // BRIEF: the return-after-absence trigger MUST read last_active_at off
+    // the pre-switch file() — workspace_set_active stamps it to "now"
+    // (seconds) before returning, so reading afterwards always measures
+    // zero absence. Deliberately not a createEffect on activeWs() for the
+    // same reason: by the time the effect sees the new workspace, the old
+    // timestamp is gone.
+    const prevActiveId = file().active_workspace_id;
+    const prevSnapshot = file().workspaces.find((w) => w.id === id);
     try {
       const f = await invoke<WorkspacesFile>("workspace_set_active", {
         workspaceId: id,
@@ -1574,6 +1619,18 @@ function App() {
         const pick =
           remembered && panes.includes(remembered) ? remembered : panes[0];
         if (pick) setActivePaneId(pick);
+      }
+      const b = settings()?.brief;
+      if (
+        b?.entry_card_on_return === true &&
+        id !== prevActiveId &&
+        prevSnapshot
+      ) {
+        const lastSec = Number(prevSnapshot.last_active_at ?? 0);
+        const absenceMin = b.absence_minutes || 30;
+        if (lastSec > 0 && Date.now() / 1000 - lastSec > absenceMin * 60) {
+          setBriefingWs(id);
+        }
       }
     } catch (e) {
       log.error("workspace_set_active failed", e);
@@ -2832,6 +2889,12 @@ function App() {
       if (surfaceOf("queue") === "closed") openPanel("queue");
       else closePanel("queue");
     } },
+    // BRIEF: the Briefing card, on demand — works regardless of the
+    // opt-in trigger toggles.
+    { id: "show_briefing", when: () => !!activeWs(), run: (e) => {
+      e.preventDefault();
+      setBriefingWs(activeWs()!.id);
+    } },
 
     // ── clipboard ──
     { id: "copy", run: (e) => {
@@ -3008,6 +3071,18 @@ function App() {
     // drag-drop, OSC 8 links) but all feed the same store, so the
     // listener belongs at the root rather than in any one pane.
     void initTransferListener();
+
+    // BRIEF: stamp user input for the idle-return trigger. Capture phase +
+    // passive, so nothing here can slow or swallow an event; three event
+    // kinds cover keyboard, pointer and scroll.
+    window.addEventListener("pointerdown", stampUserInput, { capture: true, passive: true });
+    window.addEventListener("keydown", stampUserInput, { capture: true, passive: true });
+    window.addEventListener("wheel", stampUserInput, { capture: true, passive: true });
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", stampUserInput, { capture: true });
+      window.removeEventListener("keydown", stampUserInput, { capture: true });
+      window.removeEventListener("wheel", stampUserInput, { capture: true });
+    });
 
     // Phase 48-D: lightweight UI-stall instrumentation. A 100ms heartbeat
     // measures actual elapsed vs expected and reports gaps >300ms; a
@@ -4540,6 +4615,48 @@ function App() {
         }}
         onClose={() => setAddonsWin(null)}
       />
+
+      {/* BRIEF: the workspace-entry Briefing card. `keyed` so each trigger
+          rebuilds the content fresh (intent draft included) instead of
+          resurrecting the previous card. In anyModalOpen(), so the native
+          Browser webview hides underneath it. */}
+      <Show keyed when={briefingWs()}>
+        {(wsId) => {
+          const ws = file().workspaces.find((w) => w.id === wsId);
+          if (!ws) return null;
+          return (
+            <BriefingCard
+              ws={ws}
+              rows={allPaneAgentRows().filter((r) => r.wsId === wsId)}
+              nowMs={agentClockMs()}
+              onSaveIntent={(text) => {
+                void (async () => {
+                  try {
+                    const updated = await invoke<Workspace>("workspace_set_intent", {
+                      workspaceId: wsId,
+                      intent: text === "" ? null : text,
+                    });
+                    const f = file();
+                    updateFile({
+                      ...f,
+                      workspaces: f.workspaces.map((w) =>
+                        w.id === updated.id ? updated : w,
+                      ),
+                    });
+                  } catch (e) {
+                    log.error("workspace_set_intent failed", e);
+                  }
+                })();
+              }}
+              onJumpPane={(paneId) => {
+                setBriefingWs(null);
+                focusPane(paneId);
+              }}
+              onClose={() => setBriefingWs(null)}
+            />
+          );
+        }}
+      </Show>
 
       {/* Phase 32.B: SSH key offer. Self-contained — listens for the
           `ssh-key-offer` event on its own, no props needed. */}

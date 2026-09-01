@@ -11,6 +11,7 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -201,6 +202,20 @@ and hydrated by `pane_briefs`.
 **`paneTitle.ts`** — the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
+
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
+→ `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's
+brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+`anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
+triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
+lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
+`file()` — `workspace_set_active` stamps it to "now" (in SECONDS) before
+returning, so an effect running after the switch would always measure zero
+absence; **idle-return** stamps `lastInputMs` from capture-phase passive
+pointer/key/wheel listeners and arms on the existing 250ms `pulseTick` (no
+second timer), firing on the first input after the gap; **manual** =
+`show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
+toggles.
 
 ## Panel chrome — "one body, three surfaces"
 
