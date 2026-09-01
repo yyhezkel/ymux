@@ -5308,6 +5308,7 @@ DECISIONS THAT MATTER, and why:
 Status: 28 frontend tests + 9 Go tests + 4 Rust tests, all written; the
 frontend ones run and pass here. NOT VERIFIED LIVE (Rule 14).
 2026-08-23 | Phase 82.E | macOS: site JS dead in the in-app Browser - DIAGNOSTIC
+================================================================================
 Symptom (Yossi): on macOS the workspace Browser renders a page but the site's
 own JavaScript does not run. Windows is fine. No logs, no Web Inspector, and
 Rule #17 means no local mac build - so the diagnosis had to ship in the binary.
