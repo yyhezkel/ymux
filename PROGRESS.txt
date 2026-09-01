@@ -7134,3 +7134,47 @@ Docs: docs/vault/backend-panes.md (stt.rs entry), frontend-shell.md (PTT
 paragraph), .vault-lock.json re-stamped. Vault: green.
 Status: NOT VERIFIED LIVE (Rule #14). CI = compiles. Real proof: Yossi repros
 the voice failure, then greps debug.log for [STT] / "stt failed".
+
+================================================================================
+2026-08-28 — manifest.json: stale winmux URLs + a dead field name
+================================================================================
+Found while checking whether a build off main was safe to cut. Two real bugs,
+both survivors of the winmux -> YMUX rename; the third thing I first suspected
+turned out to be already fixed.
+
+1. Every URL still pointed at `yyhezkel/winmux` — notes_url, msi_url, nsis_url
+   and all three hooks[].url. The code had already moved: DEFAULT_MANIFEST_URL
+   (settings.rs) and the releases API (updater.rs) both say `ymux`. GitHub
+   redirects a renamed repo so nothing was 404ing, but the file was lying about
+   where it lives. Rewrote the repo path only — the ASSET FILENAMES stay
+   `winmux_0.4.5_*`, because that is genuinely what the v0.4.5-beta.1 assets are
+   called (verified with `gh release view`; sha256 + size in the manifest match
+   the release exactly, so they were left untouched). All three rewritten URLs
+   verified 200 before committing.
+
+2. `min_winmux_version` is a dead key. `ManifestHook` (updater.rs:77) declares
+   `min_ymux_version`, and the field is `#[serde(default)]`, so the old spelling
+   was silently swallowed to None rather than failing loudly. Renamed. Note the
+   field is declared but read nowhere yet — this makes it correct, not live.
+
+NOT a bug after all: hooks.claude-code.version read 1.1.0 against a bundled spec
+of 1.5.0, which would have meant the hooks-outdated banner never fired for a
+remote sitting between those. PR #25 (Phase 86.E, merged as f69eb8d) had already
+taken manifest, hooks/claude-code.json and BUNDLED_CLAUDE_VERSION to 1.6.0
+together. Re-verified all three agree on main. Nothing to do.
+
+DELIBERATELY UNTOUCHED: `version` stays 0.4.5-beta.1. Editing it IS the act of
+publishing an update (RELEASING.md step 5), and 0.5.0 installs SIDE BY SIDE
+rather than upgrading in place — different bundle id — so it is gated on release
+notes that walk through install -> launch -> verify workspaces -> uninstall old
+winmux. Yossi's call, asked and answered: bugs only, no publish. Consequence
+that stands: 0.5.0-beta.1 and beta.2 remain unannounced to every 0.4.5 install.
+
+Also spotted, not fixed: RELEASING.md tells you to write `msi_size` / `nsis_size`
+and the Rust `Manifest` struct declares neither. serde ignores them (no
+deny_unknown_fields), so they are harmless documentation-only fields. -> FOLLOWUPS.
+
+Files: manifest.json (7 lines).
+Vault: green — manifest.json is not a covered source file.
+Status: verified by construction (JSON parses, no unknown hook keys, the three
+rewritten URLs return 200). The hooks banner itself is NOT verified live.
