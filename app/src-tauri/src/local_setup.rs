@@ -415,6 +415,13 @@ pub(crate) fn hidden_cmd(program: &str) -> tokio::process::Command {
     {
         c.creation_flags(CREATE_NO_WINDOW);
     }
+    // Every caller runs the child to completion, so kill_on_drop only
+    // fires when a wall-clock timeout drops the output() future — tokio
+    // does NOT kill the child on drop by default, and an orphaned
+    // install.ps1 keeps %USERPROFILE%\.claude\downloads\claude-<ver>.exe
+    // locked, so every retry of the step then fails with "The process
+    // cannot access the file … being used by another process".
+    c.kill_on_drop(true);
     c.stdin(std::process::Stdio::null());
     c.stdout(std::process::Stdio::piped());
     c.stderr(std::process::Stdio::piped());
@@ -1515,11 +1522,13 @@ async fn run_step_unix(app: &AppHandle, kind: &str) -> Result<String, Provisioni
             let mut c = hidden_cmd("/bin/bash");
             c.args(["-c", "curl -fsSL https://claude.ai/install.sh | bash"]);
             c.env("PATH", unix_path_env());
+            let installed = || {
+                canonical_claude().iter().any(|p| p.is_file())
+                    || crate::local_wizard::which("claude").is_some()
+            };
             match run_capture(c, "claude install", 600).await {
                 Ok((0, out)) => {
-                    let installed = canonical_claude().iter().any(|p| p.is_file())
-                        || crate::local_wizard::which("claude").is_some();
-                    if installed {
+                    if installed() {
                         Ok(out)
                     } else {
                         Err(ProvisioningError::StepFailed {
@@ -1531,6 +1540,10 @@ async fn run_step_unix(app: &AppHandle, kind: &str) -> Result<String, Provisioni
                         })
                     }
                 }
+                // Mirrors the Windows arm: a failed installer with a working
+                // claude already on disk (auto-updater race on ~/.claude)
+                // still means the step's goal is met.
+                Ok((_, out)) if installed() => Ok(out),
                 other => step_outcome(kind, other),
             }
         }
@@ -1697,11 +1710,13 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                     "-Command",
                     "irm https://claude.ai/install.ps1 | iex",
                 ]);
+                let installed = || {
+                    canonical_claude().iter().any(|p| p.is_file())
+                        || crate::local_wizard::which("claude.exe").is_some()
+                };
                 match run_capture(c, "claude install", 600).await {
                     Ok((0, out)) => {
-                        let installed = canonical_claude().iter().any(|p| p.is_file())
-                            || crate::local_wizard::which("claude.exe").is_some();
-                        if installed {
+                        if installed() {
                             Ok(out)
                         } else {
                             Err(ProvisioningError::StepFailed {
@@ -1713,11 +1728,22 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                             })
                         }
                     }
-                    Ok((code, out)) => Err(ProvisioningError::StepFailed {
-                        step: kind.into(),
-                        exit_code: code,
-                        stderr: out,
-                    }),
+                    // The installer shares ~\.claude\downloads with claude's
+                    // own auto-updater and with any earlier (possibly
+                    // orphaned) install attempt; a locked download file fails
+                    // it even when a working claude.exe is already on disk —
+                    // in that case the step's goal is met.
+                    Ok((code, out)) => {
+                        if installed() {
+                            Ok(out)
+                        } else {
+                            Err(ProvisioningError::StepFailed {
+                                step: kind.into(),
+                                exit_code: code,
+                                stderr: out,
+                            })
+                        }
+                    }
                     Err(e) => Err(ProvisioningError::Generic(e)),
                 }
             }
