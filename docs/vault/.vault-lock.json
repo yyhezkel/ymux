@@ -35,7 +35,7 @@
   "backend-rpc": {
     "app/src-tauri/mcp/Cargo.toml": "9cd082f90e7550af6ba24259f13e0c459569f4e463df88b10fdacdd056c9ecc3",
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
-    "app/src-tauri/src/rpc_server.rs": "40809ba5e57f47e667e10fe7879478c96fe3e0cbecba82ffc3c600cc402075ef"
+    "app/src-tauri/src/rpc_server.rs": "53a817a325685b95287f0910dfaba3b44334fa63ebff7c3288898b38e18518aa"
   },
   "backend-sessions": {
     "app/src-tauri/src/bidi_filter.rs": "bf2f974aa4570b22a50c8f88db6a47e4509f88f41238b0f0639ce6a51039b06d",

@@ -78,7 +78,17 @@ and **is** the canonical list — nothing else enumerates these:
 An agent hook arrives as one of the hook verbs and turns into a notification:
 
 1. `humanize_notification(subkind, payload, ws_name, lang)` produces `(title, body)` —
-   it is bilingual, driven by the settings language.
+   it is bilingual, driven by the settings language. For a Stop it reads
+   `response_summary` with `last_assistant_message` (what current Claude Code actually
+   sends) as the fallback, so the body shows how the turn ended. **Feed cards for the
+   passive lifecycle subkinds (`stop`, `session-start/end`, `post-tool-use`,
+   `subagent-stop`, `pre-compact`) go through the same function**: `feed.push` overrides
+   the CLI-derived `title`/`summary` desktop-side before building the `FeedItem` — the
+   CLI's fallbacks produced "agent: stop" titles and a raw payload dump (or SessionEnd's
+   bare `reason`) as the card body, and fixing it here also covers stale remote CLIs.
+   The `ws_name` passed there is empty on purpose (the card's meta row already carries
+   the workspace chip); `pre-tool-use` is excluded because its Gate-card title is the
+   approval prompt itself.
 2. `hook_toast_enabled(notifications, hook_settings, subkind)` decides whether a native
    toast fires at all; `hook_toast_should_sound` decides whether it makes noise.
 3. `show_toast_with_sound` spawns a thread and uses `notify_rust`.

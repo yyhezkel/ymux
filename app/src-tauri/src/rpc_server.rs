@@ -445,10 +445,15 @@ fn humanize_notification(subkind: &str, payload: &Value, ws_name: &str, lang: &s
         .unwrap_or("");
     let msg = payload.get("message").and_then(|v| v.as_str()).unwrap_or("");
     // v0.4.4: Stop carries `response_summary`; SessionEnd carries
-    // `session_duration_seconds` + `end_reason`.
+    // `session_duration_seconds` + `end_reason`. Current Claude Code sends
+    // `last_assistant_message` instead of `response_summary` on Stop — read
+    // it as the fallback so the card/toast shows how the turn ended rather
+    // than the generic "Finished in <cwd>".
     let summary = payload
         .get("response_summary")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| payload.get("last_assistant_message").and_then(|v| v.as_str()))
         .unwrap_or("");
     let dur_secs = payload
         .get("session_duration_seconds")
@@ -1602,6 +1607,26 @@ async fn dispatch(
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
+
+            // Passive lifecycle hooks used to land with the CLI's fallback
+            // title ("agent: stop") and, worse, `derive_hook_summary`'s raw
+            // payload dump as the body — `last_assistant_message` JSON in the
+            // feed, or SessionEnd's bare `reason` ("other"). Humanize them
+            // HERE, desktop-side, so stale remote CLIs get clean cards too
+            // and the text follows the desktop's language. ws_name is empty
+            // on purpose: the card's meta row already shows the workspace
+            // chip, so the toast-style "[ws]" prefix would duplicate it.
+            // pre-tool-use is deliberately excluded — its Gate card title
+            // ("Run `cmd`?") is the approval prompt itself.
+            let (title, summary) = if matches!(
+                subkind.as_str(),
+                "stop" | "session-end" | "session-start" | "post-tool-use"
+                    | "subagent-stop" | "pre-compact"
+            ) {
+                humanize_notification(&subkind, &payload, "", &cfg.i18n.language)
+            } else {
+                (title, summary)
+            };
 
             let item = FeedItem {
                 request_id: req_id.clone(),
