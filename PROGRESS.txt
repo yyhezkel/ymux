@@ -7178,3 +7178,28 @@ Files: manifest.json (7 lines).
 Vault: green — manifest.json is not a covered source file.
 Status: verified by construction (JSON parses, no unknown hook keys, the three
 rewritten URLs return 200). The hooks banner itself is NOT verified live.
+=== 2026-08-23 20:27 — worktree cleanup (13 dirs -> 3) ===
+Task: delete irrelevant worktrees.
+Before: git worktree list showed 8 entries; .claude/worktrees/ held 13 dirs.
+- 6 dirs had NO .git file and were completely EMPTY (mac-build-broken-b59d67,
+  sidebar-design-1985e3, strange-disconnections-logs-2c6a49,
+  worktrees-clean-build-988849, zellijj-rtl-support-3f9233,
+  zellinj-tmux-windows-3a5afe). Note: `git -C <dir> status` in these LIES —
+  the dir sits inside the main repo, so git walks up and reports main's HEAD.
+  Check for the .git file, not for a git response. rm -rf'd.
+- Removed 6 registered worktrees, all clean and 0 commits ahead of origin/main:
+  nodejs-20-deprecation, pane-tabs-status-indicator, workspace-tmux-organization,
+  ymax-remote-server-direct-comm, ymux-js-macos-issue, (+ see below).
+  pane-tabs' branch yos/folow-ufp-review-fbbfda keeps its 1 unmerged commit
+  (a514e58, followups triage) — deleting a worktree does not delete its branch.
+  Its now-empty dir could not be rmdir'd (Device or resource busy) and remains.
+Kept:
+- monitor-card-similar-screen-c5dbf5 — this session.
+- worktrees-branches-cleanup-7f7849 — NOT deleted: a LIVE session is working in
+  it right now (docs/vault/*.md files changing second by second; 2 modified when
+  first checked, 4 a minute later). I committed the two vault pages, saw the
+  third file move, and reset --mixed back so the other session's tree is exactly
+  as it was. Rule #16 in the other direction: check mtimes before removing.
+Found in passing (NOT fixed): `node scripts/vault-check.mjs` FAILS on plain main
+— 6 vault pages stale (backend-core, backend-panes, build-glue, frontend-panes,
+frontend-shell, server-go). That is what the live session appears to be fixing.
