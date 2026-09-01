@@ -7327,3 +7327,7 @@ carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
   - App.tsx: briefs signal + pane:brief listener + pane_briefs hydration; allPaneAgentRows() generalizes paneAgentLights to all workspaces; queueAttentionWorkspaceIds -> new Sidebar prop (shared dot, .brief-attn); QueuePanel mount; toggle_queue keybinding (Ctrl+Shift+Q) + palette cmd.
   - shortcuts.ts + settings.rs Shortcuts + bindings/Shortcuts.ts + SHORTCUT_GROUPS; i18n x4 (queue.*); CSS queue-* + brief-attn dot.
   - Vault: frontend-shell/panes/lib + backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 3/5: Workspace.intent
+  - ymux-types: intent field (elided when unset) + elision-test key; app lib.rs: WORKSPACES_SCHEMA_VERSION 2->3 (+doc), workspace_set_intent command (returns Workspace, logs length only); bindings/Workspace.ts.
+  - Vault: crates.md, backend-core.md. Compiles-untested until CI.

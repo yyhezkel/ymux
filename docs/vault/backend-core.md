@@ -85,6 +85,10 @@ put logic there.
   `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
   rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
   `pane_briefs` command — the `pane_agent_states` pattern verbatim.
+- **`workspace_set_intent`** (BRIEF) — sets/clears `Workspace.intent` (trimmed;
+  empty clears), persists atomically, emits `workspaces:changed`, returns the
+  updated `Workspace`. The log line carries the intent's LENGTH only — it is user
+  content. Adding the field bumped `WORKSPACES_SCHEMA_VERSION` 2→3.
 - **`workspace_set_tabs_mode`** — flips `Workspace.tabs_mode` and emits
   `workspaces:changed`. The layout tree is not touched; see `crates.md` for why this is
   a flag and not a `LayoutNode` variant.

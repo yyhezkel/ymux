@@ -584,7 +584,10 @@ struct WorkspacesFile {
 ///   - What it adds for that case is a LOG LINE. The original incident
 ///     cost hours precisely because it was silent; a downgrade of the
 ///     on-disk version now says so.
-pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 2;
+/// v2 -> v3 (2026-09-01, BRIEF): `Workspace.intent` — the user's one-line
+/// session goal. Elided when unset, but a 0.5.0 build would still drop a
+/// set intent on its next save, which is exactly this constant's trigger.
+pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 3;
 
 /// A `version` key that is absent entirely means a pre-versioning file.
 fn default_version() -> u32 {
@@ -6193,6 +6196,40 @@ fn workspace_set_tabs_mode(
     Ok(snapshot)
 }
 
+/// BRIEF: set (or clear, with None/empty) a workspace's one-line intent —
+/// "what I want to do here this session". Shown on the Briefing card.
+/// Rule #1-adjacent: the intent is user content, so the log line carries
+/// its length only, never the text.
+#[tauri::command]
+fn workspace_set_intent(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    intent: Option<String>,
+) -> Result<Workspace, String> {
+    let intent = intent
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let len = intent.as_deref().map(str::len).unwrap_or(0);
+    let updated = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        ws.intent = intent;
+        ws.clone()
+    };
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_info("WORKSPACE", &format!("ws={workspace_id} intent_len={len}"));
+    Ok(updated)
+}
+
 // ─── tree repair + the v2/v3 project-folder migration ───────────────
 
 /// Repair `parent_id` so every consumer may assume a forest.
@@ -11474,6 +11511,7 @@ pub fn run() {
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
+            workspace_set_intent,
             pane_agent_states,
             pane_briefs,
             worktrees::git_probe_worktrees,
