@@ -7204,3 +7204,27 @@ Kept:
 Found in passing (NOT fixed): `node scripts/vault-check.mjs` FAILS on plain main
 — 6 vault pages stale (backend-core, backend-panes, build-glue, frontend-panes,
 frontend-shell, server-go). That is what the live session appears to be fixing.
+--------------------------------------------------------------------------------
+2026-08-23 (same session) — PR #21 merged into the branch; gate green with no edits
+--------------------------------------------------------------------------------
+
+Third conflict on PR #20 in one session. PR #21 (CI result records + a FOLLOWUPS
+note) touched FOLLOWUPS.md and PROGRESS.txt only.
+
+Yossi resolved it on GitHub (8b881fb) while the same merge was being resolved
+locally. Both merges had identical parents and differed only in PROGRESS.txt
+ordering. His was already on the remote, so his was adopted and the local one
+dropped — the alternative was a force-push over a collaborator's commit, which
+Rule #15 exists to prevent. Nothing was lost: his tree carries every earlier
+entry from this branch; only this note was re-applied on top.
+
+`node scripts/vault-check.mjs` green with NO edits: no covered file moved, so
+nothing to re-summarise. Worth recording as the negative case — the gate is
+quiet when a change is genuinely docs-only, which is what makes the two times it
+did fire (merge #19: app/package.json; merge #18: eight covered files) mean
+something rather than reading as noise.
+
+Standing observation: main took three merges in the time this branch was open.
+Nothing about the vault causes that — but the vault is the part that goes stale
+when it happens, and each merge cost either a real update (twice) or a real
+check (once). The sooner #20 lands, the fewer of these.
