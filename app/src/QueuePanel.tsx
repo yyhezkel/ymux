@@ -1,6 +1,7 @@
-import { For, Show } from "solid-js";
+import { createSignal, For, Show } from "solid-js";
 import { t } from "./i18n";
 import { IconBot } from "./icons";
+import { createLogger } from "./logger";
 import { PanelSurface } from "./PanelSurface";
 import type { Geometry } from "./floatingWindow";
 import type { Surface } from "./panels";
@@ -41,6 +42,28 @@ export const STATUS_EMOJI: Record<QueueStatus, string> = {
   ended: "✅",
 };
 
+const log = createLogger("QUEUE");
+
+// The adoption snippet — what the user pastes into a project's CLAUDE.md
+// (or the agent's equivalent) so its agents actually write briefs.
+// Deliberately English and verbatim: it is instructions FOR an agent, not
+// UI copy, and it must match brief.rs's parser exactly.
+export const BRIEF_SNIPPET = `## ymux briefs
+
+End EVERY final answer with this plain-text block, as the last lines of
+the message:
+
+[ymux-brief]
+task: the task in a few words
+status: working | waiting-for-you | stuck | done
+ask: one closed question — only when you need my decision
+rec: your recommendation for that question, in one sentence
+next: the immediate next step
+delta: what changed since your previous brief
+
+Rules: \`ask\` never appears without \`rec\`; no history — only this
+turn's facts; omit a field rather than leaving it empty.`;
+
 export function relAge(ms: number | null, now: number): string {
   if (ms == null) return "";
   const s = Math.max(0, Math.round((now - ms) / 1000));
@@ -54,6 +77,17 @@ export function relAge(ms: number | null, now: number): string {
 
 export function QueuePanel(p: Props) {
   const groups = () => groupQueueRows(p.rows);
+  const [copied, setCopied] = createSignal(false);
+
+  const copySnippet = async () => {
+    try {
+      await navigator.clipboard.writeText(BRIEF_SNIPPET);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (e) {
+      log.warn("copy snippet failed", e);
+    }
+  };
 
   return (
     <PanelSurface
@@ -79,6 +113,11 @@ export function QueuePanel(p: Props) {
             <div class="queue-empty">
               <div class="queue-empty-title">{t("queue.empty.title")}</div>
               <div class="queue-empty-desc">{t("queue.empty.desc")}</div>
+              <div class="queue-empty-hint">{t("queue.empty.snippetHint")}</div>
+              <pre class="queue-snippet" dir="ltr">{BRIEF_SNIPPET}</pre>
+              <button class="primary" onClick={() => void copySnippet()}>
+                {copied() ? t("queue.copied") : t("queue.copy")}
+              </button>
             </div>
           }
         >

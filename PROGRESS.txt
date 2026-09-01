@@ -7336,3 +7336,7 @@ carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
   - settings.rs BriefOptions (+Settings.brief, Default impl) + bindings (BriefOptions.ts, Settings.ts) + settings.ts mirror (BriefSettings, DEFAULT) + SettingsModal General section (whole-group writes, setRtlField lesson).
   - BriefingCard.tsx (intent inline edit -> workspace_set_intent; queue-row markup shared); App.tsx: briefingWs in anyModalOpen, absence trigger INSIDE handleSetActive (reads last_active_at pre-stamp, seconds), idle-return via capture-phase input stamps + pulseTick arming, show_briefing shortcut (Ctrl+Alt+Q) + palette.
   - i18n x4, CSS. Vault: frontend-shell/flows/lib, backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 5/5: adoption
+  - Queue empty-state: BRIEF_SNIPPET (verbatim CLAUDE.md block matching brief.rs parser) + copy button; i18n x4; docs/BRIEF.md (wire format + surfaces + privacy); CLAUDE.md docs pointer.
+  - Next: open PR, watch ci-windows. All five phases compiles-untested until CI + live run (Rule #14/17).

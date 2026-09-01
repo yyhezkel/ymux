@@ -10,6 +10,7 @@ This file is read at the start of every Claude session working on ymux. Keep it 
 - `docs/RELEASING.md` — version cut process
 - `docs/DECISIONS.md` — **READ FIRST**: open threads + decisions log
 - `docs/ZELLIJ.md` — zellij's CLI + config surface as our 0.44.3 binary reports it; read before adding a verb, don't guess from zellij.dev
+- `docs/BRIEF.md` — the agent-brief wire format (`[ymux-brief]`), the Queue panel and the Briefing card; read before touching the brief parser or its surfaces
 - `docs/COMPETITIVE-SCAN.md` — survey of the 8 GitHub projects named `winmux`, ideas inventory, Secrets Vault design (pre-rename doc, kept verbatim: it is about *other people's* repos and is what motivated the move to YMUX)
 - `docs/IDEAS-RANKING.md` — decision table for the ideas inventory (MUST / SHOULD / COULD)
 
