@@ -7281,3 +7281,16 @@ and monitor-card-similar-screen-c5dbf5 once its branch content landed),
 deleted local branches with gone upstreams / ahead=0, and deleted the
 now-merged remote branches. Vault: green — diff vs main is PROGRESS/FOLLOWUPS/
 DECISIONS only, no covered source touched.
+
+================================================================================
+2026-09-01 — v0.5.0 STABLE cut and published
+================================================================================
+Task: cut the first stable YMUX release. Tag v0.5.0 on 80bdbac; build-windows
+run 33492082767 green (MSI + NSIS + both embedded-hash and scrub asserts).
+Pre-cut verification: dispatch build downloaded and RUN LIVE on Yossi's box —
+UI up, SSH reconnect + reverse tunnel to the real server worked (Rule #14).
+Feature markers confirmed in the binary: Phase 85/86 server 2.2.1 blobs
+(x64+arm64), Phase 59.G STT log strings; frontend hash assert covers Phase 89.
+Published: gh release v0.5.0 (MSI a458ad0a…, NSIS 894eb859…), release notes
+carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
+(this commit) — the step that actually notifies existing installs.

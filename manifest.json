@@ -1,13 +1,13 @@
 {
-  "version": "0.4.5-beta.1",
-  "released_at": "2026-08-03T09:32:07Z",
-  "notes_url": "https://github.com/yyhezkel/ymux/releases/tag/v0.4.5-beta.1",
-  "msi_url": "https://github.com/yyhezkel/ymux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64_en-US.msi",
-  "msi_sha256": "e7f64eb47d7e068e6de573ebad4f5b1521f015d3610a0052eb8ad7faac3ad47e",
-  "msi_size": 22642688,
-  "nsis_url": "https://github.com/yyhezkel/ymux/releases/download/v0.4.5-beta.1/winmux_0.4.5_x64-setup.exe",
-  "nsis_sha256": "aafcf8a4c1200bbc215a4224e55b32314a3ae2e2f706c82f46e3b53f05b3072f",
-  "nsis_size": 16324319,
+  "version": "0.5.0",
+  "released_at": "2026-09-01T09:40:01Z",
+  "notes_url": "https://github.com/yyhezkel/ymux/releases/tag/v0.5.0",
+  "msi_url": "https://github.com/yyhezkel/ymux/releases/download/v0.5.0/ymux_0.5.0_x64_en-US.msi",
+  "msi_sha256": "a458ad0a9e47cd57afc6bffc09cbf16d4c3bdd2ea910d58f492ad92f775c7337",
+  "msi_size": 23388160,
+  "nsis_url": "https://github.com/yyhezkel/ymux/releases/download/v0.5.0/ymux_0.5.0_x64-setup.exe",
+  "nsis_sha256": "894eb8590efbe172f4cc8d17ea4f6184ae5d1dc1ee6b12b7480701c46b6ba8c3",
+  "nsis_size": 16881746,
   "min_supported_version": "0.1.0",
   "hooks": {
     "claude-code": {
