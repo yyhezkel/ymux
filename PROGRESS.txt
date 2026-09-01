@@ -7312,3 +7312,12 @@ carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
   - Fix: desktop-side in rpc_server.rs feed.push — passive lifecycle subkinds routed through humanize_notification (ws_name empty; pre-tool-use excluded); humanize reads last_assistant_message as Stop summary fallback.
   - Files: app/src-tauri/src/rpc_server.rs, docs/vault/backend-rpc.md (+lock). Compiles-untested until CI (Rule #17).
   - Context: step 0 of the context-switching/Briefing design (agent-written brief on Stop hook + queue view) — discussion in session, not yet logged as Decided.
+
+[2026-09-01] BRIEF commit 1/5: backend pipeline (branch yos/context-switching-impl-b86b68)
+  - Plan approved (.claude/plans/precious-finding-dragon.md): agent-written [ymux-brief] block in last_assistant_message; Queue panel; Briefing card; intent per workspace; all opt-in. Logged as Decided in docs/DECISIONS.md.
+  - New app/src-tauri/src/brief.rs: parser (last-marker-wins, RTL-safe, markdown-tolerant, 11 unit tests), PaneBrief/PaneBriefEntry/BriefStatus (ts-rs).
+  - lib.rs: AppState.briefs store, emit_brief_event (pane:brief), pane_briefs hydration command.
+  - rpc_server.rs feed.push: user-prompt-submit stores clipped last_prompt; stop parses/stores brief + rewrites card summary to ask-dot-rec with block stripped; session-end flags session_ended (keeps brief).
+  - Bindings: BriefStatus.ts, PaneBrief.ts, PaneBriefEntry.ts (hand-authored ts-rs shape; CI regenerates/verifies).
+  - Vault: backend-rpc.md (+brief.rs coverage + Briefs section), backend-core.md. FOLLOWUPS +P3 (claude_summary doc-comment lie). BACKLOG +2 (LLM refresh v2, skill seeding v2).
+  - Compiles-untested until CI (Rule #17).

@@ -80,7 +80,11 @@ put logic there.
   tests in the same file. Transitions reach the UI as the **`pane:agent-run`** event via
   `emit_agent_run_event`, which carries `(started, avg, state, since, seq)`; `seq` bumps
   only on an applied transition, so a no-op skips the emit. In-memory and
-  session-scoped — never persisted.
+  session-scoped — never persisted. Its sibling store is
+  **`AppState.briefs`** (`HashMap<pane_id, PaneBriefEntry>` from `brief.rs`, covered in
+  `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
+  rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
+  `pane_briefs` command — the `pane_agent_states` pattern verbatim.
 - **`workspace_set_tabs_mode`** — flips `Workspace.tabs_mode` and emits
   `workspaces:changed`. The layout tree is not touched; see `crates.md` for why this is
   a flag and not a `LayoutNode` variant.

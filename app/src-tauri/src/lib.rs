@@ -2,6 +2,7 @@
 mod addons;
 mod bidi_filter;
 mod bootstrap_guard;
+mod brief;
 // Phase 53 (rebased): browser_pane.rs renamed to workspace_browser.rs;
 // per-pane commands swapped for workspace-keyed commands.
 mod workspace_browser;
@@ -154,6 +155,10 @@ pub(crate) struct AppState {
     /// In-memory and session-scoped — the rolling average is a within-session
     /// signal, meaningless after a restart, so it's never persisted.
     pub(crate) agent_runs: Arc<Mutex<HashMap<String, AgentRunState>>>,
+    /// BRIEF: per-pane agent brief + last user prompt, keyed by RESOLVED
+    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
+    /// same rationale as agent_runs — see `brief.rs`.
+    pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
     pub(crate) feed: Arc<Mutex<FeedStore>>,
     pub(crate) notes: Arc<Mutex<notes::NotesFile>>,
     // Phase 9.A: persistent app settings (theme, fonts, terminal, hooks, etc.)
@@ -2581,6 +2586,29 @@ fn pane_agent_states(
             )
         })
         .collect())
+}
+
+/// BRIEF: push one pane's full brief entry to the frontend. The entry
+/// rides whole (brief + last_prompt + session_ended + seq) so the two
+/// consumers — Queue panel and Briefing card — can't see different halves.
+pub(crate) fn emit_brief_event(app: &AppHandle, pane_id: &str, entry: &brief::PaneBriefEntry) {
+    let _ = app.emit(
+        "pane:brief",
+        serde_json::json!({ "pane_id": pane_id, "entry": entry }),
+    );
+}
+
+/// BRIEF: every pane's brief entry at once — webview-reload hydration,
+/// mirroring `pane_agent_states` above. Not persisted, same reasoning.
+#[tauri::command]
+fn pane_briefs(
+    state: State<'_, AppState>,
+) -> Result<std::collections::HashMap<String, brief::PaneBriefEntry>, String> {
+    let briefs = state
+        .briefs
+        .lock()
+        .map_err(|e| format!("briefs lock poisoned: {e}"))?;
+    Ok(briefs.clone())
 }
 
 /// Spawns a tokio task that clears a pane's status text after `secs` seconds.
@@ -11447,6 +11475,7 @@ pub fn run() {
             workspace_set_project_root,
             workspace_set_tabs_mode,
             pane_agent_states,
+            pane_briefs,
             worktrees::git_probe_worktrees,
             worktrees::workspace_list_worktrees,
             worktrees::workspace_create_project_worktree,
