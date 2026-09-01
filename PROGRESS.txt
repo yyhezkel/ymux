@@ -7228,3 +7228,38 @@ Standing observation: main took three merges in the time this branch was open.
 Nothing about the vault causes that — but the vault is the part that goes stale
 when it happens, and each merge cost either a real update (twice) or a real
 check (once). The sooner #20 lands, the fewer of these.
+================================================================================
+2026-08-23 — Fork scan (research, no code adopted)
+================================================================================
+Task: Yossi asked whether anyone who forked the repo added something worth
+adopting.
+
+Method: `search_repositories` with `fork:only` on both spellings (ymux AND
+winmux, because the repo was winmux until 0.4.5) plus a description search to
+catch renamed forks. Fetched each candidate as a remote and listed
+`git rev-list <branch> --not --remotes=origin`, so branches that merely mirror
+ours were excluded instead of counted as "ahead".
+
+Forks that share our history (4):
+  netanelhibsh/ymux    1 original commit  — build-macos-arm64.yml
+  bouhady/winmux      13 original commits — mobile/ Android port (~13.8k lines)
+  Efrat-Cohen/winmux   3 original commits — CI (Windows installers on push)
+  sh770/ymux           0                  — snapshot of main @ 3616b30
+
+Not ours despite the name: jozefkun/ymux, kwanmo2/ymux, and the winmux
+name-collision family from COMPETITIVE-SCAN (stoneyang0213/winmux has NO common
+ancestor with us — verified with git merge-base).
+
+Findings and the one bug worth keeping:
+  - bouhady's 82.A found a REAL cross-platform bug in our auth ladder
+    (ymux-ssh/src/lib.rs:339, still on main) — logged FOLLOWUPS P3.
+  - netanelhibsh's arm64 workflow is superseded by our own unmerged
+    claude/macos-universal-signing (048f1b2), which does it as a matrix with
+    Developer ID signing.
+  - Efrat's CI is superseded except for one idea: cross-compile the Linux CLI on
+    a native Linux runner and hand it to the Windows job as an artifact.
+
+Files: docs/DECISIONS.md (new Open entry, full write-up), FOLLOWUPS.md (P3),
+PROGRESS.txt (this).
+Result: research only. NO fork code merged, no build run. The four fork remotes
+were removed from the working copy afterwards.
