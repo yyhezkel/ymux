@@ -150,6 +150,14 @@ back) surfaced as the user-facing error message.
   on it.
 - `CREATE_NO_WINDOW` is not optional — a missing flag is a console flash, not an error,
   so it fails review rather than CI.
+- `hidden_cmd` sets `kill_on_drop(true)`: tokio does NOT kill a child when a timeout
+  drops the `output()` future, and an orphaned `install.ps1` kept
+  `~\.claude\downloads\claude-<ver>.exe` locked, so every retry of InstallClaudeCode
+  failed with "being used by another process". Same reasoning as `claude_usage.rs`.
+- InstallClaudeCode (both arms) succeeds even when the installer exits non-zero, **if**
+  a working `claude` binary is already on disk — the downloads dir is shared with
+  claude's own auto-updater, so a locked file can fail the installer on a machine
+  where the goal is already met.
 
 ## Read the source when
 

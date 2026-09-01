@@ -7283,8 +7283,19 @@ now-merged remote branches. Vault: green — diff vs main is PROGRESS/FOLLOWUPS/
 DECISIONS only, no covered source touched.
 
 ================================================================================
+2026-09-01 — fix(local-setup): InstallClaudeCode file-lock failure on Windows
+Task: a user's wizard failed at InstallClaudeCode with "The process cannot
+access the file '...\.claude\downloads\claude-2.1.251-win32-x64.exe' because
+it is being used by another process" (install.ps1 line 63, download phase).
+Root cause: run_capture's 600s timeout drops tokio's output() future, which
+does NOT kill the child — the orphaned install.ps1 keeps the version-pinned
+download file locked, so every retry hits the lock. Secondary: the downloads
+dir is shared with claude's own auto-updater.
+Files: app/src-tauri/src/local_setup.rs (hidden_cmd kill_on_drop(true);
+InstallClaudeCode "already installed" fallback on failure, Windows+unix arms),
+docs/vault/backend-wizards.md (+2 gotchas), .vault-lock re-stamped.
+Result: compiles, untested (Rule #17 — pushed for CI; live retry pending).
 2026-09-01 — v0.5.0 STABLE cut and published
-================================================================================
 Task: cut the first stable YMUX release. Tag v0.5.0 on 80bdbac; build-windows
 run 33492082767 green (MSI + NSIS + both embedded-hash and scrub asserts).
 Pre-cut verification: dispatch build downloaded and RUN LIVE on Yossi's box —
