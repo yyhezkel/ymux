@@ -7305,3 +7305,10 @@ Feature markers confirmed in the binary: Phase 85/86 server 2.2.1 blobs
 Published: gh release v0.5.0 (MSI a458ad0a…, NSIS 894eb859…), release notes
 carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
 (this commit) — the step that actually notifies existing installs.
+
+[2026-09-01] fix(feed): humanized stop/session-end feed cards (branch yos/context-switching-impl-b86b68, 705c706)
+  - Bug (user screenshot): feed cards titled 'agent: stop' with raw payload JSON as body (incl. last_assistant_message), SessionEnd cards showing bare reason 'other'.
+  - Root cause: CLI derive_hook_title has no 'stop' arm; derive_hook_summary falls back to dumping payload JSON. Cards bypassed humanize_notification (toasts-only until now).
+  - Fix: desktop-side in rpc_server.rs feed.push — passive lifecycle subkinds routed through humanize_notification (ws_name empty; pre-tool-use excluded); humanize reads last_assistant_message as Stop summary fallback.
+  - Files: app/src-tauri/src/rpc_server.rs, docs/vault/backend-rpc.md (+lock). Compiles-untested until CI (Rule #17).
+  - Context: step 0 of the context-switching/Briefing design (agent-written brief on Stop hook + queue view) — discussion in session, not yet logged as Decided.
