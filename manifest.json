@@ -8,6 +8,12 @@
   "nsis_url": "https://github.com/yyhezkel/ymux/releases/download/v0.5.0/ymux_0.5.0_x64-setup.exe",
   "nsis_sha256": "894eb8590efbe172f4cc8d17ea4f6184ae5d1dc1ee6b12b7480701c46b6ba8c3",
   "nsis_size": 16881746,
+  "dmg_x64_url": "https://github.com/yyhezkel/ymux/releases/download/v0.5.0/ymux_0.5.0_x64.dmg",
+  "dmg_x64_sha256": "388fa6f22660e825b283d1701ee4410ac571097448c47e159cf3f7a39a14fb22",
+  "dmg_x64_size": 26080609,
+  "dmg_aarch64_url": "https://github.com/yyhezkel/ymux/releases/download/v0.5.0/ymux_0.5.0_aarch64.dmg",
+  "dmg_aarch64_sha256": "b9f5e385d8943a525bc39385fdcfb9dcd019a3324d276d3dc900ded41363969b",
+  "dmg_aarch64_size": 25252667,
   "min_supported_version": "0.1.0",
   "hooks": {
     "claude-code": {
