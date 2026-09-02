@@ -11,6 +11,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFolder,
+  IconTerminal,
   IconRefresh,
   IconWarning,
 } from "./icons";
@@ -1034,10 +1035,23 @@ export function Sidebar(p: Props) {
             </span>
           }
         >
-          <span
-            class="ws-dot"
-            style={{ background: w.color || "#6b7682" }}
-          />
+          {/* Phase 87.B: a row opened FOR a multiplexer session wears a
+              terminal glyph instead of the colour dot; the raw session
+              name is the tooltip. Everything else about the row — click,
+              collapse, drag, delete — is the plain child-workspace path. */}
+          <Show
+            when={!w.tmux_session}
+            fallback={
+              <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
+                <IconTerminal size={13} />
+              </span>
+            }
+          >
+            <span
+              class="ws-dot"
+              style={{ background: w.color || "#6b7682" }}
+            />
+          </Show>
         </Show>
         <span class="ws-name">
           <Show when={w.emoji}>{w.emoji} </Show>

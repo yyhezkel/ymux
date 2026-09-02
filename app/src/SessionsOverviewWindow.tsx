@@ -31,8 +31,10 @@ interface Props {
   /** Windows local workspace: zellij, which refuses rename (docs/ZELLIJ.md §1). */
   isZellij: boolean;
   onClose: () => void;
-  /** New tab in the workspace, attached to the session. App owns the flow. */
-  onOpen: (name: string) => Promise<void>;
+  /** Open the session on a screen of its own (a child workspace row in the
+   *  tree, attached to it). App owns the flow; it needs the whole row for
+   *  the display name and the directory. */
+  onOpen: (s: TmuxSessionInfo) => Promise<void>;
   /** Resolves to what the backend achieved; `null` when the invoke threw. */
   onKill: (name: string) => Promise<KillSessionOutcome | null>;
   /** Throws with the backend's message on failure. */
@@ -242,7 +244,7 @@ export function SessionsOverviewWindow(p: Props) {
   const doOpen = async (s: TmuxSessionInfo) => {
     setBusy(s.name);
     try {
-      await p.onOpen(s.name);
+      await p.onOpen(s);
     } catch (e) {
       log.error("open session failed", e);
       window.alert(t("sessions.openFailed", { error: errText(e) }));

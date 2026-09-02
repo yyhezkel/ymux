@@ -228,7 +228,7 @@ so they are managed per workspace, opened from the workspace's right-click menu 
 the Insights monitor's install prompt. **`YmuxToolsTab.tsx` (126)** is the same shape for
 skills. Both are self-contained specifically so they do not bloat `SettingsModal`.
 
-**`SessionsOverviewWindow.tsx` (460)** — Phase 87, the workspace right-click
+**`SessionsOverviewWindow.tsx` (462)** — Phase 87, the workspace right-click
 **Active sessions…** dialog. A plain `.modal` stretched to the viewport (not a
 `PanelSurface`: it has no drawer/float life, it is a full-screen table you open, act in,
 and close), header pattern from `PortsWindow`, table class from the Monitor
@@ -239,7 +239,9 @@ chunk — it is `claude -p` on the machine). A request counter drops a late answ
 refresh, so a stale summary never lands on a fresh row; exited (zellij) rows are never
 sent. Rows group by `cwd ?? owner_cwd`, the unplaceable ones last under one "unknown
 folder" heading; the name column shows `label ?? auto_name ?? claude_title ?? name` with
-the raw name beneath. Row actions are props the window does not implement: **Open**,
+the raw name beneath. Row actions are props the window does not implement: **Open**
+(87.B: hands App the whole row — name, display name, `cwd ?? owner_cwd` — and App opens the
+session on a screen of its own, a child workspace row in the tree; nothing here splits),
 **Rename** (inline input, `^[A-Za-z0-9_-]{1,64}$` checked here AND in the backend,
 disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the button
 re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to

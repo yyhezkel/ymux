@@ -1291,7 +1291,7 @@
   "sessions.summaryFailed": "Summaries unavailable: {error}",
   "sessions.retry": "Retry",
   "sessions.open": "Open",
-  "sessions.open.hint": "Open in a new tab and attach (nothing is typed into the session)",
+  "sessions.open.hint": "Open on its own screen: a row under the machine (or its project folder), attached to the session — nothing is typed into it",
   "sessions.kill": "Kill session",
   "sessions.killConfirm": "Sure?",
   "sessions.killFailed": "Could not destroy session {name}",

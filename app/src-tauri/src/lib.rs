@@ -6078,6 +6078,118 @@ fn workspace_open_worktree(
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
+/// Phase 87.B: where a session row goes in the tree.
+///
+/// The deepest pinned project folder under `root_id` whose `cwd` equals or
+/// contains `session_cwd` — `path_is_within` insists on a separator
+/// boundary, so `/srv/app2` is not inside `/srv/app`. No such folder, or no
+/// cwd at all (a zellij session with no ownership row), and the row hangs
+/// directly under the server. Never pins a folder on the user's behalf.
+fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option<&str>) -> String {
+    let Some(cwd) = session_cwd.map(str::trim).filter(|c| !c.is_empty()) else {
+        return root_id.to_string();
+    };
+    let subtree = collect_subtree_ids(file, root_id);
+    file.workspaces
+        .iter()
+        .filter(|w| w.is_project_root && subtree.iter().any(|id| id == &w.id))
+        .filter_map(|w| w.cwd.as_deref().map(|c| (c, &w.id)))
+        .filter(|(folder, _)| path_is_within(cwd, folder))
+        .max_by_key(|(folder, _)| folder.len())
+        .map(|(_, id)| id.clone())
+        .unwrap_or_else(|| root_id.to_string())
+}
+
+/// Phase 87.B: open a multiplexer session on a screen of its own — a
+/// persisted child workspace row under the machine (or under the pinned
+/// project folder whose directory contains the session's), whose single
+/// pane the frontend then attaches to the session.
+///
+/// Idempotent on `session_name`: a row already opened for this session
+/// anywhere under the same root is activated instead of duplicated. The
+/// dialog may have been opened from a project-folder child, so the root is
+/// walked up first — sessions belong to the host, not to the row that
+/// happened to be right-clicked. Same construction as the two sibling
+/// commands: a CLONE of the root's connection, a single terminal layout,
+/// no `sort_order` (the sidebar puts nulls last).
+#[tauri::command]
+fn workspace_open_session(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    session_name: String,
+    display_name: String,
+    cwd: Option<String>,
+) -> Result<WorkspacesFile, String> {
+    let session_name = session_name.trim().to_string();
+    if session_name.is_empty() {
+        return Err("session name is required".to_string());
+    }
+    let display_name = {
+        let t = display_name.trim();
+        if t.is_empty() { session_name.clone() } else { t.to_string() }
+    };
+    let cwd = cwd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let mut created = false;
+    {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        if !file.workspaces.iter().any(|w| w.id == workspace_id) {
+            return Err("workspace not found".to_string());
+        }
+        let root_id = ancestors_of(&file, &workspace_id)
+            .last()
+            .cloned()
+            .unwrap_or_else(|| workspace_id.clone());
+        let subtree = collect_subtree_ids(&file, &root_id);
+        if let Some(existing) = file
+            .workspaces
+            .iter()
+            .find(|w| {
+                subtree.iter().any(|id| id == &w.id)
+                    && w.tmux_session.as_deref() == Some(session_name.as_str())
+            })
+            .map(|w| w.id.clone())
+        {
+            file.active_workspace_id = Some(existing);
+        } else {
+            let conn = file
+                .workspaces
+                .iter()
+                .find(|w| w.id == root_id)
+                .and_then(|w| w.connection.clone())
+                .unwrap_or(Connection::Local { shell: None });
+            let parent = pick_session_parent(&file, &root_id, cwd.as_deref());
+            let id = new_workspace_id();
+            file.workspaces.push(Workspace {
+                id: id.clone(),
+                name: display_name,
+                cwd,
+                connection: Some(conn.clone()),
+                layout: Some(single_terminal_layout(conn)),
+                parent_id: Some(parent),
+                tmux_session: Some(session_name.clone()),
+                ..Default::default()
+            });
+            file.active_workspace_id = Some(id);
+            created = true;
+        }
+    }
+    persist(&state)?;
+    if created {
+        // Session names are metadata (the picker already logs them); never
+        // the screen behind them (Rule #1).
+        log_info(
+            "WORKSPACE",
+            &format!("workspace_open_session: opened a row for session {session_name} under ws={workspace_id}"),
+        );
+        let _ = app.emit("workspaces:changed", ());
+    }
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 /// Demote a workspace that turned out not to be a git repo.
 ///
 /// The sidebar calls this when a scan comes back with git's
@@ -9891,6 +10003,7 @@ fn validate_tmux_rename_target(name: &str) -> Result<(), String> {
 #[tauri::command]
 async fn tmux_rename_session(
     state: State<'_, AppState>,
+    app: AppHandle,
     workspace_id: String,
     old_name: String,
     new_name: String,
@@ -10001,6 +10114,24 @@ async fn tmux_rename_session(
     }
     rename_session_owner(&host_key, &old_name, &new_name);
     let label = rename_tmux_label(&workspace_id, &old_name, &new_name);
+    // Phase 87.B: a session row in the tree is keyed by this name too.
+    let rows_moved = {
+        let mut file = state.workspaces.lock().unwrap();
+        let mut n = 0;
+        for w in file.workspaces.iter_mut() {
+            if conn_same_host(&w.connection, &conn)
+                && w.tmux_session.as_deref() == Some(old_name.as_str())
+            {
+                w.tmux_session = Some(new_name.clone());
+                n += 1;
+            }
+        }
+        n
+    };
+    if rows_moved > 0 {
+        persist(&state)?;
+        let _ = app.emit("workspaces:changed", ());
+    }
     log_info(
         "WORKSPACE",
         &format!("tmux_rename_session: renamed on {host_key} (ws={workspace_id})"),
@@ -11665,6 +11796,7 @@ pub fn run() {
             workspace_create_worktree,
             workspace_pin_project_folder,
             workspace_open_worktree,
+            workspace_open_session,
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
@@ -12671,6 +12803,70 @@ mod smart_connect_tests {
             build_smart_connect_script(ShellKind::Posix, "default", None, None, None),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod session_workspace_tests {
+    // Phase 87.B: where a session row lands in the tree.
+    use super::pick_session_parent;
+    use super::WorkspacesFile;
+
+    fn file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 1,
+              "workspaces": [
+                { "id": "srv", "name": "runner",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app" },
+                { "id": "app2", "name": "app2", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app2" },
+                { "id": "deep", "name": "deep", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app/packages/web" },
+                { "id": "wt", "name": "wt", "parent_id": "app", "cwd": "/srv/app-wt" },
+                { "id": "other", "name": "other-server", "is_project_root": true, "cwd": "/srv/app",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn no_cwd_lands_under_the_root() {
+        assert_eq!(pick_session_parent(&file(), "srv", None), "srv");
+        assert_eq!(pick_session_parent(&file(), "srv", Some("  ")), "srv");
+    }
+
+    #[test]
+    fn exact_folder_and_nested_path_both_match() {
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2")), "app2");
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2/src")), "app2");
+    }
+
+    #[test]
+    fn prefix_without_a_separator_boundary_is_not_inside() {
+        // /srv/app2x starts with /srv/app2 but is a sibling, not a child.
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2x")), "srv");
+    }
+
+    #[test]
+    fn deepest_matching_folder_wins() {
+        assert_eq!(
+            pick_session_parent(&file(), "srv", Some("/srv/app/packages/web/src")),
+            "deep"
+        );
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app/packages")), "app");
+    }
+
+    #[test]
+    fn only_project_roots_under_this_root_are_candidates() {
+        // `wt` shares no boundary; `other` is a folder on ANOTHER server with
+        // the same path — neither may catch the row.
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app-wt")), "srv");
+        assert_eq!(pick_session_parent(&file(), "other", Some("/srv/app/x")), "other");
     }
 }
 

@@ -317,6 +317,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decided — no new list command.** `pane_list_tmux_sessions` with `project_path: null` plus one new field (`owner_cwd`) is the list; `KillTarget` / `kill_target` were lifted out of the pane-bound kill rather than duplicated.
 - **Status:** compiles-untested until CI; Rule #14 until the FOLLOWUPS P1 smoke list runs live.
 
+#### Addendum, 2026-09-02 (87.B) — "פתח" opens the session on a screen of its own
+- **Context.** The first cut's Open split/tabbed the CURRENT workspace. Yossi: *"בפתח - אל תפצל את המסך לעוד - תוסיף שורה תחת המכונה (בעץ) והסשן יפתח על מסך משל עצמו. אם ידועה תיקיית העבודה תפתח תחת האיבר בעץ של תיקיית העבודה."*
+- **Decided (Yossi, asked before building):** the row is a **real persisted child workspace** (same mechanism as a pinned folder / worktree; delete = detach only, the session lives). Placement: under the pinned project folder whose `cwd` equals/contains the session cwd, deepest wins; **no such folder → directly under the server, never auto-pin**. A second Open on the same session **activates the existing row** (idempotent on the new `Workspace.tmux_session`). Row name = the session's display name.
+- **Found on the way, required:** activation never auto-connects panes, so a persisted row would show [Connect] after a restart and a click would spawn a NEW pane-derived session. `connectPane` now defaults to `ws.tmux_session` for the workspace's first pane, and `restoreSessions` uses it when localStorage has no hint (second machine). Without those the row is a lie after a restart.
+- **Status:** compiles-untested until CI; smoke list in FOLLOWUPS P1.
+
 ### 2026-08-23 — Phase 86: server + port-watch + hooks load
 - **Context:** measured on Yossi's server — 18 `ymux port-watch` at ~4.7% CPU each, 15 orphans (ppid=1); hook-debug.log 100% stale-reconnect noise from them; ymux-server sampling 3.1s every 5s because Docker one-shot stats block 1-2s per container. Full numbers in PROGRESS.txt (2026-08-23 ~20:30).
 - **Decided — the watcher owns its own death.** stdin-EOF watchdog + no last.env fallback + exit after 3 connect failures. Hooks KEEP the fallback (Phase 80 (f)); only the watcher's tunnel is fixed for life.

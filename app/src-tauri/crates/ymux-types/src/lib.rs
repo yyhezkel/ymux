@@ -370,8 +370,9 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sort_order: Option<i32>,
     // Sidebar nesting: the workspace this one hangs under. None = a root
-    // row, which is what participates in groups. Written only by the two
-    // create paths (pin a project folder, open a worktree); there is no
+    // row, which is what participates in groups. Written only by the three
+    // create paths (pin a project folder, open a worktree, open a session
+    // from the active-sessions overview); there is no
     // re-parent gesture. `load_from_disk` repairs self-parents, dangling
     // ids and cycles, so every consumer may assume a forest.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -405,6 +406,17 @@ pub struct Workspace {
     // workspaces.json could not render it at all.
     #[serde(default, skip_serializing_if = "is_false")]
     pub tabs_mode: bool,
+    // Phase 87.B: the multiplexer session this workspace was opened FOR by
+    // the active-sessions overview ("Open" = a row of its own in the tree).
+    // Written only by `workspace_open_session`, renamed by
+    // `tmux_rename_session`. It is what makes Open idempotent (a second
+    // Open activates this row instead of creating another), what the
+    // sidebar draws the terminal glyph from, and the fallback that lets the
+    // row's first pane re-attach to its session after a restart on a machine
+    // whose localStorage never saw it. Elided when absent, so every existing
+    // workspaces.json round-trips byte-identical.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tmux_session: Option<String>,
 }
 
 /// `skip_serializing_if` for bools. Plain `#[serde(default)]` still
@@ -842,7 +854,7 @@ mod tests {
         });
         let w: Workspace = serde_json::from_value(raw.clone()).unwrap();
         let back = serde_json::to_value(&w).unwrap();
-        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode"] {
+        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode", "tmux_session"] {
             assert!(back.get(key).is_none(), "{key} must be elided, got {back}");
         }
         assert_eq!(raw, back, "an untouched workspace must round-trip byte-identical");

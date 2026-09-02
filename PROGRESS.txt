@@ -7351,3 +7351,19 @@ build_ssh_summary_script + capture_local_tmux, the test asserts the colon, vault
 Gotcha added. Found by running the feature's pipeline by hand on this machine
 before the CI builds were downloaded; without it every summary came back
 unknown. Builds re-dispatched (Windows NSIS + macOS dmg x64/arm64).
+
+2026-09-02 — Phase 87.B: "פתח" = the session on a screen of its own (a row in the tree)
+Yossi: Open must not split the current screen; add a row under the machine
+(under the project folder when the cwd is known) and open the session there.
+Backend: Workspace.tmux_session (ymux-types, elided when absent; binding
+hand-mirrored per fc816a8 precedent), workspace_open_session (idempotent on
+tmux_session; parent = pick_session_parent = deepest is_project_root whose cwd
+contains the session cwd, else root; clone of root connection +
+single_terminal_layout), tmux_rename_session migrates tmux_session on same-host
+rows (+ app: AppHandle). 5 unit tests (session_workspace_tests) + round-trip
+key list. Frontend: openSessionAsWorkspace replaces openSessionInTab
+(activate row, connect first pane only if not live); connectPane defaults
+tmuxSessionName/persistent to ws.tmux_session for the FIRST pane; restoreSessions
+same fallback; Sidebar terminal glyph for session rows; window onOpen(s).
+Docs: vault crates / backend-core / frontend-shell / frontend-panes, DECISIONS
+addendum, FOLLOWUPS smoke amended. compiles-untested — CI.

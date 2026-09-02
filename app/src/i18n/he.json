@@ -1291,7 +1291,7 @@
   "sessions.summaryFailed": "התקצירים לא זמינים: {error}",
   "sessions.retry": "נסה שוב",
   "sessions.open": "פתח",
-  "sessions.open.hint": "פתיחה בטאב חדש והתחברות (שום דבר לא מוקלד לתוך הסשן)",
+  "sessions.open.hint": "פתיחה במסך משלו: שורה תחת המכונה (או תיקיית הפרויקט), מחוברת לסשן — שום דבר לא מוקלד לתוכו",
   "sessions.kill": "סגור סשן",
   "sessions.killConfirm": "בטוח?",
   "sessions.killFailed": "לא ניתן להשמיד את הסשן {name}",

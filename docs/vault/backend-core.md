@@ -262,6 +262,17 @@ list command. The module owns what the picker never needed:
   straight to `kill_target` and releases the ownership claim on `killed | already_gone`.
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
+- **Open is `workspace_open_session` in lib.rs (Phase 87.B)** — the third child-creating
+  command beside `workspace_pin_project_folder` / `workspace_open_worktree`, same construction
+  (a CLONE of the root's connection, `single_terminal_layout`, no `sort_order`). It walks up
+  to the root first (the dialog may have been opened from a project-folder child; sessions
+  belong to the host), then is **idempotent on `Workspace.tmux_session`**: a row already opened
+  for that name anywhere under the root is activated, never duplicated. Placement is
+  `pick_session_parent`: the deepest `is_project_root` descendant whose `cwd` contains the
+  session cwd (`path_is_within`, boundary-aware, `session_workspace_tests`), else the root —
+  it never pins a folder on the user's behalf. The frontend then attaches the row's single
+  pane; the current screen is never touched. `tmux_rename_session` also moves
+  `tmux_session` on every row of the same host (`conn_same_host`) and re-persists.
 - **Rename is `tmux_rename_session` in lib.rs**, registered since 23.G and unused until now.
   Phase 87 gave it `validate_tmux_rename_target` (ASCII letters, digits, `_`, `-`, ≤64 —
   stricter than `session_name_char_is_safe`, because the 23.I Hebrew rename crash was never

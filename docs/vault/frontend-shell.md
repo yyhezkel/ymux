@@ -44,7 +44,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (4,933) — one component, ~50 signals
+## `App.tsx` (4,954) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -117,7 +117,7 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,272)
+## `Sidebar.tsx` (1,286)
 
 Workspace tree with groups, nesting, pinned project folders, and worktree children.
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
@@ -131,12 +131,23 @@ addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
 
+Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 87.B) → a
+terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
+otherwise a plain child — click, collapse, drag, delete all take the same path.
+
 **Phase 87 — the active-sessions overview's three row actions live in App, not in the
-window**, because each needs App-level state. `openSessionInTab` closes the dialog,
-switches the workspace (`handleSetActive`), opens a tab (`newTab` now returns the new pane
-id; a workspace with every pane closed is seeded through `workspace_reset_layout`
-instead), waits for the mount and calls `connectPane(pid, { persistent, tmuxSession })` —
-the same shape the picker uses, so the attach-only guard guarantees nothing is typed.
+window**, because each needs App-level state. `openSessionAsWorkspace` (87.B) closes the
+dialog and calls `workspace_open_session` — the session gets a **persisted child workspace
+row of its own** under the machine or its project folder; the current screen is never
+split or tabbed — then activates the row, and only if its single pane is not already live
+(`paneToSession.has`, because `pane_connect` on a live pane kills and respawns) waits for
+the mount and calls `connectPane(pid, { persistent, tmuxSession })`, the picker's shape, so
+the attach-only guard guarantees nothing is typed. **Two fallbacks make the row honest after
+a restart:** `connectPane` defaults `tmuxSessionName` / `persistent` to `ws.tmux_session`
+for the workspace's FIRST pane (activation never auto-connects, so a plain [Connect] on the
+row must attach, not spawn a pane-derived session; a split-off pane stays a plain shell),
+and `restoreSessions` uses the same field when localStorage has no hint for that pane.
+`newTab` still returns the new pane id from 87; nothing depends on it now.
 `killSessionByName` routes through the existing `killSession(paneId)` when
 `panePersistence()` shows one of our panes holding the name (PTY, maps and restore hint go
 the tested way; `killSession` now returns the outcome for that), else

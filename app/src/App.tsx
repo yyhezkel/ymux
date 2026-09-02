@@ -1997,6 +1997,15 @@ function App() {
     // signal a hook may have already delivered.
     if (opts.mode === "claude") ti.setTuiSignal(true);
     else if (!opts.restoring) ti.setTuiSignal(null);
+    // Phase 87.B: a session row (`Workspace.tmux_session`) exists FOR one
+    // session, and activation never auto-connects panes — so a plain
+    // [Connect] on its first pane must attach to that session rather than
+    // spawn a pane-derived one. First pane only: a pane split off it is a
+    // plain shell, exactly like a split anywhere else.
+    const sessionForPane =
+      ws.tmux_session && ws.layout && collectPanes(ws.layout)[0] === paneId
+        ? ws.tmux_session
+        : null;
     setStatus(paneId, "connecting…", false);
     try {
       const sessionId = await invoke<string>("pane_connect", {
@@ -2005,12 +2014,12 @@ function App() {
         password: opts.password ?? null,
         keyPassphrase: opts.keyPassphrase ?? null,
         acceptUnknownHost: opts.acceptUnknownHost ?? false,
-        persistent: opts.persistent ?? false,
+        persistent: opts.persistent ?? !!sessionForPane,
         mode: opts.mode ?? null,
         cwdOverride: effectiveCwdOverride(ws, opts),
         cmd: opts.cmd ?? null,
         claudeArgs: opts.claudeArgs ?? null,
-        tmuxSessionName: opts.tmuxSession ?? null,
+        tmuxSessionName: opts.tmuxSession ?? sessionForPane,
         cols: ti.term.cols || 80,
         rows: ti.term.rows || 24,
       });
@@ -2244,27 +2253,33 @@ function App() {
   // the pane tree (open), the pane→session map (kill / rename bookkeeping)
   // and the restore hints.
   //
-  // Open = a new tab in the workspace, attached to the session and NOTHING
-  // typed into it — `pane_connect` treats an explicit picker name as live
-  // (the 2026-08-23 attach-only guard), exactly like the picker path.
-  const openSessionInTab = async (wsId: string, name: string) => {
+  // Open (87.B) = the session on a screen of its own: a persisted child
+  // workspace row under the machine — or under the pinned project folder
+  // whose directory contains the session's — whose single pane attaches to
+  // the session. The CURRENT screen is not touched. `workspace_open_session`
+  // is idempotent, so a second Open lands on the existing row; its pane is
+  // only (re)connected when it is not live, because `pane_connect` on a live
+  // pane kills and respawns. NOTHING is typed into the session: an explicit
+  // picker name is treated as live (the 2026-08-23 attach-only guard).
+  const openSessionAsWorkspace = async (wsId: string, s: TmuxSessionInfo) => {
     setSessionsWin(null);
-    if (activeWs()?.id !== wsId) await handleSetActive(wsId);
-    let pid: string | null = null;
-    if (!activeWs()?.layout) {
-      // Every pane closed: seed the single terminal pane the same way the
-      // reset-layout menu item does, then attach that one.
-      const f = await invoke<WorkspacesFile>("workspace_reset_layout", { workspaceId: wsId });
-      updateFile(f);
-      const layout = file().workspaces.find((w) => w.id === wsId)?.layout;
-      pid = layout ? (collectPanes(layout)[0] ?? null) : null;
-      if (pid) focusPane(pid);
-    } else {
-      pid = await newTab();
-    }
-    if (!pid) throw new Error("could not create a pane");
+    const f = await invoke<WorkspacesFile>("workspace_open_session", {
+      workspaceId: wsId,
+      sessionName: s.name,
+      displayName: s.label ?? s.auto_name ?? s.claude_title ?? s.name,
+      cwd: s.cwd ?? s.owner_cwd ?? null,
+    });
+    updateFile(f);
+    const rowId = f.active_workspace_id;
+    if (!rowId) throw new Error("no workspace was activated");
+    await handleSetActive(rowId);
+    const layout = file().workspaces.find((w) => w.id === rowId)?.layout;
+    const pid = layout ? (collectPanes(layout)[0] ?? null) : null;
+    if (!pid) throw new Error("the session row has no pane");
+    focusPane(pid);
+    if (paneToSession.has(pid)) return; // already attached (second Open)
     await waitForPaneMount(pid);
-    await connectPane(pid, { persistent: true, tmuxSession: name });
+    await connectPane(pid, { persistent: true, tmuxSession: s.name });
   };
 
   const paneHoldingSession = (name: string): string | undefined =>
@@ -2440,7 +2455,13 @@ function App() {
         skippedLive++; // already live
         continue;
       }
-      const tmux = getPaneSession(paneId);
+      // Phase 87.B: a session row carries its session name in the file, so a
+      // machine whose localStorage never saw this pane can still come back.
+      const tmux =
+        getPaneSession(paneId) ??
+        (ws.tmux_session && ws.layout && collectPanes(ws.layout)[0] === paneId
+          ? ws.tmux_session
+          : null);
       if (tmux) candidates.push({ paneId, tmux });
       else skippedNoHint++;
     }
@@ -4528,10 +4549,10 @@ function App() {
           })()
         }
         onClose={() => setSessionsWin(null)}
-        onOpen={(name) => {
+        onOpen={(s) => {
           const id = sessionsWin()?.id;
           if (!id) return Promise.resolve();
-          return openSessionInTab(id, name);
+          return openSessionAsWorkspace(id, s);
         }}
         onKill={(name) => {
           const id = sessionsWin()?.id;

@@ -1291,7 +1291,7 @@
   "sessions.summaryFailed": "الملخصات غير متاحة: {error}",
   "sessions.retry": "إعادة المحاولة",
   "sessions.open": "فتح",
-  "sessions.open.hint": "فتح في تبويب جديد والاتصال (لا يُكتب أي شيء داخل الجلسة)",
+  "sessions.open.hint": "فتح في شاشة خاصة: صف تحت الجهاز (أو مجلد المشروع) متصل بالجلسة — لا يُكتب أي شيء داخلها",
   "sessions.kill": "إنهاء الجلسة",
   "sessions.killConfirm": "متأكد؟",
   "sessions.killFailed": "تعذّر إنهاء الجلسة {name}",

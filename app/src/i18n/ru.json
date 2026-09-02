@@ -1291,7 +1291,7 @@
   "sessions.summaryFailed": "Сводки недоступны: {error}",
   "sessions.retry": "Повторить",
   "sessions.open": "Открыть",
-  "sessions.open.hint": "Открыть в новой вкладке и подключиться (в сессию ничего не вводится)",
+  "sessions.open.hint": "Открыть на своём экране: строка под машиной (или её папкой проекта), подключённая к сессии — в неё ничего не вводится",
   "sessions.kill": "Завершить сессию",
   "sessions.killConfirm": "Точно?",
   "sessions.killFailed": "Не удалось завершить сессию {name}",
