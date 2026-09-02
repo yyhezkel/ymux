@@ -29,6 +29,7 @@ mod provisioning;
 mod pty_decode;
 mod remote_bootstrap;
 mod rpc_server;
+mod sessions_overview;
 mod settings;
 mod skills;
 mod stt;
@@ -3145,6 +3146,19 @@ fn zellij_args_write_chars(session: &str, chars: &str) -> Vec<String> {
     ]
 }
 
+/// Phase 90: the viewport of a named session, on stdout (docs/ZELLIJ.md §4).
+/// Same root-option targeting as `zellij_args_write_chars`. No `--full`: the
+/// active-sessions overview wants what is on screen now, not the scrollback,
+/// and no `--ansi`: the text goes to a model, not a terminal.
+fn zellij_args_dump_screen(session: &str) -> Vec<String> {
+    vec![
+        "-s".into(),
+        session.to_string(),
+        "action".into(),
+        "dump-screen".into(),
+    ]
+}
+
 /// What actually happened when a zellij verb ran.
 ///
 /// The distinction that matters is `Failed` vs `Missing`. `zellij_run` used to
@@ -3321,6 +3335,7 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             owned: false,
             in_cwd: false,
             foreign: None,
+            owner_cwd: None,
         });
     }
     // Newest first, matching parse_tmux_sessions' ordering contract.
@@ -6094,6 +6109,118 @@ fn workspace_open_worktree(
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
+/// Phase 90.B: where a session row goes in the tree.
+///
+/// The deepest pinned project folder under `root_id` whose `cwd` equals or
+/// contains `session_cwd` — `path_is_within` insists on a separator
+/// boundary, so `/srv/app2` is not inside `/srv/app`. No such folder, or no
+/// cwd at all (a zellij session with no ownership row), and the row hangs
+/// directly under the server. Never pins a folder on the user's behalf.
+fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option<&str>) -> String {
+    let Some(cwd) = session_cwd.map(str::trim).filter(|c| !c.is_empty()) else {
+        return root_id.to_string();
+    };
+    let subtree = collect_subtree_ids(file, root_id);
+    file.workspaces
+        .iter()
+        .filter(|w| w.is_project_root && subtree.iter().any(|id| id == &w.id))
+        .filter_map(|w| w.cwd.as_deref().map(|c| (c, &w.id)))
+        .filter(|(folder, _)| path_is_within(cwd, folder))
+        .max_by_key(|(folder, _)| folder.len())
+        .map(|(_, id)| id.clone())
+        .unwrap_or_else(|| root_id.to_string())
+}
+
+/// Phase 90.B: open a multiplexer session on a screen of its own — a
+/// persisted child workspace row under the machine (or under the pinned
+/// project folder whose directory contains the session's), whose single
+/// pane the frontend then attaches to the session.
+///
+/// Idempotent on `session_name`: a row already opened for this session
+/// anywhere under the same root is activated instead of duplicated. The
+/// dialog may have been opened from a project-folder child, so the root is
+/// walked up first — sessions belong to the host, not to the row that
+/// happened to be right-clicked. Same construction as the two sibling
+/// commands: a CLONE of the root's connection, a single terminal layout,
+/// no `sort_order` (the sidebar puts nulls last).
+#[tauri::command]
+fn workspace_open_session(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    session_name: String,
+    display_name: String,
+    cwd: Option<String>,
+) -> Result<WorkspacesFile, String> {
+    let session_name = session_name.trim().to_string();
+    if session_name.is_empty() {
+        return Err("session name is required".to_string());
+    }
+    let display_name = {
+        let t = display_name.trim();
+        if t.is_empty() { session_name.clone() } else { t.to_string() }
+    };
+    let cwd = cwd.map(|c| c.trim().to_string()).filter(|c| !c.is_empty());
+    let mut created = false;
+    {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        if !file.workspaces.iter().any(|w| w.id == workspace_id) {
+            return Err("workspace not found".to_string());
+        }
+        let root_id = ancestors_of(&file, &workspace_id)
+            .last()
+            .cloned()
+            .unwrap_or_else(|| workspace_id.clone());
+        let subtree = collect_subtree_ids(&file, &root_id);
+        if let Some(existing) = file
+            .workspaces
+            .iter()
+            .find(|w| {
+                subtree.iter().any(|id| id == &w.id)
+                    && w.tmux_session.as_deref() == Some(session_name.as_str())
+            })
+            .map(|w| w.id.clone())
+        {
+            file.active_workspace_id = Some(existing);
+        } else {
+            let conn = file
+                .workspaces
+                .iter()
+                .find(|w| w.id == root_id)
+                .and_then(|w| w.connection.clone())
+                .unwrap_or(Connection::Local { shell: None });
+            let parent = pick_session_parent(&file, &root_id, cwd.as_deref());
+            let id = new_workspace_id();
+            file.workspaces.push(Workspace {
+                id: id.clone(),
+                name: display_name,
+                cwd,
+                connection: Some(conn.clone()),
+                layout: Some(single_terminal_layout(conn)),
+                parent_id: Some(parent),
+                tmux_session: Some(session_name.clone()),
+                ..Default::default()
+            });
+            file.active_workspace_id = Some(id);
+            created = true;
+        }
+    }
+    persist(&state)?;
+    if created {
+        // Session names are metadata (the picker already logs them); never
+        // the screen behind them (Rule #1).
+        log_info(
+            "WORKSPACE",
+            &format!("workspace_open_session: opened a row for session {session_name} under ws={workspace_id}"),
+        );
+        let _ = app.emit("workspaces:changed", ());
+    }
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 /// Demote a workspace that turned out not to be a git repo.
 ///
 /// The sidebar calls this when a scan comes back with git's
@@ -7941,10 +8068,11 @@ async fn tmux_rename_session_via_handle(
     if new_name.chars().any(|c| c == '.' || c == ':') {
         return Err("name cannot contain dots or colons".into());
     }
+    // `=` pins an exact session match (a bare `-t` prefix-matches).
     let cmd = format!(
-        "tmux rename-session -t '{}' '{}' 2>&1",
-        old_name.replace('\'', "'\\''"),
-        new_name.replace('\'', "'\\''"),
+        "tmux rename-session -t {} {} 2>&1",
+        shell_quote(&format!("={old_name}")),
+        shell_quote(new_name),
     );
     use russh::ChannelMsg;
     let mut ch = handle
@@ -8726,6 +8854,14 @@ pub(crate) struct TmuxSessionInfo {
     /// by construction and the frontend needs no scope conditional.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreign: Option<ForeignScope>,
+    /// Phase 90: the cwd recorded in `session-owners.json` when ymux claimed
+    /// this session, regardless of WHICH workspace claimed it. Exists for the
+    /// active-sessions overview, which groups rows by directory and would
+    /// otherwise have nothing to group a zellij session under (no live cwd).
+    /// It is a claim-time snapshot and can be stale; it feeds no scope
+    /// verdict — `owned` / `in_cwd` / `foreign` never read it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_cwd: Option<String>,
 }
 
 /// 2026-08-24: where a session belongs, when it is not here.
@@ -9324,6 +9460,7 @@ fn parse_tmux_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             owned: false,
             in_cwd: false,
             foreign: None,
+            owner_cwd: None,
         });
     }
     out.sort_by(|a, b| b.last_attached.max(b.created).cmp(&a.last_attached.max(a.created)));
@@ -9553,6 +9690,19 @@ fn set_tmux_label_internal(workspace_id: &str, session_name: &str, label: &str) 
     }
 }
 
+/// Phase 90: a real `tmux rename-session` moved the session; move its local
+/// label with it so the picker does not drop the user's title on the floor.
+fn rename_tmux_label(workspace_id: &str, old_name: &str, new_name: &str) -> Option<String> {
+    let mut file = load_tmux_labels();
+    let ws_map = file.labels.get_mut(workspace_id)?;
+    let label = ws_map.remove(old_name)?;
+    ws_map.insert(new_name.to_string(), label.clone());
+    if let Err(e) = save_tmux_labels(&file) {
+        log_warn("WORKSPACE", &format!("tmux-labels: save failed: {e}"));
+    }
+    Some(label)
+}
+
 #[tauri::command]
 fn tmux_labels_get(workspace_id: String) -> HashMap<String, String> {
     let file = load_tmux_labels();
@@ -9722,6 +9872,23 @@ fn release_session_owner(host_key: &str, session_name: &str) {
     }
 }
 
+/// Phase 90: carry a claim across a real `tmux rename-session`. Without this
+/// the renamed session would read as unowned in every picker and the old name
+/// would keep a claim on a session that no longer exists.
+fn rename_session_owner(host_key: &str, old_name: &str, new_name: &str) {
+    let mut file = load_session_owners();
+    let Some(host) = file.owners.get_mut(host_key) else {
+        return;
+    };
+    let Some(owner) = host.remove(old_name) else {
+        return;
+    };
+    host.insert(new_name.to_string(), owner);
+    if let Err(e) = save_session_owners(&file) {
+        log_warn("WORKSPACE", &format!("session-owners: save failed: {e}"));
+    }
+}
+
 /// Is `path` the same directory as `root`, or inside it?
 ///
 /// A bare `starts_with` gets this wrong in the way that matters: `/srv/app2`
@@ -9808,6 +9975,8 @@ fn annotate_scope_with(
     for s in sessions.iter_mut() {
         let owner = host.and_then(|h| h.get(&s.name));
         s.owned = owner.is_some_and(|o| o.workspace_id == workspace_id);
+        // Phase 90: surfaced for grouping only — see the field doc.
+        s.owner_cwd = owner.and_then(|o| o.cwd.clone());
         s.in_cwd = match (s.cwd.as_deref(), project_path) {
             (Some(cwd), Some(root)) => path_is_within(cwd, root),
             // Unknown cwd is not evidence of anything. See TmuxSessionInfo::cwd.
@@ -9855,15 +10024,51 @@ fn annotate_scope_with(
     }
 }
 
-/// Phase 23.G: rename a tmux session over the workspace's SSH
-/// handle. The Phase 23.G in-picker Rename button was removed in
-/// Phase 23.I (pane title became the canonical session name) — this
-/// command stays registered for any future CLI / programmatic caller
-/// (e.g. Phase 24 bulk renames). Now delegates to the shared
-/// `tmux_rename_session_via_handle` helper that pane_set_title uses.
+/// Phase 90: is `name` something we are willing to hand `tmux rename-session`?
+///
+/// ASCII letters, digits, `_` and `-` only, at most 64 chars. Phase 23.I's
+/// experiment with real renames crashed on a Hebrew name — a
+/// `STATUS_STACK_BUFFER_OVERRUN` in the Windows process with no Rust trace,
+/// never root-caused — which is why labels exist and why the standing rule
+/// was "no tmux rename anywhere". The active-sessions overview lifts that for
+/// an EXPLICIT user action, inside this whitelist; anything else keeps going
+/// through labels. Stricter than `session_name_char_is_safe`, deliberately.
+fn validate_tmux_rename_target(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name cannot be empty".into());
+    }
+    if name.len() > 64 {
+        return Err("name is too long (max 64 characters)".into());
+    }
+    if !name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err("name may only contain ASCII letters, digits, '_' and '-'".into());
+    }
+    Ok(())
+}
+
+/// Phase 23.G / Phase 90: rename a multiplexer session for real.
+///
+/// Registered since 23.G with no frontend caller (the in-picker Rename was
+/// removed in 23.I when the pane title became the session name). Phase 90's
+/// active-sessions overview is the caller now, and it made the command grow
+/// three things: an ASCII whitelist (`validate_tmux_rename_target`), the
+/// local-tmux and WSL arms, and the migration of everything ymux keys by
+/// session name — live `Session.tmux_session` fields (so Kill / reconnect on
+/// the attached pane keep working), `session-owners.json`, `tmux-labels.json`
+/// and, over SSH, the server-side session-meta label. `auto_name` /
+/// `claude_title` for the old key are lost until the next Claude turn
+/// rewrites them; accepted.
+///
+/// zellij is refused: `docs/ZELLIJ.md` §1 keeps `action rename-session` out
+/// on purpose, because a zellij session's name is derived from the pane id so
+/// a cold start can find it again.
 #[tauri::command]
 async fn tmux_rename_session(
     state: State<'_, AppState>,
+    app: AppHandle,
     workspace_id: String,
     old_name: String,
     new_name: String,
@@ -9871,17 +10076,148 @@ async fn tmux_rename_session(
     if old_name.is_empty() {
         return Err("old_name cannot be empty".into());
     }
-    let handle = {
-        let sessions = state.core.sessions.lock().unwrap();
-        sessions
-            .iter()
-            .find_map(|(_sid, sess)| match sess {
-                Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-                _ => None,
-            })
+    validate_tmux_rename_target(&new_name)?;
+    if new_name == old_name {
+        return Err("new name is the same as the old one".into());
     }
-    .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
-    tmux_rename_session_via_handle(&handle, &old_name, &new_name).await
+    let conn = {
+        let file = state.workspaces.lock().unwrap();
+        file.workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .map(|w| w.connection.clone())
+            .ok_or_else(|| "workspace not found".to_string())?
+    };
+    let host_key = session_owner_host_key(conn.as_ref());
+    // `=` forces an exact session match; a bare `-t` prefix-matches, and a
+    // rename that landed on `dev-2` when the user meant `dev` is the kind of
+    // surprise this dialog exists to prevent.
+    let exact_old = format!("={old_name}");
+    let ssh_handle = match &conn {
+        Some(Connection::Ssh { .. }) => {
+            let handle = {
+                let sessions = state.core.sessions.lock().unwrap();
+                sessions
+                    .iter()
+                    .find_map(|(_sid, sess)| match sess {
+                        Session::Ssh(s) if s.workspace_id == workspace_id => {
+                            Some(s.handle.clone())
+                        }
+                        _ => None,
+                    })
+            }
+            .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
+            tmux_rename_session_via_handle(&handle, &old_name, &new_name).await?;
+            Some(handle)
+        }
+        Some(Connection::Wsl { distro }) => {
+            // Pure argv — tmux receives both names verbatim (Rule #3).
+            let mut c = local_setup::wsl_cmd();
+            if let Some(d) = distro.as_deref().filter(|d| !d.is_empty()) {
+                c.arg("-d").arg(d);
+            }
+            c.arg("--")
+                .arg("tmux")
+                .arg("rename-session")
+                .arg("-t")
+                .arg(&exact_old)
+                .arg(&new_name);
+            let out = c
+                .output()
+                .await
+                .map_err(|e| format!("wsl.exe: {e}"))?;
+            if !out.status.success() {
+                let err = local_setup::clean_wsl_output(&out.stderr).trim().to_string();
+                return Err(if err.is_empty() {
+                    format!("tmux exit {:?}", out.status.code())
+                } else {
+                    err
+                });
+            }
+            None
+        }
+        #[cfg(windows)]
+        Some(Connection::Local { .. }) | None => {
+            return Err("renaming a zellij session is not supported".into());
+        }
+        #[cfg(not(windows))]
+        Some(Connection::Local { .. }) | None => {
+            match local_tmux_output(&["rename-session", "-t", &exact_old, &new_name]).await? {
+                (Some(0), _) => None,
+                (code, out) => {
+                    let out = out.trim().to_string();
+                    return Err(if out.is_empty() {
+                        format!("tmux exit {code:?}")
+                    } else {
+                        out
+                    });
+                }
+            }
+        }
+    };
+
+    // The multiplexer agreed. Now move everything ymux keys by the old name.
+    {
+        let mut sessions = state.core.sessions.lock().unwrap();
+        for sess in sessions.values_mut() {
+            match sess {
+                Session::Ssh(s)
+                    if s.workspace_id == workspace_id
+                        && s.tmux_session.as_deref() == Some(old_name.as_str()) =>
+                {
+                    s.tmux_session = Some(new_name.clone());
+                }
+                Session::Local(l)
+                    if ssh_handle.is_none()
+                        && l.tmux_session.as_deref() == Some(old_name.as_str()) =>
+                {
+                    l.tmux_session = Some(new_name.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+    rename_session_owner(&host_key, &old_name, &new_name);
+    let label = rename_tmux_label(&workspace_id, &old_name, &new_name);
+    // Phase 90.B: a session row in the tree is keyed by this name too.
+    let rows_moved = {
+        let mut file = state.workspaces.lock().unwrap();
+        let mut n = 0;
+        for w in file.workspaces.iter_mut() {
+            if conn_same_host(&w.connection, &conn)
+                && w.tmux_session.as_deref() == Some(old_name.as_str())
+            {
+                w.tmux_session = Some(new_name.clone());
+                n += 1;
+            }
+        }
+        n
+    };
+    if rows_moved > 0 {
+        persist(&state)?;
+        let _ = app.emit("workspaces:changed", ());
+    }
+    log_info(
+        "WORKSPACE",
+        &format!("tmux_rename_session: renamed on {host_key} (ws={workspace_id})"),
+    );
+    // Phase 81's server-side session-meta is keyed by name too. There is no
+    // rename verb there; re-set the label under the new name (the CLI
+    // lazy-prunes the orphaned old key on its next write). Fire-and-forget,
+    // same shape as `pane_set_title`.
+    if let (Some(handle), Some(label)) = (ssh_handle, label) {
+        let cmd = format!(
+            "\"$HOME/.ymux/bin/ymux-linux-x64\" session-meta set --session {} --label-hex {} 2>/dev/null || true",
+            shell_quote(&new_name),
+            hex_utf8(&label),
+        );
+        tauri::async_runtime::spawn(async move {
+            if let Err(e) = crate::updater::ssh_exec_simple(&handle, &cmd).await {
+                log_warn("SSH", &format!("session-meta: label write failed: {e}"));
+            }
+        });
+    }
+    Ok(())
 }
 
 /// Phase 12.B: Claude Code session metadata returned by
@@ -10390,66 +10726,33 @@ impl KillSessionOutcome {
     }
 }
 
-/// Phase 11.A: hard-kill the multiplexer session bound to this pane — tmux
-/// over SSH or WSL, zellij on a native Windows pane. Falls through to a plain
-/// disconnect for non-persistent panes so `ymux pane-disconnect --kill` is
-/// always meaningful regardless of which mode the pane was started in.
+/// The multiplexer session a kill should hit, resolved without holding any
+/// lock across an `.await` — russh's Handle is shared as Arc<> so this is
+/// cheap. Phase 80: WSL panes (Session::Local with a tmux name) kill their
+/// session via wsl.exe instead of an SSH exec channel.
 ///
-/// Free function rather than only a `#[tauri::command]` so the JSON-RPC
-/// handler can call the SAME code. It used to carry its own hand-rolled copy
-/// that matched only `Session::Ssh` — a zellij pane fell through it, no verb
-/// ran, and it still answered `killed: true`. Two implementations of "kill"
-/// is how that happened; there is now one.
-pub(crate) async fn kill_pane_session_inner(
-    state: &AppState,
-    pane_id: &str,
-) -> KillSessionOutcome {
-    let sid_opt = state.core.pane_sessions.lock().unwrap().get(pane_id).cloned();
-    let Some(sid) = sid_opt else {
-        return KillSessionOutcome::new("no_session", "none", None);
-    };
-    // Snapshot the kill target without holding the lock across the
-    // .await — russh's Handle is shared as Arc<> so this is cheap.
-    // Phase 80: WSL panes (Session::Local with a tmux name) kill their
-    // session via wsl.exe instead of an SSH exec channel.
-    enum KillTarget {
-        Ssh(Arc<client::Handle<SshClient>>, String),
-        Wsl(Option<String>, String),
-        // 2026-08-19: a native Windows pane's zellij session.
-        #[cfg(windows)]
-        Zellij(String),
-        /// A persistent LOCAL pane (no distro) off Windows - kill via the
-        /// local tmux binary.
-        #[cfg(not(windows))]
-        LocalUnix(String),
-        None,
-    }
-    let target = {
-        let sessions = state.core.sessions.lock().unwrap();
-        match sessions.get(&sid) {
-            Some(Session::Ssh(s)) => match &s.tmux_session {
-                Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
-                None => KillTarget::None,
-            },
-            // `Session::Local` covers BOTH a WSL pane and a native local pane,
-            // so the distro - not the variant - is what tells them apart.
-            // A native-local kill routed through the single `Some(name)` arm
-            // would become `wsl.exe -- tmux kill-session` against the DEFAULT
-            // distro. Split explicitly rather than relying on ordering.
-            Some(Session::Local(l)) => match (&l.tmux_session, &l.wsl_distro) {
-                (Some(name), Some(distro)) => {
-                    KillTarget::Wsl(Some(distro.clone()), name.clone())
-                }
-                #[cfg(windows)]
-                (Some(name), None) => KillTarget::Zellij(name.clone()),
-                #[cfg(not(windows))]
-                (Some(name), None) => KillTarget::LocalUnix(name.clone()),
-                (None, _) => KillTarget::None,
-            },
-            None => KillTarget::None,
-        }
-    };
-    let outcome = match target {
+/// Phase 90: lifted out of `kill_pane_session_inner` so the active-sessions
+/// overview can kill a session BY NAME (no pane attached to it) through the
+/// exact same verbs. Two implementations of "kill" is how the zellij arm
+/// once lied about success; there is still one.
+pub(crate) enum KillTarget {
+    Ssh(Arc<client::Handle<SshClient>>, String),
+    Wsl(Option<String>, String),
+    // 2026-08-19: a native Windows pane's zellij session.
+    #[cfg(windows)]
+    Zellij(String),
+    /// A persistent LOCAL pane (no distro) off Windows - kill via the
+    /// local tmux binary.
+    #[cfg(not(windows))]
+    LocalUnix(String),
+    None,
+}
+
+/// Run the kill verb for one target and report what happened. Pure
+/// multiplexer work: no pane bookkeeping, no owner release — the callers do
+/// that, because they know whether a pane was involved.
+pub(crate) async fn kill_target(target: KillTarget) -> KillSessionOutcome {
+    match target {
         #[cfg(not(windows))]
         KillTarget::LocalUnix(name) => {
             // Pure argv - tmux receives the name verbatim (Rule #3).
@@ -10641,7 +10944,57 @@ pub(crate) async fn kill_pane_session_inner(
             }
         }
         KillTarget::None => KillSessionOutcome::new("no_session", "none", None),
+    }
+}
+
+/// Phase 11.A: hard-kill the multiplexer session bound to this pane — tmux
+/// over SSH or WSL, zellij on a native Windows pane. Falls through to a plain
+/// disconnect for non-persistent panes so `ymux pane-disconnect --kill` is
+/// always meaningful regardless of which mode the pane was started in.
+///
+/// Free function rather than only a `#[tauri::command]` so the JSON-RPC
+/// handler can call the SAME code. It used to carry its own hand-rolled copy
+/// that matched only `Session::Ssh` — a zellij pane fell through it, no verb
+/// ran, and it still answered `killed: true`. Two implementations of "kill"
+/// is how that happened; there is now one.
+pub(crate) async fn kill_pane_session_inner(
+    state: &AppState,
+    pane_id: &str,
+) -> KillSessionOutcome {
+    let sid_opt = state.core.pane_sessions.lock().unwrap().get(pane_id).cloned();
+    let Some(sid) = sid_opt else {
+        return KillSessionOutcome::new("no_session", "none", None);
     };
+    // Snapshot the kill target without holding the lock across the
+    // .await — russh's Handle is shared as Arc<> so this is cheap.
+    // Phase 80: WSL panes (Session::Local with a tmux name) kill their
+    // session via wsl.exe instead of an SSH exec channel.
+    let target = {
+        let sessions = state.core.sessions.lock().unwrap();
+        match sessions.get(&sid) {
+            Some(Session::Ssh(s)) => match &s.tmux_session {
+                Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
+                None => KillTarget::None,
+            },
+            // `Session::Local` covers BOTH a WSL pane and a native local pane,
+            // so the distro - not the variant - is what tells them apart.
+            // A native-local kill routed through the single `Some(name)` arm
+            // would become `wsl.exe -- tmux kill-session` against the DEFAULT
+            // distro. Split explicitly rather than relying on ordering.
+            Some(Session::Local(l)) => match (&l.tmux_session, &l.wsl_distro) {
+                (Some(name), Some(distro)) => {
+                    KillTarget::Wsl(Some(distro.clone()), name.clone())
+                }
+                #[cfg(windows)]
+                (Some(name), None) => KillTarget::Zellij(name.clone()),
+                #[cfg(not(windows))]
+                (Some(name), None) => KillTarget::LocalUnix(name.clone()),
+                (None, _) => KillTarget::None,
+            },
+            None => KillTarget::None,
+        }
+    };
+    let outcome = kill_target(target).await;
     // Now close the shell + remove session bookkeeping. This re-uses the
     // existing pane_disconnect logic by removing from pane_sessions and
     // killing the underlying session.
@@ -11508,6 +11861,7 @@ pub fn run() {
             workspace_create_worktree,
             workspace_pin_project_folder,
             workspace_open_worktree,
+            workspace_open_session,
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
@@ -11534,6 +11888,8 @@ pub fn run() {
             pane_probe_tmux_sessions,
             pane_target_session_state,
             tmux_rename_session,
+            sessions_overview::sessions_overview_summarize,
+            sessions_overview::sessions_kill_by_name,
             tmux_labels_get,
             tmux_label_set,
             pane_set_title,
@@ -12514,6 +12870,70 @@ mod smart_connect_tests {
             build_smart_connect_script(ShellKind::Posix, "default", None, None, None),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod session_workspace_tests {
+    // Phase 90.B: where a session row lands in the tree.
+    use super::pick_session_parent;
+    use super::WorkspacesFile;
+
+    fn file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 1,
+              "workspaces": [
+                { "id": "srv", "name": "runner",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app" },
+                { "id": "app2", "name": "app2", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app2" },
+                { "id": "deep", "name": "deep", "parent_id": "srv", "is_project_root": true,
+                  "cwd": "/srv/app/packages/web" },
+                { "id": "wt", "name": "wt", "parent_id": "app", "cwd": "/srv/app-wt" },
+                { "id": "other", "name": "other-server", "is_project_root": true, "cwd": "/srv/app",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn no_cwd_lands_under_the_root() {
+        assert_eq!(pick_session_parent(&file(), "srv", None), "srv");
+        assert_eq!(pick_session_parent(&file(), "srv", Some("  ")), "srv");
+    }
+
+    #[test]
+    fn exact_folder_and_nested_path_both_match() {
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2")), "app2");
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2/src")), "app2");
+    }
+
+    #[test]
+    fn prefix_without_a_separator_boundary_is_not_inside() {
+        // /srv/app2x starts with /srv/app2 but is a sibling, not a child.
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app2x")), "srv");
+    }
+
+    #[test]
+    fn deepest_matching_folder_wins() {
+        assert_eq!(
+            pick_session_parent(&file(), "srv", Some("/srv/app/packages/web/src")),
+            "deep"
+        );
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app/packages")), "app");
+    }
+
+    #[test]
+    fn only_project_roots_under_this_root_are_candidates() {
+        // `wt` shares no boundary; `other` is a folder on ANOTHER server with
+        // the same path — neither may catch the row.
+        assert_eq!(pick_session_parent(&file(), "srv", Some("/srv/app-wt")), "srv");
+        assert_eq!(pick_session_parent(&file(), "other", Some("/srv/app/x")), "other");
     }
 }
 

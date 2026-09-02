@@ -3,6 +3,7 @@ vault: backend-core
 covers:
   - app/src-tauri/src/lib.rs
   - app/src-tauri/src/main.rs
+  - app/src-tauri/src/sessions_overview.rs
 ---
 
 # Backend core — `lib.rs`
@@ -24,7 +25,7 @@ Browser child Webview, its pop-out OS window (`close_popout_window` — otherwis
 window outlives the workspace), the browser session dir, the bootstrap verdict, and the
 reverse-tunnel state.
 
-**12,809 lines, and about 1,700 of them are `#[cfg(test)]` at the bottom.** It is the
+**13,966 lines, and about 1,700 of them are `#[cfg(test)]` at the bottom.** It is the
 "everything else" module: app state, the workspace data model and its persistence, the
 PTY and SSH spawn paths, the multiplexer (zellij / tmux) plumbing, and ~70 Tauri
 commands. `main.rs` is 6 lines — the Windows-subsystem flag and `app_lib::run()`. Never
@@ -233,6 +234,63 @@ govern it, both asserted in `tmux_list_parse_tests`:
 `project_path` is optional and **`None` means unscoped, which is load-bearing**: session
 restore and `pane_probe_tmux_sessions` share these paths and must see everything.
 
+`owner_cwd` (Phase 90) is a fourth field stamped in the same pass: the cwd recorded in
+`session-owners.json` at claim time, whichever workspace claimed it. It exists only so the
+active-sessions overview has something to group a zellij row under (zellij reports no live
+cwd). It is a snapshot that can go stale and it feeds **no** verdict — `owned` / `in_cwd` /
+`foreign` never read it, and the picker ignores it.
+
+## Active-sessions overview — `sessions_overview.rs` (Phase 90)
+
+674 lines. The sidebar's right-click **Active sessions…** dialog: every multiplexer
+session on the workspace's machine, grouped by directory, with a one-line agent summary
+and a status (`idle | working | waiting_input | error | unknown`) per row, and three row
+actions. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
+list command. The module owns what the picker never needed:
+
+- **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
+  each named session (240 chars per line) and run **one** `claude -p … --output-format json`
+  over all of them, **on the machine that holds the sessions**. Over SSH the capture loop and
+  the model call are a single remote pipeline (`build_ssh_summary_script`: `tmux capture-pane
+  -p -t "=$s:" -S -40 | cut … | bash -lc '<claude> -p …'`), so screen bytes never cross to
+  the desktop. macOS captures through `local_tmux_output` and Windows through
+  `zellij -s <name> action dump-screen` (`zellij_args_dump_screen`, argv), both framed in
+  memory and piped into the local `claude` on stdin (`run_local_claude`, the twin of
+  `claude_usage::run_local_usage_probe`; `resolve_claude_binary` grew a `claude.cmd`
+  fallback for npm installs on Windows). Legacy WSL workspaces get an `Err` and no summaries.
+  Sessions are **indexed, not named** in the prompt so the model never echoes a name back,
+  and the prompt is one line of ASCII with no `"` or `%` because a `.cmd` on Windows is
+  spawned through `cmd.exe /c`. `parse_summary_envelope` is lenient by design: a bad row is
+  dropped, a missing row is `unknown`, a body that is not JSON is `unknown` for everyone —
+  never an `Err`, because the list is still worth showing. **Rule #1:** a capture is PTY
+  content and the answer is derived from it; the log line carries counts, byte totals, the
+  envelope's `subtype` / `is_error` and a duration, nothing else.
+- **`sessions_kill_by_name(workspace_id, name)`** — a session one of our panes holds goes
+  through `kill_pane_session_inner` (PTY + maps torn down the tested way); anything else goes
+  straight to `kill_target` and releases the ownership claim on `killed | already_gone`.
+  `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
+  a pure move, so there is still one implementation of "kill".
+- **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
+  command beside `workspace_pin_project_folder` / `workspace_open_worktree`, same construction
+  (a CLONE of the root's connection, `single_terminal_layout`, no `sort_order`). It walks up
+  to the root first (the dialog may have been opened from a project-folder child; sessions
+  belong to the host), then is **idempotent on `Workspace.tmux_session`**: a row already opened
+  for that name anywhere under the root is activated, never duplicated. Placement is
+  `pick_session_parent`: the deepest `is_project_root` descendant whose `cwd` contains the
+  session cwd (`path_is_within`, boundary-aware, `session_workspace_tests`), else the root —
+  it never pins a folder on the user's behalf. The frontend then attaches the row's single
+  pane; the current screen is never touched. `tmux_rename_session` also moves
+  `tmux_session` on every row of the same host (`conn_same_host`) and re-persists.
+- **Rename is `tmux_rename_session` in lib.rs**, registered since 23.G and unused until now.
+  Phase 90 gave it `validate_tmux_rename_target` (ASCII letters, digits, `_`, `-`, ≤64 —
+  stricter than `session_name_char_is_safe`, because the 23.I Hebrew rename crash was never
+  root-caused), the local-tmux and WSL arms, `=`-pinned exact targets, and the migration of
+  everything keyed by the old name: live `Session.tmux_session` fields, `session-owners.json`
+  (`rename_session_owner`), `tmux-labels.json` (`rename_tmux_label`) and, over SSH, the
+  session-meta label re-set under the new name. **zellij is refused** — `docs/ZELLIJ.md` §1
+  keeps `action rename-session` unsent on purpose. This lifts the 2026-07-16 "NO tmux rename
+  anywhere" line for an explicit user action only; `pane_set_title` still never renames.
+
 ## Invariants
 
 - **Rule #7** — every config write is tmp + fsync + rename. No exceptions in this file.
@@ -267,6 +325,12 @@ restore and `pane_probe_tmux_sessions` share these paths and must see everything
   `ymux-tools/statuslines/hooks/turn-state.js`. Change one, change both.
 - `FEED_MAX_ITEMS` here is `#[allow(dead_code)]` documentation — `rpc_server.rs` has
   its own copy.
+- **tmux targets: `=name` is a SESSION target, `=name:` is a pane target.** `=` pins an
+  exact match (a bare name prefix-matches — `tax` hits `tax-contine`), and it works as-is
+  for `rename-session` / `kill-session`. `capture-pane` takes a pane target, and tmux 3.4
+  reads a bare `=name` there as a pane name: `can't find pane`. Phase 90 shipped with the
+  bare form and every capture came back empty until a live run on 2026-09-02 caught it —
+  `sessions_overview.rs` uses `=name:` and its test asserts the colon.
 
 ## Read the source when
 

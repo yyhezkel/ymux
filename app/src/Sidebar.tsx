@@ -11,6 +11,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFolder,
+  IconTerminal,
   IconRefresh,
   IconWarning,
 } from "./icons";
@@ -93,6 +94,7 @@ interface Props {
       | "edit"
       | "delete"
       | "disconnect"
+      | "sessions"
       | "addons"
       | "add_project_folder"
       | "check_git",
@@ -1037,10 +1039,23 @@ export function Sidebar(p: Props) {
             </span>
           }
         >
-          <span
-            class="ws-dot"
-            style={{ background: w.color || "#6b7682" }}
-          />
+          {/* Phase 90.B: a row opened FOR a multiplexer session wears a
+              terminal glyph instead of the colour dot; the raw session
+              name is the tooltip. Everything else about the row — click,
+              collapse, drag, delete — is the plain child-workspace path. */}
+          <Show
+            when={!w.tmux_session}
+            fallback={
+              <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
+                <IconTerminal size={13} />
+              </span>
+            }
+          >
+            <span
+              class="ws-dot"
+              style={{ background: w.color || "#6b7682" }}
+            />
+          </Show>
         </Show>
         <span class="ws-name">
           <Show when={w.emoji}>{w.emoji} </Show>
@@ -1152,6 +1167,12 @@ export function Sidebar(p: Props) {
             </button>
             <button onClick={() => p.onAction(w.id, "edit")}>
               {t("ws.context.edit")}
+            </button>
+            {/* Phase 90: every multiplexer session on this workspace's
+                machine, with an agent summary per row. Above Add-ons on
+                purpose — it is the thing you open several times a day. */}
+            <button onClick={() => p.onAction(w.id, "sessions")}>
+              {t("ws.context.sessions")}
             </button>
             <button onClick={() => p.onAction(w.id, "addons")}>
               {t("ws.context.addons")}

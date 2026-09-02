@@ -57,11 +57,19 @@ The only crate `app` cannot function without. Three files:
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
 
-## `ymux-types` (991) — pure persistence/wire types
+## `ymux-types` (1,019) — pure persistence/wire types
 
 `Connection` (`local | ssh`, plus the retired `wsl` variant that still deserializes),
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
 `BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`.
+
+**`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
+overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
+renamed by `tmux_rename_session`, elided when absent so old files round-trip byte-identical
+(the round-trip test lists it). It is what makes Open idempotent, what the sidebar draws
+the terminal glyph from, and the fallback that lets the row's first pane re-attach after a
+restart on a machine whose localStorage never saw it. `parent_id`'s comment now names three
+create paths, not two.
 
 **`Workspace.tabs_mode: bool`** is worth reading the comment on. It renders the
 workspace's panes as a tab strip instead of a split grid — and it is a **flag, not a

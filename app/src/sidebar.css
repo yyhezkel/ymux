@@ -842,3 +842,5 @@ body.ymux-dragging {
     opacity 120ms ease;
 }
 
+/* Phase 90.B: a session row's glyph (see .pf-icon for the folder one). */
+.ws-session-icon { display: inline-flex; align-items: center; color: var(--w-text-dim); flex-shrink: 0; }

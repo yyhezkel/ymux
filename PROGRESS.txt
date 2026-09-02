@@ -7320,6 +7320,54 @@ updater.rs ignores unknown fields (serde, all-optional), banner already works
 on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 
+2026-09-02 — Phase 90: "סשנים פעילים" — active-sessions overview per workspace
+Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
+"Active sessions…" entry above Add-ons → full-screen modal listing every
+tmux/zellij session on the workspace's machine, grouped by directory, with an
+agent summary + status per row and Open / Rename / Kill actions.
+Backend: NEW app/src-tauri/src/sessions_overview.rs (sessions_overview_summarize:
+capture-pane / dump-screen + ONE `claude -p --output-format json` on the host —
+over SSH as a single remote pipeline so screen bytes never reach the desktop;
+sessions_kill_by_name). lib.rs: TmuxSessionInfo.owner_cwd (grouping key for
+zellij rows), KillTarget + kill_target lifted out of kill_pane_session_inner
+(pure move), tmux_rename_session extended (ASCII whitelist, local-tmux + WSL
+arms, `=` exact targets, migration of owners / labels / live Session fields /
+session-meta label; zellij refused), rename_session_owner, rename_tmux_label,
+zellij_args_dump_screen. local_setup::resolve_claude_binary: claude.cmd fallback
+on Windows. claude_summary: resolve_claude_path / wrap_login / bash_squote now
+pub(crate). Frontend: NEW app/src/SessionsOverviewWindow.tsx; Sidebar action
+union + button; App.tsx sessionsWin + openSessionInTab / killSessionByName /
+renameSessionByName (newTab returns the pane id, killSession returns the
+outcome); types.ts owner_cwd + SessionSummary; i18n ×4 (35 keys); App.css.
+Docs: vault backend-core / frontend-shell / frontend-panes, ZELLIJ.md,
+DECISIONS (Decided: real rename back, ASCII-only). 11 unit tests in the new
+module. Result: compiles-untested (Rule #17) — CI decides; FOLLOWUPS P1 smoke.
+
+2026-09-02 — Phase 90.A: capture-pane target fix (=name → =name:)
+Live run on the runner (tmux 3.4): `capture-pane -t =name` answers "can't find
+pane" — a bare =name is a PANE target there; =name: (session:window) resolves.
+rename-session -t =name is fine (session target). Fixed in
+build_ssh_summary_script + capture_local_tmux, the test asserts the colon, vault
+Gotcha added. Found by running the feature's pipeline by hand on this machine
+before the CI builds were downloaded; without it every summary came back
+unknown. Builds re-dispatched (Windows NSIS + macOS dmg x64/arm64).
+
+2026-09-02 — Phase 90.B: "פתח" = the session on a screen of its own (a row in the tree)
+Yossi: Open must not split the current screen; add a row under the machine
+(under the project folder when the cwd is known) and open the session there.
+Backend: Workspace.tmux_session (ymux-types, elided when absent; binding
+hand-mirrored per fc816a8 precedent), workspace_open_session (idempotent on
+tmux_session; parent = pick_session_parent = deepest is_project_root whose cwd
+contains the session cwd, else root; clone of root connection +
+single_terminal_layout), tmux_rename_session migrates tmux_session on same-host
+rows (+ app: AppHandle). 5 unit tests (session_workspace_tests) + round-trip
+key list. Frontend: openSessionAsWorkspace replaces openSessionInTab
+(activate row, connect first pane only if not live); connectPane defaults
+tmuxSessionName/persistent to ws.tmux_session for the FIRST pane; restoreSessions
+same fallback; Sidebar terminal glyph for session rows; window onOpen(s).
+Docs: vault crates / backend-core / frontend-shell / frontend-panes, DECISIONS
+addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
+
 [2026-09-01] fix(feed): humanized stop/session-end feed cards (branch yos/context-switching-impl-b86b68, 705c706)
   - Bug (user screenshot): feed cards titled 'agent: stop' with raw payload JSON as body (incl. last_assistant_message), SessionEnd cards showing bare reason 'other'.
   - Root cause: CLI derive_hook_title has no 'stop' arm; derive_hook_summary falls back to dumping payload JSON. Cards bypassed humanize_notification (toasts-only until now).
@@ -7361,3 +7409,11 @@ RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
   - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
 
 [2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
+
+2026-09-02 — Phase 90.C: summaries are pulled, not pushed + merge of main + renumber 87→90
+Merged origin/main (BRIEF, PR #40: Workspace.intent, Queue panel; 17-file overlap,
+conflicts only in DECISIONS.md and the vault lock). Yossi's requirement from the PR #41
+comment: no auto-summarize; per-row + per-folder tick, "Summarize selected (N)", spinner
+only on rows in flight, selection per open (per-host persistence → BACKLOG P3). Phase
+renumbered 87→90 on every line this branch added (87 = recordable shortcuts, 89 = highest
+on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested — CI.
