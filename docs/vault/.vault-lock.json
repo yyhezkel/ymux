@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "f4fb309fa5efadb27c76d1a7c3080650390036d30b70ec42dba0dcee007650e3",
+    "app/src-tauri/src/lib.rs": "3159a2965f5cf35453cae3a7d3e010206cb797baab5218068148c752a9824b36",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
@@ -24,7 +24,7 @@
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
     "app/src-tauri/src/workspace_browser.rs": "cfdf8bb2730919ecff8ef96df415c443a27e0f3a712d8fd0e7c87a5dd6ad4300",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",
-    "app/src-tauri/src/worktrees.rs": "09789c58a1fa0315c517821a17f8d633214a16791035567c358b52302f16def3"
+    "app/src-tauri/src/worktrees.rs": "da33ba4543a21f77574f3f1293e85651a80edbb75e64ad8685b84cef49830cbc"
   },
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
@@ -34,7 +34,7 @@
     "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd"
   },
   "backend-rpc": {
-    "app/src-tauri/mcp/Cargo.toml": "9cd082f90e7550af6ba24259f13e0c459569f4e463df88b10fdacdd056c9ecc3",
+    "app/src-tauri/mcp/Cargo.toml": "5837dfebec492396ba2177a733127fa3edb014effd634ec973800b5eb0ba1b41",
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
     "app/src-tauri/src/brief.rs": "8beff6a1d44d38abaca9ffcc05c9a4bb02b5fdea94872cd5161ce0eba858bb45",
     "app/src-tauri/src/rpc_server.rs": "1bb7f16de5f8d5ad3089797ca6658602edb5fc30da2927ebed739aed14f3d5c6"
@@ -54,13 +54,13 @@
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
   },
   "build-glue": {
-    "app/package.json": "a27233640edb863a047a5c4a030403bab5822a33951793f21d68aeb0cb48e574",
+    "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
     "app/scripts/build-linux-cli.ps1": "f315ca76cc2fbc98016ab80b7d1ee8bb9f96a64c9b21e7703e0f62049b31d490",
     "app/scripts/build-release.ps1": "94f393bbeb1fca76bf581f4722700de94a9a9c441a7343788b6dddb3b44b4964",
     "app/scripts/reset-local-setup.ps1": "347e044d783487badb372a67a6faa3043ba676b0bc01857cac6090f9ff59ca09",
-    "app/src-tauri/Cargo.toml": "11e527893c6da44acb30bae9f92cb27dc7c810ceaf39218aca60cdab69b7d7dd",
+    "app/src-tauri/Cargo.toml": "09a383f016f4086610db02812a95c5691eb22827045187bb66316652ce2b34cd",
     "app/src-tauri/build.rs": "2737f787c88687e8a8b301e1873bef0305c55d8f038f907c61add76b30e4e999",
-    "app/src-tauri/tauri.conf.json": "f5c387bb51b3a7246b0b9f5f0b3ca9a6c74758829e6af8c590633faf00e14438",
+    "app/src-tauri/tauri.conf.json": "2e172c601a00a353dc71543cbc9dd30255d9c0f2e11078f34869abe84208fb33",
     "app/vite.config.ts": "8390a35f6f21304b51c20dc42f153bb50e4e37ca8bf0d4ebfcf8fd954ff10c8f",
     "scripts/vault-check.mjs": "10ee591eafe5d18eed4b9d7b083541ceddaef2616cfcb45a52011fa54058a2ce",
     "sdk-gen/ci-check.mjs": "b72c0705d9b4a8838c1675afa82c33ee80055e1672f879631a6c2e9e15b783f9",
@@ -70,7 +70,7 @@
     "sdk-gen/package.json": "40d633ba827d1a8c47ba9790623b30fdebaf5943ace587392160caa668f2abb3"
   },
   "cli": {
-    "app/src-tauri/cli/Cargo.toml": "8d20ec0abf74bd5e3e75603d832e3c7e8dd22f1b726d035acb8eea063a6041c4",
+    "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
     "app/src-tauri/cli/src/hooks.rs": "ec4664849076d11409b785c14671ac7dff0a52ab32ae1eead65e8f9df0e3ec69",
     "app/src-tauri/cli/src/main.rs": "c246809c4a4c77ec017dd1a59374c5b9e1615dbb3f51a40902e4a3c27cfd62cc",
@@ -96,7 +96,7 @@
     "app/src/DirPicker.tsx": "7e21eaff27eb606f446e74d88b2919e5482a9efd74a066285556d04f802acbaa",
     "app/src/LocalSetupFlow.tsx": "2dc1272555007b214dad6d690c3ccb2d13f06368c23e2c19e0315b52dd105d27",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
-    "app/src/ProjectFolderModal.tsx": "f307bbba93f3b7d64ccc3018cfe44aeec93e040e61ec5a67a47b7a4ac08339cd",
+    "app/src/ProjectFolderModal.tsx": "017a431e50b533ba339c627ba130fdc1e17566e4232acc00c35f97664479f36c",
     "app/src/ProvisionNewServerFlow.tsx": "54ec1b424c9eaf05c586840e2a4345eb9f7d696ffc19dab09d72733e4ad98c5f",
     "app/src/QuickLocalCreateFlow.tsx": "c11b1e710adeb92ddbe5ba14c326686117a0265f2cf9a0fc6b30228e96155db3",
     "app/src/QuickSshCreateFlow.tsx": "8e202a7cfdfbefd48bda445ca8e46bf42ad3eb5587cc9cd47f46c6e69fa7c929",
@@ -167,7 +167,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "a829c65877d1dfd1b720527be59310f8a175b430ad862d69b4f08463d4b6683f",
+    "app/src/App.tsx": "cf5890ff177e339424b23fcd00f75c947f3280c7c7de7ad840f27c9dcf3de99f",
     "app/src/BriefingCard.tsx": "6b94ea7667f66046db629bbbb0248a0891ca81d90678f9170bc6d73d12c2d9f8",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",

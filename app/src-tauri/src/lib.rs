@@ -5954,13 +5954,17 @@ fn ancestors_of(file: &WorkspacesFile, id: &str) -> Vec<String> {
     out
 }
 
-/// Pin a git repo as a child workspace of `parent_workspace_id`.
+/// Pin a folder as a child workspace of `parent_workspace_id`.
 ///
-/// The caller validates the path with `git_probe_worktrees` first, so a
-/// directory that is not a repo never reaches here — this command only
-/// persists. The child inherits a CLONE of the parent's connection: the
-/// folder must keep working when the parent is disconnected, and the SSH
-/// handle is resolved per call by user@host:port anyway.
+/// The caller validates the path with `worktrees::project_folder_probe`
+/// first, so a directory that does not exist never reaches here — this
+/// command only persists. `is_project_root` is the probe's answer: true
+/// pins a git repo (worktrees listed beneath it), false pins a plain
+/// folder in the demoted state, with the sidebar's "Check for a git
+/// repository" as the promotion path after a later `git init`. The
+/// child inherits a CLONE of the parent's connection: the folder must
+/// keep working when the parent is disconnected, and the SSH handle is
+/// resolved per call by user@host:port anyway.
 #[tauri::command]
 fn workspace_pin_project_folder(
     state: State<'_, AppState>,
@@ -5968,6 +5972,7 @@ fn workspace_pin_project_folder(
     parent_workspace_id: String,
     path: String,
     name: Option<String>,
+    is_project_root: bool,
 ) -> Result<WorkspacesFile, String> {
     let path = path.trim().to_string();
     if path.is_empty() {
@@ -6021,7 +6026,7 @@ fn workspace_pin_project_folder(
             connection: Some(effective.clone()),
             layout: Some(single_terminal_layout(effective)),
             parent_id: Some(parent_workspace_id.clone()),
-            is_project_root: true,
+            is_project_root,
             ..Default::default()
         });
         file.active_workspace_id = Some(new_id.clone());
@@ -6030,7 +6035,9 @@ fn workspace_pin_project_folder(
     let _ = app.emit("workspaces:changed", ());
     log_info(
         "WORKSPACE",
-        &format!("pinned a project folder under ws={parent_workspace_id} as ws={new_id}"),
+        &format!(
+            "pinned a project folder under ws={parent_workspace_id} as ws={new_id} (repo={is_project_root})"
+        ),
     );
     Ok(state.workspaces.lock().unwrap().clone())
 }
@@ -11869,6 +11876,7 @@ pub fn run() {
             pane_agent_states,
             pane_briefs,
             worktrees::git_probe_worktrees,
+            worktrees::project_folder_probe,
             worktrees::workspace_list_worktrees,
             worktrees::workspace_create_project_worktree,
             workspace_split,
