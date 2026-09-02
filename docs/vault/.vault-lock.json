@@ -87,7 +87,7 @@
     "app/src-tauri/crates/ymux-protocol/src/lib.rs": "48c14d3ed87410097ffb2d28fdf6d301b1ccf8cd230018bda88e90e8329574c8",
     "app/src-tauri/crates/ymux-ssh/src/lib.rs": "b8f539507ac1f2be9f6bd70dfa5f49eddd2427a7dc47d81851323426b78c3d9e",
     "app/src-tauri/crates/ymux-tunnel/src/lib.rs": "c7aa3cc0e70fe07057d392d549702ab1241862405415d4b94804eeebab8249db",
-    "app/src-tauri/crates/ymux-types/src/lib.rs": "cf2680a4cb33d7aeb9a65b67c4e26ed456690f45fced2fafc52fdea1329f76bc"
+    "app/src-tauri/crates/ymux-types/src/lib.rs": "1e1563422cad5fa14aa3c51a70b6772b34085e99ffb446ae70dc948868012804"
   },
   "frontend-flows": {
     "app/src/ConfirmDeleteWorkspace.tsx": "d4d54bffd5f35d9f02923eae186d6dc544c0b6dfacd6fc2f46a8f7862abb407f",
@@ -167,7 +167,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "2bfe6dacf8d390991c13199d12b9db55d76bb583b9942e411d06dd66f785a786",
+    "app/src/App.tsx": "a829c65877d1dfd1b720527be59310f8a175b430ad862d69b4f08463d4b6683f",
     "app/src/BriefingCard.tsx": "6b94ea7667f66046db629bbbb0248a0891ca81d90678f9170bc6d73d12c2d9f8",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",

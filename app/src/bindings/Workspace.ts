@@ -3,8 +3,4 @@ import type { Connection } from "./Connection";
 import type { EnvVar } from "./EnvVar";
 import type { LayoutNode } from "./LayoutNode";
 
-<<<<<<< HEAD
-export type Workspace = { id: string, name: string, color: string | null, emoji: string | null, cwd: string | null, connection: Connection | null, layout: LayoutNode | null, setup_command: string | null, teardown_command: string | null, env: Array<EnvVar>, auto_port_forward: boolean, last_active_at: bigint, git_worktree: string | null, claude_separate_account: boolean, group_id: string | null, sort_order: number | null, parent_id: string | null, is_project_root: boolean, is_collapsed: boolean, tabs_mode: boolean, tmux_session: string | null, };
-=======
-export type Workspace = { id: string, name: string, color: string | null, emoji: string | null, cwd: string | null, connection: Connection | null, layout: LayoutNode | null, setup_command: string | null, teardown_command: string | null, env: Array<EnvVar>, auto_port_forward: boolean, last_active_at: bigint, git_worktree: string | null, claude_separate_account: boolean, group_id: string | null, sort_order: number | null, parent_id: string | null, is_project_root: boolean, is_collapsed: boolean, tabs_mode: boolean, intent: string | null, };
->>>>>>> origin/main
+export type Workspace = { id: string, name: string, color: string | null, emoji: string | null, cwd: string | null, connection: Connection | null, layout: LayoutNode | null, setup_command: string | null, teardown_command: string | null, env: Array<EnvVar>, auto_port_forward: boolean, last_active_at: bigint, git_worktree: string | null, claude_separate_account: boolean, group_id: string | null, sort_order: number | null, parent_id: string | null, is_project_root: boolean, is_collapsed: boolean, tabs_mode: boolean, tmux_session: string | null, intent: string | null, };

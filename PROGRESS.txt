@@ -7320,7 +7320,6 @@ updater.rs ignores unknown fields (serde, all-optional), banner already works
 on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 
-<<<<<<< HEAD
 2026-09-02 — Phase 90: "סשנים פעילים" — active-sessions overview per workspace
 Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
 "Active sessions…" entry above Add-ons → full-screen modal listing every
@@ -7368,7 +7367,7 @@ tmuxSessionName/persistent to ws.tmux_session for the FIRST pane; restoreSession
 same fallback; Sidebar terminal glyph for session rows; window onOpen(s).
 Docs: vault crates / backend-core / frontend-shell / frontend-panes, DECISIONS
 addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
-=======
+
 [2026-09-01] fix(feed): humanized stop/session-end feed cards (branch yos/context-switching-impl-b86b68, 705c706)
   - Bug (user screenshot): feed cards titled 'agent: stop' with raw payload JSON as body (incl. last_assistant_message), SessionEnd cards showing bare reason 'other'.
   - Root cause: CLI derive_hook_title has no 'stop' arm; derive_hook_summary falls back to dumping payload JSON. Cards bypassed humanize_notification (toasts-only until now).
@@ -7410,7 +7409,6 @@ addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
   - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
 
 [2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
->>>>>>> origin/main
 
 2026-09-02 — Phase 90.C: summaries are pulled, not pushed + merge of main + renumber 87→90
 Merged origin/main (BRIEF, PR #40: Workspace.intent, Queue panel; 17-file overlap,

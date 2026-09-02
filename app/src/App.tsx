@@ -4711,7 +4711,6 @@ function App() {
         onClose={() => setAddonsWin(null)}
       />
 
-<<<<<<< HEAD
       {/* Phase 90: per-workspace active-sessions overview (from right-click). */}
       <SessionsOverviewWindow
         open={!!sessionsWin()}
@@ -4739,7 +4738,6 @@ function App() {
           return id ? renameSessionByName(id, oldName, newName) : Promise.resolve();
         }}
       />
-=======
       {/* BRIEF: the workspace-entry Briefing card. `keyed` so each trigger
           rebuilds the content fresh (intent draft included) instead of
           resurrecting the previous card. In anyModalOpen(), so the native
@@ -4781,7 +4779,6 @@ function App() {
           );
         }}
       </Show>
->>>>>>> origin/main
 
       {/* Phase 32.B: SSH key offer. Self-contained — listens for the
           `ssh-key-offer` event on its own, no props needed. */}

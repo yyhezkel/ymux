@@ -406,7 +406,6 @@ pub struct Workspace {
     // workspaces.json could not render it at all.
     #[serde(default, skip_serializing_if = "is_false")]
     pub tabs_mode: bool,
-<<<<<<< HEAD
     // Phase 90.B: the multiplexer session this workspace was opened FOR by
     // the active-sessions overview ("Open" = a row of its own in the tree).
     // Written only by `workspace_open_session`, renamed by
@@ -418,7 +417,6 @@ pub struct Workspace {
     // workspaces.json round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tmux_session: Option<String>,
-=======
     // BRIEF: the user's one-line session goal ("what I want to do here"),
     // shown on the Briefing card and editable inline there. User content,
     // so it lives in workspaces.json (survives machine changes, rides the
@@ -426,7 +424,6 @@ pub struct Workspace {
     // untouched file round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
->>>>>>> origin/main
 }
 
 /// `skip_serializing_if` for bools. Plain `#[serde(default)]` still
@@ -864,11 +861,7 @@ mod tests {
         });
         let w: Workspace = serde_json::from_value(raw.clone()).unwrap();
         let back = serde_json::to_value(&w).unwrap();
-<<<<<<< HEAD
-        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode", "tmux_session"] {
-=======
-        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode", "intent"] {
->>>>>>> origin/main
+        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode", "tmux_session", "intent"] {
             assert!(back.get(key).is_none(), "{key} must be elided, got {back}");
         }
         assert_eq!(raw, back, "an untouched workspace must round-trip byte-identical");
