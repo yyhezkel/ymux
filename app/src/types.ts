@@ -117,14 +117,14 @@ export interface TmuxSessionInfo {
    *  `owned || in_cwd`. "This folder" is exactly the complement of this field,
    *  so the badge cannot show up there and needs no scope conditional. */
   foreign?: ForeignScope;
-  /** Phase 87: the cwd recorded in `session-owners.json` when ymux claimed
+  /** Phase 90: the cwd recorded in `session-owners.json` when ymux claimed
    *  this session, whichever workspace did. A grouping key for the
    *  active-sessions overview (zellij rows have no live `cwd`); a claim-time
    *  snapshot, so it can be stale. Feeds no scope verdict. */
   owner_cwd?: string;
 }
 
-/** Phase 87: one row of `sessions_overview_summarize`. Mirrors
+/** Phase 90: one row of `sessions_overview_summarize`. Mirrors
  *  `SessionSummary` in sessions_overview.rs. `status` is the model's read of
  *  the screen; `unknown` when it said nothing usable. */
 export interface SessionSummary {

@@ -1,4 +1,4 @@
-//! Phase 87 — the active-sessions overview ("סשנים פעילים").
+//! Phase 90 — the active-sessions overview ("סשנים פעילים").
 //!
 //! One workspace, every multiplexer session on its machine, each with a
 //! one-line agent summary and a status read off the screen. The LIST is the
@@ -15,7 +15,7 @@
 //! - `sessions_kill_by_name` — kill a session that no pane is attached to,
 //!   through the same `kill_target` verbs the pane-bound kill uses.
 //!
-//! Rename is `tmux_rename_session` in lib.rs, which Phase 87 extended.
+//! Rename is `tmux_rename_session` in lib.rs, which Phase 90 extended.
 //!
 //! Rule #1 is the constraint that shaped every log line here: a capture IS
 //! PTY content and the model's answer is derived from it. Nothing below logs

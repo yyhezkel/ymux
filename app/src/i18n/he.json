@@ -1330,5 +1330,10 @@
   "sessions.renameInvalid": "רק אותיות לטיניות, ספרות, '_' ו-'-' (עד 64). לשם בעברית השתמש בכותרת הפאנל.",
   "sessions.renameFailed": "שינוי השם נכשל: {error}",
   "sessions.renamePlaceholder": "new-name",
-  "sessions.openFailed": "לא ניתן לפתוח את הסשן: {error}"
+  "sessions.openFailed": "לא ניתן לפתוח את הסשן: {error}",
+  "sessions.selectHint": "סמן את הסשנים שאתה רוצה לסכם, ואז לחץ \"סכם נבחרים\".",
+  "sessions.selectAll": "בחר הכל",
+  "sessions.selectNone": "נקה בחירה",
+  "sessions.selectGroup": "בחר את כל הסשנים בתיקייה הזו",
+  "sessions.summarizeSelected": "סכם נבחרים ({n})"
 }

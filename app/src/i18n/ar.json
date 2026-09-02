@@ -1330,5 +1330,10 @@
   "sessions.renameInvalid": "أحرف لاتينية وأرقام و'_' و'-' فقط (بحد أقصى 64). استخدم عنوان اللوحة لاسم غير لاتيني.",
   "sessions.renameFailed": "فشلت إعادة التسمية: {error}",
   "sessions.renamePlaceholder": "new-name",
-  "sessions.openFailed": "تعذّر فتح الجلسة: {error}"
+  "sessions.openFailed": "تعذّر فتح الجلسة: {error}",
+  "sessions.selectHint": "حدّد الجلسات التي تريد تلخيصها ثم اضغط \"تلخيص المحدد\".",
+  "sessions.selectAll": "تحديد الكل",
+  "sessions.selectNone": "إلغاء التحديد",
+  "sessions.selectGroup": "تحديد كل الجلسات في هذا المجلد",
+  "sessions.summarizeSelected": "تلخيص المحدد ({n})"
 }

@@ -164,7 +164,7 @@ back) surfaced as the user-facing error message.
   drops the `output()` future, and an orphaned `install.ps1` kept
   `~\.claude\downloads\claude-<ver>.exe` locked, so every retry of InstallClaudeCode
   failed with "being used by another process". Same reasoning as `claude_usage.rs`.
-- `resolve_claude_binary` (Phase 87) also tries `claude.cmd` on Windows: `which` only
+- `resolve_claude_binary` (Phase 90) also tries `claude.cmd` on Windows: `which` only
   appends PATHEXT to the name it is handed, so `which("claude.exe")` cannot see an
   npm-global install, which is a `.cmd` shim. `probe_tool` had always known both
   spellings; the one-shot `claude -p` callers (`claude_usage`, `sessions_overview`)

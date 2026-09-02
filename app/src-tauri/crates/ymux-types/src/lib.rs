@@ -407,7 +407,7 @@ pub struct Workspace {
     #[serde(default, skip_serializing_if = "is_false")]
     pub tabs_mode: bool,
 <<<<<<< HEAD
-    // Phase 87.B: the multiplexer session this workspace was opened FOR by
+    // Phase 90.B: the multiplexer session this workspace was opened FOR by
     // the active-sessions overview ("Open" = a row of its own in the tree).
     // Written only by `workspace_open_session`, renamed by
     // `tmux_rename_session`. It is what makes Open idempotent (a second

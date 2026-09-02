@@ -129,17 +129,17 @@ notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 
 The workspace right-click menu is a fixed-position `.ws-menu` whose items all funnel
 through one `onAction(id, action)` prop with a closed string union — rename, edit,
-**sessions** (Phase 87, above add-ons on purpose: it is opened several times a day),
+**sessions** (Phase 90, above add-ons on purpose: it is opened several times a day),
 addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item means
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
 
-Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 87.B) → a
+Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
 terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
 otherwise a plain child — click, collapse, drag, delete all take the same path.
 
-**Phase 87 — the active-sessions overview's three row actions live in App, not in the
-window**, because each needs App-level state. `openSessionAsWorkspace` (87.B) closes the
+**Phase 90 — the active-sessions overview's three row actions live in App, not in the
+window**, because each needs App-level state. `openSessionAsWorkspace` (90.B) closes the
 dialog and calls `workspace_open_session` — the session gets a **persisted child workspace
 row of its own** under the machine or its project folder; the current screen is never
 split or tabbed — then activates the row, and only if its single pane is not already live

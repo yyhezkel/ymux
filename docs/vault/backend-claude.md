@@ -27,7 +27,7 @@ Two entry points:
 - **Manual** — Ctrl+Alt+B, the Summarize button in Settings → Claude, or the
   `claude_summarize` Tauri command.
 
-Three of its helpers are `pub(crate)` since Phase 87 because `sessions_overview.rs`
+Three of its helpers are `pub(crate)` since Phase 90 because `sessions_overview.rs`
 builds its remote `claude -p` pipeline from the same parts: `resolve_claude_path`
 (the per-workspace `claude` path, cached in `AppState.claude_paths` under `<ws>:ssh`),
 `wrap_login` (`bash -lc '…'`, so an nvm/fnm/npm-global `claude` is on PATH) and

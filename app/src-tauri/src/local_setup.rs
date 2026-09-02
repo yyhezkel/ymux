@@ -908,7 +908,7 @@ pub(crate) fn resolve_claude_binary() -> Option<PathBuf> {
     let name = if cfg!(windows) { "claude.exe" } else { "claude" };
     crate::local_wizard::which(name)
         .or_else(|| canonical_claude().into_iter().find(|p| p.is_file()))
-        // Phase 87: an npm-global install on Windows is `claude.cmd`, which
+        // Phase 90: an npm-global install on Windows is `claude.cmd`, which
         // `which("claude.exe")` cannot see (it only appends PATHEXT to the
         // name it is given). `probe_tool` already knew both spellings; the
         // one-shot `claude -p` callers resolve through here and did not.

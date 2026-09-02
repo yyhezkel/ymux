@@ -7321,7 +7321,7 @@ on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 
 <<<<<<< HEAD
-2026-09-02 — Phase 87: "סשנים פעילים" — active-sessions overview per workspace
+2026-09-02 — Phase 90: "סשנים פעילים" — active-sessions overview per workspace
 Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
 "Active sessions…" entry above Add-ons → full-screen modal listing every
 tmux/zellij session on the workspace's machine, grouped by directory, with an
@@ -7344,7 +7344,7 @@ Docs: vault backend-core / frontend-shell / frontend-panes, ZELLIJ.md,
 DECISIONS (Decided: real rename back, ASCII-only). 11 unit tests in the new
 module. Result: compiles-untested (Rule #17) — CI decides; FOLLOWUPS P1 smoke.
 
-2026-09-02 — Phase 87.A: capture-pane target fix (=name → =name:)
+2026-09-02 — Phase 90.A: capture-pane target fix (=name → =name:)
 Live run on the runner (tmux 3.4): `capture-pane -t =name` answers "can't find
 pane" — a bare =name is a PANE target there; =name: (session:window) resolves.
 rename-session -t =name is fine (session target). Fixed in
@@ -7353,7 +7353,7 @@ Gotcha added. Found by running the feature's pipeline by hand on this machine
 before the CI builds were downloaded; without it every summary came back
 unknown. Builds re-dispatched (Windows NSIS + macOS dmg x64/arm64).
 
-2026-09-02 — Phase 87.B: "פתח" = the session on a screen of its own (a row in the tree)
+2026-09-02 — Phase 90.B: "פתח" = the session on a screen of its own (a row in the tree)
 Yossi: Open must not split the current screen; add a row under the machine
 (under the project folder when the cwd is known) and open the session there.
 Backend: Workspace.tmux_session (ymux-types, elided when absent; binding
@@ -7411,3 +7411,11 @@ addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
 
 [2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
 >>>>>>> origin/main
+
+2026-09-02 — Phase 90.C: summaries are pulled, not pushed + merge of main + renumber 87→90
+Merged origin/main (BRIEF, PR #40: Workspace.intent, Queue panel; 17-file overlap,
+conflicts only in DECISIONS.md and the vault lock). Yossi's requirement from the PR #41
+comment: no auto-summarize; per-row + per-folder tick, "Summarize selected (N)", spinner
+only on rows in flight, selection per open (per-host persistence → BACKLOG P3). Phase
+renumbered 87→90 on every line this branch added (87 = recordable shortcuts, 89 = highest
+on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested — CI.

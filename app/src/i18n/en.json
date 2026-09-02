@@ -1330,5 +1330,10 @@
   "sessions.renameInvalid": "ASCII letters, digits, '_' and '-' only (max 64). Use the pane title for a Hebrew name.",
   "sessions.renameFailed": "Rename failed: {error}",
   "sessions.renamePlaceholder": "new-name",
-  "sessions.openFailed": "Could not open the session: {error}"
+  "sessions.openFailed": "Could not open the session: {error}",
+  "sessions.selectHint": "Tick the sessions you want summarized, then press Summarize selected.",
+  "sessions.selectAll": "Select all",
+  "sessions.selectNone": "Clear selection",
+  "sessions.selectGroup": "Select every session in this folder",
+  "sessions.summarizeSelected": "Summarize selected ({n})"
 }

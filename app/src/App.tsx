@@ -420,7 +420,7 @@ function App() {
   // Monitor's open/drawer/float state now lives in the unified `panels`
   // registry (see panels.ts) under the "monitor" id.
   const [addonsWin, setAddonsWin] = createSignal<{ id: string; name: string } | null>(null);
-  // Phase 87: the active-sessions overview, per workspace (from right-click).
+  // Phase 90: the active-sessions overview, per workspace (from right-click).
   const [sessionsWin, setSessionsWin] = createSignal<{ id: string; name: string } | null>(null);
   // Project folders: the pin dialog and the new-worktree dialog share
   // one modal, discriminated by `kind`.
@@ -1862,7 +1862,7 @@ function App() {
   // pane_id, so diff the pane sets instead of changing a signature that
   // half a dozen call sites depend on.
   //
-  // Phase 87: returns the new pane id (or null) so the active-sessions
+  // Phase 90: returns the new pane id (or null) so the active-sessions
   // overview can attach it to a session; the strip's own callers ignore it.
   const newTab = async (): Promise<string | null> => {
     const ws = activeWs();
@@ -2110,7 +2110,7 @@ function App() {
     // signal a hook may have already delivered.
     if (opts.mode === "claude") ti.setTuiSignal(true);
     else if (!opts.restoring) ti.setTuiSignal(null);
-    // Phase 87.B: a session row (`Workspace.tmux_session`) exists FOR one
+    // Phase 90.B: a session row (`Workspace.tmux_session`) exists FOR one
     // session, and activation never auto-connects panes — so a plain
     // [Connect] on its first pane must attach to that session rather than
     // spawn a pane-derived one. First pane only: a pane split off it is a
@@ -2361,12 +2361,12 @@ function App() {
     return out;
   };
 
-  // Phase 87: the active-sessions overview's three row actions. They live
+  // Phase 90: the active-sessions overview's three row actions. They live
   // here rather than in the window because each one needs App-level state:
   // the pane tree (open), the pane→session map (kill / rename bookkeeping)
   // and the restore hints.
   //
-  // Open (87.B) = the session on a screen of its own: a persisted child
+  // Open (90.B) = the session on a screen of its own: a persisted child
   // workspace row under the machine — or under the pinned project folder
   // whose directory contains the session's — whose single pane attaches to
   // the session. The CURRENT screen is not touched. `workspace_open_session`
@@ -2568,7 +2568,7 @@ function App() {
         skippedLive++; // already live
         continue;
       }
-      // Phase 87.B: a session row carries its session name in the file, so a
+      // Phase 90.B: a session row carries its session name in the file, so a
       // machine whose localStorage never saw this pane can still come back.
       const tmux =
         getPaneSession(paneId) ??
@@ -4712,7 +4712,7 @@ function App() {
       />
 
 <<<<<<< HEAD
-      {/* Phase 87: per-workspace active-sessions overview (from right-click). */}
+      {/* Phase 90: per-workspace active-sessions overview (from right-click). */}
       <SessionsOverviewWindow
         open={!!sessionsWin()}
         workspaceId={sessionsWin()?.id}

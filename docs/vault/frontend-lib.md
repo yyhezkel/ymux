@@ -156,7 +156,7 @@ are what components use to reason about a pane.
 **hand-written mirrors** of structs that live in `lib.rs` rather than `ymux-types`, so
 ts-rs never sees them and nothing regenerates them for you. A field added on the Rust
 side is silently missing here until someone types it — update both in the same commit.
-Phase 87 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cwd from
+Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cwd from
 `session-owners.json`, a grouping key only) and `SessionSummary`, the row shape of
 `sessions_overview_summarize` (`status` is a closed union ending in `unknown`, which is
 what the backend emits for anything the model did not say cleanly).

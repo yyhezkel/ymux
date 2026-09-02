@@ -3146,7 +3146,7 @@ fn zellij_args_write_chars(session: &str, chars: &str) -> Vec<String> {
     ]
 }
 
-/// Phase 87: the viewport of a named session, on stdout (docs/ZELLIJ.md §4).
+/// Phase 90: the viewport of a named session, on stdout (docs/ZELLIJ.md §4).
 /// Same root-option targeting as `zellij_args_write_chars`. No `--full`: the
 /// active-sessions overview wants what is on screen now, not the scrollback,
 /// and no `--ansi`: the text goes to a model, not a terminal.
@@ -6109,7 +6109,7 @@ fn workspace_open_worktree(
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
-/// Phase 87.B: where a session row goes in the tree.
+/// Phase 90.B: where a session row goes in the tree.
 ///
 /// The deepest pinned project folder under `root_id` whose `cwd` equals or
 /// contains `session_cwd` — `path_is_within` insists on a separator
@@ -6131,7 +6131,7 @@ fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option
         .unwrap_or_else(|| root_id.to_string())
 }
 
-/// Phase 87.B: open a multiplexer session on a screen of its own — a
+/// Phase 90.B: open a multiplexer session on a screen of its own — a
 /// persisted child workspace row under the machine (or under the pinned
 /// project folder whose directory contains the session's), whose single
 /// pane the frontend then attaches to the session.
@@ -8854,7 +8854,7 @@ pub(crate) struct TmuxSessionInfo {
     /// by construction and the frontend needs no scope conditional.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreign: Option<ForeignScope>,
-    /// Phase 87: the cwd recorded in `session-owners.json` when ymux claimed
+    /// Phase 90: the cwd recorded in `session-owners.json` when ymux claimed
     /// this session, regardless of WHICH workspace claimed it. Exists for the
     /// active-sessions overview, which groups rows by directory and would
     /// otherwise have nothing to group a zellij session under (no live cwd).
@@ -9690,7 +9690,7 @@ fn set_tmux_label_internal(workspace_id: &str, session_name: &str, label: &str) 
     }
 }
 
-/// Phase 87: a real `tmux rename-session` moved the session; move its local
+/// Phase 90: a real `tmux rename-session` moved the session; move its local
 /// label with it so the picker does not drop the user's title on the floor.
 fn rename_tmux_label(workspace_id: &str, old_name: &str, new_name: &str) -> Option<String> {
     let mut file = load_tmux_labels();
@@ -9872,7 +9872,7 @@ fn release_session_owner(host_key: &str, session_name: &str) {
     }
 }
 
-/// Phase 87: carry a claim across a real `tmux rename-session`. Without this
+/// Phase 90: carry a claim across a real `tmux rename-session`. Without this
 /// the renamed session would read as unowned in every picker and the old name
 /// would keep a claim on a session that no longer exists.
 fn rename_session_owner(host_key: &str, old_name: &str, new_name: &str) {
@@ -9975,7 +9975,7 @@ fn annotate_scope_with(
     for s in sessions.iter_mut() {
         let owner = host.and_then(|h| h.get(&s.name));
         s.owned = owner.is_some_and(|o| o.workspace_id == workspace_id);
-        // Phase 87: surfaced for grouping only — see the field doc.
+        // Phase 90: surfaced for grouping only — see the field doc.
         s.owner_cwd = owner.and_then(|o| o.cwd.clone());
         s.in_cwd = match (s.cwd.as_deref(), project_path) {
             (Some(cwd), Some(root)) => path_is_within(cwd, root),
@@ -10024,7 +10024,7 @@ fn annotate_scope_with(
     }
 }
 
-/// Phase 87: is `name` something we are willing to hand `tmux rename-session`?
+/// Phase 90: is `name` something we are willing to hand `tmux rename-session`?
 ///
 /// ASCII letters, digits, `_` and `-` only, at most 64 chars. Phase 23.I's
 /// experiment with real renames crashed on a Hebrew name — a
@@ -10049,10 +10049,10 @@ fn validate_tmux_rename_target(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Phase 23.G / Phase 87: rename a multiplexer session for real.
+/// Phase 23.G / Phase 90: rename a multiplexer session for real.
 ///
 /// Registered since 23.G with no frontend caller (the in-picker Rename was
-/// removed in 23.I when the pane title became the session name). Phase 87's
+/// removed in 23.I when the pane title became the session name). Phase 90's
 /// active-sessions overview is the caller now, and it made the command grow
 /// three things: an ASCII whitelist (`validate_tmux_rename_target`), the
 /// local-tmux and WSL arms, and the migration of everything ymux keys by
@@ -10179,7 +10179,7 @@ async fn tmux_rename_session(
     }
     rename_session_owner(&host_key, &old_name, &new_name);
     let label = rename_tmux_label(&workspace_id, &old_name, &new_name);
-    // Phase 87.B: a session row in the tree is keyed by this name too.
+    // Phase 90.B: a session row in the tree is keyed by this name too.
     let rows_moved = {
         let mut file = state.workspaces.lock().unwrap();
         let mut n = 0;
@@ -10731,7 +10731,7 @@ impl KillSessionOutcome {
 /// cheap. Phase 80: WSL panes (Session::Local with a tmux name) kill their
 /// session via wsl.exe instead of an SSH exec channel.
 ///
-/// Phase 87: lifted out of `kill_pane_session_inner` so the active-sessions
+/// Phase 90: lifted out of `kill_pane_session_inner` so the active-sessions
 /// overview can kill a session BY NAME (no pane attached to it) through the
 /// exact same verbs. Two implementations of "kill" is how the zellij arm
 /// once lied about success; there is still one.
@@ -12875,7 +12875,7 @@ mod smart_connect_tests {
 
 #[cfg(test)]
 mod session_workspace_tests {
-    // Phase 87.B: where a session row lands in the tree.
+    // Phase 90.B: where a session row lands in the tree.
     use super::pick_session_parent;
     use super::WorkspacesFile;
 

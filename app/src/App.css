@@ -7135,7 +7135,7 @@ body.ymux-dragging .pane-conn {
   margin-inline: 0;
 }
 
-/* ── Phase 87: active-sessions overview ─────────────────────────────────────
+/* ── Phase 90: active-sessions overview ─────────────────────────────────────
    A plain .modal that fills the viewport. The table is .ins-an-table (the
    Monitor's) with a group heading row per directory; the body scrolls, the
    header stays. Status pills use the same hues the agent light does. */
@@ -7221,3 +7221,14 @@ body.ymux-dragging .pane-conn {
   animation: sessions-spin 0.8s linear infinite; vertical-align: middle;
 }
 @keyframes sessions-spin { to { transform: rotate(360deg); } }
+/* 90.C: pull-not-push summaries — the tick column and the header buttons. */
+.sessions-col-tick { width: 24px; padding-inline-end: 4px !important; }
+.sessions-col-tick input { margin: 0; vertical-align: middle; cursor: pointer; }
+.sessions-row-selected td { background: rgba(122, 162, 247, 0.06); }
+.sessions-head-btn {
+  background: transparent; border: 1px solid var(--w-border); border-radius: 4px;
+  color: var(--w-text-dim); padding: 3px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
+}
+.sessions-head-btn:hover:not(:disabled) { color: var(--w-text); }
+.sessions-head-btn.primary { color: var(--w-accent); border-color: var(--w-accent); }
+.sessions-head-btn:disabled { opacity: 0.45; cursor: default; }

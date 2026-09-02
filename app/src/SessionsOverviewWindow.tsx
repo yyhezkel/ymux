@@ -7,14 +7,19 @@ import { createLogger } from "./logger";
 
 const log = createLogger("SESSIONS");
 
-// Phase 87: the active-sessions overview ("סשנים פעילים"). Opened from a
+// Phase 90: the active-sessions overview ("סשנים פעילים"). Opened from a
 // workspace's right-click menu; lists EVERY multiplexer session on that
 // workspace's machine, grouped by directory, and then asks the machine's own
 // `claude -p` for a one-line summary + status per session.
 //
-// Two round trips, on purpose: the list is instant and renders first, the
-// summaries take 10-30 s and fill in. A request counter drops a late answer
-// after a refresh so a stale summary never lands on a fresh row.
+// Summaries are PULLED, never pushed (Yossi, 2026-09-02, PR #41 comment): every
+// chunk is a real `claude -p` over captured screens and a machine holds many
+// sessions the user does not care about, so selection is the cost control.
+// The list renders instantly from multiplexer metadata; the user ticks rows
+// (or a whole directory group) and presses "Summarize selected". The choice
+// is per open (v1); persisting it per host is a BACKLOG item. A request
+// counter drops a late answer after a refresh so a stale summary never lands
+// on a fresh row.
 //
 // Rule #1: summaries are derived from screen content. They are rendered,
 // never logged — `log.*` here only ever sees counts and error kinds.
@@ -74,6 +79,9 @@ export function SessionsOverviewWindow(p: Props) {
   const [renaming, setRenaming] = createSignal<string | null>(null);
   const [renameValue, setRenameValue] = createSignal("");
   const [renameError, setRenameError] = createSignal<string | null>(null);
+  // Which rows the next "Summarize selected" covers, and which are in flight.
+  const [selected, setSelected] = createSignal<Set<string>>(new Set());
+  const [inFlight, setInFlight] = createSignal<Set<string>>(new Set());
   let reqId = 0;
   let disarmTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -83,6 +91,7 @@ export function SessionsOverviewWindow(p: Props) {
     if (names.length === 0) return;
     setSummarizing(true);
     setSummaryError(null);
+    setInFlight(new Set(names));
     try {
       for (let i = 0; i < names.length; i += SUMMARY_CHUNK) {
         const chunk = names.slice(i, i + SUMMARY_CHUNK);
@@ -97,14 +106,54 @@ export function SessionsOverviewWindow(p: Props) {
           for (const s of out) next[s.name] = s;
           return next;
         });
+        setInFlight((prev) => {
+          const next = new Set(prev);
+          for (const n of chunk) next.delete(n);
+          return next;
+        });
       }
     } catch (e) {
       if (id !== reqId) return;
       log.warn("sessions_overview_summarize failed", e);
       setSummaryError(errText(e));
     } finally {
-      if (id === reqId) setSummarizing(false);
+      if (id === reqId) {
+        setSummarizing(false);
+        setInFlight(new Set());
+      }
     }
+  };
+
+  // Only rows that can be captured: an EXITED zellij session has no running
+  // server to read from.
+  const summarizable = (s: TmuxSessionInfo) => !s.exited;
+  const isSelected = (name: string) => selected().has(name);
+  const toggleSelected = (name: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  const setManySelected = (names: string[], on: boolean) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const n of names) {
+        if (on) next.add(n);
+        else next.delete(n);
+      }
+      return next;
+    });
+  const selectableNames = () => rows().filter(summarizable).map((s) => s.name);
+  const allSelected = () => {
+    const all = selectableNames();
+    return all.length > 0 && all.every((n) => selected().has(n));
+  };
+  const summarizeSelected = () => {
+    const names = selectableNames().filter((n) => selected().has(n));
+    if (names.length === 0 || summarizing()) return;
+    const id = ++reqId;
+    void summarize(names, id);
   };
 
   const load = async () => {
@@ -116,6 +165,8 @@ export function SessionsOverviewWindow(p: Props) {
     setSummaries({});
     setKillArmed(null);
     setRenaming(null);
+    setInFlight(new Set());
+    setSummarizing(false);
     try {
       const list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
         workspaceId: wsId,
@@ -124,8 +175,10 @@ export function SessionsOverviewWindow(p: Props) {
       if (id !== reqId) return;
       setRows(list);
       log.info(`listed ${list.length} sessions`);
-      // An EXITED zellij session has no running server to capture from.
-      void summarize(list.filter((s) => !s.exited).map((s) => s.name), id);
+      // Keep a selection only for rows that still exist; nothing is summarized
+      // until the user asks.
+      const live = new Set(list.map((s) => s.name));
+      setSelected((prev) => new Set([...prev].filter((n) => live.has(n))));
     } catch (e) {
       if (id !== reqId) return;
       log.error("pane_list_tmux_sessions failed", e);
@@ -136,10 +189,7 @@ export function SessionsOverviewWindow(p: Props) {
     }
   };
 
-  const retrySummaries = () => {
-    const id = ++reqId;
-    void summarize(rows().filter((s) => !s.exited).map((s) => s.name), id);
-  };
+  const retrySummaries = () => summarizeSelected();
 
   createEffect(
     on(
@@ -150,6 +200,9 @@ export function SessionsOverviewWindow(p: Props) {
           reqId++; // drop anything still in flight
           setRows([]);
           setSummaries({});
+          setSelected(new Set());
+          setInFlight(new Set());
+          setSummarizing(false);
         }
       },
     ),
@@ -272,7 +325,26 @@ export function SessionsOverviewWindow(p: Props) {
                   {t("sessions.retry")}
                 </button>
               </Show>
+              <Show when={!summarizing() && !summaryError() && rows().length > 0 && selected().size === 0}>
+                {t("sessions.selectHint")}
+              </Show>
             </span>
+            <Show when={rows().length > 0}>
+              <button
+                class="sessions-head-btn"
+                disabled={summarizing() || selectableNames().length === 0}
+                onClick={() => setManySelected(selectableNames(), !allSelected())}
+              >
+                {allSelected() ? t("sessions.selectNone") : t("sessions.selectAll")}
+              </button>
+              <button
+                class="sessions-head-btn primary"
+                disabled={summarizing() || selected().size === 0}
+                onClick={summarizeSelected}
+              >
+                {t("sessions.summarizeSelected", { n: selected().size })}
+              </button>
+            </Show>
             <button
               class="feed-x"
               title={t("sessions.refresh")}
@@ -300,6 +372,7 @@ export function SessionsOverviewWindow(p: Props) {
               <table class="ins-an-table sessions-table">
                 <thead>
                   <tr>
+                    <th class="sessions-col-tick" />
                     <th>{t("sessions.col.name")}</th>
                     <th>{t("sessions.col.state")}</th>
                     <th>{t("sessions.col.windows")}</th>
@@ -313,6 +386,20 @@ export function SessionsOverviewWindow(p: Props) {
                   {(g) => (
                     <tbody>
                       <tr class="sessions-group-head">
+                        <td class="sessions-col-tick">
+                          <input
+                            type="checkbox"
+                            title={t("sessions.selectGroup")}
+                            disabled={summarizing() || !g.rows.some(summarizable)}
+                            checked={g.rows.filter(summarizable).every((s) => isSelected(s.name)) && g.rows.some(summarizable)}
+                            onChange={(e) =>
+                              setManySelected(
+                                g.rows.filter(summarizable).map((s) => s.name),
+                                e.currentTarget.checked,
+                              )
+                            }
+                          />
+                        </td>
                         <td colSpan={7} title={g.key ?? undefined}>
                           <span class="sessions-group-title">{g.title}</span>
                           <Show when={g.key}>
@@ -322,7 +409,15 @@ export function SessionsOverviewWindow(p: Props) {
                       </tr>
                       <For each={g.rows}>
                         {(s) => (
-                          <tr classList={{ "sessions-row-busy": busy() === s.name }}>
+                          <tr classList={{ "sessions-row-busy": busy() === s.name, "sessions-row-selected": isSelected(s.name) }}>
+                            <td class="sessions-col-tick">
+                              <input
+                                type="checkbox"
+                                disabled={summarizing() || !summarizable(s)}
+                                checked={isSelected(s.name)}
+                                onChange={() => toggleSelected(s.name)}
+                              />
+                            </td>
                             <td class="sessions-col-name">
                               <Show
                                 when={renaming() === s.name}
@@ -381,7 +476,7 @@ export function SessionsOverviewWindow(p: Props) {
                                 when={statusOf(s)}
                                 fallback={
                                   <Show
-                                    when={!s.exited && summarizing()}
+                                    when={inFlight().has(s.name)}
                                     fallback={<span class="sessions-dash">—</span>}
                                   >
                                     <span class="sessions-spinner" aria-hidden="true" />

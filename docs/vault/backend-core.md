@@ -234,13 +234,13 @@ govern it, both asserted in `tmux_list_parse_tests`:
 `project_path` is optional and **`None` means unscoped, which is load-bearing**: session
 restore and `pane_probe_tmux_sessions` share these paths and must see everything.
 
-`owner_cwd` (Phase 87) is a fourth field stamped in the same pass: the cwd recorded in
+`owner_cwd` (Phase 90) is a fourth field stamped in the same pass: the cwd recorded in
 `session-owners.json` at claim time, whichever workspace claimed it. It exists only so the
 active-sessions overview has something to group a zellij row under (zellij reports no live
 cwd). It is a snapshot that can go stale and it feeds **no** verdict — `owned` / `in_cwd` /
 `foreign` never read it, and the picker ignores it.
 
-## Active-sessions overview — `sessions_overview.rs` (Phase 87)
+## Active-sessions overview — `sessions_overview.rs` (Phase 90)
 
 674 lines. The sidebar's right-click **Active sessions…** dialog: every multiplexer
 session on the workspace's machine, grouped by directory, with a one-line agent summary
@@ -270,7 +270,7 @@ list command. The module owns what the picker never needed:
   straight to `kill_target` and releases the ownership claim on `killed | already_gone`.
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
-- **Open is `workspace_open_session` in lib.rs (Phase 87.B)** — the third child-creating
+- **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
   command beside `workspace_pin_project_folder` / `workspace_open_worktree`, same construction
   (a CLONE of the root's connection, `single_terminal_layout`, no `sort_order`). It walks up
   to the root first (the dialog may have been opened from a project-folder child; sessions
@@ -282,7 +282,7 @@ list command. The module owns what the picker never needed:
   pane; the current screen is never touched. `tmux_rename_session` also moves
   `tmux_session` on every row of the same host (`conn_same_host`) and re-persists.
 - **Rename is `tmux_rename_session` in lib.rs**, registered since 23.G and unused until now.
-  Phase 87 gave it `validate_tmux_rename_target` (ASCII letters, digits, `_`, `-`, ≤64 —
+  Phase 90 gave it `validate_tmux_rename_target` (ASCII letters, digits, `_`, `-`, ≤64 —
   stricter than `session_name_char_is_safe`, because the 23.I Hebrew rename crash was never
   root-caused), the local-tmux and WSL arms, `=`-pinned exact targets, and the migration of
   everything keyed by the old name: live `Session.tmux_session` fields, `session-owners.json`
@@ -328,7 +328,7 @@ list command. The module owns what the picker never needed:
 - **tmux targets: `=name` is a SESSION target, `=name:` is a pane target.** `=` pins an
   exact match (a bare name prefix-matches — `tax` hits `tax-contine`), and it works as-is
   for `rename-session` / `kill-session`. `capture-pane` takes a pane target, and tmux 3.4
-  reads a bare `=name` there as a pane name: `can't find pane`. Phase 87 shipped with the
+  reads a bare `=name` there as a pane name: `can't find pane`. Phase 90 shipped with the
   bare form and every capture came back empty until a live run on 2026-09-02 caught it —
   `sessions_overview.rs` uses `=name:` and its test asserts the colon.
 

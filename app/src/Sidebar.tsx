@@ -1039,7 +1039,7 @@ export function Sidebar(p: Props) {
             </span>
           }
         >
-          {/* Phase 87.B: a row opened FOR a multiplexer session wears a
+          {/* Phase 90.B: a row opened FOR a multiplexer session wears a
               terminal glyph instead of the colour dot; the raw session
               name is the tooltip. Everything else about the row — click,
               collapse, drag, delete — is the plain child-workspace path. */}
@@ -1168,7 +1168,7 @@ export function Sidebar(p: Props) {
             <button onClick={() => p.onAction(w.id, "edit")}>
               {t("ws.context.edit")}
             </button>
-            {/* Phase 87: every multiplexer session on this workspace's
+            {/* Phase 90: every multiplexer session on this workspace's
                 machine, with an agent summary per row. Above Add-ons on
                 purpose — it is the thing you open several times a day. */}
             <button onClick={() => p.onAction(w.id, "sessions")}>

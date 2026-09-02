@@ -63,7 +63,7 @@ restricted networks.
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
 `BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`.
 
-**`Workspace.tmux_session: Option<String>`** (Phase 87.B) marks a row the active-sessions
+**`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
 overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
 renamed by `tmux_rename_session`, elided when absent so old files round-trip byte-identical
 (the round-trip test lists it). It is what makes Open idempotent, what the sidebar draws

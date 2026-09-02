@@ -1330,5 +1330,10 @@
   "sessions.renameInvalid": "Только латинские буквы, цифры, '_' и '-' (не более 64). Для другого имени используйте заголовок панели.",
   "sessions.renameFailed": "Переименование не удалось: {error}",
   "sessions.renamePlaceholder": "new-name",
-  "sessions.openFailed": "Не удалось открыть сессию: {error}"
+  "sessions.openFailed": "Не удалось открыть сессию: {error}",
+  "sessions.selectHint": "Отметьте сессии, которые нужно свести, и нажмите «Свести выбранные».",
+  "sessions.selectAll": "Выбрать все",
+  "sessions.selectNone": "Снять выбор",
+  "sessions.selectGroup": "Выбрать все сессии в этой папке",
+  "sessions.summarizeSelected": "Свести выбранные ({n})"
 }
