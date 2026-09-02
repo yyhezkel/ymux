@@ -80,8 +80,8 @@ export function SessionsOverviewWindow(p: Props) {
   const [renameValue, setRenameValue] = createSignal("");
   const [renameError, setRenameError] = createSignal<string | null>(null);
   // Which rows the next "Summarize selected" covers, and which are in flight.
-  const [selected, setSelected] = createSignal<Set<string>>(new Set());
-  const [inFlight, setInFlight] = createSignal<Set<string>>(new Set());
+  const [selected, setSelected] = createSignal<Set<string>>(new Set<string>());
+  const [inFlight, setInFlight] = createSignal<Set<string>>(new Set<string>());
   let reqId = 0;
   let disarmTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -119,7 +119,7 @@ export function SessionsOverviewWindow(p: Props) {
     } finally {
       if (id === reqId) {
         setSummarizing(false);
-        setInFlight(new Set());
+        setInFlight(new Set<string>());
       }
     }
   };
@@ -165,7 +165,7 @@ export function SessionsOverviewWindow(p: Props) {
     setSummaries({});
     setKillArmed(null);
     setRenaming(null);
-    setInFlight(new Set());
+    setInFlight(new Set<string>());
     setSummarizing(false);
     try {
       const list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
@@ -200,8 +200,8 @@ export function SessionsOverviewWindow(p: Props) {
           reqId++; // drop anything still in flight
           setRows([]);
           setSummaries({});
-          setSelected(new Set());
-          setInFlight(new Set());
+          setSelected(new Set<string>());
+          setInFlight(new Set<string>());
           setSummarizing(false);
         }
       },

@@ -152,7 +152,7 @@
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "b0822121f91512c85bc0cadbd3464ea7673b36e448edb40ee01b3eb14c0db35e",
     "app/src/QueuePanel.tsx": "401716a6a25f6b5ce73cbcac68f9b2a51f608c82cd6af4bd16f4577000c43ee3",
-    "app/src/SessionsOverviewWindow.tsx": "4b8460a0e9682c38057ae8933a92eb615589b737fb8d532bf0ecd2cfda1bef44",
+    "app/src/SessionsOverviewWindow.tsx": "c673dd9c82319d2687be46a93459304e4342a24a94fce4e5d49af1cd8824b7f2",
     "app/src/TicketModal.tsx": "d271dea16f1c83d547ea209e3dd8dcfcbdd4778c2e15d69863a40b691ff505f0",
     "app/src/TicketsPanel.tsx": "480d09aa00f31cf1f8c9513ba36377a73f0440a88bd3f0fd1a5ab0b712e0294e",
     "app/src/TransferBar.tsx": "19997105e7db2d1f11ed0e04ed235a7f088458cf19685a66fbb80d75c7b78f13",
