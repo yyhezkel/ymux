@@ -1,14 +1,15 @@
 {
   "backend-claude": {
     "app/src-tauri/src/claude_log.rs": "5c2da4f93556ca6aae96a0cfba2bdeb07d339b5930249ceb71a647948587b1b4",
-    "app/src-tauri/src/claude_summary.rs": "6c00db5263d04bc5e2c641e22fa255a8494574653e78e8125e8f3ab6eaf1fca9",
+    "app/src-tauri/src/claude_summary.rs": "858f0f7c0b8e07a064b2783cfb25124903969116865d69f6413f4b9918496199",
     "app/src-tauri/src/claude_usage.rs": "57c87c2c494e783aab50a24fd6b268df110457f2399d3fa457986bd9dc7302b3",
     "app/src-tauri/src/claude_usage_local.rs": "b0f1abecd1e23d0fc8083e940509f70449bb04beefbe2bd98e79056e5b6b304e",
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "31f85860cc8c5aff61742a6d3b3616e65e3158284a9852bf8dd734e6601a8401",
-    "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635"
+    "app/src-tauri/src/lib.rs": "cc85b30924b2ffa2a71f18d695c7ae04bc1874aa6c7485d65ae110ef9c7c2708",
+    "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
+    "app/src-tauri/src/sessions_overview.rs": "a45421d667468d29a4ba0de5e318d05d5ac1466596d7839450471fa09bd89a85"
   },
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
@@ -46,7 +47,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
-    "app/src-tauri/src/local_setup.rs": "418e71be728c9a558d28413e10959582659cd65760ec1b11bc21968e38f808d2",
+    "app/src-tauri/src/local_setup.rs": "f5a0e4cf415b780a9dbe741effd48f20026d81ce6fcb396206487b6d2df5861c",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "3c3bf6e6216ed0dc3035884d4a5bf4ed004de54d6af3d1af457dd6d0ea949d9c",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
@@ -126,7 +127,7 @@
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
     "app/src/terminalInstance.ts": "e42c29810e3c4035af579f5eb23e07b0ad98073dc6d851584c791f3b0b1430fd",
     "app/src/textDirection.ts": "b2c78aa9f8a1e8770e7902b6bd3f75a77f290b1882cf8bcc4e999fd08d88d1fb",
-    "app/src/types.ts": "17a1b3fe673bad2411e414653928611148c66b9d7c53cbd160a2570b1bf05405"
+    "app/src/types.ts": "95d00c753c358c87bea893dd701ad644f4722792063645ec3ac435254a640fc7"
   },
   "frontend-panes": {
     "app/src/AddonsTab.tsx": "6eff5e7b1389af86debd3194ff02917788346a7801134b41403c48d9b4578c43",
@@ -149,6 +150,7 @@
     "app/src/MobilePairing.tsx": "d9ff30e8b1dd38b0aad3084b184f3ed48ffff95548401bd28658c714485879d8",
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "b0822121f91512c85bc0cadbd3464ea7673b36e448edb40ee01b3eb14c0db35e",
+    "app/src/SessionsOverviewWindow.tsx": "a497ff726387f95932e261f183ca7d66b1186866c6bec846927c22739cec4a05",
     "app/src/TicketModal.tsx": "d271dea16f1c83d547ea209e3dd8dcfcbdd4778c2e15d69863a40b691ff505f0",
     "app/src/TicketsPanel.tsx": "480d09aa00f31cf1f8c9513ba36377a73f0440a88bd3f0fd1a5ab0b712e0294e",
     "app/src/TransferBar.tsx": "19997105e7db2d1f11ed0e04ed235a7f088458cf19685a66fbb80d75c7b78f13",
@@ -163,7 +165,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "7b91d3a80f1eefa4308158def1d94c4d50bb2a85e0597cc03bfdd5e82469e1c8",
+    "app/src/App.tsx": "7f132d3d5526a1f1fb0f81541f44f7036806dd86f31bd50b855f140755a99491",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
     "app/src/LayoutView.tsx": "b39071f6d31b2c0b011662f86ccfd3394a5ff93dd25fafcf19e18658bcf9f093",
@@ -173,7 +175,7 @@
     "app/src/PanelFloat.tsx": "c73d3b1ec18f5c31f84079445ef786ed51005b9da60bb2435ad17b9316ebbe51",
     "app/src/PanelSurface.tsx": "d7baafe4d0187a3ccbb30d8ddaf6af44e8fe12ad09dbc84ede5aabfaed4ebf00",
     "app/src/SideDrawer.tsx": "baf72d7230d67cd602586b627bf0e6204e9b3e0e788ae7dbca092d0cbd1432a9",
-    "app/src/Sidebar.tsx": "8fc47239d3b328d456848ffdbe3732f426aca3ebd317627ec1dab9a908662e37",
+    "app/src/Sidebar.tsx": "56707ecc768377480ef2c8935f815c7b623e797791107745756fe90d96deb569",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",

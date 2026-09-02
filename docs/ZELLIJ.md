@@ -22,6 +22,7 @@ Two kinds of caller, and the difference is the whole safety story:
 | `list-sessions -n` | child process, argv array | [`zellij_args_list`](../app/src-tauri/src/lib.rs#L2247) |
 | `delete-session -f <name>` | child process, argv array | [`zellij_args_delete_force`](../app/src-tauri/src/lib.rs#L2257) |
 | `-s <name> action write-chars <chars>` | child process, argv array | [`zellij_args_write_chars`](../app/src-tauri/src/lib.rs#L2276) |
+| `-s <name> action dump-screen` | child process, argv array, stdout captured (Phase 87 active-sessions overview) | [`zellij_args_dump_screen`](../app/src-tauri/src/lib.rs) |
 
 argv only, never a shell — Rule #3. New verbs go through
 [`zellij_try`](../app/src-tauri/src/lib.rs#L2325), which reports `Ok` /
@@ -47,7 +48,9 @@ PATH edit only reaches processes started *after* the install.
 - `attach -b` (create detached) — returns 0 and creates nothing without a tty, so
   there is no way to tell success from silence. Panes create by attaching.
 - `action rename-session` — the session name is derived from the pane id so a cold
-  start can find it again. Pane labels live app-side.
+  start can find it again. Pane labels live app-side. Phase 87's active-sessions
+  overview renames tmux sessions for real and shows its Rename button disabled on
+  zellij for exactly this reason — do not "fix" that by sending the verb.
 - `kill-all-sessions` / `delete-all-sessions` — nothing in the UI means "every
   session on this machine", including ones ymux never created.
 

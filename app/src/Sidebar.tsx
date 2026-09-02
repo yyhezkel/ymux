@@ -89,6 +89,7 @@ interface Props {
       | "edit"
       | "delete"
       | "disconnect"
+      | "sessions"
       | "addons"
       | "add_project_folder"
       | "check_git",
@@ -1134,6 +1135,12 @@ export function Sidebar(p: Props) {
             </button>
             <button onClick={() => p.onAction(w.id, "edit")}>
               {t("ws.context.edit")}
+            </button>
+            {/* Phase 87: every multiplexer session on this workspace's
+                machine, with an agent summary per row. Above Add-ons on
+                purpose — it is the thing you open several times a day. */}
+            <button onClick={() => p.onAction(w.id, "sessions")}>
+              {t("ws.context.sessions")}
             </button>
             <button onClick={() => p.onAction(w.id, "addons")}>
               {t("ws.context.addons")}

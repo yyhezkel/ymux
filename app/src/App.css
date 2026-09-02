@@ -7010,3 +7010,90 @@ body.ymux-dragging .pane-conn {
 .pane-tab .pane-agent-light {
   margin-inline: 0;
 }
+
+/* ── Phase 87: active-sessions overview ─────────────────────────────────────
+   A plain .modal that fills the viewport. The table is .ins-an-table (the
+   Monitor's) with a group heading row per directory; the body scrolls, the
+   header stays. Status pills use the same hues the agent light does. */
+.modal.sessions-overview {
+  width: calc(100vw - 32px);
+  height: calc(100vh - 32px);
+  max-width: none;
+  max-height: none;
+  min-width: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.sessions-overview .settings-head h3 { flex: 0 1 auto; }
+.sessions-head-note {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: var(--w-fs-sm, 12px);
+  color: var(--w-text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sessions-link {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--w-accent); font: inherit; text-decoration: underline;
+}
+.sessions-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 18px 18px; }
+.sessions-empty { color: var(--w-text-dim); font-size: 13px; padding: 24px 4px; }
+.sessions-table th, .sessions-table td { padding: 6px 10px 6px 0; vertical-align: top; }
+.sessions-table thead th { position: sticky; top: 0; background: var(--w-surface); z-index: 1; }
+.sessions-table td.sessions-col-summary, .sessions-table th.sessions-col-summary {
+  white-space: normal; min-width: 240px; width: 40%;
+}
+.sessions-group-head td {
+  padding-top: 14px; padding-bottom: 4px; border-bottom: 1px solid var(--w-border);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 0;
+}
+.sessions-group-title { font-weight: 600; color: var(--w-text); }
+.sessions-group-path {
+  margin-inline-start: 10px; color: var(--w-text-faint); font-family: var(--w-font-mono);
+  font-size: var(--w-fs-xs); direction: ltr; unicode-bidi: isolate;
+}
+.sessions-col-name { max-width: 260px; }
+.sessions-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sessions-raw-name {
+  color: var(--w-text-faint); font-family: var(--w-font-mono); font-size: var(--w-fs-xs);
+  direction: ltr; unicode-bidi: isolate; overflow: hidden; text-overflow: ellipsis;
+}
+.sessions-num { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; }
+.sessions-dash { color: var(--w-text-faint); }
+.sessions-badge-attached { background: rgba(158, 206, 106, 0.18); color: var(--w-ok, #9ece6a); }
+.sessions-summary { display: block; line-height: 1.4; }
+.sessions-status {
+  display: inline-block; font-size: var(--w-fs-xs); padding: 1px 8px; border-radius: 999px;
+  border: 1px solid var(--w-border); color: var(--w-text-dim); white-space: nowrap;
+}
+.sessions-status.idle { color: var(--w-text-dim); }
+.sessions-status.working { background: rgba(158, 206, 106, 0.16); color: var(--w-ok, #9ece6a); border-color: transparent; }
+.sessions-status.waiting_input { background: rgba(224, 175, 104, 0.18); color: var(--w-warn, #e0af68); border-color: transparent; }
+.sessions-status.error { background: rgba(247, 118, 142, 0.16); color: var(--w-danger, #f7768e); border-color: transparent; }
+.sessions-status.unknown { color: var(--w-text-faint); border-style: dashed; }
+.sessions-actions { margin-inline-start: 0; flex-wrap: nowrap; }
+.sessions-actions button.primary { color: var(--w-accent); border-color: var(--w-accent); }
+.sessions-actions button.danger:hover, .sessions-actions button.danger.armed {
+  color: var(--w-danger, #f7768e); border-color: var(--w-danger, #f7768e);
+}
+.sessions-actions button:disabled { opacity: 0.45; cursor: default; }
+.sessions-row-busy { opacity: 0.6; }
+.sessions-rename-input {
+  width: 100%; max-width: 240px; padding: 3px 6px; font: inherit; font-family: var(--w-font-mono);
+  direction: ltr; background: var(--w-bg); color: var(--w-text); border: 1px solid var(--w-accent);
+  border-radius: 4px;
+}
+.sessions-rename-error { color: var(--w-danger, #f7768e); font-size: var(--w-fs-xs); margin-top: 3px; white-space: normal; }
+.sessions-spinner {
+  display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+  border: 2px solid var(--w-border); border-top-color: var(--w-accent);
+  animation: sessions-spin 0.8s linear infinite; vertical-align: middle;
+}
+@keyframes sessions-spin { to { transform: rotate(360deg); } }

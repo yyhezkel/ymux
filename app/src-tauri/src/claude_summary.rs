@@ -86,7 +86,7 @@ async fn ssh_exec(
 /// fold the user-configured prompt into the remote `claude -p`
 /// invocation without giving them an accidental shell-injection
 /// vector.
-fn bash_squote(s: &str) -> String {
+pub(crate) fn bash_squote(s: &str) -> String {
     let escaped = s.replace('\'', "'\\''");
     format!("'{escaped}'")
 }
@@ -132,7 +132,7 @@ fn cache_key(workspace_id: &str) -> String {
     format!("{workspace_id}:ssh")
 }
 
-async fn resolve_claude_path(
+pub(crate) async fn resolve_claude_path(
     state: &AppState,
     workspace_id: &str,
     handle: &SshHandle<SshClient>,
@@ -178,7 +178,7 @@ async fn resolve_claude_path(
 /// nvm, $HOME/.claude/local, …) invisible. `bash -lc` flips both
 /// flags so `command -v claude` and `command -v jq` actually find
 /// them. Mirrors claude_chat::wrap_login.
-fn wrap_login(script: &str) -> String {
+pub(crate) fn wrap_login(script: &str) -> String {
     format!("bash -lc {}", bash_squote(script))
 }
 

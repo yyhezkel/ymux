@@ -44,7 +44,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (4,793) — one component, ~50 signals
+## `App.tsx` (4,933) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -117,12 +117,33 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,265)
+## `Sidebar.tsx` (1,272)
 
 Workspace tree with groups, nesting, pinned project folders, and worktree children.
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 `WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
+
+The workspace right-click menu is a fixed-position `.ws-menu` whose items all funnel
+through one `onAction(id, action)` prop with a closed string union — rename, edit,
+**sessions** (Phase 87, above add-ons on purpose: it is opened several times a day),
+addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item means
+adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
+state beyond which row it is open for.
+
+**Phase 87 — the active-sessions overview's three row actions live in App, not in the
+window**, because each needs App-level state. `openSessionInTab` closes the dialog,
+switches the workspace (`handleSetActive`), opens a tab (`newTab` now returns the new pane
+id; a workspace with every pane closed is seeded through `workspace_reset_layout`
+instead), waits for the mount and calls `connectPane(pid, { persistent, tmuxSession })` —
+the same shape the picker uses, so the attach-only guard guarantees nothing is typed.
+`killSessionByName` routes through the existing `killSession(paneId)` when
+`panePersistence()` shows one of our panes holding the name (PTY, maps and restore hint go
+the tested way; `killSession` now returns the outcome for that), else
+`sessions_kill_by_name`. `renameSessionByName` calls `tmux_rename_session` and then moves
+the holding pane's restore hint (`rememberPaneSession`) — the backend migrates its own
+maps, but the hint is frontend-owned and would otherwise name a session that no longer
+exists on the next boot.
 
 ## `LayoutView.tsx` (372) + `Divider.tsx` (72)
 

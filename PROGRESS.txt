@@ -7319,3 +7319,26 @@ manifest.json: new dmg_x64_* / dmg_aarch64_* fields (url/sha256/size) —
 updater.rs ignores unknown fields (serde, all-optional), banner already works
 on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
+
+2026-09-02 — Phase 87: "סשנים פעילים" — active-sessions overview per workspace
+Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
+"Active sessions…" entry above Add-ons → full-screen modal listing every
+tmux/zellij session on the workspace's machine, grouped by directory, with an
+agent summary + status per row and Open / Rename / Kill actions.
+Backend: NEW app/src-tauri/src/sessions_overview.rs (sessions_overview_summarize:
+capture-pane / dump-screen + ONE `claude -p --output-format json` on the host —
+over SSH as a single remote pipeline so screen bytes never reach the desktop;
+sessions_kill_by_name). lib.rs: TmuxSessionInfo.owner_cwd (grouping key for
+zellij rows), KillTarget + kill_target lifted out of kill_pane_session_inner
+(pure move), tmux_rename_session extended (ASCII whitelist, local-tmux + WSL
+arms, `=` exact targets, migration of owners / labels / live Session fields /
+session-meta label; zellij refused), rename_session_owner, rename_tmux_label,
+zellij_args_dump_screen. local_setup::resolve_claude_binary: claude.cmd fallback
+on Windows. claude_summary: resolve_claude_path / wrap_login / bash_squote now
+pub(crate). Frontend: NEW app/src/SessionsOverviewWindow.tsx; Sidebar action
+union + button; App.tsx sessionsWin + openSessionInTab / killSessionByName /
+renameSessionByName (newTab returns the pane id, killSession returns the
+outcome); types.ts owner_cwd + SessionSummary; i18n ×4 (35 keys); App.css.
+Docs: vault backend-core / frontend-shell / frontend-panes, ZELLIJ.md,
+DECISIONS (Decided: real rename back, ASCII-only). 11 unit tests in the new
+module. Result: compiles-untested (Rule #17) — CI decides; FOLLOWUPS P1 smoke.

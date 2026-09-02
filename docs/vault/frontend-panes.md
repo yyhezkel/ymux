@@ -23,6 +23,7 @@ covers:
   - app/src/FeedPanel.tsx
   - app/src/NotificationCenter.tsx
   - app/src/AddonsWindow.tsx
+  - app/src/SessionsOverviewWindow.tsx
   - app/src/AddonsTab.tsx
   - app/src/YmuxToolsTab.tsx
   - app/src/ClaudeUsageIndicator.tsx
@@ -226,6 +227,23 @@ reset times converted to the viewer's **local** timezone.
 so they are managed per workspace, opened from the workspace's right-click menu and from
 the Insights monitor's install prompt. **`YmuxToolsTab.tsx` (126)** is the same shape for
 skills. Both are self-contained specifically so they do not bloat `SettingsModal`.
+
+**`SessionsOverviewWindow.tsx` (460)** — Phase 87, the workspace right-click
+**Active sessions…** dialog. A plain `.modal` stretched to the viewport (not a
+`PanelSurface`: it has no drawer/float life, it is a full-screen table you open, act in,
+and close), header pattern from `PortsWindow`, table class from the Monitor
+(`.ins-an-table`). **Two round trips on purpose:** `pane_list_tmux_sessions` with
+`projectPath: null` renders the table at once; `sessions_overview_summarize` then runs in
+chunks of 10 names and fills the status pill + summary column as it lands (10-30 s per
+chunk — it is `claude -p` on the machine). A request counter drops a late answer after a
+refresh, so a stale summary never lands on a fresh row; exited (zellij) rows are never
+sent. Rows group by `cwd ?? owner_cwd`, the unplaceable ones last under one "unknown
+folder" heading; the name column shows `label ?? auto_name ?? claude_title ?? name` with
+the raw name beneath. Row actions are props the window does not implement: **Open**,
+**Rename** (inline input, `^[A-Za-z0-9_-]{1,64}$` checked here AND in the backend,
+disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the button
+re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to
+`log.*` (Rule #1).
 
 **`DiffPane.tsx` (341)** — on mount it tells the backend the persisted source (or
 `Working`), which restarts the per-pane watcher task; the watcher emits

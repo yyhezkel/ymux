@@ -39,6 +39,7 @@ import {
 } from "./icons";
 import { createNarrow } from "./useNarrow";
 import { AddonsWindow } from "./AddonsWindow";
+import { SessionsOverviewWindow } from "./SessionsOverviewWindow";
 import { SettingsModal } from "./SettingsModal";
 import { SshKeyOfferModal } from "./SshKeyOfferModal";
 import { CommandPalette, type Command } from "./CommandPalette";
@@ -79,7 +80,7 @@ import {
   type HooksOutdatedInfo,
 } from "./settings";
 import { applyI18nSettings, t } from "./i18n";
-import { isMac } from "./platform";
+import { isMac, isWindows } from "./platform";
 import {
   buildShortcutTable,
   keyEq,
@@ -405,6 +406,8 @@ function App() {
   // Monitor's open/drawer/float state now lives in the unified `panels`
   // registry (see panels.ts) under the "monitor" id.
   const [addonsWin, setAddonsWin] = createSignal<{ id: string; name: string } | null>(null);
+  // Phase 87: the active-sessions overview, per workspace (from right-click).
+  const [sessionsWin, setSessionsWin] = createSignal<{ id: string; name: string } | null>(null);
   // Project folders: the pin dialog and the new-worktree dialog share
   // one modal, discriminated by `kind`.
   const [projectFolderModal, setProjectFolderModal] =
@@ -1745,16 +1748,20 @@ function App() {
   // workspace_split returns the whole WorkspacesFile rather than the new
   // pane_id, so diff the pane sets instead of changing a signature that
   // half a dozen call sites depend on.
-  const newTab = async () => {
+  //
+  // Phase 87: returns the new pane id (or null) so the active-sessions
+  // overview can attach it to a session; the strip's own callers ignore it.
+  const newTab = async (): Promise<string | null> => {
     const ws = activeWs();
     const pid = activePaneId();
-    if (!ws?.layout || !pid) return;
+    if (!ws?.layout || !pid) return null;
     const before = new Set(collectPanes(ws.layout));
     await splitPane(pid, "horizontal");
     const after = activeWs()?.layout;
-    if (!after) return;
+    if (!after) return null;
     const added = collectPanes(after).find((p) => !before.has(p));
     if (added) focusPane(added);
+    return added ?? null;
   };
 
   // Phase 84.A: close a tab and land on a sensible neighbour. The
@@ -2229,6 +2236,70 @@ function App() {
     terms.get(paneId)?.detach();
     bump();
     void refreshPersistence();
+    return out;
+  };
+
+  // Phase 87: the active-sessions overview's three row actions. They live
+  // here rather than in the window because each one needs App-level state:
+  // the pane tree (open), the pane→session map (kill / rename bookkeeping)
+  // and the restore hints.
+  //
+  // Open = a new tab in the workspace, attached to the session and NOTHING
+  // typed into it — `pane_connect` treats an explicit picker name as live
+  // (the 2026-08-23 attach-only guard), exactly like the picker path.
+  const openSessionInTab = async (wsId: string, name: string) => {
+    setSessionsWin(null);
+    if (activeWs()?.id !== wsId) await handleSetActive(wsId);
+    let pid: string | null = null;
+    if (!activeWs()?.layout) {
+      // Every pane closed: seed the single terminal pane the same way the
+      // reset-layout menu item does, then attach that one.
+      const f = await invoke<WorkspacesFile>("workspace_reset_layout", { workspaceId: wsId });
+      updateFile(f);
+      const layout = file().workspaces.find((w) => w.id === wsId)?.layout;
+      pid = layout ? (collectPanes(layout)[0] ?? null) : null;
+      if (pid) focusPane(pid);
+    } else {
+      pid = await newTab();
+    }
+    if (!pid) throw new Error("could not create a pane");
+    await waitForPaneMount(pid);
+    await connectPane(pid, { persistent: true, tmuxSession: name });
+  };
+
+  const paneHoldingSession = (name: string): string | undefined =>
+    Object.entries(panePersistence()).find(([, n]) => n === name)?.[0];
+
+  // Kill = through the pane when one of ours holds the session (so the PTY,
+  // the maps and the restore hint all go the tested way), else by name.
+  const killSessionByName = async (
+    wsId: string,
+    name: string,
+  ): Promise<KillSessionOutcome | null> => {
+    const paneId = paneHoldingSession(name);
+    if (paneId) return killSession(paneId);
+    try {
+      const out = await invoke<KillSessionOutcome>("sessions_kill_by_name", {
+        workspaceId: wsId,
+        name,
+      });
+      void refreshPersistence();
+      return out;
+    } catch (e) {
+      log.warn("sessions_kill_by_name failed", e);
+      return null;
+    }
+  };
+
+  // Rename = a real `tmux rename-session` (ASCII-only; the backend
+  // validates too). The backend migrates its own maps; here the restore
+  // hint of the holding pane must follow, or the next boot probes a name
+  // that no longer exists and skips the pane.
+  const renameSessionByName = async (wsId: string, oldName: string, newName: string) => {
+    await invoke("tmux_rename_session", { workspaceId: wsId, oldName, newName });
+    const paneId = paneHoldingSession(oldName);
+    if (paneId) rememberPaneSession(paneId, newName);
+    await refreshPersistence();
   };
 
   // Phase 80: session restore — on app start, re-attach the ACTIVE workspace's
@@ -3777,6 +3848,9 @@ function App() {
             else if (action === "addons") {
               const ws = file().workspaces.find((w) => w.id === id);
               setAddonsWin({ id, name: ws?.name ?? "" });
+            } else if (action === "sessions") {
+              const ws = file().workspaces.find((w) => w.id === id);
+              setSessionsWin({ id, name: ws?.name ?? "" });
             } else if (action === "add_project_folder") {
               void startPinProjectFolder(id);
             } else if (action === "check_git") {
@@ -4439,6 +4513,34 @@ function App() {
           );
         }}
         onClose={() => setAddonsWin(null)}
+      />
+
+      {/* Phase 87: per-workspace active-sessions overview (from right-click). */}
+      <SessionsOverviewWindow
+        open={!!sessionsWin()}
+        workspaceId={sessionsWin()?.id}
+        workspaceName={sessionsWin()?.name}
+        isZellij={
+          isWindows() &&
+          (() => {
+            const ws = file().workspaces.find((w) => w.id === sessionsWin()?.id);
+            return !ws || ws.connection == null || ws.connection.type === "local";
+          })()
+        }
+        onClose={() => setSessionsWin(null)}
+        onOpen={(name) => {
+          const id = sessionsWin()?.id;
+          if (!id) return Promise.resolve();
+          return openSessionInTab(id, name);
+        }}
+        onKill={(name) => {
+          const id = sessionsWin()?.id;
+          return id ? killSessionByName(id, name) : Promise.resolve(null);
+        }}
+        onRename={(oldName, newName) => {
+          const id = sessionsWin()?.id;
+          return id ? renameSessionByName(id, oldName, newName) : Promise.resolve();
+        }}
       />
 
       {/* Phase 32.B: SSH key offer. Self-contained — listens for the

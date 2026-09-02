@@ -309,6 +309,14 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-09-02 — Phase 87: the active-sessions overview, and tmux rename comes back (ASCII-only)
+- **Context:** Yossi wanted, from a workspace's right-click menu (above Add-ons), a full-screen table of every tmux/zellij session on that machine with an agent-written one-line summary and status per row, grouped by project folder, with Open / Kill / Rename per row.
+- **Decided (Yossi, asked before building):** scope is SSH + macOS tmux **and Windows zellij** (list + summaries via `dump-screen`; grouping falls back to the claim-time `owner_cwd` since zellij reports no cwd). The table renders first and summaries fill in asynchronously. Status is the model's read of the screen (`idle | working | waiting_input | error`), attached/detached stays a tmux badge.
+- **Decided — Rename is a real `tmux rename-session`, ASCII-only.** This lifts the 2026-07-16 line "NO tmux rename anywhere (Phase 23.J crash constraint stands)" for an explicit user action inside `^[A-Za-z0-9_-]{1,64}$`. The 23.I crash was a Hebrew name and was never root-caused, so non-ASCII keeps going through labels; `pane_set_title` still never renames. The command migrates owners, labels, live `Session.tmux_session` fields and the SSH session-meta label; `auto_name` / `claude_title` for the old key are lost until the next Claude turn. **zellij rename stays refused** (`docs/ZELLIJ.md` §1 — the name is how a cold start finds the session).
+- **Decided — one model call per chunk, on the machine that holds the sessions.** Over SSH the capture loop and `claude -p` are a single remote pipeline, so screen bytes never reach the desktop; locally they are piped into the local `claude` on stdin. Sessions are indexed, not named, in the prompt. Legacy WSL workspaces list but get no summaries — nothing creates new ones.
+- **Decided — no new list command.** `pane_list_tmux_sessions` with `project_path: null` plus one new field (`owner_cwd`) is the list; `KillTarget` / `kill_target` were lifted out of the pane-bound kill rather than duplicated.
+- **Status:** compiles-untested until CI; Rule #14 until the FOLLOWUPS P1 smoke list runs live.
+
 ### 2026-08-23 — Phase 86: server + port-watch + hooks load
 - **Context:** measured on Yossi's server — 18 `ymux port-watch` at ~4.7% CPU each, 15 orphans (ppid=1); hook-debug.log 100% stale-reconnect noise from them; ymux-server sampling 3.1s every 5s because Docker one-shot stats block 1-2s per container. Full numbers in PROGRESS.txt (2026-08-23 ~20:30).
 - **Decided — the watcher owns its own death.** stdin-EOF watchdog + no last.env fallback + exit after 3 connect failures. Hooks KEEP the fallback (Phase 80 (f)); only the watcher's tunnel is fixed for life.
