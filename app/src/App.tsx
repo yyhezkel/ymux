@@ -12,6 +12,11 @@ import { LayoutView } from "./LayoutView";
 import { PaneTabs } from "./PaneTabs";
 import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgentState";
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
+import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
+import { QueuePanel } from "./QueuePanel";
+import { BriefingCard } from "./BriefingCard";
+import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel";
+import { paneLabel, type PaneNode } from "./paneTitle";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
   allPaneSessions,
@@ -326,6 +331,15 @@ function App() {
       }
     >
   >({});
+  // BRIEF: per-pane brief entries (agent-written brief + last user prompt),
+  // mirrored off `pane:brief` events and hydrated by `pane_briefs` on
+  // reload. Same lifecycle as agentRuns above.
+  const [briefs, setBriefs] = createSignal<Record<string, PaneBriefEntry>>({});
+  // BRIEF: the Briefing card — which workspace it is showing, null = none.
+  // Fed by three triggers: return-after-absence (in handleSetActive, which
+  // must read last_active_at BEFORE workspace_set_active stamps it),
+  // idle-return (below), and the show_briefing shortcut/palette command.
+  const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
   // cmux-A A1: pane_ids that received an OSC 9/99/777 notification and
   // haven't been focused since. Drives the amber pulse ring on the pane
   // + the sidebar aggregate badge. Cleared when the pane is focused.
@@ -615,7 +629,9 @@ function App() {
     // Dev-Mode ticket modal — same reason as the rest: the native
     // Browser Webview paints above HTML and must be hidden for it.
     pendingCapture() !== null || projectFolderModal() !== null ||
-    dirPickerFor() !== null;
+    dirPickerFor() !== null ||
+    // BRIEF: the Briefing card is a backdrop modal like the rest.
+    briefingWs() !== null;
   createEffect(() => {
     if (!anyModalOpen()) return;
     // Broadcast hide to every workspace's Browser Webview. At most
@@ -1067,6 +1083,8 @@ function App() {
     const hasPane = !!pid;
     return [
       { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
+      { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
       { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
       { id: "workspace.delete", label: t("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
@@ -1137,24 +1155,71 @@ function App() {
   // Computed here rather than inside PaneTabs so the strip and the pane
   // header go through the same trafficLight() with the same inputs — two
   // call sites deriving a colour independently is how they drift.
-  const paneAgentLights = (): Record<string, TrafficLight | null> => {
+  //
+  // BRIEF (commit 2): generalized to EVERY workspace. allPaneAgentRows is
+  // the single source; the Queue panel, the sidebar attention set and the
+  // active-workspace lights below all derive from it, so they cannot
+  // disagree about a pane's state.
+  const collectPaneNodes = (node: LayoutNode): PaneNode[] =>
+    node.kind === "pane"
+      ? [node]
+      : [...collectPaneNodes(node.first), ...collectPaneNodes(node.second)];
+  const allPaneAgentRows = (): QueueRow[] => {
     const runs = agentRuns();
     const waiting = waitingPaneIds();
     const connected = connectedPanes();
     const now = agentClockMs();
-    const out: Record<string, TrafficLight | null> = {};
-    const layout = activeWs()?.layout;
-    for (const pid of layout ? collectPanes(layout) : []) {
-      const run = runs[pid];
-      out[pid] = trafficLight({
-        state: run?.state ?? "unknown",
-        stateSince: run?.stateSince ?? null,
-        waitingOnPermission: waiting.has(pid),
-        connected: connected.has(pid),
-        nowMs: now,
-      });
+    const briefMap = briefs();
+    const out: QueueRow[] = [];
+    for (const w of file().workspaces) {
+      if (!w.layout) continue;
+      for (const pane of collectPaneNodes(w.layout)) {
+        const pid = pane.pane_id;
+        const run = runs[pid];
+        out.push({
+          wsId: w.id,
+          wsName: w.name,
+          paneId: pid,
+          title: paneLabel(pane, {
+            workspaceName: w.name,
+            workspaceConnection: w.connection,
+          }),
+          state: run?.state ?? "unknown",
+          stateSince: run?.stateSince ?? null,
+          startedAt: run?.startedAt ?? null,
+          waitingOnPermission: waiting.has(pid),
+          connected: connected.has(pid),
+          brief: briefMap[pid] ?? null,
+          light: trafficLight({
+            state: run?.state ?? "unknown",
+            stateSince: run?.stateSince ?? null,
+            waitingOnPermission: waiting.has(pid),
+            connected: connected.has(pid),
+            nowMs: now,
+          }),
+        });
+      }
     }
     return out;
+  };
+  const paneAgentLights = (): Record<string, TrafficLight | null> => {
+    const wsId = activeWs()?.id;
+    const out: Record<string, TrafficLight | null> = {};
+    if (!wsId) return out;
+    for (const r of allPaneAgentRows()) {
+      if (r.wsId === wsId) out[r.paneId] = r.light;
+    }
+    return out;
+  };
+  // BRIEF: workspaces holding a pane in the "needs you" buckets (blocked /
+  // stuck / waiting-for-you). Superset of waitingWorkspaceIds — feeds the
+  // sidebar's attention dot at a lower intensity than blocking red.
+  const queueAttentionWorkspaceIds = (): Set<string> => {
+    const s = new Set<string>();
+    for (const r of allPaneAgentRows()) {
+      if (inQueue(r) && QUEUE_BUCKET[queueStatus(r)] <= 1) s.add(r.wsId);
+    }
+    return s;
   };
   const paneAgentStateSince = (): Record<string, number | null> => {
     const runs = agentRuns();
@@ -1225,6 +1290,34 @@ function App() {
   const [pulseTick, setPulseTick] = createSignal(0);
   const pulseTimer = setInterval(() => setPulseTick((n) => n + 1), 250);
   onCleanup(() => clearInterval(pulseTimer));
+  // BRIEF: idle-return trigger. `lastInputMs` is stamped by cheap
+  // capture-phase listeners (registered in onMount); the existing 250ms
+  // pulse — no second timer — arms the flag once the gap exceeds the
+  // configured idle window, and the FIRST input after that shows the
+  // Briefing card for the active workspace. Opt-in is checked at both
+  // ends so flipping the setting mid-idle behaves.
+  let lastInputMs = Date.now();
+  let idleReturnArmed = false;
+  const stampUserInput = () => {
+    if (idleReturnArmed) {
+      idleReturnArmed = false;
+      const wsId = activeWs()?.id;
+      if (settings()?.brief?.entry_card_on_idle === true && wsId && !anyModalOpen()) {
+        setBriefingWs(wsId);
+      }
+    }
+    lastInputMs = Date.now();
+  };
+  createEffect(() => {
+    void pulseTick();
+    const b = settings()?.brief;
+    if (b?.entry_card_on_idle !== true) {
+      idleReturnArmed = false;
+      return;
+    }
+    const idleMin = b.idle_minutes || 15;
+    if (Date.now() - lastInputMs > idleMin * 60_000) idleReturnArmed = true;
+  });
   // issue #4: a reactive wall-clock the Ticker label reads through, so the
   // "M:SS" elapsed re-renders every pulse without any per-second backend event.
   const agentClockMs = (): number => {
@@ -1503,6 +1596,14 @@ function App() {
   };
 
   const handleSetActive = async (id: string) => {
+    // BRIEF: the return-after-absence trigger MUST read last_active_at off
+    // the pre-switch file() — workspace_set_active stamps it to "now"
+    // (seconds) before returning, so reading afterwards always measures
+    // zero absence. Deliberately not a createEffect on activeWs() for the
+    // same reason: by the time the effect sees the new workspace, the old
+    // timestamp is gone.
+    const prevActiveId = file().active_workspace_id;
+    const prevSnapshot = file().workspaces.find((w) => w.id === id);
     try {
       const f = await invoke<WorkspacesFile>("workspace_set_active", {
         workspaceId: id,
@@ -1518,6 +1619,18 @@ function App() {
         const pick =
           remembered && panes.includes(remembered) ? remembered : panes[0];
         if (pick) setActivePaneId(pick);
+      }
+      const b = settings()?.brief;
+      if (
+        b?.entry_card_on_return === true &&
+        id !== prevActiveId &&
+        prevSnapshot
+      ) {
+        const lastSec = Number(prevSnapshot.last_active_at ?? 0);
+        const absenceMin = b.absence_minutes || 30;
+        if (lastSec > 0 && Date.now() / 1000 - lastSec > absenceMin * 60) {
+          setBriefingWs(id);
+        }
       }
     } catch (e) {
       log.error("workspace_set_active failed", e);
@@ -2770,6 +2883,18 @@ function App() {
     { id: "toggle_notes", run: (e) => { e.preventDefault(); setShowNotes((v) => !v); } },
     { id: "toggle_settings", run: (e) => { e.preventDefault(); setShowSettings((v) => !v); } },
     { id: "new_workspace", run: (e) => { e.preventDefault(); setShowSetup({}); } },
+    // BRIEF: the cross-workspace agent Queue.
+    { id: "toggle_queue", run: (e) => {
+      e.preventDefault();
+      if (surfaceOf("queue") === "closed") openPanel("queue");
+      else closePanel("queue");
+    } },
+    // BRIEF: the Briefing card, on demand — works regardless of the
+    // opt-in trigger toggles.
+    { id: "show_briefing", when: () => !!activeWs(), run: (e) => {
+      e.preventDefault();
+      setBriefingWs(activeWs()!.id);
+    } },
 
     // ── clipboard ──
     { id: "copy", run: (e) => {
@@ -2947,6 +3072,18 @@ function App() {
     // listener belongs at the root rather than in any one pane.
     void initTransferListener();
 
+    // BRIEF: stamp user input for the idle-return trigger. Capture phase +
+    // passive, so nothing here can slow or swallow an event; three event
+    // kinds cover keyboard, pointer and scroll.
+    window.addEventListener("pointerdown", stampUserInput, { capture: true, passive: true });
+    window.addEventListener("keydown", stampUserInput, { capture: true, passive: true });
+    window.addEventListener("wheel", stampUserInput, { capture: true, passive: true });
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", stampUserInput, { capture: true });
+      window.removeEventListener("keydown", stampUserInput, { capture: true });
+      window.removeEventListener("wheel", stampUserInput, { capture: true });
+    });
+
     // Phase 48-D: lightweight UI-stall instrumentation. A 100ms heartbeat
     // measures actual elapsed vs expected and reports gaps >300ms; a
     // PerformanceObserver on `longtask` reports any single task >200ms.
@@ -3045,6 +3182,13 @@ function App() {
       setAgentRuns(seeded);
     } catch (e) {
       log.warn("pane_agent_states failed", e);
+    }
+
+    // BRIEF: same reload story for the brief entries.
+    try {
+      setBriefs(await invoke<Record<string, PaneBriefEntry>>("pane_briefs"));
+    } catch (e) {
+      log.warn("pane_briefs failed", e);
     }
 
     const unlistens: UnlistenFn[] = [];
@@ -3468,6 +3612,16 @@ function App() {
         setAgentRuns(next);
       })
     );
+    // BRIEF: per-pane brief entries. Same seq guard as pane:agent-run —
+    // hooks race over a socket, drop anything not newer than what we hold.
+    unlistens.push(
+      await listen<{ pane_id: string; entry: PaneBriefEntry }>("pane:brief", (e) => {
+        const { pane_id, entry } = e.payload;
+        const prev = briefs()[pane_id];
+        if (prev && entry.seq <= prev.seq) return;
+        setBriefs({ ...briefs(), [pane_id]: entry });
+      })
+    );
     // Live refresh when an external mutation happens (RPC over named pipe).
     unlistens.push(
       await listen("workspaces:changed", () => {
@@ -3678,6 +3832,7 @@ function App() {
           waitingWorkspaceIds={waitingWorkspaceIds()}
           hookPulseWorkspaceIds={activeHookWorkspaceIdsReactive()}
           notifiedWorkspaceIds={notifiedWorkspaceIds()}
+          briefAttentionWorkspaceIds={queueAttentionWorkspaceIds()}
           groups={file().groups ?? []}
           onGroupCreate={async (name, color) => {
             try {
@@ -4419,6 +4574,26 @@ function App() {
         onFullscreen={() => expandPanel("tickets")}
       />
 
+      {/* BRIEF: the cross-workspace agent Queue — every agent pane sorted
+          by who needs the user. Data comes from allPaneAgentRows so it can
+          never disagree with the tab strip or the sidebar. */}
+      <QueuePanel
+        surface={surfaceOf("queue")}
+        rows={allPaneAgentRows()}
+        nowMs={agentClockMs()}
+        onJump={(wsId, paneId) => {
+          if (surfaceOf("queue") === "drawer") closePanel("queue");
+          void (async () => {
+            await handleSetActive(wsId);
+            focusPane(paneId);
+          })();
+        }}
+        onClose={() => closePanel("queue")}
+        onDrawer={() => openPanel("queue")}
+        onFloat={() => floatPanel("queue")}
+        onFullscreen={() => expandPanel("queue")}
+      />
+
       {/* Phase 68 (UX): per-workspace Add-ons window (from right-click). */}
       <AddonsWindow
         open={!!addonsWin()}
@@ -4440,6 +4615,48 @@ function App() {
         }}
         onClose={() => setAddonsWin(null)}
       />
+
+      {/* BRIEF: the workspace-entry Briefing card. `keyed` so each trigger
+          rebuilds the content fresh (intent draft included) instead of
+          resurrecting the previous card. In anyModalOpen(), so the native
+          Browser webview hides underneath it. */}
+      <Show keyed when={briefingWs()}>
+        {(wsId) => {
+          const ws = file().workspaces.find((w) => w.id === wsId);
+          if (!ws) return null;
+          return (
+            <BriefingCard
+              ws={ws}
+              rows={allPaneAgentRows().filter((r) => r.wsId === wsId)}
+              nowMs={agentClockMs()}
+              onSaveIntent={(text) => {
+                void (async () => {
+                  try {
+                    const updated = await invoke<Workspace>("workspace_set_intent", {
+                      workspaceId: wsId,
+                      intent: text === "" ? null : text,
+                    });
+                    const f = file();
+                    updateFile({
+                      ...f,
+                      workspaces: f.workspaces.map((w) =>
+                        w.id === updated.id ? updated : w,
+                      ),
+                    });
+                  } catch (e) {
+                    log.error("workspace_set_intent failed", e);
+                  }
+                })();
+              }}
+              onJumpPane={(paneId) => {
+                setBriefingWs(null);
+                focusPane(paneId);
+              }}
+              onClose={() => setBriefingWs(null)}
+            />
+          );
+        }}
+      </Show>
 
       {/* Phase 32.B: SSH key offer. Self-contained — listens for the
           `ssh-key-offer` event on its own, no props needed. */}
