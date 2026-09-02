@@ -7203,7 +7203,15 @@ body.ymux-dragging .pane-conn {
 .sessions-status.error { background: rgba(247, 118, 142, 0.16); color: var(--w-danger, #f7768e); border-color: transparent; }
 .sessions-status.unknown { color: var(--w-text-faint); border-style: dashed; }
 .sessions-actions { margin-inline-start: 0; flex-wrap: nowrap; }
-.sessions-actions button.primary { color: var(--w-accent); border-color: var(--w-accent); }
+/* Outline, not filled: the row's Open must not outshout the table. The
+   explicit transparent background is what keeps `button.primary`'s accent
+   fill out (same specificity as `.ports-row-actions button`, so say it). */
+.sessions-actions button.primary {
+  background: transparent; color: var(--w-accent); border-color: var(--w-accent);
+}
+.sessions-actions button.primary:hover:not(:disabled) {
+  background: rgba(122, 162, 247, 0.14); color: var(--w-accent-hi); border-color: var(--w-accent-hi);
+}
 .sessions-actions button.danger:hover, .sessions-actions button.danger.armed {
   color: var(--w-danger, #f7768e); border-color: var(--w-danger, #f7768e);
 }
@@ -7230,5 +7238,14 @@ body.ymux-dragging .pane-conn {
   color: var(--w-text-dim); padding: 3px 10px; cursor: pointer; font-size: 12px; white-space: nowrap;
 }
 .sessions-head-btn:hover:not(:disabled) { color: var(--w-text); }
-.sessions-head-btn.primary { color: var(--w-accent); border-color: var(--w-accent); }
+/* The global `button.primary` (accent background, `--w-bg` text) outranks
+   `.sessions-head-btn` on the background, so an accent TEXT override here
+   painted accent-on-accent — invisible until hover. Be the app's ordinary
+   primary button instead: filled, dark text, lighter on hover. */
+.sessions-head-btn.primary {
+  background: var(--w-accent); border-color: var(--w-accent); color: var(--w-bg); font-weight: 600;
+}
+.sessions-head-btn.primary:hover:not(:disabled) {
+  background: var(--w-accent-hi); border-color: var(--w-accent-hi); color: var(--w-bg);
+}
 .sessions-head-btn:disabled { opacity: 0.45; cursor: default; }
