@@ -7354,3 +7354,8 @@ RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 [2026-09-01] BRIEF commit 5/5: adoption
   - Queue empty-state: BRIEF_SNIPPET (verbatim CLAUDE.md block matching brief.rs parser) + copy button; i18n x4; docs/BRIEF.md (wire format + surfaces + privacy); CLAUDE.md docs pointer.
   - Next: open PR, watch ci-windows. All five phases compiles-untested until CI + live run (Rule #14/17).
+
+[2026-09-02] BRIEF merged: PR #40 -> main (1094893), all 5 checks green (ci-windows x3 + build-macos x2).
+  - Parallel session's PR #41 (tmux_sessions, active-sessions overview) overlaps on 17 files and now needs a merge of main + vault re-sweep before landing; also flagged there: its 'Phase 87' collides with the existing Phase 87 (shortcuts).
+  - BACKLOG: two BRIEF<->overview unification entries added (status-vocab mapping; brief-first rows / shared LLM summarize engine), superseding the old 'refresh button' entry.
+  - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
