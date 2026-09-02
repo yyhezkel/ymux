@@ -7359,3 +7359,5 @@ RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
   - Parallel session's PR #41 (tmux_sessions, active-sessions overview) overlaps on 17 files and now needs a merge of main + vault re-sweep before landing; also flagged there: its 'Phase 87' collides with the existing Phase 87 (shortcuts).
   - BACKLOG: two BRIEF<->overview unification entries added (status-vocab mapping; brief-first rows / shared LLM summarize engine), superseding the old 'refresh button' entry.
   - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
+
+[2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
