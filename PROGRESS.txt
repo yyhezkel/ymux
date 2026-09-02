@@ -7423,3 +7423,8 @@ on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested â
   - Plan: push bump -> ci-windows green -> tag v0.5.1-beta.1 -> build-windows (MSI+NSIS+asserts) -> gh release --prerelease. NO manifest.json flip (stable channel untouched - that is what makes it a beta).
 
 [2026-09-02] v0.5.1-beta.1 PUBLISHED: https://github.com/yyhezkel/ymux/releases/tag/v0.5.1-beta.1 (prerelease; MSI 23.5MB + NSIS 16.9MB from tag run 33653328842, both asserts green). manifest.json NOT flipped - stable stays 0.5.0. Rule #14 still open: the beta exists to gather the live soak of BRIEF + sessions overview.
+
+[2026-09-02] BRIEF beta feedback round 1 (Yossi, live on v0.5.1-beta.1):
+  - Queue had no visible entry point -> header button next to the bell, badge = needs-you pane count (queueNeedsYouCount), same openPanel handler as shortcut/palette.
+  - Intent field had no visible submit -> explicit Save button; disabled state = saved-checkmark. Enter/blur still work.
+  - i18n x4, CSS, vault (frontend-shell header-buttons + BriefingCard prose).
