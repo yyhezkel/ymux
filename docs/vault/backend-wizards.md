@@ -154,6 +154,12 @@ back) surfaced as the user-facing error message.
   drops the `output()` future, and an orphaned `install.ps1` kept
   `~\.claude\downloads\claude-<ver>.exe` locked, so every retry of InstallClaudeCode
   failed with "being used by another process". Same reasoning as `claude_usage.rs`.
+- `resolve_claude_binary` (Phase 87) also tries `claude.cmd` on Windows: `which` only
+  appends PATHEXT to the name it is handed, so `which("claude.exe")` cannot see an
+  npm-global install, which is a `.cmd` shim. `probe_tool` had always known both
+  spellings; the one-shot `claude -p` callers (`claude_usage`, `sessions_overview`)
+  resolve through here and did not. A `.cmd` is spawned via `cmd.exe /c` by std with
+  its own escaping, which is why those callers keep their prompt free of `"` and `%`.
 - InstallClaudeCode (both arms) succeeds even when the installer exits non-zero, **if**
   a working `claude` binary is already on disk — the downloads dir is shared with
   claude's own auto-updater, so a locked file can fail the installer on a machine
