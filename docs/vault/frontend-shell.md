@@ -86,8 +86,10 @@ char count only (never the transcript — Rule #1; chars=0 catches the "pressed 
 nothing happened" case), and every recorder rejection as `log.error` before the 5-second
 toast, so a missed toast is no longer a lost error.
 
-**The workspace header keeps four buttons, not seven.** Browser, Files and the
-notification bell (which carries the unread badge) stay visible; view mode, `+ diff`,
+**The workspace header keeps five buttons, not eight.** Browser, Files, the
+BRIEF Queue (badge = panes needing you across ALL workspaces — beta feedback:
+a shortcut-only feature dies quietly) and the notification bell (unread badge)
+stay visible; view mode, `+ diff`,
 Insights and Tickets live behind a single `⋯` (`.ws-header-more` / `.ws-header-menu`,
 sharing `.diff-pane-menu`'s CSS rather than a second dropdown component). Each item
 calls the **same handler its old standalone button called** — `setTabsMode`,
@@ -236,8 +238,10 @@ and hydrated by `pane_briefs`.
 the tab strip, the Queue panel and the Briefing card call one function.
 
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
-→ `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's
-brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+→ `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose
+disabled state doubles as "saved ✓" — beta feedback: a field that saves
+invisibly reads as one that doesn't save at all; empty clears) + this
+workspace's brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
 `anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
 triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
 lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch

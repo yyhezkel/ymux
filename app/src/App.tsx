@@ -40,6 +40,7 @@ import {
   IconGitCompare,
   IconColumns,
   IconMore,
+  IconBot,
   IconRows,
 } from "./icons";
 import { createNarrow } from "./useNarrow";
@@ -1224,6 +1225,12 @@ function App() {
     }
     return s;
   };
+  // BRIEF (beta feedback): the header button's badge — how many PANES need
+  // you right now, across all workspaces.
+  const queueNeedsYouCount = (): number =>
+    allPaneAgentRows().filter(
+      (r) => inQueue(r) && QUEUE_BUCKET[queueStatus(r)] <= 1,
+    ).length;
   const paneAgentStateSince = (): Record<string, number | null> => {
     const runs = agentRuns();
     const out: Record<string, number | null> = {};
@@ -4168,6 +4175,24 @@ function App() {
               >
                 <IconFolder />
                 <span class="ws-header-btn-label">{t("sidebar.files.label")}</span>
+              </button>
+              {/* BRIEF (beta feedback): the Queue lived behind Ctrl+Shift+Q
+                  only — a feature nobody can see dies quietly. Visible
+                  button next to the bell; badge = panes needing you across
+                  ALL workspaces. Same openPanel the keybinding and the
+                  palette call. */}
+              <button
+                class="ws-header-btn notif-bell"
+                title={t("queue.title")}
+                onClick={() => openPanel("queue")}
+              >
+                <IconBot />
+                <span class="ws-header-btn-label">{t("queue.btn.label")}</span>
+                <Show when={queueNeedsYouCount() > 0}>
+                  <span class="notif-bell-badge">
+                    {queueNeedsYouCount() > 99 ? "99+" : queueNeedsYouCount()}
+                  </span>
+                </Show>
               </button>
               {/* Feedback reorg: Notifications button lives at the header edge,
                   after Monitor. Moved here from the sidebar so all workspace
