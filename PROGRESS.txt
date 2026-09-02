@@ -7417,3 +7417,7 @@ comment: no auto-summarize; per-row + per-folder tick, "Summarize selected (N)",
 only on rows in flight, selection per open (per-host persistence → BACKLOG P3). Phase
 renumbered 87→90 on every line this branch added (87 = recordable shortcuts, 89 = highest
 on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested — CI.
+
+[2026-09-02] Cutting v0.5.1-beta.1 from main (BRIEF #40 + active-sessions overview #41).
+  - chore bump 0.5.0 -> 0.5.1 (6 files, same shape as f2f1b27); files stay plain semver, only the tag carries -beta.1 (house convention, verified against v0.5.0-beta.1/2).
+  - Plan: push bump -> ci-windows green -> tag v0.5.1-beta.1 -> build-windows (MSI+NSIS+asserts) -> gh release --prerelease. NO manifest.json flip (stable channel untouched - that is what makes it a beta).
