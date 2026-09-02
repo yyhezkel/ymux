@@ -7421,3 +7421,5 @@ on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested â
 [2026-09-02] Cutting v0.5.1-beta.1 from main (BRIEF #40 + active-sessions overview #41).
   - chore bump 0.5.0 -> 0.5.1 (6 files, same shape as f2f1b27); files stay plain semver, only the tag carries -beta.1 (house convention, verified against v0.5.0-beta.1/2).
   - Plan: push bump -> ci-windows green -> tag v0.5.1-beta.1 -> build-windows (MSI+NSIS+asserts) -> gh release --prerelease. NO manifest.json flip (stable channel untouched - that is what makes it a beta).
+
+[2026-09-02] v0.5.1-beta.1 PUBLISHED: https://github.com/yyhezkel/ymux/releases/tag/v0.5.1-beta.1 (prerelease; MSI 23.5MB + NSIS 16.9MB from tag run 33653328842, both asserts green). manifest.json NOT flipped - stable stays 0.5.0. Rule #14 still open: the beta exists to gather the live soak of BRIEF + sessions overview.
