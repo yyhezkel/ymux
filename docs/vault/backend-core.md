@@ -244,7 +244,7 @@ list command. The module owns what the picker never needed:
   each named session (240 chars per line) and run **one** `claude -p … --output-format json`
   over all of them, **on the machine that holds the sessions**. Over SSH the capture loop and
   the model call are a single remote pipeline (`build_ssh_summary_script`: `tmux capture-pane
-  -p -t "=$s" -S -40 | cut … | bash -lc '<claude> -p …'`), so screen bytes never cross to
+  -p -t "=$s:" -S -40 | cut … | bash -lc '<claude> -p …'`), so screen bytes never cross to
   the desktop. macOS captures through `local_tmux_output` and Windows through
   `zellij -s <name> action dump-screen` (`zellij_args_dump_screen`, argv), both framed in
   memory and piped into the local `claude` on stdin (`run_local_claude`, the twin of
@@ -306,6 +306,12 @@ list command. The module owns what the picker never needed:
   `ymux-tools/statuslines/hooks/turn-state.js`. Change one, change both.
 - `FEED_MAX_ITEMS` here is `#[allow(dead_code)]` documentation — `rpc_server.rs` has
   its own copy.
+- **tmux targets: `=name` is a SESSION target, `=name:` is a pane target.** `=` pins an
+  exact match (a bare name prefix-matches — `tax` hits `tax-contine`), and it works as-is
+  for `rename-session` / `kill-session`. `capture-pane` takes a pane target, and tmux 3.4
+  reads a bare `=name` there as a pane name: `can't find pane`. Phase 87 shipped with the
+  bare form and every capture came back empty until a live run on 2026-09-02 caught it —
+  `sessions_overview.rs` uses `=name:` and its test asserts the colon.
 
 ## Read the source when
 

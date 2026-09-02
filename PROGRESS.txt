@@ -7342,3 +7342,12 @@ outcome); types.ts owner_cwd + SessionSummary; i18n ×4 (35 keys); App.css.
 Docs: vault backend-core / frontend-shell / frontend-panes, ZELLIJ.md,
 DECISIONS (Decided: real rename back, ASCII-only). 11 unit tests in the new
 module. Result: compiles-untested (Rule #17) — CI decides; FOLLOWUPS P1 smoke.
+
+2026-09-02 — Phase 87.A: capture-pane target fix (=name → =name:)
+Live run on the runner (tmux 3.4): `capture-pane -t =name` answers "can't find
+pane" — a bare =name is a PANE target there; =name: (session:window) resolves.
+rename-session -t =name is fine (session target). Fixed in
+build_ssh_summary_script + capture_local_tmux, the test asserts the colon, vault
+Gotcha added. Found by running the feature's pipeline by hand on this machine
+before the CI builds were downloaded; without it every summary came back
+unknown. Builds re-dispatched (Windows NSIS + macOS dmg x64/arm64).

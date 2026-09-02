@@ -178,8 +178,14 @@ fn frame_captures(captures: &[String]) -> String {
 /// The single remote pipeline: capture every session in order, feed the lot
 /// to `claude -p` under a login shell (so an npm / nvm / fnm `claude` is on
 /// PATH — see `claude_summary::wrap_login`). Names go through `shell_quote`;
-/// the prompt through `bash_squote` inside `wrap_login`. `=` on the target
-/// pins an exact session match (a bare `-t` prefix-matches).
+/// the prompt through `bash_squote` inside `wrap_login`.
+///
+/// **The target is `=name:`, colon included.** `=` pins an exact session match
+/// (a bare `-t` prefix-matches, and `tax` would hit `tax-contine`), but
+/// `capture-pane` takes a PANE target, and tmux 3.4 reads a bare `=name` there
+/// as a pane name and answers `can't find pane` — verified live on 2026-09-02.
+/// The trailing colon makes it `session:window`, which resolves. Session-level
+/// verbs (`rename-session`, `kill-session`) take `=name` as-is.
 ///
 /// `2>/dev/null` on both `tmux` and the model call matters: `addons::exec`
 /// merges stderr into the output it returns, and the JSON envelope has to
@@ -193,7 +199,7 @@ fn build_ssh_summary_script(names: &[String], claude_path: &str, prompt: &str) -
     ));
     format!(
         "i=0; for s in {names}; do i=$((i+1)); printf '\\n### SESSION %s\\n' \"$i\"; \
-         tmux capture-pane -p -t \"=$s\" -S -{lines} 2>/dev/null | cut -c1-{cols}; done \
+         tmux capture-pane -p -t \"=$s:\" -S -{lines} 2>/dev/null | cut -c1-{cols}; done \
          | {model} 2>/dev/null",
         names = quoted.join(" "),
         lines = CAPTURE_LINES,
@@ -318,12 +324,13 @@ async fn run_local_claude(prompt: &str, input: &[u8]) -> Result<String, String> 
 
 /// macOS: one `capture-pane` per session, argv only (Rule #3). A session
 /// that vanished between the list and now captures as empty, not as an
-/// error — the model then reports it `unknown`, which is the truth.
+/// error — the model then reports it `unknown`, which is the truth. `=name:`
+/// for the same reason as the SSH script: a bare `=name` is not a pane target.
 #[cfg(not(windows))]
 async fn capture_local_tmux(names: &[String]) -> Vec<String> {
     let mut out = Vec::with_capacity(names.len());
     for name in names {
-        let target = format!("={name}");
+        let target = format!("={name}:");
         let lines = format!("-{CAPTURE_LINES}");
         let text = match crate::local_tmux_output(&["capture-pane", "-p", "-t", &target, "-S", &lines])
             .await
@@ -604,7 +611,9 @@ mod tests {
             "prompt",
         );
         assert!(s.starts_with("i=0; for s in 'dev' 'it'\\''s; rm -rf /'; do"));
-        assert!(s.contains("tmux capture-pane -p -t \"=$s\" -S -40 2>/dev/null | cut -c1-240"));
+        // `=name:` — a bare `=name` is a PANE target for capture-pane and fails
+        // on tmux 3.4 (`can't find pane`). Verified live; do not "simplify".
+        assert!(s.contains("tmux capture-pane -p -t \"=$s:\" -S -40 2>/dev/null | cut -c1-240"));
         assert!(s.contains("bash -lc '"));
         assert!(s.contains("--output-format json"));
         assert!(s.ends_with("2>/dev/null"));
