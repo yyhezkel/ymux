@@ -1679,22 +1679,28 @@ function App() {
   const [dirPickerFor, setDirPickerFor] =
     createSignal<{ workspaceId: string; connection: Connection | null } | null>(null);
 
-  /** Probe, then persist. The probe is what keeps a non-repo directory
-   *  from landing as a dead section — git's own message comes back. */
+  /** Probe, then persist. The probe rejects only a path that isn't
+   *  there (or an SSH host with no live session) — that would land a
+   *  dead row. A directory WITHOUT git pins fine, just demoted
+   *  (`is_project_root: false`, no worktree scan), the same state
+   *  `onNotARepo` produces, with "Check for a git repository" as the
+   *  way back after a `git init`. */
   const pinProjectFolder = async (
     parentWorkspaceId: string,
     path: string,
     connection: Connection | null,
   ) => {
     try {
-      await invoke<WorktreeEntry[]>("git_probe_worktrees", { path, connection });
+      const isRepo = await invoke<boolean>("project_folder_probe", { path, connection });
       const f = await invoke<WorkspacesFile>("workspace_pin_project_folder", {
         parentWorkspaceId,
         path,
         name: null,
+        isProjectRoot: isRepo,
       });
       updateFile(f);
       if (f.active_workspace_id) await handleSetActive(f.active_workspace_id);
+      if (!isRepo) flashSummaryToast("ok", t("pf.pinned.noGit"));
     } catch (e) {
       log.error("pin project folder failed", e);
       flashSummaryToast("err", String(e));

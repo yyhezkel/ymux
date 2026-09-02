@@ -154,9 +154,16 @@ other arm returns a clean error.
 
 ## Git
 
-**`worktrees.rs` (638)** — enumerate and create git worktrees for a workspace flagged
-`is_project_root` whose cwd is a repo. Every git call dispatches on that workspace's
-connection:
+**`worktrees.rs` (715)** — enumerate and create git worktrees for a workspace flagged
+`is_project_root` whose cwd is a repo, plus the pin flow's validation step,
+**`project_folder_probe`**: `Err` only when the directory does not exist on the host
+(`dir_exists_over` — `tokio::fs` locally, `test -d` over WSL/SSH; parsing git's fatal
+messages apart instead would break on localization) or when no SSH session is live.
+A directory git rejects probes to `Ok(false)` and pins as a plain demoted folder —
+"Check for a git repository" promotes it after `git init`, and THAT re-check still
+uses `git_probe_worktrees`, the older always-fatal variant, because there the user
+asked "is this a repo?" and git's verbatim message is the answer. Every git call
+dispatches on that workspace's connection:
 
 | connection | transport |
 |---|---|

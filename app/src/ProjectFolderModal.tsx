@@ -11,8 +11,11 @@ import type { Connection, Workspace, WorktreeEntry } from "./types";
 //   mode "worktree" — create a new worktree inside a pinned folder
 //
 // Both talk to a host that is usually NOT this machine, so neither one
-// guesses whether a path is valid: git is the validation step and its
-// message comes back verbatim.
+// guesses whether a path is valid: the backend probe is the validation
+// step and its message comes back verbatim. A directory that exists but
+// has no git repo is NOT an error — it pins as a plain folder (demoted,
+// no worktree list) and can be promoted later via "Check for a git
+// repository" in the sidebar.
 //
 // On "pin": SSH workspaces do NOT come here — they get the real remote
 // browser (DirPicker.tsx, over SFTP), and Local gets the native dialog.
@@ -85,10 +88,11 @@ export function ProjectFolderModal(p: Props) {
     setBusy(true);
     setError(null);
     try {
-      // Validate before persisting: a path that is not a repo (or a
-      // workspace with no live session) fails here with git's own
-      // message instead of landing a dead row in the sidebar.
-      await invoke<WorktreeEntry[]>("git_probe_worktrees", {
+      // Validate before persisting: a path that does not exist (or a
+      // host with no live session) fails here instead of landing a dead
+      // row in the sidebar. "No git there" is an answer, not a failure —
+      // the folder pins demoted.
+      const isRepo = await invoke<boolean>("project_folder_probe", {
         path: value,
         connection: p.mode.connection,
       });
@@ -96,6 +100,7 @@ export function ProjectFolderModal(p: Props) {
         parentWorkspaceId: p.mode.workspaceId,
         path: value,
         name: null,
+        isProjectRoot: isRepo,
       });
       p.onDone();
       p.onClose();

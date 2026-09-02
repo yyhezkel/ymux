@@ -113,6 +113,14 @@ here.
 An `ErrorBoundary` wraps the tree — a thrown render error shows a recovery panel rather
 than a white window.
 
+**Pinning a project folder no longer requires git.** `pinProjectFolder` calls
+`project_folder_probe` (hard error only for a missing directory or a dead SSH host),
+then passes the verdict to `workspace_pin_project_folder` as `isProjectRoot`; a folder
+without a repo lands demoted with an explanatory toast (`pf.pinned.noGit`) instead of
+being refused with git's fatal message. `recheckGit` (the sidebar's "Check for a git
+repository") still uses the always-fatal `git_probe_worktrees` — there, git's own
+message IS the answer.
+
 The Monitor mount passes `local={activeWs()?.connection?.type === "local"}` (Phase
 84.E) — `InsightsWindow` needs it only to print the right file paths in its
 "copy investigation commands" blocks; the fetch routing itself stays in Rust. The F12 /
