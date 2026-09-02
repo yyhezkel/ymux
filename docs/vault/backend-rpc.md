@@ -2,6 +2,7 @@
 vault: backend-rpc
 covers:
   - app/src-tauri/src/rpc_server.rs
+  - app/src-tauri/src/brief.rs
   - app/src-tauri/mcp/src/main.rs
   - app/src-tauri/mcp/Cargo.toml
 ---
@@ -78,7 +79,17 @@ and **is** the canonical list — nothing else enumerates these:
 An agent hook arrives as one of the hook verbs and turns into a notification:
 
 1. `humanize_notification(subkind, payload, ws_name, lang)` produces `(title, body)` —
-   it is bilingual, driven by the settings language.
+   it is bilingual, driven by the settings language. For a Stop it reads
+   `response_summary` with `last_assistant_message` (what current Claude Code actually
+   sends) as the fallback, so the body shows how the turn ended. **Feed cards for the
+   passive lifecycle subkinds (`stop`, `session-start/end`, `post-tool-use`,
+   `subagent-stop`, `pre-compact`) go through the same function**: `feed.push` overrides
+   the CLI-derived `title`/`summary` desktop-side before building the `FeedItem` — the
+   CLI's fallbacks produced "agent: stop" titles and a raw payload dump (or SessionEnd's
+   bare `reason`) as the card body, and fixing it here also covers stale remote CLIs.
+   The `ws_name` passed there is empty on purpose (the card's meta row already carries
+   the workspace chip); `pre-tool-use` is excluded because its Gate-card title is the
+   approval prompt itself.
 2. `hook_toast_enabled(notifications, hook_settings, subkind)` decides whether a native
    toast fires at all; `hook_toast_should_sound` decides whether it makes noise.
 3. `show_toast_with_sound` spawns a thread and uses `notify_rust`.
@@ -99,6 +110,33 @@ the policy, the Block branch and Stop separately). With `blocking: true` it park
 with the Tauri `feed_decide` command, defined in `lib.rs`) is what wakes it. That is the
 allow/deny prompt loop. `FEED_MAX_ITEMS_LIMIT = 50` — `lib.rs` has its own copy of the
 constant.
+
+## Briefs (`brief.rs`)
+
+The data layer behind the Queue panel / Briefing card. An agent may end its final
+assistant message with a plain-text `[ymux-brief]` block (`task:` / `status:` /
+`ask:` / `rec:` / `next:` / `delta:`, one per line). Because the CLI forwards the
+Stop hook payload verbatim, the desktop parses `last_assistant_message` with **no
+CLI cooperation**: `parse_brief` is pure string ops (last marker line wins via a
+full-line scan, so a self-quoting agent doesn't truncate its brief; keys are ASCII
+split on the first `:`, so fully-RTL values are safe; markdown decoration and
+fences are stripped; unknown keys ignored). `status` is
+`working|waiting-for-you|stuck|done` with `waiting`/`blocked` aliases, defaulting
+to `done`. No marker → a **degraded** brief (`degraded: true`, task from
+`claude_title`, delta = first line of the message, never a fabricated `ask`).
+
+State lives in `AppState.briefs: HashMap<pane_id, PaneBriefEntry>` — entry =
+`{ brief, last_prompt, prompt_ms, session_ended, seq }`, keyed by the **resolved**
+pane (same `resolve_hook_pane` rule as `agent_runs`), in-memory only (same
+rationale), hydrated by the `pane_briefs` command and pushed as the `pane:brief`
+event (whole entry, `seq`-guarded). Three `feed.push` arms feed it:
+`user-prompt-submit` stores the clipped last user prompt (the queue's "got from
+you: …" line), `stop` stores the parsed/degraded brief and clears `session_ended`,
+`session-end` sets `session_ended` but **keeps** the brief — it summarizes
+finished work. A non-degraded brief also rewrites the stop feed card: humanize
+sees the message with the block stripped (`pre_brief_text`), and the summary
+becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content lives in memory
+and the UI only — log lines carry pane id + flags, never text.
 
 ## The MCP bridge (`mcp/`)
 

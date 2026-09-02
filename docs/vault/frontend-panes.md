@@ -20,6 +20,7 @@ covers:
   - app/src/PortsWindow.tsx
   - app/src/TicketsPanel.tsx
   - app/src/TicketModal.tsx
+  - app/src/QueuePanel.tsx
   - app/src/FeedPanel.tsx
   - app/src/NotificationCenter.tsx
   - app/src/AddonsWindow.tsx
@@ -215,6 +216,17 @@ a key.
 list, and the dialog that finalizes a captured element into a ticket on disk. **The
 capture came from an untrusted page**, so the element HTML is rendered as **text, never
 as markup**, and the preview is collapsed by default.
+
+**`QueuePanel.tsx` (BRIEF)** — the cross-workspace agent Queue: every agent pane
+grouped by workspace with a count and a "needs you" badge, rows sorted by
+`queueModel.ts`'s buckets (blocked/stuck → waiting-for-you → done/closed →
+running), each row = status emoji (🔄 ⏸️ ⚠️ 💤 ✅) + pane title + the
+"what's happening" line (`got from you: <last prompt>` while running; `ask · rec`
+after a stop) + age. **Owns no verdicts** — App hands it the same
+`allPaneAgentRows()` the sidebar derives from; this file only paints (all brief
+text renders as plain text with `dir="auto"`, never markup — it is agent
+output). Row click = `handleSetActive` + `focusPane`; a drawer closes itself on
+jump. Rides the shared PanelSurface lifecycle like Tickets.
 
 **`ClaudeUsageIndicator.tsx` (181)** + **`claudeUsageFmt.ts` (120)** — the always-visible
 subscription-usage chip. With room it shows session · week · top model; narrow, it

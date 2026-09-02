@@ -9,6 +9,9 @@ covers:
   - app/src/PaneTabs.tsx
   - app/src/AgentLight.tsx
   - app/src/paneAgentState.ts
+  - app/src/queueModel.ts
+  - app/src/paneTitle.ts
+  - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -212,6 +215,39 @@ it is your move, red = it is blocked on you, **nothing at all = unknown**, which
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
 untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
 greyscale, 8px, and red-green deficiency.
+
+**`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
+(needs-input / stuck / waiting / working / done / ended — live hook state always
+outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
+`whatsHappening` (running rows show the user's last prompt, ended rows show
+`ask · rec` → delta → next), and `groupQueueRows` (group by workspace, the
+reference-table "CRM — 5" shape). Solid-free and unit-tested in
+`queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
+input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
+every workspace; the active-workspace lights, the Queue panel and the sidebar
+attention set (`queueAttentionWorkspaceIds`, a fifth Sidebar prop that shares the
+row's one dot as `.brief-attn`, precedence blocking > brief > activity) all derive
+from those rows, so they cannot disagree. Per-pane brief entries live in the
+`briefs` signal, mirrored off `pane:brief` (seq-guarded like `pane:agent-run`)
+and hydrated by `pane_briefs`.
+
+**`paneTitle.ts`** — the pane display-label precedence
+(`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
+the tab strip, the Queue panel and the Briefing card call one function.
+
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
+→ `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's
+brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+`anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
+triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
+lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
+`file()` — `workspace_set_active` stamps it to "now" (in SECONDS) before
+returning, so an effect running after the switch would always measure zero
+absence; **idle-return** stamps `lastInputMs` from capture-phase passive
+pointer/key/wheel listeners and arms on the existing 250ms `pulseTick` (no
+second timer), firing on the first input after the gap; **manual** =
+`show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
+toggles.
 
 ## Panel chrome — "one body, three surfaces"
 

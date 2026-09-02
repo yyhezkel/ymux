@@ -851,6 +851,10 @@ pub(crate) struct Shortcuts {
     /// Tab cycling. Only fires in a tabs-mode workspace.
     pub tab_next: String,
     pub tab_prev: String,
+    /// BRIEF: toggle the cross-workspace agent Queue panel.
+    pub toggle_queue: String,
+    /// BRIEF: show the Briefing card for the active workspace.
+    pub show_briefing: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -877,6 +881,34 @@ impl Default for ClaudeOptions {
             auto_summarize_on_stop: false,
             summary_history_count: 10,
             summary_prompt: "Summarize the last {N} exchanges in 2-3 sentences in the same language the conversation used.".to_string(),
+        }
+    }
+}
+
+/// BRIEF: the Briefing-card options. Everything opt-in (defaults false) —
+/// the card's automatic triggers must never surprise a user who didn't
+/// ask for them; the manual shortcut works regardless of these.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, ts_rs::TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+#[serde(default)]
+pub(crate) struct BriefOptions {
+    /// Show the card when switching into a workspace not visited for
+    /// `absence_minutes`.
+    pub entry_card_on_return: bool,
+    /// Show the card on the first input after `idle_minutes` with no
+    /// keyboard/mouse activity in the app.
+    pub entry_card_on_idle: bool,
+    pub absence_minutes: u32,
+    pub idle_minutes: u32,
+}
+
+impl Default for BriefOptions {
+    fn default() -> Self {
+        Self {
+            entry_card_on_return: false,
+            entry_card_on_idle: false,
+            absence_minutes: 30,
+            idle_minutes: 15,
         }
     }
 }
@@ -966,6 +998,8 @@ impl Default for Shortcuts {
             quadrant_bottom_right: "Ctrl+Alt+L".into(),
             tab_next: "Ctrl+Tab".into(),
             tab_prev: "Ctrl+Shift+Tab".into(),
+            toggle_queue: "Ctrl+Shift+Q".into(),
+            show_briefing: "Ctrl+Alt+Q".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }
@@ -995,6 +1029,9 @@ pub(crate) struct Settings {
     /// Phase 78. Claude subscription-usage indicator display + auto-refresh.
     #[serde(default)]
     pub claude_usage: ClaudeUsageSettings,
+    /// BRIEF. Briefing-card triggers (all opt-in).
+    #[serde(default)]
+    pub brief: BriefOptions,
     /// Phase 18. Hooks-outdated banner show/skip state.
     #[serde(default)]
     pub hooks_updates: HooksUpdates,
@@ -1409,6 +1446,7 @@ impl Default for Settings {
             shortcuts: Shortcuts::default(),
             claude: ClaudeOptions::default(),
             claude_usage: ClaudeUsageSettings::default(),
+            brief: BriefOptions::default(),
             hooks_updates: HooksUpdates::default(),
             ssh_key_offer_disabled: false,
             auto_connect_on_workspace_select: true,

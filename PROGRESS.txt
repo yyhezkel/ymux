@@ -7320,6 +7320,7 @@ updater.rs ignores unknown fields (serde, all-optional), banner already works
 on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 
+<<<<<<< HEAD
 2026-09-02 — Phase 87: "סשנים פעילים" — active-sessions overview per workspace
 Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
 "Active sessions…" entry above Add-ons → full-screen modal listing every
@@ -7367,3 +7368,46 @@ tmuxSessionName/persistent to ws.tmux_session for the FIRST pane; restoreSession
 same fallback; Sidebar terminal glyph for session rows; window onOpen(s).
 Docs: vault crates / backend-core / frontend-shell / frontend-panes, DECISIONS
 addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
+=======
+[2026-09-01] fix(feed): humanized stop/session-end feed cards (branch yos/context-switching-impl-b86b68, 705c706)
+  - Bug (user screenshot): feed cards titled 'agent: stop' with raw payload JSON as body (incl. last_assistant_message), SessionEnd cards showing bare reason 'other'.
+  - Root cause: CLI derive_hook_title has no 'stop' arm; derive_hook_summary falls back to dumping payload JSON. Cards bypassed humanize_notification (toasts-only until now).
+  - Fix: desktop-side in rpc_server.rs feed.push — passive lifecycle subkinds routed through humanize_notification (ws_name empty; pre-tool-use excluded); humanize reads last_assistant_message as Stop summary fallback.
+  - Files: app/src-tauri/src/rpc_server.rs, docs/vault/backend-rpc.md (+lock). Compiles-untested until CI (Rule #17).
+  - Context: step 0 of the context-switching/Briefing design (agent-written brief on Stop hook + queue view) — discussion in session, not yet logged as Decided.
+
+[2026-09-01] BRIEF commit 1/5: backend pipeline (branch yos/context-switching-impl-b86b68)
+  - Plan approved (.claude/plans/precious-finding-dragon.md): agent-written [ymux-brief] block in last_assistant_message; Queue panel; Briefing card; intent per workspace; all opt-in. Logged as Decided in docs/DECISIONS.md.
+  - New app/src-tauri/src/brief.rs: parser (last-marker-wins, RTL-safe, markdown-tolerant, 11 unit tests), PaneBrief/PaneBriefEntry/BriefStatus (ts-rs).
+  - lib.rs: AppState.briefs store, emit_brief_event (pane:brief), pane_briefs hydration command.
+  - rpc_server.rs feed.push: user-prompt-submit stores clipped last_prompt; stop parses/stores brief + rewrites card summary to ask-dot-rec with block stripped; session-end flags session_ended (keeps brief).
+  - Bindings: BriefStatus.ts, PaneBrief.ts, PaneBriefEntry.ts (hand-authored ts-rs shape; CI regenerates/verifies).
+  - Vault: backend-rpc.md (+brief.rs coverage + Briefs section), backend-core.md. FOLLOWUPS +P3 (claude_summary doc-comment lie). BACKLOG +2 (LLM refresh v2, skill seeding v2).
+  - Compiles-untested until CI (Rule #17).
+
+[2026-09-01] BRIEF commit 2/5: Queue panel (frontend)
+  - queueModel.ts (pure: queueStatus/QUEUE_BUCKET/whatsHappening/groupQueueRows, 10 node tests), paneTitle.ts (label precedence lifted from PaneTabs), QueuePanel.tsx (Shape B panel, grouped by workspace, statuses emoji per the reference table).
+  - App.tsx: briefs signal + pane:brief listener + pane_briefs hydration; allPaneAgentRows() generalizes paneAgentLights to all workspaces; queueAttentionWorkspaceIds -> new Sidebar prop (shared dot, .brief-attn); QueuePanel mount; toggle_queue keybinding (Ctrl+Shift+Q) + palette cmd.
+  - shortcuts.ts + settings.rs Shortcuts + bindings/Shortcuts.ts + SHORTCUT_GROUPS; i18n x4 (queue.*); CSS queue-* + brief-attn dot.
+  - Vault: frontend-shell/panes/lib + backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 3/5: Workspace.intent
+  - ymux-types: intent field (elided when unset) + elision-test key; app lib.rs: WORKSPACES_SCHEMA_VERSION 2->3 (+doc), workspace_set_intent command (returns Workspace, logs length only); bindings/Workspace.ts.
+  - Vault: crates.md, backend-core.md. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 4/5: Briefing card + BriefOptions
+  - settings.rs BriefOptions (+Settings.brief, Default impl) + bindings (BriefOptions.ts, Settings.ts) + settings.ts mirror (BriefSettings, DEFAULT) + SettingsModal General section (whole-group writes, setRtlField lesson).
+  - BriefingCard.tsx (intent inline edit -> workspace_set_intent; queue-row markup shared); App.tsx: briefingWs in anyModalOpen, absence trigger INSIDE handleSetActive (reads last_active_at pre-stamp, seconds), idle-return via capture-phase input stamps + pulseTick arming, show_briefing shortcut (Ctrl+Alt+Q) + palette.
+  - i18n x4, CSS. Vault: frontend-shell/flows/lib, backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 5/5: adoption
+  - Queue empty-state: BRIEF_SNIPPET (verbatim CLAUDE.md block matching brief.rs parser) + copy button; i18n x4; docs/BRIEF.md (wire format + surfaces + privacy); CLAUDE.md docs pointer.
+  - Next: open PR, watch ci-windows. All five phases compiles-untested until CI + live run (Rule #14/17).
+
+[2026-09-02] BRIEF merged: PR #40 -> main (1094893), all 5 checks green (ci-windows x3 + build-macos x2).
+  - Parallel session's PR #41 (tmux_sessions, active-sessions overview) overlaps on 17 files and now needs a merge of main + vault re-sweep before landing; also flagged there: its 'Phase 87' collides with the existing Phase 87 (shortcuts).
+  - BACKLOG: two BRIEF<->overview unification entries added (status-vocab mapping; brief-first rows / shared LLM summarize engine), superseding the old 'refresh button' entry.
+  - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
+
+[2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
+>>>>>>> origin/main

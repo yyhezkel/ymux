@@ -81,6 +81,12 @@ directions, and an older ymux reading a `Tabs` node out of `workspaces.json` cou
 render it at all. It is also one of the keys excluded from the "grandfathered" list in
 the migration test — check that list before adding another.
 
+**`Workspace.intent: Option<String>`** (BRIEF) — the user's one-line session goal,
+shown/edited on the Briefing card. Elided when unset (byte-identical round-trip for
+untouched files; it is in the elision test's key list), but a SET intent is a field a
+0.5.0 build would drop on save — which is why its addition bumped
+`WORKSPACES_SCHEMA_VERSION` to 3 (see the constant's doc in `app/src/lib.rs`).
+
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding
 regeneration is isolated here, which is the point: the frontend's `src/bindings/` comes

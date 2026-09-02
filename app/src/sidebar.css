@@ -565,6 +565,12 @@
   box-shadow: inset 0 0 0 1.5px var(--w-warning);
   animation: none;
 }
+/* BRIEF: a pane's brief says "needs you" (stuck / waiting-for-you) with no
+   live blocking card. Middle intensity: solid like blocking, but static —
+   the animation stays reserved for a card that actually blocks an agent. */
+.ws-waiting-dot.brief-attn {
+  animation: none;
+}
 
 /* ─── Attention: hook pulse ─── */
 

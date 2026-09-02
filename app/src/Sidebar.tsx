@@ -74,6 +74,10 @@ interface Props {
   // Renders a soft amber breathing pulse on the row — attention-grabbing
   // but not blocking (`waitingWorkspaceIds` is the blocking red dot).
   hookPulseWorkspaceIds?: Set<string>;
+  // BRIEF: workspaces holding a pane whose brief says "needs you" (stuck /
+  // waiting-for-you) without a live blocking card. Shares the row's ONE
+  // attention dot at a middle intensity: blocking > brief > activity.
+  briefAttentionWorkspaceIds?: Set<string>;
   onActivate: (id: string) => void;
   /** Phase 80 — opens the unified SetupWizard (server new/existing +
    *  local existing/smart-install all live behind this one button; the
@@ -1111,13 +1115,27 @@ export function Sidebar(p: Props) {
               pseudo-element was absolutely positioned at inset-inline-end
               and painted ON TOP of the badges. The class stays on the row —
               themes-redesign.css and the pulse both key off it. */}
-          <Show when={p.waitingWorkspaceIds.has(w.id) || p.notifiedWorkspaceIds.has(w.id)}>
+          <Show
+            when={
+              p.waitingWorkspaceIds.has(w.id)
+              || p.briefAttentionWorkspaceIds?.has(w.id)
+              || p.notifiedWorkspaceIds.has(w.id)
+            }
+          >
             <span
-              class={`ws-waiting-dot ${p.waitingWorkspaceIds.has(w.id) ? "" : "activity"}`}
+              class={`ws-waiting-dot ${
+                p.waitingWorkspaceIds.has(w.id)
+                  ? ""
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "brief-attn"
+                    : "activity"
+              }`}
               title={t(
                 p.waitingWorkspaceIds.has(w.id)
                   ? "sidebar.workspaceWaitingTitle"
-                  : "sidebar.workspaceActivityTitle",
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "sidebar.workspaceBriefTitle"
+                    : "sidebar.workspaceActivityTitle",
               )}
             />
           </Show>
