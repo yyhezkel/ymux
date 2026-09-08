@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount, untrack } from "solid-js";
 import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
@@ -573,20 +573,40 @@ export function Sidebar(p: Props) {
    */
   const pathKey = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
 
-  // A parked scan resumes the moment any workspace reports a live
-  // session — the folder's host is almost always the one that just came
-  // up, and a redundant `git worktree list` is cheaper than a stale red
-  // row the user has to notice and clear by hand.
-  createEffect(() => {
-    const live = p.connectedIds;
-    if (live.size === 0) return;
-    const parked = Object.entries(scans())
-      .filter(([, st]) => st.status === "offline")
-      .map(([id]) => id);
-    for (const id of parked) {
-      const ws = p.workspaces.find((w) => w.id === id);
-      if (ws) void scanFolder(ws);
+  // A parked scan resumes when ITS host comes up — the backend resolves
+  // the SSH handle by `user@host:port` (`pick_ssh_handle_for_host`), so
+  // that is the only event that can turn "no live SSH session" into an
+  // answer. The first version of this effect retried on *any* live
+  // workspace and also tracked `scans()`, which it writes to itself:
+  // with a local workspace up and the folder's SSH host down, every
+  // failed retry re-parked the scan, re-ran the effect, and retried
+  // again — eight `worktree scan start` lines in 30ms, forever
+  // (2026-09-08). The memo collapses `connectedIds` (a fresh Set on
+  // every tick) to the sorted host-key string, so the effect fires only
+  // when the set of live SSH hosts actually changes, and `untrack`
+  // keeps its own writes from re-triggering it.
+  const liveSshHosts = createMemo(() => {
+    const keys = new Set<string>();
+    for (const id of p.connectedIds) {
+      const c = p.workspaces.find((w) => w.id === id)?.connection;
+      if (isRemoteConn(c)) keys.add(`${c.user}@${c.host}:${c.port}`);
     }
+    return [...keys].sort().join("\n");
+  });
+  createEffect(() => {
+    const live = liveSshHosts();
+    if (live.length === 0) return;
+    const hosts = new Set(live.split("\n"));
+    untrack(() => {
+      for (const [id, st] of Object.entries(scans())) {
+        if (st.status !== "offline") continue;
+        const ws = p.workspaces.find((w) => w.id === id);
+        const c = ws?.connection;
+        if (ws && isRemoteConn(c) && hosts.has(`${c.user}@${c.host}:${c.port}`)) {
+          void scanFolder(ws);
+        }
+      }
+    });
   });
 
   /**
