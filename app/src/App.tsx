@@ -2504,20 +2504,17 @@ function App() {
     const ws = file().workspaces.find((w) => w.id === wsId);
     if (!ws) return;
     const caps = wsCaps(ws);
-    const prev = sessionLists()[wsId];
     const patch = (p: Partial<SessionListState>) =>
-      setSessionLists((m) => ({
-        ...m,
-        [wsId]: {
-          rows: prev?.rows ?? [],
-          reachable: prev?.reachable ?? false,
+      setSessionLists((m) => {
+        const cur: SessionListState = m[wsId] ?? {
+          rows: [],
+          reachable: false,
           loading: false,
           error: null,
-          fetchedAt: prev?.fetchedAt ?? 0,
-          ...(m[wsId] ?? {}),
-          ...p,
-        },
-      }));
+          fetchedAt: 0,
+        };
+        return { ...m, [wsId]: { ...cur, ...p } };
+      });
     if (!caps.sessionPersistence) {
       patch({ rows: [], reachable: false, loading: false });
       return;
