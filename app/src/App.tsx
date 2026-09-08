@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, ErrorBoundary, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
 import type { RtlProfileKind } from "./types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
