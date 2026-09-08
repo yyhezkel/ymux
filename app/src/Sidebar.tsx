@@ -1,5 +1,5 @@
 import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount } from "solid-js";
-import { collectPanes, findPane, isRemoteConn, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
+import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
 import {
@@ -66,6 +66,14 @@ interface Props {
   workspaces: Workspace[];
   activeId: string | null;
   connectedIds: Set<string>;
+  // Phase 91.C: session rows whose session the host no longer lists —
+  // rendered dim; their [Connect] resumes. App decides, from the root's
+  // live list.
+  goneIds: Set<string>;
+  // Phase 91.C: Settings → "Show every session as a sidebar row". Gates the
+  // per-row "new session" button; the mirroring itself is App's.
+  sessionsAsRows: boolean;
+  onNewSession: (w: Workspace) => void;
   // Phase 26: workspaces that contain at least one pane with a
   // pending blocking permission request. Renders a pulsing dot on
   // the workspace row so the user can spot waiting work across
@@ -1033,7 +1041,7 @@ export function Sidebar(p: Props) {
         data-ws-id={w.id}
         class={`ws-item ${p.activeId === w.id ? "active" : ""} ${
           p.waitingWorkspaceIds.has(w.id) ? "has-waiting" : ""
-        } ${
+        } ${p.goneIds.has(w.id) ? "ws-gone" : ""} ${
           p.hookPulseWorkspaceIds?.has(w.id) ? "hook-pulse" : ""
         } ${dragKind() === "ws" && dragId() === w.id ? "dragging" : ""} ${
           dropWsWhere(w.id) ? `drop-${dropWsWhere(w.id)}` : ""
@@ -1045,7 +1053,7 @@ export function Sidebar(p: Props) {
         // Always, not just in icons mode: `full` mode can be dragged down to
         // 160px, where .ws-name ellipsizes and the tooltip is the only way
         // left to read the name.
-        title={w.name}
+        title={p.goneIds.has(w.id) ? t("ws.gone.tooltip", { name: w.tmux_session ?? w.name }) : w.name}
         // beta.3 (ws-dragdrop): pointer-drag reorder. A press that never crosses
         // the move threshold is a click → switch; a completed drag sets
         // `didDrag`, which swallows the trailing click here.
@@ -1132,6 +1140,19 @@ export function Sidebar(p: Props) {
             onClick={(e) => { e.stopPropagation(); void scanFolder(w); }}
           >
             <IconRefresh size={12} />
+          </button>
+        </Show>
+        {/* Phase 91.C: a new session as a new row — on any server or folder
+            row (never on a session row), only while the setting is on. The
+            terminal glyph keeps it apart from the worktree + above. */}
+        <Show when={p.sessionsAsRows && !w.tmux_session && wsCaps(w).sessionPersistence}>
+          <button
+            class="pf-btn"
+            title={t("sidebar.newSession.tooltip")}
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); p.onNewSession(w); }}
+          >
+            <IconTerminal size={12} />
           </button>
         </Show>
         {/* Every status marker lives in ONE trailing cluster, in a fixed

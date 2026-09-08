@@ -76,6 +76,17 @@ export interface KillSessionOutcome {
   detail?: string;
 }
 
+/** Phase 91.C: what a pane's [Connect] must attach to. App computes it for
+ *  the first NOT-live pane of a workspace with `tmux_session`; PaneView's
+ *  smartConnect short-circuits on it (no probe, no picker). `gone` +
+ *  `claudeSessionId` turn the button into "Resume" (`claude --resume`). */
+export interface BoundSession {
+  name: string;
+  gone: boolean;
+  claudeSessionId: string | null;
+  cwd: string | null;
+}
+
 export interface TmuxSessionInfo {
   name: string;
   created: number;

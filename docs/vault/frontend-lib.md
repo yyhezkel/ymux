@@ -161,7 +161,9 @@ nullable key, not `T?` — so helpers such as `effectiveIdentity` widen their pa
 `describeConnection`, `isLocalConn`, `isRemoteEffective`, `collectPanes`, `findPane`)
 are what components use to reason about a pane.
 
-**Not everything here is generated.** `TmuxSessionInfo` and `ForeignScope` are
+**Not everything here is generated.** `BoundSession` (Phase 91.C — what a pane's
+[Connect] attaches to, or resumes) is hand-written in `types.ts`, as are
+`TmuxSessionInfo` and `ForeignScope`, which are
 **hand-written mirrors** of structs that live in `lib.rs` rather than `ymux-types`, so
 ts-rs never sees them and nothing regenerates them for you. A field added on the Rust
 side is silently missing here until someone types it — update both in the same commit.

@@ -870,3 +870,9 @@ body.ymux-dragging {
 
 /* Phase 90.B: a session row's glyph (see .pf-icon for the folder one). */
 .ws-session-icon { display: inline-flex; align-items: center; color: var(--w-text-dim); flex-shrink: 0; }
+/* Phase 91.C: a session row whose session the host no longer lists. Dim,
+   not hidden — its [Connect] is the way to resume it, delete is the way
+   to let it go. */
+.ws-item.ws-gone .ws-name,
+.ws-item.ws-gone .ws-session-icon { opacity: 0.5; font-style: italic; }
+.ws-item.ws-gone:hover .ws-name { opacity: 0.8; }

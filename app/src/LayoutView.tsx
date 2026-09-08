@@ -1,5 +1,5 @@
 import { Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import type { RtlProfileKind } from "./types";
+import type { BoundSession, RtlProfileKind } from "./types";
 import { Divider } from "./Divider";
 import { paneDragStore, installPaneDragEscape } from "./paneDrag";
 // Phase 53 (rebased): BrowserPane no longer imported — the Browser
@@ -77,10 +77,10 @@ interface Props {
   onDisconnect: (paneId: string) => void;
   // Phase 11.A: tmux session map keyed by pane_id; presence = persistent.
   panePersistence: Record<string, string>;
-  // Phase 91: pane_id → the session its [Connect] must attach to (a
-  // sessions-strip pane, or the workspace's first pane bound to
-  // `tmux_session`). Only panes that are NOT live carry one.
-  boundSessions: Record<string, string>;
+  // Phase 91: pane_id → the session its [Connect] must attach to (the
+  // workspace's first pane bound to `tmux_session`). Only panes that are
+  // NOT live carry one; `gone` + a Claude id make it a Resume.
+  boundSessions: Record<string, BoundSession>;
   onKillSession: (paneId: string) => void;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;

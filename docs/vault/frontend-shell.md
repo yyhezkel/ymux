@@ -135,6 +135,10 @@ Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 F
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 `WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
 
+**Session rows (Phase 90.B / 91.C)** wear a terminal glyph; the ones in `goneIds` are
+`.ws-gone`; server and folder rows carry a terminal-glyph `+` (`onNewSession`) while
+`sessionsAsRows` is on. See § Sessions as rows below.
+
 **"Only rows with live sessions" (Phase 91.A)** — a toggle under the wordmark
 (`.sidebar-live-toggle`, `aria-pressed`, localStorage `ymux.sidebar.liveOnly`). The rule
 is `isLiveTree`: a row stays if `connectedIds` has it (App's `liveWorkspaceIds()` — any
@@ -193,19 +197,54 @@ workspace-level floating windows (sidebar 🌐 / 🗂). `BrowserPane.tsx` stays 
 as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, but
 consumed by `FileManagerWindow.tsx`.
 
-## Sessions as rows (Phase 91.C) — the strip that lasted one live smoke
+## Sessions as rows (Phase 91.C)
 
-Round 1 of Phase 91 shipped a third view mode: a sessions strip above the terminal
-(`SessionTabs.tsx`, `Workspace.sessions_mode`, `workspace_set_view_mode`,
-`workspace_set_session`). Yossi's first live run said the opposite of what it built —
-sessions belong in the sidebar tree as rows, switched on from Settings for every server,
-and `+` must make a row, not a tab — so all of it was removed again the same day. What
-survived: the root's `known_sessions` memory (`workspace_remember_sessions`), the
-`sessionDisplay` precedence, and **`boundSessions()`** — pane_id → session for the
-workspace's first NOT-live pane when it has `tmux_session`, threaded through LayoutView as
-`boundSession` so PaneView's `smartConnect` attaches straight to it instead of probing and
-opening the picker (the unverified 90.B gap). The sidebar mirror that replaces the strip
-is described under `Sidebar.tsx` above once it lands.
+Round 1 of Phase 91 shipped a third view mode (a sessions strip above the terminal).
+Yossi's first live run said the opposite of what it built — sessions belong in the sidebar
+tree as rows, switched on from Settings for every server, and `+` must make a row, not a
+tab — so the strip was removed the same day and this took its place. Everything keys on
+the **root id, a string** — never on the workspace object, which changes identity on every
+persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` memo).
+
+- **`refreshSessionRows(rootId, {ensure})`** (gated on `settings.sessions_as_rows`):
+  `workspace_ensure_connected` when `sessionBound && ensure` → `pane_list_tmux_sessions(root,
+  null)` → **`reachable = rows.length > 0 || !sessionBound`** (a cold password-auth host
+  answers an EMPTY list, not an error — the `restoreSessions` precedent — so it greys
+  nothing) → `sessionLists[rootId]` → `workspace_remember_sessions(root, …)` (the root's
+  memory) → `workspace_mirror_sessions(root, candidates)`. **`mirrorCandidates`** drops
+  `foreign.kind === "workspace"` rows and every name one of our own panes holds —
+  `panePersistence()` (live) ∪ `allPaneSessions()` (restore hints) — because a session a
+  plain pane holds is `owned`, not `foreign`, and a row for it would attach a second client;
+  the backend applies the pane-derived-name rule too. `mirrorInFlight` coalesces overlapping
+  refreshes. Triggers: (a) the active root on activation/boot, once per root
+  (`lastMirrorRoot`), with `ensure` following Phase 41's auto-connect opt-out and an early
+  return while `settings()` is null; (b) the post-connect 100 ms timer (a `+` or a resume
+  CREATED a session); (c) a 30 s visible-only `setInterval` on `activeRootId()` — how a
+  session killed elsewhere goes grey; (d) `commitDelete` after it touched session rows.
+- **`goneWorkspaceIds()`**: session rows whose root's list is reachable and lacks the name
+  (zellij `exited` rows are in the list = live). Sidebar prop `goneIds` → `.ws-gone` (dim,
+  italic) + `ws.gone.tooltip`. Rows are never removed on their own; delete is the way out,
+  and `commitDelete` skips the kill for a gone row (a password-auth host would only toast
+  "kill failed") while always forgetting the name in the root's memory.
+- **`boundSessions()`** — pane_id → `BoundSession { name, gone, claudeSessionId, cwd }` for
+  the first NOT-live pane of a workspace with `tmux_session` (Claude id + cwd from the live
+  row first, else the root's `known_sessions`). LayoutView threads it as `boundSession`;
+  PaneView's `smartConnect` short-circuits: gone with a Claude id → `connectPane` with
+  `mode: "claude"`, `claudeArgs: "--resume <id>"` (a STRING), `cwdOverride`, and the button
+  reads "Resume"; otherwise a plain attach — `new-session -A` recreates a gone session of the
+  same name. If the session reappeared between poll and click, `pane_connect`'s attach-only
+  guard types nothing.
+- **`+` on a server / folder row** (`sessionsAsRows && !tmux_session &&
+  wsCaps(w).sessionPersistence`, `IconTerminal`, `sidebar.newSession.tooltip`) →
+  `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory
+  and every `tmux_session` in the file → `openSessionRow(w.id, {name, display, cwd:
+  w.cwd})` — the body `openSessionAsWorkspace` now wraps: `workspace_open_session` (placed
+  under the folder by cwd) → `handleSetActive` → focus the first pane → `connectPane`, which
+  creates the session.
+- Setting OFF: rows stay (ordinary workspaces); refreshes, greying and `+` stop. ON with
+  rows already opened by hand: the host-wide dedupe skips them. Two roots to one host: rows
+  land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
+  until they connect — that is its contract. A row's name is fixed at creation.
 
 ## `PaneView.tsx` (2,194) — one terminal pane
 

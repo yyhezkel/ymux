@@ -4,7 +4,7 @@ import { Portal } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openNativeDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
+import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
@@ -134,10 +134,11 @@ interface Props {
   // to render the "T" badge and to enable "Kill session" in the menu.
   tmuxSession?: string | null;
   // Phase 91: the session this pane must attach to on [Connect] — set by
-  // App for a sessions-strip pane and for the first pane of a workspace
-  // with `tmux_session`. smartConnect short-circuits on it: no probe, no
-  // picker, attach. Null for an ordinary pane.
-  boundSession?: string | null;
+  // App for the first pane of a workspace with `tmux_session`. smartConnect
+  // short-circuits on it: no probe, no picker, attach — or RESUME when the
+  // host no longer lists the session and a Claude id is known. Null for an
+  // ordinary pane.
+  boundSession?: BoundSession | null;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
   ensureTerm: (paneId: string, profile: RtlProfileKind) => TerminalInstance;
@@ -641,7 +642,26 @@ export function PaneView(p: Props) {
     // restart. Before this, the probe below opened the picker on any host
     // with a session, and App's tmux_session fallback never got a turn.
     const bound = p.boundSession;
-    if (bound) { p.onConnect(p.pane.pane_id, { persistent: true, tmuxSession: bound }); return; }
+    if (bound) {
+      // A gone session with a Claude id comes back running `claude --resume`
+      // in the cwd it lived in; `new-session -A` recreates the session under
+      // the same name. Without an id it is just a fresh session of that name.
+      // If the session reappeared between the poll and this click,
+      // pane_connect's attach-only guard types nothing into it.
+      p.onConnect(
+        p.pane.pane_id,
+        bound.gone && bound.claudeSessionId
+          ? {
+              persistent: true,
+              tmuxSession: bound.name,
+              mode: "claude",
+              claudeArgs: `--resume ${bound.claudeSessionId}`,
+              cwdOverride: bound.cwd ?? undefined,
+            }
+          : { persistent: true, tmuxSession: bound.name },
+      );
+      return;
+    }
     setConnectProbing(true);
     try {
       // Idempotent, PTY-free, tmux-free; no-ops on password-auth (can't prompt
@@ -1728,9 +1748,13 @@ export function PaneView(p: Props) {
                   class="primary big"
                   onClick={() => void smartConnect()}
                   disabled={connectProbing()}
-                  title={p.boundSession ? t("connect.bound.tooltip", { name: p.boundSession }) : undefined}
+                  title={p.boundSession ? t("connect.bound.tooltip", { name: p.boundSession.name }) : undefined}
                 >
-                  {connectProbing() ? t("connect.probing") : t("common.connect")}
+                  {connectProbing()
+                    ? t("connect.probing")
+                    : p.boundSession?.gone && p.boundSession.claudeSessionId
+                      ? t("connect.resume")
+                      : t("common.connect")}
                 </button>
                 <button class="big nc-wizard-btn" onClick={openNewConnModal} disabled={connectProbing()}>
                   {t("connect.openWizard")}
