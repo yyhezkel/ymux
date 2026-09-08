@@ -243,7 +243,14 @@ Two independent signals feed it, and it needs both:
   `/srv/app`.
 - **`session-owners.json`** (`%APPDATA%\ymux`, host → session name → `SessionOwner`),
   giving `owned`. This half exists because `zellij list-sessions` reports **no directory
-  at all**, so on Windows ownership is the only workspace signal there is.
+  at all**, so on Windows ownership is the only workspace signal there is. A claim is
+  made by `pane_connect` / `workspace_open_session`, released by a kill that reports
+  `killed | already_gone`, renamed by `tmux_rename_session`, and — since Phase 91 —
+  **pruned by workspace delete**: `teardown_workspace_runtime` calls
+  `release_session_owners_of_workspace`, whose disk-free core `prune_owners_of_workspace`
+  (`session_owner_prune_tests`) drops every claim of that workspace id on every host and
+  any host left empty. The kill of a session row's session is the frontend's job, before
+  the delete (the kill helpers are async and resolve the connection by a workspace id).
 
 `foreign: Option<ForeignScope>` (2026-08-24) is the third verdict and the "Whole server"
 view's mess-guard: a row nobody can place is free to attach, a row we *can* place already

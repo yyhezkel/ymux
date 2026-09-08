@@ -1619,8 +1619,30 @@ function App() {
     setPendingDelete(subtreeOf(id));
   };
 
+  // Phase 91: the tmux/zellij sessions behind a subtree's session rows —
+  // a row with `tmux_session` that is NOT in sessions mode (there the
+  // field is a bookmark, and deleting a server must not kill one session).
+  const sessionRowsIn = (subtree: Workspace[]): Workspace[] =>
+    subtree.filter((w) => !!w.tmux_session && !w.sessions_mode);
+
   const commitDelete = async (id: string) => {
     setPendingDelete(null);
+    // Phase 91: deleting a session row KILLS its session (reverses 90.B's
+    // detach-only). Kill BEFORE the delete — the kill helpers resolve the
+    // connection by workspace id, which is gone afterwards — and through
+    // the existing path, so PTY, maps, restore hint and the ownership
+    // claim all go the tested way. Best-effort SSH arm first: the by-name
+    // kill needs a live handle and killSessionByName swallows to null.
+    for (const w of sessionRowsIn(subtreeOf(id))) {
+      const name = w.tmux_session;
+      if (!name) continue;
+      if (wsCaps(w).sessionBound) {
+        try { await invoke("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
+      }
+      const out = await killSessionByName(w.id, name);
+      const ok = !!out && ["killed", "already_gone", "no_session", "attempted"].includes(out.result);
+      if (!ok) flashSummaryToast("err", t("workspace.delete.sessionKillFailed", { name }));
+    }
     try {
       const f = await invoke<WorkspacesFile>("workspace_delete", {
         workspaceId: id,
@@ -5324,6 +5346,7 @@ function App() {
           <ConfirmDeleteWorkspace
             subtree={sub()}
             liveIds={liveWorkspaceIds()}
+            sessionNames={sessionRowsIn(sub()).map((w) => w.tmux_session ?? "")}
             noteCount={notesInSubtree(sub())}
             onClose={() => setPendingDelete(null)}
             onConfirm={() => void commitDelete(sub()[0].id)}

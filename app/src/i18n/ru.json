@@ -1295,6 +1295,8 @@
   "workspace.delete.live": "активно",
   "workspace.delete.liveWarning": "У {count} из них есть активные сессии. Они будут завершены.",
   "workspace.delete.hostSafe": "Каталоги на хосте не затрагиваются — только рабочие пространства.",
+  "workspace.delete.sessionWarning": "{count} из них — строки сессий: их сессии tmux/zellij будут УБИТЫ на хосте: {names}",
+  "workspace.delete.sessionKillFailed": "Не удалось убить сессию {name}; рабочее пространство всё равно удалено",
   "workspace.delete.confirmButton": "Удалить",
   "pf.isRepo": "репозиторий git — его worktrees перечислены ниже",
   "pf.checkGit": "Проверить наличие репозитория git",

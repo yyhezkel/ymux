@@ -7743,6 +7743,16 @@ fn teardown_workspace_runtime(
     // Phase 86: abort its port-watcher (this path never did — the task and
     // the `port_watchers` slot leaked past delete) and leave the host group.
     clear_workspace_detection(state, app, workspace_id);
+    // Phase 91: drop every ownership claim this workspace holds. A claim
+    // says "this session belongs to my workspace"; with the workspace gone
+    // it can only mis-colour other pickers (a `ForeignKind::Workspace` badge
+    // naming a workspace nobody can resolve). Pruned by workspace id across
+    // every host, not by the row's one `tmux_session`: pane_connect claims a
+    // session per pane. The tmux/zellij KILL for a session row is the
+    // frontend's job, before this command runs — the kill helpers are async
+    // and resolve the connection by a workspace id that no longer exists
+    // once we are here.
+    release_session_owners_of_workspace(workspace_id);
     for pane_id in panes_to_kill {
         if let Some(sid) = state.core.pane_sessions.lock().unwrap().remove(pane_id) {
             if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
@@ -9106,10 +9116,12 @@ pub(crate) enum ForeignKind {
 pub(crate) struct ForeignScope {
     pub kind: ForeignKind,
     /// The owning workspace's name, or the folder's last path segment. Never a
-    /// user-facing sentence. `None` is reachable and real: nothing prunes
-    /// `session-owners.json` when a workspace is deleted, so a stale row can
-    /// name a workspace that no longer exists AND have recorded no cwd. That
-    /// still warrants a warning — the picker just words it generically.
+    /// user-facing sentence. `None` is still reachable (a file written before
+    /// Phase 91 pruned claims on workspace delete, or a hand-edited
+    /// workspaces.json) but no longer the normal outcome of a delete: a stale
+    /// row can name a workspace that no longer exists AND have recorded no
+    /// cwd. That still warrants a warning — the picker just words it
+    /// generically.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Full path for the row tooltip: the live `#{session_path}` when known,
@@ -9956,6 +9968,12 @@ fn tmux_label_set(
 // Keyed by host FIRST because a session name is only unique per tmux/zellij
 // server: two boxes each running a session called `dev` are two sessions, and
 // collapsing them would let one workspace claim the other's.
+//
+// Lifecycle of a claim: CLAIMED by `pane_connect` (persistent panes) and
+// `workspace_open_session`, newest wins; RELEASED by any kill that reports
+// `killed | already_gone` (kept on `failed` — the session is still alive and
+// still ours); RENAMED by `tmux_rename_session`; PRUNED, every claim of the
+// workspace on every host, by workspace delete (Phase 91).
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub(crate) struct SessionOwner {
@@ -10086,6 +10104,31 @@ fn release_session_owner(host_key: &str, session_name: &str) {
     }
     if host.is_empty() {
         file.owners.remove(host_key);
+    }
+    if let Err(e) = save_session_owners(&file) {
+        log_warn("WORKSPACE", &format!("session-owners: save failed: {e}"));
+    }
+}
+
+/// Phase 91: the disk-free core of `release_session_owners_of_workspace` —
+/// drop every claim `workspace_id` holds on every host, and any host left
+/// with no claims. Returns whether anything was removed.
+pub(crate) fn prune_owners_of_workspace(file: &mut SessionOwnersFile, workspace_id: &str) -> bool {
+    let before: usize = file.owners.values().map(|h| h.len()).sum();
+    for host in file.owners.values_mut() {
+        host.retain(|_, o| o.workspace_id != workspace_id);
+    }
+    file.owners.retain(|_, h| !h.is_empty());
+    let after: usize = file.owners.values().map(|h| h.len()).sum();
+    after != before
+}
+
+/// Phase 91: forget every claim a deleted workspace holds. Best-effort like
+/// its siblings — a failed save is a warning, never a failed delete.
+fn release_session_owners_of_workspace(workspace_id: &str) {
+    let mut file = load_session_owners();
+    if !prune_owners_of_workspace(&mut file, workspace_id) {
+        return;
     }
     if let Err(e) = save_session_owners(&file) {
         log_warn("WORKSPACE", &format!("session-owners: save failed: {e}"));
@@ -13094,6 +13137,46 @@ mod smart_connect_tests {
             build_smart_connect_script(ShellKind::Posix, "default", None, None, None),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod session_owner_prune_tests {
+    // Phase 91: workspace delete prunes its claims — the disk-free core.
+    use super::{prune_owners_of_workspace, SessionOwner, SessionOwnersFile};
+    use std::collections::HashMap;
+
+    fn owner(ws: &str) -> SessionOwner {
+        SessionOwner { workspace_id: ws.into(), cwd: None, ts: 0 }
+    }
+
+    fn file() -> SessionOwnersFile {
+        let mut owners: HashMap<String, HashMap<String, SessionOwner>> = HashMap::new();
+        owners.insert(
+            "host-a".into(),
+            HashMap::from([("dev".to_string(), owner("w1")), ("ops".to_string(), owner("w2"))]),
+        );
+        owners.insert("host-b".into(), HashMap::from([("dev".to_string(), owner("w1"))]));
+        SessionOwnersFile { version: 1, owners }
+    }
+
+    #[test]
+    fn prunes_only_that_workspace_on_every_host_and_drops_emptied_hosts() {
+        let mut f = file();
+        assert!(prune_owners_of_workspace(&mut f, "w1"));
+        // host-b held nothing but w1's claim → the host key is gone.
+        assert!(!f.owners.contains_key("host-b"));
+        let a = &f.owners["host-a"];
+        assert_eq!(a.len(), 1);
+        assert_eq!(a["ops"].workspace_id, "w2");
+    }
+
+    #[test]
+    fn an_unknown_workspace_changes_nothing() {
+        let mut f = file();
+        assert!(!prune_owners_of_workspace(&mut f, "nobody"));
+        assert_eq!(f.owners.len(), 2);
+        assert_eq!(f.owners["host-a"].len(), 2);
     }
 }
 

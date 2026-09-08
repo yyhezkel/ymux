@@ -1295,6 +1295,8 @@
   "workspace.delete.live": "חי",
   "workspace.delete.liveWarning": "ל-{count} מהן יש סשנים חיים. הם ייסגרו.",
   "workspace.delete.hostSafe": "התיקיות על השרת לא נוגעים בהן — רק בסביבות העבודה.",
+  "workspace.delete.sessionWarning": "{count} מהן שורות‑סשן — סשני ה‑tmux/zellij שלהן ייהרגו בשרת: {names}",
+  "workspace.delete.sessionKillFailed": "לא הצלחתי להרוג את הסשן {name}; סביבת העבודה הוסרה בכל זאת",
   "workspace.delete.confirmButton": "מחק",
   "pf.isRepo": "מאגר git — ה-worktrees שלו מוצגים מתחת",
   "pf.checkGit": "בדוק אם יש כאן מאגר git",

@@ -1295,6 +1295,8 @@
   "workspace.delete.live": "live",
   "workspace.delete.liveWarning": "{count} of these have live sessions. They will be terminated.",
   "workspace.delete.hostSafe": "Directories on the host are not touched — only the workspaces.",
+  "workspace.delete.sessionWarning": "{count} of these are session rows — their tmux/zellij sessions will be KILLED on the host: {names}",
+  "workspace.delete.sessionKillFailed": "Could not kill session {name}; the workspace was removed anyway",
   "workspace.delete.confirmButton": "Delete",
   "pf.isRepo": "git repository — its worktrees are listed below",
   "pf.checkGit": "Check for a git repository",

@@ -164,7 +164,11 @@ for the workspace's FIRST pane (activation never auto-connects, so a plain [Conn
 row must attach, not spawn a pane-derived session; a split-off pane stays a plain shell),
 and `restoreSessions` uses the same field when localStorage has no hint for that pane.
 `newTab` still returns the new pane id from 87; nothing depends on it now.
-`killSessionByName` routes through the existing `killSession(paneId)` when
+**Deleting a session row kills its session (Phase 91):** `commitDelete` walks
+`sessionRowsIn(subtree)` (`tmux_session && !sessions_mode`), best-effort
+`workspace_ensure_connected`, `killSessionByName`, toasts `workspace.delete.sessionKillFailed`
+on anything but `killed | already_gone | no_session | attempted`, and only then calls
+`workspace_delete`. `killSessionByName` routes through the existing `killSession(paneId)` when
 `panePersistence()` shows one of our panes holding the name (PTY, maps and restore hint go
 the tested way; `killSession` now returns the outcome for that), else
 `sessions_kill_by_name`. `renameSessionByName` calls `tmux_rename_session` and then moves
