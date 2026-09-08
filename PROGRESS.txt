@@ -7463,3 +7463,10 @@ Commits, in order:
     ZELLIJ.md, BACKLOG.md, ymux-zellij.kdl, ymux-bootstrap comment, MOUSE-DEBUG.md (decided: #2 + the lock).
     FOLLOWUPS: the 2026-08-11 `mouse on` P2 archived; NEW P1 smoke list for all of Phase 91.
 Result: compiles-untested (Rule #17) — CI decides; Rule #14 until the FOLLOWUPS P1 smoke runs live.
+
+[2026-09-08] Phase 91 PR #44 CI: one tsc round-trip (TS2783 double spread in the strip's list-state patch, fixed in
+  aef16e6), then all 5 checks green (ci-windows frontend/rust/go + build-macos x64/arm64 — the macOS legs are the
+  only ones compiling the cfg(not(windows)) local-tmux arm). build-windows.yml dispatched on the branch by hand
+  (run 34239269309, green): artifacts ymux-windows-nsis (16.9 MB) + ymux-windows-exe (21.8 MB) for the Rule #14
+  live smoke — FOLLOWUPS P1 (2026-09-08). Yossi's question "we build only for mac — what about Windows?": ci-windows
+  is a compile/test gate with no installer; the installer is workflow_dispatch / v* tag only, hence the dispatch.
