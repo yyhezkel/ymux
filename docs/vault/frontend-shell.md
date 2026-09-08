@@ -87,7 +87,10 @@ nothing happened" case), and every recorder rejection as `log.error` before the 
 toast, so a missed toast is no longer a lost error.
 
 **The workspace header keeps four buttons, not seven.** Browser, Files and the
-notification bell (which carries the unread badge) stay visible; view mode, `+ diff`,
+notification bell (which carries the unread badge) stay visible; view mode (Phase 91:
+three `menuitemradio` entries — split / tabs / sessions — with the current one marked
+`.ws-header-menu-current`, all calling `setViewMode` → `workspace_set_view_mode`; the
+palette's `pane.viewMode.toggle` cycles the same three), `+ diff`,
 Insights and Tickets live behind a single `⋯` (`.ws-header-more` / `.ws-header-menu`,
 sharing `.diff-pane-menu`'s CSS rather than a second dropdown component). Each item
 calls the **same handler its old standalone button called** — `setTabsMode`,
@@ -143,7 +146,8 @@ adding a union member here and a branch in `App.tsx`'s handler; the menu itself 
 state beyond which row it is open for.
 
 Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
-terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
+terminal icon**, tooltip = the raw session name — unless the row is in `sessions_mode`,
+where `tmux_session` is only the last-selected bookmark; else the colour dot. A session row is
 otherwise a plain child — click, collapse, drag, delete all take the same path.
 
 **Phase 90 — the active-sessions overview's three row actions live in App, not in the
@@ -174,7 +178,11 @@ Recursively renders `LayoutNode`: a `split` becomes two children plus a `Divider
 resize with `requestAnimationFrame` coalescing — `onDrag` during, `onCommit` at the end,
 so only the commit hits the backend.
 
-When the workspace has `tabs_mode` set, `PaneTabs` renders above `.layout-root` instead
+`viewMode()` in App is `sessions | tabs | split` off the two persisted flags, and
+**`oneLeafMode()`** (tabs OR sessions) is what every "one pane fills the workspace"
+guard asks — maximize, the split/close key routing, Ctrl+1..9, tab cycling, the
+LayoutView node pick and PaneView's `tabsMode` prop. Only the strip `Show`s and the menu
+marking are mode-specific. When the workspace has `tabs_mode` set, `PaneTabs` renders above `.layout-root` instead
 of the grid. **Browser and File Manager are no longer pane kinds here.** Both moved to
 workspace-level floating windows (sidebar 🌐 / 🗂). `BrowserPane.tsx` stays in the repo
 as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, but

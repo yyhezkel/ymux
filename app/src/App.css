@@ -820,6 +820,10 @@ body {
 .ws-header-menu button:hover {
   background: rgba(122, 162, 247, 0.12);
 }
+/* Phase 91: the view-mode entry that is currently active. */
+.ws-header-menu button.ws-header-menu-current {
+  color: var(--w-accent, #7aa2f7);
+}
 .diff-pane-ref-row {
   display: flex;
   gap: 6px;

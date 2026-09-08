@@ -1,4 +1,4 @@
-import { createEffect, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, ErrorBoundary, For, onCleanup, onMount, Show } from "solid-js";
 import type { RtlProfileKind } from "./types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
@@ -41,7 +41,12 @@ import {
   IconColumns,
   IconMore,
   IconRows,
+  IconTerminal,
 } from "./icons";
+
+// Phase 91: the workspace view mode, one of the two persisted flags or
+// neither. `workspace_set_view_mode` is the backend's one writer.
+type ViewMode = "split" | "tabs" | "sessions";
 import { createNarrow } from "./useNarrow";
 import { AddonsWindow } from "./AddonsWindow";
 import { SessionsOverviewWindow } from "./SessionsOverviewWindow";
@@ -983,9 +988,20 @@ function App() {
   const activeWs = (): Workspace | null =>
     file().workspaces.find((w) => w.id === file().active_workspace_id) ?? null;
 
-  // Phase 84.A: tabs mode. No signal — the flag is persisted on the
-  // workspace and `file()` is already reactive, so this reads through.
-  const tabsMode = (): boolean => activeWs()?.tabs_mode === true;
+  // Phase 84.A / 91: the view mode. No signal — both flags are persisted on
+  // the workspace and `file()` is already reactive, so this reads through.
+  // `sessions_mode` wins if a hand-edited file ever carries both; the
+  // backend's `workspace_set_view_mode` never writes both.
+  const viewMode = (): ViewMode => {
+    const w = activeWs();
+    return w?.sessions_mode ? "sessions" : w?.tabs_mode ? "tabs" : "split";
+  };
+  const tabsMode = (): boolean => viewMode() === "tabs";
+  // "One leaf fills the workspace" — true for tabs AND sessions. Every
+  // guard that used to ask tabsMode() because it meant THIS asks this.
+  const oneLeafMode = (): boolean => viewMode() !== "split";
+  const nextViewMode = (): ViewMode =>
+    viewMode() === "split" ? "tabs" : viewMode() === "tabs" ? "sessions" : "split";
 
   // Phase 84.A: focusing a pane, extracted from LayoutView's onFocus so
   // the tab strip goes through exactly the same path. Switching tabs and
@@ -1098,8 +1114,8 @@ function App() {
       { id: "pane.focus.prev", label: t("cmd.pane.focus.prev"), enabled: () => hasPane, handler: () => focusAdjacentPane(-1) },
       // Phase 55-A: maximize toggle (Ctrl+Enter / double-click pane content).
       { id: "pane.maximize", label: t("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
-      // Phase 84.A: split ⇄ tabs for the active workspace.
-      { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
+      // Phase 84.A / 91: split → tabs → sessions → split for the active workspace.
+      { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setViewMode(nextViewMode()) },
       // Phase 55-B: distribute splits evenly (Ctrl+Alt+=).
       { id: "pane.distributeEvenly", label: t("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
       { id: "pane.rename", label: t("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
@@ -1829,19 +1845,20 @@ function App() {
     }
   };
 
-  // Phase 84.A: flip the active workspace between the split grid and the
-  // tab strip. The layout tree is untouched — see workspace_set_tabs_mode.
-  const setTabsMode = async (enabled: boolean) => {
+  // Phase 84.A / 91: switch the active workspace between the split grid,
+  // the tab strip and the sessions strip. The layout tree is untouched in
+  // every mode — see workspace_set_view_mode.
+  const setViewMode = async (mode: ViewMode) => {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_set_tabs_mode", {
+      const f = await invoke<WorkspacesFile>("workspace_set_view_mode", {
         workspaceId: ws.id,
-        tabsMode: enabled,
+        mode,
       });
       updateFile(f);
     } catch (e) {
-      log.error("workspace_set_tabs_mode failed", e);
+      log.error("workspace_set_view_mode failed", e);
       return;
     }
     // Maximize is meaningless in tabs mode; clear it so flipping back to
@@ -2877,11 +2894,11 @@ function App() {
   // leaf; fit+resize fires for every pane in the workspace after the
   // signal flips so xterm catches up to the new available area.
   const toggleMaximize = (paneId?: string) => {
-    // Phase 84.A: in tabs mode every pane is already full-screen, so
-    // maximize has nothing to do. One guard here disables Ctrl+Enter,
-    // Ctrl+Shift+Z, the Esc restore, the double-click gesture and the
-    // ymux:pane-maximize event in a single place.
-    if (tabsMode()) return;
+    // Phase 84.A: in tabs (and sessions) mode every pane is already
+    // full-screen, so maximize has nothing to do. One guard here disables
+    // Ctrl+Enter, Ctrl+Shift+Z, the Esc restore, the double-click gesture
+    // and the ymux:pane-maximize event in a single place.
+    if (oneLeafMode()) return;
     const cur = maximizedPaneId();
     if (cur) {
       setMaximizedPaneId(null);
@@ -2938,11 +2955,11 @@ function App() {
   };
   const keyBindings: KeyBinding[] = [
     // ── tabs. First in the table so a rebind elsewhere can't shadow tab
-    //    cycling. Gated on tabsMode() so split-mode workspaces — and the
+    //    cycling. Gated on oneLeafMode() so split-mode workspaces — and the
     //    terminal apps running in them — keep every key they have today.
     //    Deliberately NOT binding Ctrl+T: readline uses it (transpose-chars).
-    { id: "tab_next", when: tabsMode, run: (e) => { e.preventDefault(); focusAdjacentPane(1); } },
-    { id: "tab_prev", when: tabsMode, run: (e) => { e.preventDefault(); focusAdjacentPane(-1); } },
+    { id: "tab_next", when: oneLeafMode, run: (e) => { e.preventDefault(); focusAdjacentPane(1); } },
+    { id: "tab_prev", when: oneLeafMode, run: (e) => { e.preventDefault(); focusAdjacentPane(-1); } },
 
     // ── pane geometry ──
     // Phase 55-A: maximize the active pane. tmux uses Ctrl+b z for the same
@@ -3050,21 +3067,21 @@ function App() {
       e.preventDefault();
       const pid = activePaneId();
       if (!pid) return;
-      if (tabsMode()) void newTab();
+      if (oneLeafMode()) void newTab();
       else void splitPane(pid, "horizontal");
     } },
     { id: "split_vertical", when: hasActivePane, run: (e) => {
       e.preventDefault();
       const pid = activePaneId();
       if (!pid) return;
-      if (tabsMode()) void newTab();
+      if (oneLeafMode()) void newTab();
       else void splitPane(pid, "vertical");
     } },
     { id: "close_pane", when: hasActivePane, run: (e) => {
       e.preventDefault();
       const pid = activePaneId();
       if (!pid) return;
-      if (tabsMode()) void closeTab(pid);
+      if (oneLeafMode()) void closeTab(pid);
       else void closePane(pid);
     } },
   ];
@@ -3075,7 +3092,7 @@ function App() {
     // and a ParsedShortcut holds exactly one key. Settings lists it
     // read-only under "fixed shortcuts". Runs before the table so a rebound
     // accelerator can't shadow it.
-    if (tabsMode() && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
+    if (oneLeafMode() && e.ctrlKey && !e.shiftKey && !e.altKey && !e.metaKey) {
       for (let n = 1; n <= 9; n++) {
         if (!keyEq(e, String(n))) continue;
         e.preventDefault();
@@ -4207,20 +4224,32 @@ function App() {
                 </button>
                 <Show when={wsMenuOpen()}>
                   <div class="ws-header-menu">
-                    <button
-                      title={t("ws_header.view_mode.tooltip")}
-                      onClick={() => {
-                        setWsMenuOpen(false);
-                        void setTabsMode(!tabsMode());
-                      }}
+                    {/* Phase 91: three view modes, the current one marked.
+                        Each entry calls the same setViewMode the palette's
+                        cycle command uses. */}
+                    <For
+                      each={[
+                        { mode: "split" as ViewMode, icon: <IconColumns />, label: t("ws_header.view_mode.split"), tip: t("ws_header.view_mode.split.tooltip") },
+                        { mode: "tabs" as ViewMode, icon: <IconRows />, label: t("ws_header.view_mode.tabs"), tip: t("ws_header.view_mode.tabs.tooltip") },
+                        { mode: "sessions" as ViewMode, icon: <IconTerminal />, label: t("ws_header.view_mode.sessions"), tip: t("ws_header.view_mode.sessions.tooltip") },
+                      ]}
                     >
-                      <Show when={tabsMode()} fallback={<IconRows />}>
-                        <IconColumns />
-                      </Show>
-                      {tabsMode()
-                        ? t("ws_header.view_mode.split")
-                        : t("ws_header.view_mode.tabs")}
-                    </button>
+                      {(item) => (
+                        <button
+                          role="menuitemradio"
+                          aria-checked={viewMode() === item.mode}
+                          classList={{ "ws-header-menu-current": viewMode() === item.mode }}
+                          title={item.tip}
+                          onClick={() => {
+                            setWsMenuOpen(false);
+                            void setViewMode(item.mode);
+                          }}
+                        >
+                          {item.icon}
+                          {item.label}
+                        </button>
+                      )}
+                    </For>
                     <button
                       title={t("ws_header.split_diff_title")}
                       onClick={() => {
@@ -4393,7 +4422,7 @@ function App() {
                       // target always set — the active tab. That is the
                       // entire rendering story for tabs; the strip is
                       // just a control surface over `activePaneId`.
-                      const target = tabsMode()
+                      const target = oneLeafMode()
                         ? activePaneId() ?? collectPanes(base)[0] ?? null
                         : maximizedPaneId();
                       if (!target) return base;
@@ -4404,7 +4433,7 @@ function App() {
                       // active pane can legitimately be missing (popped out
                       // into its own window, or left over from another
                       // workspace). Land on the first surviving leaf.
-                      if (!tabsMode()) return base;
+                      if (!oneLeafMode()) return base;
                       const first = collectPanes(base)[0];
                       return (first ? findPane(base, first) : null) ?? base;
                     })()}
@@ -4419,7 +4448,7 @@ function App() {
                     workspaceColor={activeWs()?.color ?? undefined}
                     workspaceEmoji={activeWs()?.emoji ?? undefined}
                     maximizedPaneId={maximizedPaneId()}
-                    tabsMode={tabsMode()}
+                    tabsMode={oneLeafMode()}
                     workspacePaneCount={(() => {
                       const l = activeWs()?.layout;
                       return l ? collectPanes(l).length : 0;
