@@ -7470,3 +7470,30 @@ Result: compiles-untested (Rule #17) — CI decides; Rule #14 until the FOLLOWUP
   (run 34239269309, green): artifacts ymux-windows-nsis (16.9 MB) + ymux-windows-exe (21.8 MB) for the Rule #14
   live smoke — FOLLOWUPS P1 (2026-09-08). Yossi's question "we build only for mac — what about Windows?": ci-windows
   is a compile/test gate with no installer; the installer is workflow_dispatch / v* tag only, hence the dispatch.
+
+2026-09-08 — Phase 91.C: sessions as SIDEBAR ROWS (the strip lasted one live smoke)
+Yossi's first live run of PR #44: "how do I open something so it appears as a new row in the
+workspaces bar? — it added an option next to the tabs — that should be in Settings and apply to
+every server — clicking it opens a new tab, not a new row". Also: tmux pane looks better without
+the status bar (keep), live-only button works (keep), "assume the mouse works for now" (91.D wheel
+proxy DEFERRED → FOLLOWUPS P2 with the full design). Plan round 2 approved; commits:
+ 1. refactor(shell): remove the sessions view mode — SessionTabs.tsx, App.tsx back to tabsMode/
+    setTabsMode + the two-entry ⋯ toggle, Workspace.sessions_mode dropped (never shipped; v4 stays
+    for known_sessions), workspace_set_view_mode + workspace_set_session removed, i18n/CSS cleanup.
+    Kept: known_sessions + remember, sessionDisplay, boundSessions → PaneView.boundSession. DECISIONS
+    91.C addendum.
+ 2. feat(settings): Settings.sessions_as_rows (flat bool, #[serde(default)], General tab, i18n x4).
+ 3. feat(workspaces): push_session_row extracted from workspace_open_session (which goes HOST-wide
+    idempotent via session_row_on_host); workspace_mirror_sessions → mirror_sessions_into (skips
+    names any same-host row carries and pane-derived names of same-host panes; 3 tests).
+ 4. feat(shell): refreshSessionRows keyed on the ROOT id (activeRootId memo; activation once per
+    root with ensure = auto-connect opt-out; post-connect timer; 30 s visible-only poll; after a
+    delete), mirrorCandidates (minus foreign-workspace, minus names our own panes hold — live map
+    + restore hints), goneWorkspaceIds → Sidebar .ws-gone, BoundSession {name, gone,
+    claudeSessionId, cwd} → PaneView "Resume" = claude --resume in the remembered cwd, + on
+    server/folder rows → newSessionRow → openSessionRow (openSessionAsWorkspace wraps it),
+    commitDelete skips the kill on gone rows and forgets the name. Vault frontend-shell/lib.
+ Bugs on the way: a scratch write helper truncated Settings.ts when its edit assert failed
+ (open-for-write before compute) — restored from git, helper fixed to compute-then-write.
+Result: compiles-untested (Rule #17) — CI; FOLLOWUPS P1 rewritten for rows; build-windows to be
+dispatched for the live smoke.
