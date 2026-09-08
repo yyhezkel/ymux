@@ -695,6 +695,8 @@
   "settings.updates.logs.copyPath": "نسخ المسار",
   "settings.updates.logs.copied": "تم النسخ",
   "sidebar.notes.tooltip": "ملاحظات",
+  "sidebar.liveOnly.tooltip": "الصفوف ذات الجلسات الحية فقط",
+  "sidebar.liveOnly.empty": "لا شيء نشط الآن — أوقف التصفية لرؤية كل مساحات العمل",
   "sidebar.ports.label": "المنافذ",
   "sidebar.ports.tooltip": "يسمح لمتصفحك المحلي بالوصول إلى ما يعمل على الخادم البعيد",
   "sidebar.browser.label": "متصفح",

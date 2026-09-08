@@ -695,6 +695,8 @@
   "settings.updates.logs.copyPath": "העתק נתיב",
   "settings.updates.logs.copied": "הועתק",
   "sidebar.notes.tooltip": "הערות",
+  "sidebar.liveOnly.tooltip": "רק שורות עם סשנים חיים",
+  "sidebar.liveOnly.empty": "אין כרגע שורה פעילה — כבה את הסינון כדי לראות את כל סביבות העבודה",
   "sidebar.ports.label": "פורטים",
   "sidebar.ports.tooltip": "מאפשר התחברות localhost מהמחשב שלך למה שרץ על השרת המרוחק",
   "sidebar.browser.label": "דפדפן",

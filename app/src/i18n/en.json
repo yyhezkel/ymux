@@ -687,6 +687,8 @@
   "settings.updates.logs.copyPath": "Copy path",
   "settings.updates.logs.copied": "Copied",
   "sidebar.notes.tooltip": "Notes",
+  "sidebar.liveOnly.tooltip": "Only rows with live sessions",
+  "sidebar.liveOnly.empty": "Nothing live right now — turn the filter off to see every workspace",
   "sidebar.ports.label": "Ports",
   "sidebar.ports.tooltip": "Lets your local browser reach what's running on the remote server",
   "sidebar.browser.label": "Browser",

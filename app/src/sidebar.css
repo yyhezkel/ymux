@@ -178,6 +178,32 @@
   transition: background var(--wmx-dur-instant) var(--wmx-ease-standard);
 }
 .sidebar-brand-row:hover { background: var(--w-surface-hi); }
+/* Phase 91.A: the "only active rows" toggle, a small pill under the
+   wordmark in both rail modes. `on` = accent; it is a filter, not an
+   action, so it never reads as primary. */
+.sidebar-live-toggle {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--w-r-sm);
+  color: var(--w-text-dim);
+  padding: 2px 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  line-height: 1;
+}
+.sidebar-live-toggle:hover { background: var(--w-surface-hi); color: var(--w-text); }
+.sidebar-live-toggle.on {
+  color: var(--w-accent);
+  border-color: var(--w-accent);
+}
+.sidebar-live-empty {
+  padding: 10px 12px;
+  font-size: var(--w-fs-sm);
+  color: var(--w-text-dim);
+  text-align: center;
+}
+.sidebar.icons .sidebar-live-empty { display: none; }
 .sidebar-header .sidebar-logo {
   /* em, so the mark tracks the wordmark instead of being pinned at 22px
      while the type around it grows. */

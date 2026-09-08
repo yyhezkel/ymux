@@ -139,6 +139,15 @@ Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 F
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 `WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
 
+**"Only rows with live sessions" (Phase 91.A)** — a toggle under the wordmark
+(`.sidebar-live-toggle`, `aria-pressed`, localStorage `ymux.sidebar.liveOnly`). The rule
+is `isLiveTree`: a row stays if `connectedIds` has it (App's `liveWorkspaceIds()` — any
+pane in `paneToSession`, no round trip), if it is the active workspace (the filter can
+never hide what you are looking at), or if a descendant qualifies — so a server stays for
+its live folder child. Applied to the ungrouped list, each group's members (a group with
+none left is hidden, the count shows the visible number) and the children inside a
+subtree; `.sidebar-live-empty` says so when nothing at all is live.
+
 The workspace right-click menu is a fixed-position `.ws-menu` whose items all funnel
 through one `onAction(id, action)` prop with a closed string union — rename, edit,
 **sessions** (Phase 90, above add-ons on purpose: it is opened several times a day),

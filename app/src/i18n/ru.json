@@ -695,6 +695,8 @@
   "settings.updates.logs.copyPath": "Копировать путь",
   "settings.updates.logs.copied": "Скопировано",
   "sidebar.notes.tooltip": "Заметки",
+  "sidebar.liveOnly.tooltip": "Только строки с живыми сессиями",
+  "sidebar.liveOnly.empty": "Сейчас ничего не запущено — выключите фильтр, чтобы увидеть все рабочие пространства",
   "sidebar.ports.label": "Порты",
   "sidebar.ports.tooltip": "Позволяет локальному браузеру дотянуться до того, что работает на удалённом сервере",
   "sidebar.browser.label": "Браузер",

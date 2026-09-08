@@ -14,6 +14,7 @@ import {
   IconTerminal,
   IconRefresh,
   IconWarning,
+  IconActivity,
 } from "./icons";
 import type { SidebarMode } from "./settings";
 import { createLogger } from "./logger";
@@ -608,6 +609,43 @@ export function Sidebar(p: Props) {
     return out;
   });
 
+  // Phase 91.A: "only active rows". A workspace is live when one of its
+  // panes is connected (`connectedIds`, App's local truth — no round trip)
+  // or when a descendant is; the active workspace is always shown so the
+  // filter can never hide what you are looking at. Per-machine UI state,
+  // so localStorage like the sidebar width and the window rects.
+  const LIVE_ONLY_KEY = "ymux.sidebar.liveOnly";
+  const [liveOnly, setLiveOnlyRaw] = createSignal<boolean>((() => {
+    try {
+      return localStorage.getItem(LIVE_ONLY_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })());
+  const setLiveOnly = (on: boolean) => {
+    setLiveOnlyRaw(on);
+    try {
+      if (on) localStorage.setItem(LIVE_ONLY_KEY, "1");
+      else localStorage.removeItem(LIVE_ONLY_KEY);
+    } catch {
+      // Storage unavailable — the toggle still works for this session.
+    }
+  };
+  const isLiveTree = (w: Workspace, depth = 0): boolean => {
+    if (p.connectedIds.has(w.id) || p.activeId === w.id) return true;
+    if (depth > 8) return false;
+    return (childrenOf().get(w.id) ?? []).some((k) => isLiveTree(k, depth + 1));
+  };
+  const rowVisible = (w: Workspace): boolean => !liveOnly() || isLiveTree(w);
+  const visibleUngrouped = () => groupedWorkspaces().ungrouped.filter(rowVisible);
+  const visibleMembers = (gid: string) =>
+    (groupedWorkspaces().byGroup.get(gid) ?? []).filter(rowVisible);
+  const nothingVisible = () =>
+    liveOnly()
+    && p.workspaces.length > 0
+    && visibleUngrouped().length === 0
+    && sortedGroups().every((g) => visibleMembers(g.id).length === 0);
+
   return (
     <div
       class={`sidebar ${p.mode}`}
@@ -673,6 +711,17 @@ export function Sidebar(p: Props) {
         </svg>
         <span class="sidebar-brand">{t("sidebar.title")}</span>
         </button>
+        {/* Phase 91.A: show only the rows with something live in them. */}
+        <button
+          class="sidebar-live-toggle"
+          classList={{ on: liveOnly() }}
+          aria-pressed={liveOnly()}
+          title={t("sidebar.liveOnly.tooltip")}
+          aria-label={t("sidebar.liveOnly.tooltip")}
+          onClick={() => setLiveOnly(!liveOnly())}
+        >
+          <IconActivity size={13} />
+        </button>
       </div>
       <div class="sidebar-list">
         {/* Design Pass 01 (#1): friendly CTA card while the list is empty,
@@ -687,22 +736,25 @@ export function Sidebar(p: Props) {
             </button>
           </div>
         </Show>
-        <Show when={p.groups.length > 0}>
+        <Show when={nothingVisible()}>
+          <div class="sidebar-live-empty">{t("sidebar.liveOnly.empty")}</div>
+        </Show>
+        <Show when={p.groups.length > 0 && (!liveOnly() || visibleUngrouped().length > 0)}>
           <div
             data-group-id=""
             class={`group-header ${dropIntoGroup(null) ? "drop-into" : ""}`}
             style="cursor: default"
           >
             <span class="group-header-name">{t("sidebar.ungrouped")}</span>
-            <span class="group-header-count">({groupedWorkspaces().ungrouped.length})</span>
+            <span class="group-header-count">({visibleUngrouped().length})</span>
           </div>
         </Show>
-        <For each={groupedWorkspaces().ungrouped}>
+        <For each={visibleUngrouped()}>
           {(w) => renderWorkspaceItem(w)}
         </For>
-        <For each={sortedGroups()}>
+        <For each={sortedGroups().filter((g) => !liveOnly() || visibleMembers(g.id).length > 0)}>
           {(g) => {
-            const members = () => groupedWorkspaces().byGroup.get(g.id) ?? [];
+            const members = () => visibleMembers(g.id);
             const collapsed = () => g.is_collapsed;
             return (
               <>
@@ -895,7 +947,7 @@ export function Sidebar(p: Props) {
       <>
         {renderWorkspaceRow(w, depth)}
         <Show when={!w.is_collapsed}>
-          <For each={kids()}>{(k) => renderWorkspaceSubtree(k, depth + 1, chain)}</For>
+          <For each={kids().filter(rowVisible)}>{(k) => renderWorkspaceSubtree(k, depth + 1, chain)}</For>
           <Show when={w.is_project_root}>
             <Show when={scan()?.status === "loading"}>
               <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>{t("pf.scanning")}</div>
