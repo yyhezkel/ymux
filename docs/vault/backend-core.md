@@ -315,11 +315,21 @@ list command. The module owns what the picker never needed:
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
 - **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
-  command beside `workspace_pin_project_folder` / `workspace_open_worktree`, same construction
-  (a CLONE of the root's connection, `single_terminal_layout`, no `sort_order`). It walks up
-  to the root first (the dialog may have been opened from a project-folder child; sessions
-  belong to the host), then is **idempotent on `Workspace.tmux_session`**: a row already opened
-  for that name anywhere under the root is activated, never duplicated. Placement is
+  command beside `workspace_pin_project_folder` / `workspace_open_worktree`. Since Phase 91.C
+  the construction lives in **`push_session_row`** (a CLONE of the root's connection,
+  `single_terminal_layout`, `parent_id` from `pick_session_parent`, no `sort_order`, never
+  touches `active_workspace_id`), shared with the mirror below. It walks up to the root first
+  (the dialog may have been opened from a project-folder child; sessions belong to the host),
+  then is **idempotent on `Workspace.tmux_session` HOST-wide** (`session_row_on_host`,
+  `conn_same_host` over every workspace): a row already standing for that name anywhere on
+  the host is activated, never duplicated. **`workspace_mirror_sessions(ws, sessions)`**
+  (91.C) is the batch form behind Settings → "Show every session as a sidebar row": its
+  disk-free core `mirror_sessions_into` (`session_mirror_tests`) creates a row under the root
+  for every offered `{name, display?, cwd?}` that no same-host row carries and that is not
+  the pane-derived name (`sanitize_tmux_session_name`) of a pane in any same-host workspace —
+  that session belongs to a plain pane that already holds it, and a row would attach a second
+  client. One persist + one `workspaces:changed`, only when something was created; nothing
+  is activated. Placement is
   `pick_session_parent`: the deepest `is_project_root` descendant whose `cwd` contains the
   session cwd (`path_is_within`, boundary-aware, `session_workspace_tests`), else the root —
   it never pins a folder on the user's behalf. The frontend then attaches the row's single

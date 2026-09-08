@@ -6155,18 +6155,162 @@ fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option
         .unwrap_or_else(|| root_id.to_string())
 }
 
+/// Root of `id` — the last ancestor — or `id` itself.
+fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
+    ancestors_of(file, id)
+        .last()
+        .cloned()
+        .unwrap_or_else(|| id.to_string())
+}
+
+/// Phase 91.C: does ANY row on the same host already stand for `name`?
+/// Host-wide, not subtree-wide: two roots to one server must not both get a
+/// row for the same session (that would attach a second client to it).
+fn session_row_on_host(file: &WorkspacesFile, conn: &Option<Connection>, name: &str) -> Option<String> {
+    file.workspaces
+        .iter()
+        .find(|w| w.tmux_session.as_deref() == Some(name) && conn_same_host(&w.connection, conn))
+        .map(|w| w.id.clone())
+}
+
+/// Phase 90.B / 91.C: THE construction of a session row — a child workspace
+/// under `root_id` (or under the pinned project folder whose cwd contains
+/// `cwd`, per `pick_session_parent`), a CLONE of the root's connection, a
+/// single terminal pane, `tmux_session = name`. Caller holds the lock and
+/// has trimmed `cwd` to None-or-nonempty. Never touches
+/// `active_workspace_id`. Returns the new id.
+fn push_session_row(
+    file: &mut WorkspacesFile,
+    root_id: &str,
+    session_name: &str,
+    display_name: &str,
+    cwd: Option<String>,
+) -> String {
+    let conn = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == root_id)
+        .and_then(|w| w.connection.clone())
+        .unwrap_or(Connection::Local { shell: None });
+    let parent = pick_session_parent(file, root_id, cwd.as_deref());
+    let id = new_workspace_id();
+    file.workspaces.push(Workspace {
+        id: id.clone(),
+        name: display_name.to_string(),
+        cwd,
+        connection: Some(conn.clone()),
+        layout: Some(single_terminal_layout(conn)),
+        parent_id: Some(parent),
+        tmux_session: Some(session_name.to_string()),
+        ..Default::default()
+    });
+    id
+}
+
+/// One live session as the frontend saw it. Deserialize-only.
+#[derive(Deserialize)]
+pub(crate) struct MirrorSessionInput {
+    pub name: String,
+    #[serde(default)]
+    pub display: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Phase 91.C: the disk-free core of `workspace_mirror_sessions`. Creates a
+/// row under `root_id` for every input that (a) no same-host row already
+/// carries and (b) is not the pane-derived name of a pane in any same-host
+/// workspace — that session belongs to a plain pane that already holds it,
+/// and a row for it would attach a second client. Returns the created ids.
+pub(crate) fn mirror_sessions_into(
+    file: &mut WorkspacesFile,
+    root_id: &str,
+    sessions: &[MirrorSessionInput],
+) -> Vec<String> {
+    let conn = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == root_id)
+        .and_then(|w| w.connection.clone());
+    let mut pane_names: Vec<String> = Vec::new();
+    for w in file.workspaces.iter().filter(|w| conn_same_host(&w.connection, &conn)) {
+        if let Some(layout) = &w.layout {
+            let mut ids = Vec::new();
+            collect_panes(layout, &mut ids);
+            pane_names.extend(ids.iter().map(|p| sanitize_tmux_session_name(p)));
+        }
+    }
+    let mut created = Vec::new();
+    for s in sessions {
+        let name = s.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if session_row_on_host(file, &conn, name).is_some() {
+            continue;
+        }
+        if pane_names.iter().any(|p| p == name) {
+            continue;
+        }
+        let display = s
+            .display
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .unwrap_or(name)
+            .to_string();
+        let cwd = s.cwd.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        created.push(push_session_row(file, root_id, name, &display, cwd));
+    }
+    created
+}
+
+/// Phase 91.C: mirror a host's live session list into the sidebar tree as
+/// session rows under the root of `workspace_id` (Settings →
+/// "Show every session as a sidebar row"). Batch: one persist, one emit,
+/// only when something was created; never activates anything.
+#[tauri::command]
+fn workspace_mirror_sessions(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    sessions: Vec<MirrorSessionInput>,
+) -> Result<WorkspacesFile, String> {
+    let (snapshot, created) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        if !file.workspaces.iter().any(|w| w.id == workspace_id) {
+            return Err("workspace not found".to_string());
+        }
+        let root_id = root_workspace_of(&file, &workspace_id);
+        let created = mirror_sessions_into(&mut file, &root_id, &sessions);
+        (file.clone(), created)
+    };
+    if created.is_empty() {
+        return Ok(snapshot);
+    }
+    persist(&state)?;
+    log_info(
+        "WORKSPACE",
+        &format!(
+            "workspace_mirror_sessions: root of ws={workspace_id} gained {} session row(s) (offered {})",
+            created.len(),
+            sessions.len()
+        ),
+    );
+    let _ = app.emit("workspaces:changed", ());
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 /// Phase 90.B: open a multiplexer session on a screen of its own — a
 /// persisted child workspace row under the machine (or under the pinned
-/// project folder whose directory contains the session's), whose single
-/// pane the frontend then attaches to the session.
-///
-/// Idempotent on `session_name`: a row already opened for this session
-/// anywhere under the same root is activated instead of duplicated. The
-/// dialog may have been opened from a project-folder child, so the root is
-/// walked up first — sessions belong to the host, not to the row that
-/// happened to be right-clicked. Same construction as the two sibling
-/// commands: a CLONE of the root's connection, a single terminal layout,
-/// no `sort_order` (the sidebar puts nulls last).
+/// project folder whose cwd contains the session's), then activate it.
+/// Idempotent on `tmux_session` HOST-wide (Phase 91.C: the same rule the
+/// mirror uses — a session has one row per host, wherever it landed): a
+/// second Open activates that row instead of creating another. The
+/// construction itself is `push_session_row`, shared with the mirror.
 #[tauri::command]
 fn workspace_open_session(
     state: State<'_, AppState>,
@@ -6194,40 +6338,16 @@ fn workspace_open_session(
         if !file.workspaces.iter().any(|w| w.id == workspace_id) {
             return Err("workspace not found".to_string());
         }
-        let root_id = ancestors_of(&file, &workspace_id)
-            .last()
-            .cloned()
-            .unwrap_or_else(|| workspace_id.clone());
-        let subtree = collect_subtree_ids(&file, &root_id);
-        if let Some(existing) = file
+        let root_id = root_workspace_of(&file, &workspace_id);
+        let conn = file
             .workspaces
             .iter()
-            .find(|w| {
-                subtree.iter().any(|id| id == &w.id)
-                    && w.tmux_session.as_deref() == Some(session_name.as_str())
-            })
-            .map(|w| w.id.clone())
-        {
+            .find(|w| w.id == root_id)
+            .and_then(|w| w.connection.clone());
+        if let Some(existing) = session_row_on_host(&file, &conn, &session_name) {
             file.active_workspace_id = Some(existing);
         } else {
-            let conn = file
-                .workspaces
-                .iter()
-                .find(|w| w.id == root_id)
-                .and_then(|w| w.connection.clone())
-                .unwrap_or(Connection::Local { shell: None });
-            let parent = pick_session_parent(&file, &root_id, cwd.as_deref());
-            let id = new_workspace_id();
-            file.workspaces.push(Workspace {
-                id: id.clone(),
-                name: display_name,
-                cwd,
-                connection: Some(conn.clone()),
-                layout: Some(single_terminal_layout(conn)),
-                parent_id: Some(parent),
-                tmux_session: Some(session_name.clone()),
-                ..Default::default()
-            });
+            let id = push_session_row(&mut file, &root_id, &session_name, &display_name, cwd);
             file.active_workspace_id = Some(id);
             created = true;
         }
@@ -12049,6 +12169,7 @@ pub fn run() {
             workspace_pin_project_folder,
             workspace_open_worktree,
             workspace_open_session,
+            workspace_mirror_sessions,
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
@@ -13314,6 +13435,89 @@ mod known_sessions_tests {
             &[],
             100 + KNOWN_SESSION_TOUCH_SECS
         ));
+    }
+}
+
+#[cfg(test)]
+mod session_mirror_tests {
+    // Phase 91.C: which live sessions become rows, and where.
+    use super::{mirror_sessions_into, session_row_on_host, MirrorSessionInput, WorkspacesFile};
+
+    fn file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 1,
+              "workspaces": [
+                { "id": "srv", "name": "runner",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_plain",
+                              "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app" },
+                { "id": "row-dev", "name": "dev", "parent_id": "srv", "tmux_session": "dev",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "srv-b", "name": "same-host-again",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "row-ops-b", "name": "ops", "parent_id": "srv-b", "tmux_session": "ops",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "other", "name": "other-server", "tmux_session": "web",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn input(name: &str, display: Option<&str>, cwd: Option<&str>) -> MirrorSessionInput {
+        MirrorSessionInput {
+            name: name.into(),
+            display: display.map(str::to_string),
+            cwd: cwd.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn creates_only_names_no_same_host_row_carries() {
+        let mut f = file();
+        let created = mirror_sessions_into(
+            &mut f,
+            "srv",
+            &[
+                input("dev", None, None),        // this root already has it
+                input("ops", None, None),        // the OTHER root on the same host has it
+                input("web", None, None),        // a row on a different host — does not block
+                input("ymux-p_plain", None, None), // the root's own plain pane holds it
+                input("  ", None, None),
+                input("fresh", Some("Fresh one"), Some("/srv/app/src")),
+            ],
+        );
+        assert_eq!(created.len(), 2, "web and fresh");
+        let web = f.workspaces.iter().find(|w| w.id == created[0]).unwrap();
+        assert_eq!(web.tmux_session.as_deref(), Some("web"));
+        assert_eq!(web.name, "web", "display falls back to the name");
+        assert_eq!(web.parent_id.as_deref(), Some("srv"), "no cwd → under the root");
+        let fresh = f.workspaces.iter().find(|w| w.id == created[1]).unwrap();
+        assert_eq!(fresh.name, "Fresh one");
+        assert_eq!(fresh.parent_id.as_deref(), Some("app"), "cwd inside the pinned folder → under it");
+        assert_eq!(fresh.cwd.as_deref(), Some("/srv/app/src"));
+        assert!(fresh.layout.is_some());
+        assert!(matches!(fresh.connection, Some(super::Connection::Ssh { .. })));
+    }
+
+    #[test]
+    fn a_second_pass_creates_nothing() {
+        let mut f = file();
+        let first = mirror_sessions_into(&mut f, "srv", &[input("fresh", None, None)]);
+        assert_eq!(first.len(), 1);
+        let again = mirror_sessions_into(&mut f, "srv-b", &[input("fresh", None, None)]);
+        assert!(again.is_empty(), "the other root on the same host must not mirror it again");
+    }
+
+    #[test]
+    fn row_lookup_is_host_wide_and_host_bound() {
+        let f = file();
+        let conn = f.workspaces[0].connection.clone();
+        assert_eq!(session_row_on_host(&f, &conn, "ops").as_deref(), Some("row-ops-b"));
+        assert_eq!(session_row_on_host(&f, &conn, "web"), None, "same name, other host");
     }
 }
 
