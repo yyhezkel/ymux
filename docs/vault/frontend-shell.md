@@ -142,6 +142,17 @@ addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
 
+**Worktree scans are lazy, keyed by workspace id, and never polled.** A subtree's
+effect runs `scanFolder` once when it is open and has no result; a scan that fails
+with "no live SSH session" parks as `offline` (not an error row). The retry lives in
+one effect over `liveSshHosts` — a memo that collapses `connectedIds` (a fresh Set on
+every App tick) to the sorted `user@host:port` string of live SSH hosts — and rescans
+only the parked folders whose own host is in that set, inside `untrack` so its own
+`setScans` never re-fires it. Both constraints are load-bearing: the earlier version
+retried on *any* live workspace and tracked `scans()`, so a local workspace up with the
+folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
+Local/WSL folders never park — the backend runs git directly for them.
+
 Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
 terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
 otherwise a plain child — click, collapse, drag, delete all take the same path.
