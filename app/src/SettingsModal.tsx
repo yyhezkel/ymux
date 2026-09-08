@@ -707,6 +707,15 @@ export function SettingsModal(p: Props) {
                     />
                     <span>{t("settings.restoreSessions.label")}</span>
                   </label>
+                  {/* Phase 91.C: sessions as sidebar rows, for every server. */}
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.sessions_as_rows === true}
+                      onChange={(e) => update("sessions_as_rows", e.currentTarget.checked)}
+                    />
+                    <span>{t("settings.sessionsAsRows.label")}</span>
+                  </label>
                   {/* Phase 80.1: file manager reopens where it was left. */}
                   <label class="settings-checkbox">
                     <input

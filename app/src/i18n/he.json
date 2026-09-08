@@ -593,6 +593,8 @@
   "settings.autoConnect.hint": "כשמופעל, מעבר ל-workspace מסוג SSH יוצר חיבור ברקע כך שסשני tmux והקבצים שלך מוצגים מיד. כבה כדי לדחות את החיבור עד שייפתח pane של טרמינל.",
   "settings.restoreSessions.label": "שחזור סשני SSH בפתיחת האפליקציה",
   "settings.restoreSessions.hint": "כשמופעל, פתיחת YMUX מחברת מחדש את ה-panes של ה-workspace הפעיל לסשני tmux שהם היו בהם בסגירה. pane מתחבר מחדש רק אחרי שהשרת מאשר שהסשן עדיין חי — אם הוא מת, ה-pane נשאר עם כפתור ההתחברות. המחיר: handshake אחד של SSH לכל pane שמשוחזר, והרצה מחדש של פקודת האתחול של ה-workspace בכל אחד.",
+  "settings.sessionsAsRows.label": "הצג כל סשן כשורה ב‑sidebar",
+  "settings.sessionsAsRows.hint": "לכל שרת שפותחים: כל סשן tmux/zellij הופך לשורה תחת השרת (או תחת תיקיית הפרויקט שלו), + על שורת שרת פותח סשן חדש כשורה חדשה, וסשן שנעלם שומר את השורה שלו באפור עד שמוחקים אותה.",
   "settings.fmRememberPath.label": "סייר הקבצים נפתח בתיקייה האחרונה",
   "settings.fmRememberPath.hint": "כשמופעל, כל עמודה בסייר הקבצים נפתחת במקום שבו השארת אותה, בזיכרון נפרד לכל workspace. כשכבוי, שתי העמודות נפתחות תמיד בתיקיית הבית.",
   "ws_header.add_browser": "+ דפדפן",

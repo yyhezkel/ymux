@@ -57,7 +57,10 @@ the single source of truth instead, so a `settings.json` written by an older bui
 simply lacks the new keys and picks them up. Add a field there and to the `Default`
 impl, nothing else. The frontend parses these strings; Rust never validates them.
 
-`TerminalSettings.use_ymux_tmux_config` (default true, alias `use_winmux_tmux_config`)
+`Settings.sessions_as_rows` (Phase 91.C, default false, bare `#[serde(default)]`) is the
+switch for mirroring a host's sessions into the sidebar tree; the frontend is its only
+writer, so it round-trips through `update("sessions_as_rows", ...)` with no carry-list
+entry. `TerminalSettings.use_ymux_tmux_config` (default true, alias `use_winmux_tmux_config`)
 is what puts `-f ~/.ymux/tmux.conf` and the per-attach `source-file -q` on the tmux
 line — i.e. the Phase 91.B lock: mouse off, no status bar, prefix table = `[` / `d` /
 `C-b`, PageUp scrollback. Off means the user's own `~/.tmux.conf`, mouse included.

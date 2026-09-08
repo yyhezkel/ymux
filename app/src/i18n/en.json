@@ -585,6 +585,8 @@
   "settings.autoConnect.hint": "When enabled, switching to an SSH workspace establishes a background connection so tmux sessions and your files are immediately visible. Disable to defer the connection until a terminal pane is opened.",
   "settings.restoreSessions.label": "Restore SSH sessions on startup",
   "settings.restoreSessions.hint": "When enabled, opening YMUX re-attaches the active workspace's SSH panes to the tmux sessions they were on when it closed. A pane is only re-attached after the server confirms its session is still alive — if it is gone, the pane keeps its Connect button. Costs one SSH handshake per restored pane at startup, and re-runs the workspace's setup command on each.",
+  "settings.sessionsAsRows.label": "Show every session as a sidebar row",
+  "settings.sessionsAsRows.hint": "For every server you open: each tmux/zellij session on it becomes a row under the server (or under its project folder), + on a server row starts a new session as a new row, and a session that vanished keeps its row greyed until you delete it.",
   "settings.fmRememberPath.label": "File manager reopens at the last directory",
   "settings.fmRememberPath.hint": "When enabled, each column of the file manager reopens where you left it, remembered per workspace. When disabled, both columns always open at your home directory.",
   "ws_header.add_browser": "+ browser",

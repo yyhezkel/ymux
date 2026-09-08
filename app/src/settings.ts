@@ -321,6 +321,9 @@ export interface Settings {
   // sessions at app start. Backend defaults to FALSE — opt-in, because it
   // makes startup do network work (one handshake per restored pane).
   restore_sessions_on_start?: boolean;
+  // Phase 91.C: mirror every session on a host as a sidebar row. Backend
+  // defaults to FALSE — opt-in, because it fills the tree on its own.
+  sessions_as_rows?: boolean;
   // Phase 80.1: file manager reopens at the last directory each column was
   // showing, per workspace, instead of $HOME. Backend defaults to FALSE.
   file_manager_remember_path?: boolean;

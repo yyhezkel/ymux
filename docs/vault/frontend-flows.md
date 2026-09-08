@@ -97,7 +97,8 @@ The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hoo
 notifications, logs, Claude, updates, shortcuts. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
-modal. The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
+modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"
+checkbox (`sessions_as_rows`, the `restore_sessions_on_start` row's shape). The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
 toggles + two minute thresholds); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
 group.
