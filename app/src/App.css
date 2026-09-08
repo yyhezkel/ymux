@@ -7139,6 +7139,52 @@ body.ymux-dragging .pane-conn {
   margin-inline: 0;
 }
 
+/* Phase 91: the sessions strip. A session the host no longer lists stays
+   in the strip, dimmed — clicking it resumes the conversation. */
+.pane-tab-gone {
+  opacity: 0.45;
+  font-style: italic;
+}
+.pane-tab-gone:hover {
+  opacity: 0.8;
+}
+.pane-tab-badge {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  opacity: 0.7;
+}
+/* The two-step kill: the × turns into "Sure?" for 3 s. */
+.pane-tab-close.pane-tab-confirm {
+  width: auto;
+  padding: 0 4px;
+  opacity: 1;
+  color: var(--w-error, #f7768e);
+  font-size: 10px;
+  font-weight: 600;
+}
+.pane-tab-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.pane-tab-refresh-busy svg {
+  animation: pane-tab-spin 0.9s linear infinite;
+}
+@keyframes pane-tab-spin {
+  to { transform: rotate(360deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-tab-refresh-busy svg { animation: none; }
+}
+.pane-tabs-note {
+  align-self: center;
+  font-size: 10px;
+  color: var(--w-text-dim, #7d8590);
+  padding-inline: 6px;
+  white-space: nowrap;
+}
+
 /* ── Phase 90: active-sessions overview ─────────────────────────────────────
    A plain .modal that fills the viewport. The table is .ins-an-table (the
    Monitor's) with a group heading row per directory; the body scrolls, the

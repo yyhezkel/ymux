@@ -77,6 +77,10 @@ interface Props {
   onDisconnect: (paneId: string) => void;
   // Phase 11.A: tmux session map keyed by pane_id; presence = persistent.
   panePersistence: Record<string, string>;
+  // Phase 91: pane_id → the session its [Connect] must attach to (a
+  // sessions-strip pane, or the workspace's first pane bound to
+  // `tmux_session`). Only panes that are NOT live carry one.
+  boundSessions: Record<string, string>;
   onKillSession: (paneId: string) => void;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
@@ -230,6 +234,7 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           onPopOut={props.all.onPopOut}
           onDisconnect={props.all.onDisconnect}
           tmuxSession={props.all.panePersistence[props.pane.pane_id] ?? null}
+          boundSession={props.all.boundSessions[props.pane.pane_id] ?? null}
           onKillSession={props.all.onKillSession}
           onSetTitle={props.all.onSetTitle}
           onSetAnnotation={props.all.onSetAnnotation}

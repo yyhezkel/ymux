@@ -10,13 +10,14 @@ import { NotificationCenter, NotifHeaderActions, type NotifItem } from "./Notifi
 import { WelcomeScreen } from "./WelcomeScreen";
 import { LayoutView } from "./LayoutView";
 import { PaneTabs } from "./PaneTabs";
+import { SessionTabs, type SessionEntry } from "./SessionTabs";
 import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgentState";
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
 import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel";
-import { paneLabel, type PaneNode } from "./paneTitle";
+import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
   allPaneSessions,
@@ -121,6 +122,7 @@ import {
   type WorktreeEntry,
   type FeedResolvedEvent,
   type KillSessionOutcome,
+  type KnownSession,
   type LayoutNode,
   type Note,
   type NotesFile,
@@ -860,6 +862,21 @@ function App() {
   );
   // Phase 11.A: per-pane tmux persistence map { pane_id → session_name }.
   const [panePersistence, setPanePersistence] = createSignal<Record<string, string>>({});
+  // Phase 91: the sessions strip's live list, per workspace. `reachable`
+  // is false when the host could not be asked (a cold password-auth SSH
+  // workspace returns an EMPTY list, not an error) — then nothing is
+  // painted as gone, because "we do not know" must never read as "dead".
+  type SessionListState = {
+    rows: TmuxSessionInfo[];
+    reachable: boolean;
+    loading: boolean;
+    error: string | null;
+    fetchedAt: number;
+  };
+  const [sessionLists, setSessionLists] = createSignal<Record<string, SessionListState>>({});
+  // session name → the pane created FOR it, from creation until the
+  // backend's persistence map confirms the attach (then the map wins).
+  const [pendingSessionPanes, setPendingSessionPanes] = createSignal<Record<string, string>>({});
   const refreshPersistence = async () => {
     try {
       const m = await invoke<Record<string, string>>("pane_persistence_list");
@@ -997,6 +1014,7 @@ function App() {
     return w?.sessions_mode ? "sessions" : w?.tabs_mode ? "tabs" : "split";
   };
   const tabsMode = (): boolean => viewMode() === "tabs";
+  const sessionsMode = (): boolean => viewMode() === "sessions";
   // "One leaf fills the workspace" — true for tabs AND sessions. Every
   // guard that used to ask tabsMode() because it meant THIS asks this.
   const oneLeafMode = (): boolean => viewMode() !== "split";
@@ -2180,6 +2198,9 @@ function App() {
           const name = panePersistence()[paneId];
           if (name) rememberPaneSession(paneId, name);
           else forgetPaneSession(paneId);
+          // Phase 91: a connect can have CREATED a session (the strip's +,
+          // a resume) — the strip learns about it from the host, not from us.
+          if (sessionsMode()) void refreshSessionList(ws.id, { ensure: false });
         });
       }, 100);
     } catch (e) {
@@ -2402,7 +2423,7 @@ function App() {
     const f = await invoke<WorkspacesFile>("workspace_open_session", {
       workspaceId: wsId,
       sessionName: s.name,
-      displayName: s.label ?? s.auto_name ?? s.claude_title ?? s.name,
+      displayName: sessionDisplay(s),
       cwd: s.cwd ?? s.owner_cwd ?? null,
     });
     updateFile(f);
@@ -2441,6 +2462,355 @@ function App() {
       return null;
     }
   };
+
+  // ─── Phase 91: sessions mode ─────────────────────────────────────────
+  //
+  // The strip is a second view onto host truth: entries come from the
+  // workspace's `known_sessions` (order, memory of what vanished) joined
+  // with the host's live list; the pane↔session binding is the backend's
+  // persistence map first and the localStorage restore hint second. The
+  // workspace's `tmux_session` is the last selection, so [Connect] after a
+  // restart lands in it without the picker (see boundSessions / PaneView).
+
+  // Scope follows the workspace: a project-folder child sees only what the
+  // picker's "This folder" shows (`owned || in_cwd`, the backend annotates,
+  // never filters); a root workspace sees the whole host.
+  const scopedSessionRows = (ws: Workspace, rows: TmuxSessionInfo[]): TmuxSessionInfo[] =>
+    ws.parent_id ? rows.filter((r) => r.owned || r.in_cwd) : rows;
+
+  const refreshSessionList = async (wsId: string, opts: { ensure: boolean }) => {
+    const ws = file().workspaces.find((w) => w.id === wsId);
+    if (!ws) return;
+    const caps = wsCaps(ws);
+    const prev = sessionLists()[wsId];
+    const patch = (p: Partial<SessionListState>) =>
+      setSessionLists((m) => ({
+        ...m,
+        [wsId]: {
+          rows: prev?.rows ?? [],
+          reachable: prev?.reachable ?? false,
+          loading: false,
+          error: null,
+          fetchedAt: prev?.fetchedAt ?? 0,
+          ...(m[wsId] ?? {}),
+          ...p,
+        },
+      }));
+    if (!caps.sessionPersistence) {
+      patch({ rows: [], reachable: false, loading: false });
+      return;
+    }
+    patch({ loading: true, error: null });
+    if (caps.sessionBound && opts.ensure) {
+      // Idempotent, PTY-free; a password-auth workspace no-ops here and the
+      // list below comes back empty — which `reachable` then records.
+      try {
+        await invoke("workspace_ensure_connected", { workspaceId: wsId });
+      } catch (e) {
+        patch({ loading: false, reachable: false, error: String(e) });
+        return;
+      }
+    }
+    let rows: TmuxSessionInfo[];
+    try {
+      rows = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        workspaceId: wsId,
+        projectPath: null,
+      });
+    } catch (e) {
+      log.warn("sessions strip: list failed", e);
+      patch({ loading: false, reachable: false, error: String(e) });
+      return;
+    }
+    // An empty list from a session-bound host is ambiguous (cold SSH, no
+    // handle) — the restoreSessions precedent. Local multiplexers answer
+    // from cold, so their empty list is real.
+    const reachable = rows.length > 0 || !caps.sessionBound;
+    patch({ rows, reachable, loading: false, error: null, fetchedAt: Date.now() });
+    if (!reachable || rows.length === 0) return;
+    const entries = scopedSessionRows(ws, rows).map((r) => ({
+      name: r.name,
+      display: sessionDisplay(r) === r.name ? null : sessionDisplay(r),
+      claude_session_id: r.claude_session_id ?? null,
+      cwd: r.cwd ?? r.owner_cwd ?? null,
+    }));
+    try {
+      const f = await invoke<WorkspacesFile>("workspace_remember_sessions", {
+        workspaceId: wsId,
+        entries,
+        forget: [],
+      });
+      updateFile(f);
+    } catch (e) {
+      log.warn("workspace_remember_sessions failed", e);
+    }
+  };
+
+  // session name → pane id. The backend's live map wins; then a pane we
+  // just created for the session; then, for panes that are NOT live, the
+  // restore hint and the workspace's own bookmark for its first pane.
+  const paneBySession = (): Map<string, string> => {
+    const out = new Map<string, string>();
+    const taken = new Set<string>();
+    const claim = (name: string, pid: string) => {
+      if (out.has(name) || taken.has(pid)) return;
+      out.set(name, pid);
+      taken.add(pid);
+    };
+    for (const [pid, name] of Object.entries(panePersistence())) claim(name, pid);
+    for (const [name, pid] of Object.entries(pendingSessionPanes())) claim(name, pid);
+    const ws = activeWs();
+    if (!ws?.layout) return out;
+    const leaves = collectPanes(ws.layout);
+    for (const pid of leaves) {
+      if (paneToSession.has(pid)) continue;
+      const hint = getPaneSession(pid);
+      if (hint) claim(hint, pid);
+    }
+    const first = leaves[0];
+    if (ws.tmux_session && first && !paneToSession.has(first)) claim(ws.tmux_session, first);
+    return out;
+  };
+
+  const sessionEntries = (): SessionEntry[] => {
+    const ws = activeWs();
+    if (!ws) return [];
+    const st = sessionLists()[ws.id];
+    const live = new Map<string, TmuxSessionInfo>();
+    for (const r of st?.rows ?? []) live.set(r.name, r);
+    const scoped = new Set(scopedSessionRows(ws, st?.rows ?? []).map((r) => r.name));
+    const panes = paneBySession();
+    const out: SessionEntry[] = [];
+    const seen = new Set<string>();
+    const push = (name: string, known: KnownSession | null) => {
+      if (seen.has(name)) return;
+      seen.add(name);
+      const l = live.get(name) ?? null;
+      out.push({
+        name,
+        display: l ? sessionDisplay(l) : known?.display ?? name,
+        paneId: panes.get(name) ?? null,
+        // "gone" needs a host that answered: a silent host greys nothing.
+        gone: !!st?.reachable && !l,
+        foreign: l?.foreign ?? null,
+        attached: l?.attached ?? false,
+        windows: l?.windows ?? 0,
+        claudeSessionId: l?.claude_session_id ?? known?.claude_session_id ?? null,
+      });
+    };
+    for (const k of ws.known_sessions ?? []) push(k.name, k);
+    for (const name of scoped) push(name, null);
+    return out;
+  };
+
+  // Layout leaves no entry claims — a split-off shell, a diff pane, a pane
+  // whose session is out of scope. Rendered as plain tabs so nothing in
+  // the tree is unreachable from the strip.
+  const unboundPanes = (tree: LayoutNode): PaneNode[] => {
+    const bound = new Set(sessionEntries().map((e) => e.paneId).filter((p): p is string => !!p));
+    return collectPanes(tree)
+      .filter((pid) => !bound.has(pid))
+      .map((pid) => findPane(tree, pid))
+      .filter((n): n is PaneNode => n !== null);
+  };
+
+  // pane id → the session its [Connect] must attach to. Only panes that
+  // are NOT live carry one (a live pane has no [Connect]). In every view
+  // mode the workspace's first pane is bound to `tmux_session` — that is
+  // what makes a Phase 90.B session row honest after a restart.
+  const boundSessions = (): Record<string, string> => {
+    const out: Record<string, string> = {};
+    const ws = activeWs();
+    if (!ws?.layout) return out;
+    if (sessionsMode()) {
+      for (const [name, pid] of paneBySession()) if (!paneToSession.has(pid)) out[pid] = name;
+    }
+    const first = collectPanes(ws.layout)[0];
+    if (ws.tmux_session && first && !paneToSession.has(first) && !out[first]) out[first] = ws.tmux_session;
+    return out;
+  };
+
+  const setWorkspaceSession = async (wsId: string, name: string | null) => {
+    const cur = file().workspaces.find((w) => w.id === wsId);
+    if (!cur || (cur.tmux_session ?? null) === name) return;
+    try {
+      const updated = await invoke<Workspace>("workspace_set_session", { workspaceId: wsId, name });
+      const f = file();
+      updateFile({ ...f, workspaces: f.workspaces.map((w) => (w.id === updated.id ? updated : w)) });
+    } catch (e) {
+      log.warn("workspace_set_session failed", e);
+    }
+  };
+
+  // A pane for a session that has none yet. Remember the hint BEFORE the
+  // connect so a crash mid-way still binds the pane on the next boot.
+  const ensurePaneForSession = async (name: string): Promise<string | null> => {
+    const ws = activeWs();
+    if (!ws) return null;
+    let pid: string | null = null;
+    if (!ws.layout) {
+      // Closing the last tab leaves layout null; the strip stays up (it is
+      // the way back in), so make a pane without the confirm that
+      // handleResetLayout wraps around the same command.
+      try {
+        const f = await invoke<WorkspacesFile>("workspace_reset_layout", { workspaceId: ws.id });
+        updateFile(f);
+      } catch (e) {
+        log.error("workspace_reset_layout failed", e);
+        return null;
+      }
+      const layout = activeWs()?.layout;
+      pid = layout ? collectPanes(layout)[0] ?? null : null;
+    } else {
+      if (!activePaneId()) focusPane(collectPanes(ws.layout)[0]);
+      pid = await newTab();
+    }
+    if (!pid) return null;
+    setPendingSessionPanes((m) => ({ ...m, [name]: pid as string }));
+    rememberPaneSession(pid, name);
+    focusPane(pid);
+    return pid;
+  };
+
+  const attachPaneToSession = async (pid: string, name: string, extra: ConnectOpts = {}) => {
+    focusPane(pid);
+    await waitForPaneMount(pid);
+    await connectPane(pid, { persistent: true, tmuxSession: name, ...extra });
+  };
+
+  // Click on a live entry: focus its pane, or attach one.
+  const selectSession = async (name: string) => {
+    const ws = activeWs();
+    if (!ws) return;
+    const pid = paneBySession().get(name) ?? null;
+    if (pid && paneToSession.has(pid)) {
+      focusPane(pid);
+    } else if (pid) {
+      await attachPaneToSession(pid, name);
+    } else {
+      const created = await ensurePaneForSession(name);
+      if (!created) return;
+      await attachPaneToSession(created, name);
+    }
+    await setWorkspaceSession(ws.id, name);
+  };
+
+  // Click on a grey entry: bring the session back and resume the Claude
+  // conversation that was inside it. If the session came back between the
+  // poll and the click, pane_connect's attach-only guard types nothing.
+  const resumeGoneSession = async (name: string) => {
+    const ws = activeWs();
+    if (!ws) return;
+    const known = (ws.known_sessions ?? []).find((k) => k.name === name) ?? null;
+    const entry = sessionEntries().find((e) => e.name === name) ?? null;
+    const claudeId = entry?.claudeSessionId ?? known?.claude_session_id ?? null;
+    const extra: ConnectOpts = claudeId
+      ? { mode: "claude", claudeArgs: `--resume ${claudeId}`, cwdOverride: known?.cwd ?? undefined }
+      : { cwdOverride: known?.cwd ?? undefined };
+    const pid = paneBySession().get(name) ?? (await ensurePaneForSession(name));
+    if (!pid) return;
+    await attachPaneToSession(pid, name, extra);
+    await setWorkspaceSession(ws.id, name);
+  };
+
+  const onSessionEntryClick = (name: string) => {
+    const entry = sessionEntries().find((e) => e.name === name);
+    if (entry?.gone) void resumeGoneSession(name);
+    else void selectSession(name);
+  };
+
+  // +: a fresh session named after the workspace, `-2`, `-3`… past every
+  // name the host or the strip already knows (the connectAsNewSession loop).
+  const newSessionFromStrip = async () => {
+    const ws = activeWs();
+    if (!ws) return;
+    const base = ws.name.replace(/[^A-Za-z0-9_-]/g, "") || "ymux";
+    const taken = new Set<string>([
+      ...(sessionLists()[ws.id]?.rows ?? []).map((r) => r.name),
+      ...(ws.known_sessions ?? []).map((k) => k.name),
+    ]);
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+    const pid = await ensurePaneForSession(name);
+    if (!pid) return;
+    await attachPaneToSession(pid, name);
+    await setWorkspaceSession(ws.id, name);
+  };
+
+  // ×: kill on the host (through the pane when one of ours holds it, so
+  // PTY, maps and the restore hint go the tested way), close the pane,
+  // forget the entry.
+  const killSessionFromStrip = async (name: string) => {
+    const ws = activeWs();
+    if (!ws) return;
+    const entry = sessionEntries().find((e) => e.name === name);
+    const pid = paneBySession().get(name) ?? null;
+    if (entry && !entry.gone) {
+      const out = await killSessionByName(ws.id, name);
+      if (!out) flashSummaryToast("err", t("sessions.killFailed", { name }));
+    }
+    if (pid) await closeTab(pid);
+    setPendingSessionPanes((m) => {
+      const { [name]: _dropped, ...rest } = m;
+      void _dropped;
+      return rest;
+    });
+    try {
+      const f = await invoke<WorkspacesFile>("workspace_remember_sessions", {
+        workspaceId: ws.id,
+        entries: [],
+        forget: [name],
+      });
+      updateFile(f);
+    } catch (e) {
+      log.warn("workspace_remember_sessions (forget) failed", e);
+    }
+    if (ws.tmux_session === name) await setWorkspaceSession(ws.id, null);
+    void refreshSessionList(ws.id, { ensure: false });
+  };
+
+  // Once the backend confirms a pane holds the session, the pending
+  // entry has done its job.
+  createEffect(() => {
+    const live = panePersistence();
+    const pending = pendingSessionPanes();
+    const stale = Object.entries(pending).filter(([name, pid]) => live[pid] === name);
+    if (stale.length === 0) return;
+    setPendingSessionPanes((m) => {
+      const next = { ...m };
+      for (const [name] of stale) delete next[name];
+      return next;
+    });
+  });
+
+  // Entering sessions mode (or switching to a workspace that is in it)
+  // refreshes once, with the SSH handle armed. The id guard keeps this from
+  // re-firing on every file() change, like the auto-connect effect above.
+  let lastSessionsRefreshWs: string | null = null;
+  createEffect(() => {
+    const ws = activeWs();
+    const on = sessionsMode();
+    if (!ws || !on) {
+      lastSessionsRefreshWs = null;
+      return;
+    }
+    if (lastSessionsRefreshWs === ws.id) return;
+    lastSessionsRefreshWs = ws.id;
+    void refreshSessionList(ws.id, { ensure: true });
+  });
+
+  // A light poll while the strip is showing and the window is visible —
+  // this is how a session killed from elsewhere goes grey.
+  createEffect(() => {
+    if (!sessionsMode()) return;
+    const wsId = activeWs()?.id;
+    if (!wsId) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshSessionList(wsId, { ensure: false });
+    }, 30_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
 
   // Rename = a real `tmux rename-session` (ASCII-only; the backend
   // validates too). The backend migrates its own maps; here the restore
@@ -4356,6 +4726,47 @@ function App() {
           }}
         </Show>
 
+        {/* Phase 91: the sessions strip. Unlike PaneTabs it does NOT need a
+            layout — with the last tab closed the strip is the way back in. */}
+        <Show when={sessionsMode() ? activeWs() : null}>
+          {(ws) => {
+            const tree = (): LayoutNode | null => {
+              const layout = ws().layout;
+              if (!layout) return null;
+              const hidden = poppedOut();
+              return hidden.size > 0 ? pruneLayout(layout, hidden) ?? layout : layout;
+            };
+            const st = () => sessionLists()[ws().id];
+            return (
+              <SessionTabs
+                entries={sessionEntries()}
+                extraPanes={(() => { const tr = tree(); return tr ? unboundPanes(tr) : []; })()}
+                activePaneId={activePaneId()}
+                connectedPaneIds={connectedPanes()}
+                waitingPaneIds={waitingPaneIds()}
+                notifiedPaneIds={paneNotified()}
+                panePulseEnabled={settings()?.notifications?.pane_pulse_on_activity ?? true}
+                workspaceName={ws().name}
+                workspaceColor={ws().color ?? undefined}
+                workspaceEmoji={ws().emoji ?? undefined}
+                workspaceConnection={ws().connection ?? undefined}
+                agentLights={paneAgentLights()}
+                agentStateSince={paneAgentStateSince()}
+                agentNowMs={agentClockMs()}
+                reachable={st()?.reachable ?? false}
+                loading={st()?.loading ?? false}
+                error={st()?.error ?? null}
+                onSelectSession={onSessionEntryClick}
+                onKillSession={(name) => void killSessionFromStrip(name)}
+                onNewSession={() => void newSessionFromStrip()}
+                onRefresh={() => void refreshSessionList(ws().id, { ensure: true })}
+                onSelectPane={focusPane}
+                onClosePane={(pid) => void closeTab(pid)}
+              />
+            );
+          }}
+        </Show>
+
         <Show when={activeWs()?.layout}>
           {/* Phase 62.B (item H): workspace color frames the whole pane
               area (outer border). Pane colors frame each pane inside. */}
@@ -4472,6 +4883,7 @@ function App() {
                     agentRuns={agentRuns()}
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}
+                    boundSessions={boundSessions()}
                     ensureTerm={ensureTerm}
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}

@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, For, Show, on, onCleanup } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import type { KillSessionOutcome, SessionSummary, TmuxSessionInfo } from "./types";
+import { sessionDisplay } from "./paneTitle";
 import { currentLanguage, t } from "./i18n";
 import { IconClose, IconRefresh } from "./icons";
 import { createLogger } from "./logger";
@@ -48,8 +49,8 @@ interface Props {
 
 type Group = { key: string | null; title: string; rows: TmuxSessionInfo[] };
 
-const displayName = (s: TmuxSessionInfo): string =>
-  s.label ?? s.auto_name ?? s.claude_title ?? s.name;
+// Phase 91: precedence lives in paneTitle.ts so the strip cannot drift.
+const displayName = (s: TmuxSessionInfo): string => sessionDisplay(s);
 
 const lastSegment = (path: string): string => {
   const trimmed = path.replace(/[\\/]+$/, "");

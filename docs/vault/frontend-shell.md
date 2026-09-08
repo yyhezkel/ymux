@@ -7,6 +7,7 @@ covers:
   - app/src/LayoutView.tsx
   - app/src/PaneView.tsx
   - app/src/PaneTabs.tsx
+  - app/src/SessionTabs.tsx
   - app/src/AgentLight.tsx
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
@@ -188,6 +189,63 @@ workspace-level floating windows (sidebar 🌐 / 🗂). `BrowserPane.tsx` stays 
 as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, but
 consumed by `FileManagerWindow.tsx`.
 
+## Sessions mode (Phase 91)
+
+The third view mode. The body renders exactly like tabs (one leaf), and
+**`SessionTabs.tsx`** replaces the tab strip: each tab is a multiplexer session on the
+workspace's machine, whether or not a pane holds it yet. It is a second view onto host
+truth, and App owns every piece of it:
+
+- **Scope** follows the workspace: a project-folder child (`parent_id`) sees `owned ||
+  in_cwd` — the picker's *This folder* rule over the same annotated response — and a root
+  sees the whole host. The list call is `pane_list_tmux_sessions(ws, projectPath: null)`;
+  the backend annotates against `ws.cwd` and never filters.
+- **`sessionLists`** (per workspace: rows, `reachable`, loading, error) is filled by
+  `refreshSessionList(ws, {ensure})`. `reachable = rows.length > 0 || !sessionBound` — a
+  cold password-auth SSH host answers an EMPTY list, not an error (the `restoreSessions`
+  precedent), so an empty answer from a session-bound host greys nothing. Refresh runs on
+  entering the mode / switching to a workspace in it (id-guarded, `ensure: true` arms the
+  SSH handle first), from the post-connect 100 ms timer, after `+` / `×`, from the strip's
+  ↻, and on a 30 s `setInterval` while the mode is on and the window is visible — that
+  poll is how a session killed elsewhere goes grey. Each reachable refresh calls
+  `workspace_remember_sessions` (backend-core.md), which is what persists the memory.
+- **`sessionEntries()`** walks `ws.known_sessions` in order (that is the strip order),
+  then live scoped rows not yet known. `gone = reachable && !live`. Display name is
+  `sessionDisplay` from `paneTitle.ts` — the same precedence the overview and "Open" use.
+- **`paneBySession()`** binds a session to a pane: the backend's `panePersistence()` map
+  wins, then `pendingSessionPanes` (a pane just created for it), then — for panes that are
+  NOT live — the localStorage hint (`getPaneSession`) and `ws.tmux_session` for the first
+  leaf. Leaves no entry claims are `unboundPanes()` and render as ordinary tabs after the
+  sessions (drag included), so nothing in the tree is unreachable. Session tabs carry no
+  `data-pane-id` and no drag — their order is not the layout's.
+- **Flows.** Click a live entry (`selectSession`): focus its live pane, else attach the
+  disconnected pane it has, else `ensurePaneForSession` (`newTab()`, or
+  `workspace_reset_layout` directly when the layout is null — the strip stays up with zero
+  panes, it is the way back in; `rememberPaneSession` BEFORE the connect so a crash
+  mid-way still binds next boot) then `connectPane(pid, {persistent, tmuxSession})` — the
+  `openSessionAsWorkspace` shape; then `workspace_set_session` bookmarks it. `+`
+  (`newSessionFromStrip`): `<slug of ws.name>`, `-2`, `-3`… past every live and known
+  name, then the same attach — `new-session -A` creates it. `×` (`killSessionFromStrip`,
+  after the strip's two-step confirm): `killSessionByName` (through the pane when one of
+  ours holds it), `closeTab`, `workspace_remember_sessions(forget)`, clear the bookmark if
+  it was current. **A grey entry** (`resumeGoneSession`): `connectPane` with `mode:
+  "claude"` and `claudeArgs: "--resume <id>"` (a STRING — `pane_connect` takes
+  `claude_args: Option<String>`) in `known.cwd`, or a plain session of the same name when
+  no Claude id is known; if the session came back between poll and click, `pane_connect`'s
+  attach-only guard types nothing — do not "fix" that.
+- **Restart.** Nothing new runs at boot. Hints and the first-pane fallback bind the
+  disconnected leaves; a click connects that pane; a pane's own [Connect] goes straight in
+  through **`boundSessions()`** — pane_id → session for every NOT-live strip pane plus, in
+  every mode, the first pane of a workspace with `tmux_session`. LayoutView threads it as
+  `boundSession` and PaneView's `smartConnect` short-circuits on it (no probe, no picker).
+  That is also the fix for the 90.B gap where the probe opened the picker on any host with
+  a session and App's fallback never got a turn. Popped-out panes count as bound and are
+  never active — known, not special-cased.
+- The one local signal in `SessionTabs` is `pendingKill` (× → "Sure?" for 3 s → kill), the
+  deliberate exception to PaneTabs' "owns no state". CSS: `.pane-tab-gone`,
+  `.pane-tab-badge` (📁 foreign, the picker's wording), `.pane-tab-confirm`,
+  `.pane-tab-refresh`, `.pane-tabs-note`.
+
 ## `PaneView.tsx` (2,194) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
@@ -247,7 +305,8 @@ from those rows, so they cannot disagree. Per-pane brief entries live in the
 `briefs` signal, mirrored off `pane:brief` (seq-guarded like `pane:agent-run`)
 and hydrated by `pane_briefs`.
 
-**`paneTitle.ts`** — the pane display-label precedence
+**`paneTitle.ts`** — `sessionDisplay` (label → auto_name → claude_title → name, Phase 91,
+shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
 

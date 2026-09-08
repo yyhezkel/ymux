@@ -133,6 +133,11 @@ interface Props {
   // Phase 11.A: when this pane is bound to a tmux session, the name. Used
   // to render the "T" badge and to enable "Kill session" in the menu.
   tmuxSession?: string | null;
+  // Phase 91: the session this pane must attach to on [Connect] — set by
+  // App for a sessions-strip pane and for the first pane of a workspace
+  // with `tmux_session`. smartConnect short-circuits on it: no probe, no
+  // picker, attach. Null for an ordinary pane.
+  boundSession?: string | null;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
   ensureTerm: (paneId: string, profile: RtlProfileKind) => TerminalInstance;
@@ -631,6 +636,12 @@ export function PaneView(p: Props) {
   // to, no matter what the restore loop did on the next boot.
   const smartConnect = async () => {
     if (!caps().sessionPersistence) { p.onConnect(p.pane.pane_id, { persistent: false }); return; }
+    // Phase 91: a pane that already knows its session attaches to it —
+    // this is what makes a session row / a strip pane honest after a
+    // restart. Before this, the probe below opened the picker on any host
+    // with a session, and App's tmux_session fallback never got a turn.
+    const bound = p.boundSession;
+    if (bound) { p.onConnect(p.pane.pane_id, { persistent: true, tmuxSession: bound }); return; }
     setConnectProbing(true);
     try {
       // Idempotent, PTY-free, tmux-free; no-ops on password-auth (can't prompt
@@ -1713,7 +1724,12 @@ export function PaneView(p: Props) {
                   [Connection wizard] opens the unified wizard (type / directory
                   / command / resume list). */}
               <div class="connect-buttons">
-                <button class="primary big" onClick={() => void smartConnect()} disabled={connectProbing()}>
+                <button
+                  class="primary big"
+                  onClick={() => void smartConnect()}
+                  disabled={connectProbing()}
+                  title={p.boundSession ? t("connect.bound.tooltip", { name: p.boundSession }) : undefined}
+                >
                   {connectProbing() ? t("connect.probing") : t("common.connect")}
                 </button>
                 <button class="big nc-wizard-btn" onClick={openNewConnModal} disabled={connectProbing()}>
