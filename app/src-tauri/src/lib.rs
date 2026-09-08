@@ -536,7 +536,7 @@ struct PtyExitEvent {
 // own derive — `cargo test` still regenerates `app/src/bindings/*.ts`
 // since the export_to path resolves to the same on-disk location.
 pub(crate) use ymux_types::{
-    BrowserState, Connection, DiffSource, EnvVar, LayoutNode, PaneKind,
+    BrowserState, Connection, DiffSource, EnvVar, KnownSession, LayoutNode, PaneKind,
     SplitDirection, Workspace, WorkspaceGroup,
 };
 
@@ -6192,6 +6192,10 @@ fn workspace_open_session(
             .iter()
             .find(|w| {
                 subtree.iter().any(|id| id == &w.id)
+                    // Phase 91: in sessions mode `tmux_session` is "last
+                    // selected", not "this row IS the session" — a server
+                    // root that bookmarked X must not swallow "Open X".
+                    && !w.sessions_mode
                     && w.tmux_session.as_deref() == Some(session_name.as_str())
             })
             .map(|w| w.id.clone())
@@ -6327,11 +6331,215 @@ fn workspace_set_tabs_mode(
             .find(|w| w.id == workspace_id)
             .ok_or_else(|| "workspace not found".to_string())?;
         ws.tabs_mode = tabs_mode;
+        // Phase 91: at most one of the two view flags is ever true.
+        if tabs_mode {
+            ws.sessions_mode = false;
+        }
         file.clone()
     };
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
     log_info("WORKSPACE", &format!("ws={workspace_id} tabs_mode={tabs_mode}"));
+    Ok(snapshot)
+}
+
+/// Phase 91: the one writer of the view-mode pair. `mode` is
+/// `split | tabs | sessions`; the two flags are set together so no
+/// caller can leave both true. The layout tree is untouched in every
+/// mode — see `tabs_mode` / `sessions_mode` in `ymux-types`.
+#[tauri::command]
+fn workspace_set_view_mode(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    mode: String,
+) -> Result<WorkspacesFile, String> {
+    let (tabs, sessions) = match mode.as_str() {
+        "split" => (false, false),
+        "tabs" => (true, false),
+        "sessions" => (false, true),
+        other => return Err(format!("unknown view mode: {other}")),
+    };
+    let snapshot = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        ws.tabs_mode = tabs;
+        ws.sessions_mode = sessions;
+        file.clone()
+    };
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_info("WORKSPACE", &format!("ws={workspace_id} view_mode={mode}"));
+    Ok(snapshot)
+}
+
+/// Phase 91: remember which session the user selected last in sessions
+/// mode (`Workspace.tmux_session`, see its doc for the meaning shift).
+/// `None` / empty clears. A no-op write is skipped entirely — the strip
+/// calls this on every click and most clicks re-select the same session.
+/// Session names are metadata, so the log line may carry the name.
+#[tauri::command]
+fn workspace_set_session(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    name: Option<String>,
+) -> Result<Workspace, String> {
+    let name = name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let (updated, changed) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let changed = ws.tmux_session != name;
+        ws.tmux_session = name.clone();
+        (ws.clone(), changed)
+    };
+    if changed {
+        persist(&state)?;
+        let _ = app.emit("workspaces:changed", ());
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "ws={workspace_id} session={}",
+                name.as_deref().unwrap_or("-")
+            ),
+        );
+    }
+    Ok(updated)
+}
+
+/// One row of a `workspace_remember_sessions` call — the live list as the
+/// frontend saw it. Deserialize-only: it never leaves the process.
+#[derive(Deserialize)]
+pub(crate) struct KnownSessionInput {
+    pub name: String,
+    #[serde(default)]
+    pub display: Option<String>,
+    #[serde(default)]
+    pub claude_session_id: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// How stale a `last_seen` may be before a refresh that changes nothing
+/// else still counts as a change worth persisting. The strip polls every
+/// 30 s; without this every tick would rewrite workspaces.json.
+const KNOWN_SESSION_TOUCH_SECS: u64 = 300;
+
+/// Phase 91: the merge behind `workspace_remember_sessions`, disk-free so
+/// the rules can be tested. Returns whether anything worth persisting
+/// changed.
+///
+/// - Rows are matched by `name`. An incoming `Some` overwrites; an
+///   incoming `None` never erases — a session whose hooks went quiet must
+///   not lose its `claude_session_id`, that is the resume handle.
+/// - Names not yet known are appended, so first-seen order is strip order.
+/// - Names in `forget` are removed (a kill from the strip).
+/// - Rows absent from `entries` are KEPT. That absence is the whole point:
+///   it is the grey list.
+pub(crate) fn merge_known_sessions(
+    existing: &mut Vec<KnownSession>,
+    entries: &[KnownSessionInput],
+    forget: &[String],
+    now: u64,
+) -> bool {
+    let mut changed = false;
+    for e in entries {
+        if let Some(row) = existing.iter_mut().find(|r| r.name == e.name) {
+            if e.display.is_some() && row.display != e.display {
+                row.display = e.display.clone();
+                changed = true;
+            }
+            if e.claude_session_id.is_some() && row.claude_session_id != e.claude_session_id {
+                row.claude_session_id = e.claude_session_id.clone();
+                changed = true;
+            }
+            if e.cwd.is_some() && row.cwd != e.cwd {
+                row.cwd = e.cwd.clone();
+                changed = true;
+            }
+            if now.saturating_sub(row.last_seen) >= KNOWN_SESSION_TOUCH_SECS {
+                changed = true;
+            }
+            row.last_seen = now;
+        } else {
+            existing.push(KnownSession {
+                name: e.name.clone(),
+                display: e.display.clone(),
+                claude_session_id: e.claude_session_id.clone(),
+                cwd: e.cwd.clone(),
+                last_seen: now,
+            });
+            changed = true;
+        }
+    }
+    if !forget.is_empty() {
+        let before = existing.len();
+        existing.retain(|r| !forget.iter().any(|f| f == &r.name));
+        if existing.len() != before {
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Phase 91: fold a live session list into `Workspace.known_sessions`.
+/// Called by the strip after every successful refresh (and with `forget`
+/// after a kill). Persists only when `merge_known_sessions` says something
+/// changed — the 30 s poll must not churn workspaces.json.
+#[tauri::command]
+fn workspace_remember_sessions(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    entries: Vec<KnownSessionInput>,
+    forget: Vec<String>,
+) -> Result<WorkspacesFile, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (snapshot, changed, total) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let changed = merge_known_sessions(&mut ws.known_sessions, &entries, &forget, now);
+        let total = ws.known_sessions.len();
+        (file.clone(), changed, total)
+    };
+    if changed {
+        persist(&state)?;
+        let _ = app.emit("workspaces:changed", ());
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "ws={workspace_id} known_sessions={total} (live={} forget={})",
+                entries.len(),
+                forget.len()
+            ),
+        );
+    }
     Ok(snapshot)
 }
 
@@ -11877,6 +12085,9 @@ pub fn run() {
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
+            workspace_set_view_mode,
+            workspace_set_session,
+            workspace_remember_sessions,
             workspace_set_intent,
             pane_agent_states,
             pane_briefs,
@@ -12883,6 +13094,90 @@ mod smart_connect_tests {
             build_smart_connect_script(ShellKind::Posix, "default", None, None, None),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod known_sessions_tests {
+    // Phase 91: the merge rules behind workspace_remember_sessions.
+    use super::{merge_known_sessions, KnownSession, KnownSessionInput, KNOWN_SESSION_TOUCH_SECS};
+
+    fn input(name: &str, claude: Option<&str>) -> KnownSessionInput {
+        KnownSessionInput {
+            name: name.into(),
+            display: None,
+            claude_session_id: claude.map(str::to_string),
+            cwd: None,
+        }
+    }
+
+    fn row(name: &str, claude: Option<&str>, seen: u64) -> KnownSession {
+        KnownSession {
+            name: name.into(),
+            display: None,
+            claude_session_id: claude.map(str::to_string),
+            cwd: None,
+            last_seen: seen,
+        }
+    }
+
+    #[test]
+    fn unknown_names_are_appended_in_first_seen_order() {
+        let mut have = vec![row("a", None, 10)];
+        let changed = merge_known_sessions(&mut have, &[input("b", None), input("c", None)], &[], 20);
+        assert!(changed);
+        let names: Vec<&str> = have.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(have[1].last_seen, 20);
+    }
+
+    #[test]
+    fn rows_absent_from_the_live_list_are_kept() {
+        // That absence IS the grey list.
+        let mut have = vec![row("gone", Some("uuid-1"), 10), row("live", None, 10)];
+        merge_known_sessions(&mut have, &[input("live", None)], &[], 20);
+        assert_eq!(have.len(), 2);
+        assert_eq!(have[0].name, "gone");
+        assert_eq!(have[0].last_seen, 10, "an absent row keeps its old last_seen");
+        assert_eq!(have[1].last_seen, 20);
+    }
+
+    #[test]
+    fn incoming_some_overwrites_but_none_never_erases() {
+        let mut have = vec![row("s", Some("old"), 10)];
+        assert!(merge_known_sessions(&mut have, &[input("s", Some("new"))], &[], 11));
+        assert_eq!(have[0].claude_session_id.as_deref(), Some("new"));
+        merge_known_sessions(&mut have, &[input("s", None)], &[], 12);
+        assert_eq!(
+            have[0].claude_session_id.as_deref(),
+            Some("new"),
+            "a quiet refresh must not drop the resume handle"
+        );
+    }
+
+    #[test]
+    fn forget_removes_by_name() {
+        let mut have = vec![row("a", None, 10), row("b", None, 10)];
+        assert!(merge_known_sessions(&mut have, &[], &["a".into()], 20));
+        assert_eq!(have.len(), 1);
+        assert_eq!(have[0].name, "b");
+        assert!(!merge_known_sessions(&mut have, &[], &["zzz".into()], 21));
+    }
+
+    #[test]
+    fn a_fresh_refresh_that_changes_nothing_is_not_a_change() {
+        // The 30 s poll must not rewrite workspaces.json every tick ...
+        let mut have = vec![row("s", Some("u"), 100)];
+        assert!(!merge_known_sessions(&mut have, &[input("s", Some("u"))], &[], 130));
+        assert_eq!(have[0].last_seen, 130, "... but the in-memory stamp still moves");
+        // ... while a stale stamp is worth one write.
+        let mut have = vec![row("s", Some("u"), 100)];
+        assert!(merge_known_sessions(
+            &mut have,
+            &[input("s", Some("u"))],
+            &[],
+            100 + KNOWN_SESSION_TOUCH_SECS
+        ));
     }
 }
 
