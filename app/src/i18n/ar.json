@@ -585,7 +585,7 @@
   "settings.terminal.rtl.off.label": "إيقاف",
   "settings.terminal.rtl.off.desc": "WebGL renderer، بدون إعادة ترتيب. بايتات العبرية تُعرض من اليسار إلى اليمين كما تُكتب.",
   "settings.terminal.use_ymux_tmux_config.label": "استخدام إعدادات tmux الخاصة بـ YMUX (مستحسن)",
-  "settings.terminal.use_ymux_tmux_config.hint": "ينشر ملف tmux.conf إلى ~/.ymux/tmux.conf بحيث يقوم تمرير العجلة بالتمرير في الذاكرة المؤقتة بدلاً من سجل الصدفة، buffer بحجم 50,000 سطر، دعم truecolour. أوقف للعودة إلى ~/.tmux.conf الخاص بك. يسري عند الاتصال التالي للوحة.",
+  "settings.terminal.use_ymux_tmux_config.hint": "ينشر ملف tmux.conf إلى ~/.ymux/tmux.conf: فأرة tmux مُعطّلة كي تبقى النقرات والتحديد أصليين، بلا شريط حالة، بلا مفاتيح تقسيم/نوافذ (فقط Ctrl+b [ و d)، PageUp يمرّر للخلف، buffer بحجم 50,000 سطر، truecolour. أوقف للعودة إلى ~/.tmux.conf الخاص بك. يسري عند الاتصال التالي للوحة.",
   "settings.sessions.visibility.label": "نطاق منتقي جلسات tmux",
   "settings.sessions.visibility.hint": "الجلسات التي يعرضها منتقي الاتصال عندما تتشارك عدة أجهزة نفس مستخدم الخادم.",
   "settings.sessions.visibility.shared": "كل الجلسات على الخادم (افتراضي) — بما فيها الجلسات المنشأة من أجهزة أخرى",

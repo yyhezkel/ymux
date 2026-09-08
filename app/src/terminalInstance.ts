@@ -1012,13 +1012,15 @@ export class TerminalInstance {
     // the common case — Yossi's `TMUX=`(empty) / `#{mouse}`=0 diag showed
     // the proxy was firing in a PLAIN bash shell (not even tmux), sending
     // Alt+Up that bash read as history navigation. xterm.js's built-in
-    // wheel handling already does the right thing everywhere:
+    // wheel handling is left alone:
     //   - plain shell (no tmux)      → scrolls xterm.js's own scrollback
-    //   - tmux + `mouse on`          → emits SGR mouse events; tmux scrolls
-    //   - tmux + `mouse off`         → scrolls xterm.js's scrollback
-    // So we simply let it be. `scrollback` is set in the Terminal options
-    // above; the bundled tmux.conf ships `mouse on` for native tmux
-    // scroll. (One-time note in the console for future debugging.)
+    //   - an app tracking the mouse  → emits SGR mouse events; the app scrolls
+    //   - inside tmux (mouse OFF since Phase 91.B) → the wheel reaches
+    //     nothing: tmux holds the alt screen, so xterm.js has no scrollback
+    //     of its own there, and tmux never sees the wheel. Scrollback inside
+    //     tmux is the keyboard — PageUp (the conf's root bind) or Ctrl+b [.
+    // `scrollback` is set in the Terminal options above. (One-time note in
+    // the console for future debugging.)
     if (!g_loggedNoWheelProxy) {
       g_loggedNoWheelProxy = true;
       console.log(

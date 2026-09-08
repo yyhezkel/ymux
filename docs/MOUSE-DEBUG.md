@@ -20,9 +20,14 @@ literal text in a bare SSH shell. These are **SGR 1006** mouse-report events
   `app/src-tauri/src` (Rust) and `app/src-tauri/server` (Go) finds **no**
   mouse-*enable* sequence emitted by ymux.
 
-## Root cause — ymux turns tmux mouse ON
+## Root cause — ymux turned tmux mouse ON (until 2026-09-08)
 
-`app/src-tauri/src/lib.rs` (~line 2496), the tmux attach command chain:
+**Historical since Phase 91.B:** the injection below is gone, the conf locks
+tmux (mouse off, status off, prefix table = `[` / `d` / `C-b`, PageUp
+scrollback) and the attach chains `source-file -q` so running servers adopt
+it. Kept as the record of how the leak arose.
+
+`app/src-tauri/src/lib.rs` (`build_tmux_attach_script`), the tmux attach command chain:
 
 ```
 exec tmux -f $HOME/.ymux/tmux.conf new-session -A -s <name> \; set -g mouse on
@@ -72,9 +77,9 @@ source (ymux/tmux OR a user app):
   `\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1015l\e[?9l` to xterm (the DISPLAY,
   not the PTY) so xterm drops any stale mouse-tracking state. Gated by
   Settings → Terminal → **"Reset mouse state on connect"** (default on).
-  Note: for a *tmux* session this clears pre-existing stale state; tmux's own
-  `set -g mouse on` then re-enables mouse for the live session (wheel scrollback
-  preserved) — so this does NOT regress the O-3 behaviour.
+  Note: for a *tmux* session this clears pre-existing stale state. (Until
+  Phase 91.B tmux's own `set -g mouse on` then re-enabled mouse for the live
+  session; since then tmux stays off and there is nothing to re-enable.)
 - **Reset on pane process exit (extra safety):** in the `pty:exit` handler in
   `App.tsx` we call `resetMouseModes()` unconditionally after the
   `[disconnected]` notice — a full-screen app that enabled SGR/X10 tracking
@@ -89,10 +94,17 @@ source (ymux/tmux OR a user app):
 
 Rule #1: the disable string is a fixed control sequence — never PTY content.
 
-## Open decision for Yossi
+## Decided 2026-09-08 (Phase 91.B): option 2, plus the lock
 
-The ymux-side source is the intentional `set -g mouse on` (wheel scrollback,
-O-3). Options:
+Yossi's actual complaint was never the wheel: with tmux tracking the mouse,
+LEFT-CLICKS landed on whatever Claude Code was redrawing that instant and
+selected / pasted things nobody aimed at. So: `set -g mouse on` deleted, O-3
+retired, the conf locked like `ymux-zellij.kdl` (status off, `unbind -a -T
+prefix`, keep `[` / `d` / `C-b`), root `PPage` → `copy-mode -eu` on the main
+screen (passed through under `#{alternate_on}`), and the attach chains
+`source-file -q` so a running server adopts it without kill-server. Full
+entry in `docs/DECISIONS.md` (2026-09-08, Phase 91.B). The options as they
+stood, for the record:
 
 1. **Keep as-is + rely on the reset** (shipped) — wheel scrollback stays; the
    post-tmux-exit leak is cleared on next connect or via Ctrl+Alt+R.
@@ -103,8 +115,7 @@ O-3). Options:
    reset to the shell's exit path so leaving tmux always disables mouse. More
    moving parts; needs care not to fight tmux.
 
-Recommended: ship #1 now (done), and take #2 vs #3 as a follow-up if the reset
-proves insufficient in the field.
+#1 shipped in v0.4.4-beta.2; #2 (with the lock) landed 2026-09-08.
 
 ## Deferred
 

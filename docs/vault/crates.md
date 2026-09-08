@@ -167,7 +167,11 @@ uniformly. Pure data — no IO. The SSH side and the `Builtin` routine dispatch 
 
 Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
-succeeds and before the user's shell channel opens.
+succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
+`ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the
+manifest's `tmux-conf` entry) and does nothing else: applying it to a running tmux
+server is the attach script's `source-file -q` (backend-core.md § Multiplexer
+wrappers), not the bootstrap's job.
 
 **No `tauri` dependency, by explicit decision.** The caller resolves resource paths and
 passes in the manifest plus a resource-loader closure; `bootstrap()` does all the russh +

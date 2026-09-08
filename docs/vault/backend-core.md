@@ -200,6 +200,23 @@ the listing output so `parse_tmux_sessions` can read it back unambiguously.
 `session-meta` labels cross the wire **hex-encoded** (`hex_utf8`) so Hebrew/RTL labels
 never meet shell quoting.
 
+**`build_tmux_attach_script` is the one builder of the tmux attach line** (SSH, macOS
+local tmux and the legacy WSL arm all call it; the macOS site ANDs
+`local_tmux_conf_ready()` into the flag). With `terminal.use_ymux_tmux_config` on it
+types `exec tmux -f $HOME/.ymux/tmux.conf new-session -A -s <name> \; source-file -q
+$HOME/.ymux/tmux.conf`; off, plain `new-session -A` and nothing chained. Since Phase
+91.B **Rust never touches tmux's `mouse` option** — the Phase 65 EE `\; set -g mouse on`
+injection is gone, and `source-file -q` is what makes a running server adopt a changed
+conf (`-f` is read only when the server starts). The conf (`resources/ymux-tmux.conf`)
+states the same invariant as `ymux-zellij.kdl` — *1 ymux pane == 1 session == 1 window
+== 1 pane, zero chrome*: `mouse off`, `status off`, `unbind -a -T prefix` then only `[`,
+`d` and `C-b send-prefix`, root `PPage` → `copy-mode -eu` under `!#{alternate_on}`, and a
+`set -gu` before every `set -ga` so re-sourcing is idempotent. `tmux_attach_script_tests`
+lints it (allowed key names — Phase 65 CRITICAL is why —, the `-gu`/`-ga` pairing, no
+`mouse on`, no `-t =`) and pins `remote-manifest.json`'s `tmux-conf` sha/size to the
+embedded bytes: only ci-windows regenerates that file, so a stale committed entry makes
+the mac build re-upload the conf on every connect.
+
 **A session NAME is a security boundary, because one path types it into a shell.**
 `build_zellij_attach_command` produces a line that is typed verbatim into the user's
 cmd.exe or PowerShell 900ms after spawn, and a session name can come from a user's pane

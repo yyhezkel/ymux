@@ -3415,20 +3415,32 @@ fn build_tmux_attach_script(
     // ~/.tmux.conf if the file is absent (tmux logs a warning and uses
     // defaults — non-fatal). When the setting is off, omit -f so the
     // user's conf alone applies.
-    let tmux_flags = if use_ymux_tmux_conf {
-        "-f $HOME/.ymux/tmux.conf "
+    //
+    // Phase 91.B (2026-09-08): the `\; set -g mouse on` injection that
+    // Phase 65 EE chained here is GONE — the conf's Mouse section says why
+    // (left-click landing on Claude Code's redraws, not the wheel). In its
+    // place, when the bundled conf is in use, chain `source-file -q` so a
+    // server that is ALREADY running adopts the conf on this attach: `-f`
+    // is read only when the server starts, and `new-session -A` onto a live
+    // server otherwise keeps every option and binding from whatever conf it
+    // was born with (Phase 65 O round 4 found this the hard way). The conf
+    // is written to be re-sourced (each `-ga` append is preceded by a `-gu`
+    // reset), and `-q` makes a missing file a silent no-op, so the attach
+    // never fails on it. With the setting off NOTHING is chained: the user's
+    // own ~/.tmux.conf governs, mouse included. Rust never touches `mouse`.
+    let (tmux_flags, tmux_tail) = if use_ymux_tmux_conf {
+        (
+            "-f $HOME/.ymux/tmux.conf ",
+            " \\; source-file -q $HOME/.ymux/tmux.conf",
+        )
     } else {
-        ""
+        ("", "")
     };
-    // Phase 65 (bug EE): the bundled conf ships `mouse off` (the
-    // known-good display config — `mouse on` in the conf garbled Claude
-    // Code's live output). We still want tmux-native wheel scrollback,
-    // so turn mouse on via the new-session command chain (`\; set -g
-    // mouse on`) instead of in the conf.
     script.push_str(&format!(
-        "command -v tmux >/dev/null 2>&1 && exec tmux {flags}new-session -A -s {name} \\; set -g mouse on || echo '{msg}'\r\n",
+        "command -v tmux >/dev/null 2>&1 && exec tmux {flags}new-session -A -s {name}{tail} || echo '{msg}'\r\n",
         flags = tmux_flags,
         name = shell_quote(name),
+        tail = tmux_tail,
         msg = fallback_msg
     ));
     script
@@ -4790,7 +4802,7 @@ async fn spawn_ssh(
             ));
             // Phase 80: script construction shared with WSL panes — see
             // build_tmux_attach_script for the env-injection + -f conf +
-            // mouse-on rationale comments.
+            // source-file rationale comments.
             let script = build_tmux_attach_script(
                 &name_clone,
                 &socket_addr,
@@ -13020,6 +13032,137 @@ mod project_folder_migration_tests {
                 "walking up from {start} must reach a root"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tmux_attach_script_tests {
+    // Phase 91.B: the tmux attach line, and the conf it points at. There
+    // were NO tests here before — Phase 65 CRITICAL (a bad key name in the
+    // conf took every session down for five builds) is why the conf gets
+    // linted from Rust now.
+    use super::build_tmux_attach_script;
+    use ymux_core::shell_quote;
+
+    const CONF: &str = include_str!("../resources/ymux-tmux.conf");
+
+    #[test]
+    fn with_conf_chains_source_file_and_never_mouse_on() {
+        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m");
+        assert_eq!(
+            s,
+            format!(
+                "command -v tmux >/dev/null 2>&1 && exec tmux -f $HOME/.ymux/tmux.conf new-session -A -s {} \\; source-file -q $HOME/.ymux/tmux.conf || echo 'm'\r\n",
+                shell_quote("s")
+            )
+        );
+        assert!(!s.contains("mouse"));
+    }
+
+    #[test]
+    fn without_conf_appends_nothing() {
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m");
+        assert_eq!(
+            s,
+            format!(
+                "command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s {} || echo 'm'\r\n",
+                shell_quote("s")
+            )
+        );
+        assert!(!s.contains("\\;"));
+        assert!(!s.contains("tmux.conf"));
+        assert!(!s.contains("mouse"));
+    }
+
+    #[test]
+    fn env_injection_precedes_exec() {
+        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m");
+        assert_eq!(s.matches("tmux set-environment -g ").count(), 6);
+        for var in ["YMUX_SOCKET_ADDR", "WINMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "WINMUX_TUNNEL_TOKEN", "YMUX_PANE_ID", "WINMUX_PANE_ID"] {
+            assert!(s.contains(var), "missing {var}");
+        }
+        let exec_at = s.find("exec tmux").expect("exec");
+        let last_env = s.rfind("set-environment").expect("env");
+        assert!(last_env < exec_at, "env injection must come before the exec");
+        assert!(s.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn session_name_is_shell_quoted() {
+        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m");
+        assert!(s.contains(&format!("-s {} ", shell_quote("it's"))));
+    }
+
+    /// The conf lint. A single bad key name aborts the whole conf and
+    /// tmux exits before the session starts (Phase 65 CRITICAL). There is
+    /// no tmux on the Windows dev box, so this is the linter.
+    #[test]
+    fn conf_is_locked_and_re_sourceable() {
+        assert!(!CONF.contains('\r'), "conf must be LF-only");
+        // Comments explain the history and name the traps by name, so the
+        // checks below run over CODE lines only.
+        let code: String = CONF
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix"] {
+            assert!(code.contains(want), "conf lost `{want}`");
+        }
+        for forbidden in ["mouse on", "-t =", "S-PageUp", "S-PPage", "S-NPage", "status on"] {
+            assert!(!code.contains(forbidden), "conf must not contain `{forbidden}`");
+        }
+        // Every key a `bind` names must be one tmux 3.0–3.4 spells this way.
+        let allowed = ["[", "d", "C-b", "PPage"];
+        let mut seen_unset: Vec<String> = Vec::new();
+        for line in CONF.lines() {
+            let mut toks = line.split_whitespace();
+            match toks.next() {
+                Some("bind") => {
+                    let mut key = None;
+                    while let Some(t) = toks.next() {
+                        if t == "-T" {
+                            toks.next();
+                            continue;
+                        }
+                        if t.starts_with('-') {
+                            continue;
+                        }
+                        key = Some(t);
+                        break;
+                    }
+                    let key = key.expect("bind without a key");
+                    assert!(allowed.contains(&key), "bind names key {key:?}, not in the allowlist {allowed:?}");
+                }
+                Some("set") => {
+                    let flags = toks.next().unwrap_or("");
+                    let opt = toks.next().unwrap_or("").to_string();
+                    if flags == "-gu" {
+                        seen_unset.push(opt);
+                    } else if flags == "-ga" {
+                        assert!(seen_unset.contains(&opt), "`set -ga {opt}` has no `set -gu {opt}` above it — re-sourcing would accumulate");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The manifest pins the conf: the bootstrap's hash gate and the macOS
+    /// byte-compare both read it, and only ci-windows regenerates it — a
+    /// stale committed entry makes the mac build re-upload forever.
+    #[test]
+    fn manifest_pins_the_embedded_conf() {
+        use sha2::{Digest, Sha256};
+        let manifest = crate::remote_bootstrap::embedded_manifest().expect("manifest parses");
+        let entry = manifest.get("tmux-conf").expect("tmux-conf entry");
+        let bytes = crate::remote_bootstrap::embedded_payload("ymux-tmux.conf").expect("payload");
+        assert_eq!(entry.size, bytes.len() as u64, "remote-manifest.json size is stale");
+        assert_eq!(
+            entry.sha256.to_lowercase(),
+            format!("{:x}", Sha256::digest(&bytes)),
+            "remote-manifest.json sha256 is stale — recompute it for the new conf"
+        );
     }
 }
 

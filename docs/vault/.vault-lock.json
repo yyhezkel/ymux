@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "6bfbb9bd4d4cf30121037c8fa3b9b68355cb1e66060ea3d19158224f3052ae78",
+    "app/src-tauri/src/lib.rs": "0b6dc99470310e16ae61272326bbf0d368516a837b6e02db092958de9fb943d0",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
@@ -50,7 +50,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "bd65cba6ecad8377e580561f56c15ef7d0e3a1149c1c205b14faa9f13cec7d97",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "779bc736fe200555369eb2fda3902f26d5e911706e525aab16091151763a73fb",
+    "app/src-tauri/src/settings.rs": "8d823a9d27a463595fe95182cd1b98ccc67b152547c161184b2a9bd54c906812",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
   },
   "build-glue": {
@@ -79,7 +79,7 @@
   },
   "crates": {
     "app/src-tauri/crates/ymux-addons/src/lib.rs": "a564d3880cf0237b9e66adbff8cbfc974a9448f8c4e13105527dd59e7ee134dc",
-    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "1ad51672a01ce71805d0fa921721c5a33d806d3f22a3c4dbfe96a89e80e0f46c",
+    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "40a488882d4973fa41152e596ad4e1316a5126f073e9eed1442d815c2a7f104a",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "13261b0cd324f6c792a02dddda464c6c5b70696997c4152a56acc59dc6915857",
     "app/src-tauri/crates/ymux-core/src/log_writer.rs": "23760aa4727797ecb1e1cc60dde6ca02fab996f4115a5a920d764d983db4a6bd",
@@ -126,7 +126,7 @@
     "app/src/settings.ts": "937236b2c547adc41d318f058abcaf472602acebc51fa0c416a60932980a2e84",
     "app/src/shortcuts.ts": "236be11fe8831ec1f4bb0ba1d79926624ebb8f96e971f86af06c8d3d6952d64d",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
-    "app/src/terminalInstance.ts": "e42c29810e3c4035af579f5eb23e07b0ad98073dc6d851584c791f3b0b1430fd",
+    "app/src/terminalInstance.ts": "6180933cdd711b79e13835abe0922ff5b25f9775c603771b425501f0a6f71df8",
     "app/src/textDirection.ts": "b2c78aa9f8a1e8770e7902b6bd3f75a77f290b1882cf8bcc4e999fd08d88d1fb",
     "app/src/types.ts": "3a4fdb4c61fba0d85b6bbce843fec59cb3df3d08f6546769329d83caf4b47c1e"
   },

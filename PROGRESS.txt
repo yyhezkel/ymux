@@ -7428,3 +7428,38 @@ on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested �
   Fix: new `project_folder_probe` command (worktrees.rs) — Err only for a missing directory (dir_exists_over: tokio::fs local, `test -d` over WSL/SSH) or a dead SSH host; "no repo" is Ok(false), not an error. `workspace_pin_project_folder` (lib.rs) takes `is_project_root` as a param (the probe's verdict) instead of hardcoding true, so a non-git folder pins in the existing demoted state ("Check for a git repository" promotes it after git init). Both pin call sites updated (App.tsx pinProjectFolder + ProjectFolderModal submitPin) + `pf.pinned.noGit` toast and a softened pathHint in en/he/ar/ru. recheckGit deliberately still uses the always-fatal git_probe_worktrees.
   Files: app/src-tauri/src/worktrees.rs, app/src-tauri/src/lib.rs, app/src/App.tsx, app/src/ProjectFolderModal.tsx, app/src/i18n/{en,he,ar,ru}.json, vault (backend-core, backend-panes, frontend-shell, frontend-flows) + .vault-lock.json, FOLLOWUPS.md smoke step (7).
   Result: compiles untested locally per Rule #17 — pushed for CI; needs a live smoke (pin a non-git folder on Local + WSL + SSH).
+
+2026-09-08 — Phase 91: sessions view mode + tmux lock (mouse OFF) + delete-kills-session + live-only sidebar
+Branch yos/sessions-row-tmux-display-f97645 (worktree install-file-lock-windows-6ca4a6). Plan
+.claude/plans/glimmering-meandering-dahl.md, approved by Yossi after 3 AskUserQuestion rounds
+(cmux's remote-tmux model was put to him; he chose a strip-above-the-terminal third view mode).
+Commits, in order:
+ 1. feat(types): Workspace.sessions_mode + known_sessions (KnownSession), WORKSPACES_SCHEMA_VERSION 3->4,
+    bindings hand-mirrored, elision test 8 keys. Vault crates/backend-core.
+ 2. feat(workspaces): workspace_set_view_mode (one writer of the tabs/sessions pair), workspace_set_session
+    (tmux_session as "last selected"), workspace_remember_sessions -> merge_known_sessions (Some overwrites,
+    None never erases the --resume handle, absent rows KEPT = the grey list, 300 s touch throttle; 6 tests);
+    workspace_open_session idempotency gated on !sessions_mode.
+ 3. feat(shell): viewMode split|tabs|sessions; oneLeafMode() replaces nine tabsMode() guards; header ⋯ menu =
+    three menuitemradio entries; palette cycles; sidebar glyph gated. i18n x4.
+ 4. feat(shell): SessionTabs.tsx + App.tsx sessions state (sessionLists w/ reachable, pendingSessionPanes,
+    paneBySession, sessionEntries, unboundPanes, the four flows incl. resumeGoneSession with mode:"claude" +
+    claudeArgs "--resume <id>" (STRING) in known.cwd, id-guarded refresh, post-connect refresh, 30 s poll);
+    sessionDisplay lifted into paneTitle.ts. boundSessions -> LayoutView -> PaneView.boundSession: smartConnect
+    attaches straight to it (closes the 90.B [Connect]-opens-the-picker gap).
+ 5. (folded into 4)
+ 6. feat(workspaces): deleting a session row KILLS its session (reverses 90.B detach-only): commitDelete kills via
+    killSessionByName BEFORE workspace_delete; ConfirmDeleteWorkspace names them; teardown_workspace_runtime
+    prunes session-owners.json claims (prune_owners_of_workspace, 2 tests). DECISIONS Phase 91 entry.
+ 7. feat(sidebar): "only rows with live sessions" toggle (localStorage ymux.sidebar.liveOnly; isLiveTree =
+    connectedIds || active || live descendant; empty groups hidden). i18n x4.
+ 8. fix(tmux) Phase 91.B: ymux-tmux.conf rewritten — mouse off (Yossi's bug was LEFT-CLICK on Claude Code
+    redraws, not the wheel), status off, `unbind -a -T prefix` + only `[` `d` `C-b send-prefix`, root PPage ->
+    copy-mode -eu under !alternate_on, `set -gu` before every `-ga` (re-source was NOT idempotent);
+    build_tmux_attach_script drops `\; set -g mouse on` and chains `\; source-file -q ~/.ymux/tmux.conf` when
+    the setting is on (running servers adopt it, no kill-server); remote-manifest.json tmux-conf sha/size
+    recomputed (aa59221d…, 8286 B); NEW tmux_attach_script_tests (4 line tests + conf lint over code lines +
+    manifest pin). Stale prose fixed: settings.rs, TerminalSettings.ts, terminalInstance.ts, i18n hint x4,
+    ZELLIJ.md, BACKLOG.md, ymux-zellij.kdl, ymux-bootstrap comment, MOUSE-DEBUG.md (decided: #2 + the lock).
+    FOLLOWUPS: the 2026-08-11 `mouse on` P2 archived; NEW P1 smoke list for all of Phase 91.
+Result: compiles-untested (Rule #17) — CI decides; Rule #14 until the FOLLOWUPS P1 smoke runs live.

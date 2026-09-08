@@ -151,8 +151,10 @@ behind zellij's alt screen — so a zellij pane could not scroll back at all.
 
 Closed by giving zellij the wheel (`mouse_mode true`) rather than by building the
 `dump-screen --full` viewer this entry proposed. That viewer is not needed: the wheel is
-the affordance, and it is the same bet the tmux side already took (`set -g mouse on`,
-decision O-3 in docs/MOUSE-DEBUG.md).
+the affordance, and it was the same bet the tmux side had taken (`set -g mouse on`,
+decision O-3 in docs/MOUSE-DEBUG.md). 2026-09-08: the tmux side reversed that (Phase
+91.B, mouse off + PageUp scrollback — left-click capture was the bug); zellij keeps
+`true` because cleared keybinds leave it no scroll mode.
 
 (Also: this entry was originally appended below the `## Done` heading by mistake, so it
 read as done on the day it was filed. It is done now, which is a coincidence.)

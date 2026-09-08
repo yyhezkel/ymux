@@ -556,12 +556,13 @@ pub(crate) struct TerminalSettings {
     #[serde(default = "default_rtl_mode")]
     pub rtl_mode: String,
     /// Phase tmux-conf: when true (default), tmux is launched with
-    /// `-f ~/.ymux/tmux.conf` so the bundled scrollback-friendly
-    /// config applies (wheel scrolls the scrollback ring instead of
-    /// shell history, 50k-line buffer, mouse on, sane truecolour).
-    /// Set false to fall back to the user's own `~/.tmux.conf`. The
-    /// conf file is uploaded by the bootstrap regardless, so the
-    /// toggle takes effect on the NEXT pane connect.
+    /// `-f ~/.ymux/tmux.conf` (and re-sources it on every attach) so the
+    /// bundled config applies: mouse OFF so clicks and drag-select stay
+    /// native, no status bar, the prefix table reduced to `[` / `d` /
+    /// `C-b`, PageUp as keyboard scrollback, 50k-line buffer, sane
+    /// truecolour (Phase 91.B). Set false to fall back to the user's own
+    /// `~/.tmux.conf`. The conf file is uploaded by the bootstrap
+    /// regardless, so the toggle takes effect on the NEXT pane connect.
     /// `alias`: settings.json files written before the winmux → ymux
     /// rename carry the old key. Without it a user who had explicitly
     /// turned this OFF would silently get it back on after upgrading,

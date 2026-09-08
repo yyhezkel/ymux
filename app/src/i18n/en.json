@@ -577,7 +577,7 @@
   "settings.terminal.rtl.off.label": "Off",
   "settings.terminal.rtl.off.desc": "WebGL renderer, no reorder. Hebrew bytes render left-to-right as written.",
   "settings.terminal.use_ymux_tmux_config.label": "Use YMUX tmux config (recommended)",
-  "settings.terminal.use_ymux_tmux_config.hint": "Bundles a tmux.conf at ~/.ymux/tmux.conf so wheel scrolls the scrollback ring instead of shell history, 50k-line buffer, sane truecolour. Turn off to fall back to your own ~/.tmux.conf. Takes effect on next pane connect.",
+  "settings.terminal.use_ymux_tmux_config.hint": "Bundles a tmux.conf at ~/.ymux/tmux.conf: tmux's mouse stays off so clicks and drag-select stay native, no status bar, no split/window keys (only Ctrl+b [ and d), PageUp scrolls back, 50k-line buffer, truecolour. Turn off to fall back to your own ~/.tmux.conf. Takes effect on next pane connect.",
   "settings.sessions.visibility.label": "tmux session picker scope",
   "settings.sessions.visibility.hint": "Which sessions the Connect picker lists when several machines share the same server user.",
   "settings.sessions.visibility.shared": "All sessions on the server (default) — including ones created from other machines",

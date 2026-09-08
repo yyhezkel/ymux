@@ -30,6 +30,15 @@ The non-component half of `app/src/`. Two things dominate: the terminal wrapper,
 
 ## `terminalInstance.ts` (1,935) — the xterm.js wrapper
 
+**The mouse contract (Phase 91.B):** xterm.js's native wheel handling is left alone —
+there is no wheel proxy (Phase 65.O deleted it). A plain shell scrolls xterm's own
+buffer; an app that tracks the mouse gets SGR events; **inside tmux the wheel reaches
+nothing** — tmux holds the alt screen and its mouse is off since the conf lock — so
+scrollback there is the keyboard (PageUp via the conf's root bind, or Ctrl+b [).
+`installRtlMouseCapture` gates on row `dir`, not on tracking, so it now always feeds
+native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is leak cleanup
+for the display and is unrelated to tmux's option.
+
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
 and the Ctrl+C-copies-selection flag so new panes construct with the current values;

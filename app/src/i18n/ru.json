@@ -585,7 +585,7 @@
   "settings.terminal.rtl.off.label": "Выкл",
   "settings.terminal.rtl.off.desc": "WebGL renderer без reorder. Иврит выводится слева направо, как записано.",
   "settings.terminal.use_ymux_tmux_config.label": "Использовать конфиг tmux от YMUX (рекомендуется)",
-  "settings.terminal.use_ymux_tmux_config.hint": "Загружает tmux.conf в ~/.ymux/tmux.conf — колесо прокручивает scrollback (вместо истории shell), буфер на 50,000 строк, truecolour. Отключите, чтобы вернуться к собственному ~/.tmux.conf. Применяется при следующем подключении панели.",
+  "settings.terminal.use_ymux_tmux_config.hint": "Загружает tmux.conf в ~/.ymux/tmux.conf: мышь tmux выключена, чтобы клики и выделение оставались нативными, без строки состояния, без клавиш разделения/окон (только Ctrl+b [ и d), PageUp прокручивает назад, буфер на 50,000 строк, truecolour. Отключите, чтобы вернуться к собственному ~/.tmux.conf. Применяется при следующем подключении панели.",
   "settings.sessions.visibility.label": "Область выбора сессий tmux",
   "settings.sessions.visibility.hint": "Какие сессии показывает окно подключения, когда несколько машин используют одного пользователя сервера.",
   "settings.sessions.visibility.shared": "Все сессии на сервере (по умолчанию) — включая созданные с других машин",

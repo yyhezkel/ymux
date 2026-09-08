@@ -585,7 +585,7 @@
   "settings.terminal.rtl.off.label": "כבוי",
   "settings.terminal.rtl.off.desc": "WebGL renderer, ללא סידור. בייטי עברית מוצגים משמאל לימין כפי שנכתבו.",
   "settings.terminal.use_ymux_tmux_config.label": "השתמש בקובץ ה-tmux של YMUX (מומלץ)",
-  "settings.terminal.use_ymux_tmux_config.hint": "מעלה קובץ tmux.conf ל-~/.ymux/tmux.conf כך שגלגלת העכבר גוללת את ה-scrollback במקום בהיסטוריית פקודות, buffer של 50,000 שורות, תמיכת truecolour. כבה כדי לחזור ל-~/.tmux.conf שלך. ייכנס לתוקף בחיבור הבא של pane.",
+  "settings.terminal.use_ymux_tmux_config.hint": "מעלה קובץ tmux.conf ל-~/.ymux/tmux.conf: העכבר של tmux כבוי כך שלחיצה ובחירה נשארות טבעיות, בלי status bar, בלי מקשי פיצול/חלונות (רק Ctrl+b [ ו-d), PageUp גולל אחורה, buffer של 50,000 שורות, truecolour. כבה כדי לחזור ל-~/.tmux.conf שלך. ייכנס לתוקף בחיבור הבא של pane.",
   "settings.sessions.visibility.label": "היקף בוחר הסשנים של tmux",
   "settings.sessions.visibility.hint": "אילו סשנים בוחר ההתחברות מציג כשכמה מחשבים חולקים את אותו משתמש על השרת.",
   "settings.sessions.visibility.shared": "כל הסשנים על השרת (ברירת מחדל) — כולל כאלה שנוצרו ממחשבים אחרים",
