@@ -61,7 +61,7 @@ restricted networks.
 
 `Connection` (`local | ssh`, plus the retired `wsl` variant that still deserializes),
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
-`BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`.
+`BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`, `KnownSession`.
 
 **`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
 overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
@@ -86,6 +86,20 @@ shown/edited on the Briefing card. Elided when unset (byte-identical round-trip 
 untouched files; it is in the elision test's key list), but a SET intent is a field a
 0.5.0 build would drop on save — which is why its addition bumped
 `WORKSPACES_SCHEMA_VERSION` to 3 (see the constant's doc in `app/src/lib.rs`).
+
+**`Workspace.sessions_mode: bool` + `known_sessions: Vec<KnownSession>`** (Phase 91) —
+the third view mode and its memory. `sessions_mode` is a sibling flag of `tabs_mode`
+(same flag-not-variant reasoning; `workspace_set_view_mode` is the only writer and keeps
+at most one of the two true). In that mode **`tmux_session` changes meaning** to "the
+session the user selected last" — every reader that takes it as "this row IS that
+session" (`workspace_open_session`'s idempotency, the sidebar glyph, delete-kills-session)
+gates on `!sessions_mode`. `KnownSession { name, display?, claude_session_id?, cwd?,
+last_seen }` is one row of the strip: everything but `name` elided, so a plain shell
+session costs two keys. Rows are merged by `workspace_remember_sessions` (backend-core.md)
+and are what lets a session that vanished from the host stay in the strip greyed and be
+resumed with `claude --resume`. Both fields are in the elision test's key list (now eight
+keys), and adding them bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop
+both.
 
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding

@@ -116,7 +116,8 @@ put logic there.
    `WINMUX_CONFIG_DIR`, and a plain dump is last-write-wins across the whole document —
    the older binary silently drops every field its structs don't know.
 3. **The schema gate**, between reading the file and merging onto it.
-   `WORKSPACES_SCHEMA_VERSION` (currently 2) is stamped on every write through
+   `WORKSPACES_SCHEMA_VERSION` (currently 4: v2 nesting, v3 `intent`, v4 Phase 91's
+   `sessions_mode` + `known_sessions`) is stamped on every write through
    `serialize_with`, not by assigning the field — the invariant is "what we WRITE is
    current", and serialization is the one place that cannot be bypassed.
    `schema_gate(on_disk, last_written)` is a pure function (extracted for the same

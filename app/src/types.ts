@@ -15,6 +15,7 @@ export type { BrowserState } from "./bindings/BrowserState";
 export type { EnvVar } from "./bindings/EnvVar";
 export type { LayoutNode } from "./bindings/LayoutNode";
 export type { Workspace } from "./bindings/Workspace";
+export type { KnownSession } from "./bindings/KnownSession";
 // cmux-A A2: sidebar collapsible groups.
 export type { WorkspaceGroup } from "./bindings/WorkspaceGroup";
 // One row of `git worktree list --porcelain`, for a workspace flagged

@@ -588,7 +588,12 @@ struct WorkspacesFile {
 /// v2 -> v3 (2026-09-01, BRIEF): `Workspace.intent` — the user's one-line
 /// session goal. Elided when unset, but a 0.5.0 build would still drop a
 /// set intent on its next save, which is exactly this constant's trigger.
-pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 3;
+/// v3 -> v4 (2026-09-08, Phase 91): `Workspace.sessions_mode` +
+/// `known_sessions` — the sessions view mode and its memory of sessions
+/// that vanished from the host. Both elided when empty; a 0.5.1 build would
+/// drop both on its next save. (90.B's `tmux_session` should have bumped
+/// too and did not; it rides this one.)
+pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 4;
 
 /// A `version` key that is absent entirely means a pre-versioning file.
 fn default_version() -> u32 {
