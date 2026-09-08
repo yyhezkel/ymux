@@ -7502,3 +7502,8 @@ dispatched for the live smoke.
   Fix: `liveSshHosts` createMemo collapses connectedIds to a sorted `user@host:port` string (effect fires only when the live-host set changes); retry only parked folders whose own host is live (matches the backend's `pick_ssh_handle_for_host` resolution); body wrapped in `untrack`. No new deps, no polling.
   Files: app/src/Sidebar.tsx, docs/vault/frontend-shell.md + .vault-lock.json.
   Result: compiles untested locally per Rule #17 — pushed for CI; live check = open a folder pinned to a disconnected SSH host, confirm ONE deferred line, then connect the host and confirm one "scan ok".
+
+[2026-09-08] Phase 91.C on PR #44: one tsc round-trip (unused `For` import, 77bed98), then main moved (PR #45,
+  worktree-scan retry fix) → merged origin/main (f5e406b; conflicts: Sidebar imports union, PROGRESS append-only,
+  vault lock regenerated). All 5 PR checks green on f5e406b. build-windows dispatched on f5e406b (run 34250666442,
+  green): ymux-windows-nsis + ymux-windows-exe for the Rule #14 smoke — FOLLOWUPS P1 (2026-09-08, rewritten for rows).
