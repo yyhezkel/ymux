@@ -588,11 +588,11 @@ struct WorkspacesFile {
 /// v2 -> v3 (2026-09-01, BRIEF): `Workspace.intent` — the user's one-line
 /// session goal. Elided when unset, but a 0.5.0 build would still drop a
 /// set intent on its next save, which is exactly this constant's trigger.
-/// v3 -> v4 (2026-09-08, Phase 91): `Workspace.sessions_mode` +
-/// `known_sessions` — the sessions view mode and its memory of sessions
-/// that vanished from the host. Both elided when empty; a 0.5.1 build would
-/// drop both on its next save. (90.B's `tmux_session` should have bumped
-/// too and did not; it rides this one.)
+/// v3 -> v4 (2026-09-08, Phase 91): `Workspace.known_sessions` — the root's
+/// memory of sessions seen on its host, so a row for a session that vanished
+/// can be resumed. Elided when empty; a 0.5.1 build would drop it on its
+/// next save. (90.B's `tmux_session` should have bumped too and did not; it
+/// rides this one.)
 pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 4;
 
 /// A `version` key that is absent entirely means a pre-versioning file.
@@ -6204,10 +6204,6 @@ fn workspace_open_session(
             .iter()
             .find(|w| {
                 subtree.iter().any(|id| id == &w.id)
-                    // Phase 91: in sessions mode `tmux_session` is "last
-                    // selected", not "this row IS the session" — a server
-                    // root that bookmarked X must not swallow "Open X".
-                    && !w.sessions_mode
                     && w.tmux_session.as_deref() == Some(session_name.as_str())
             })
             .map(|w| w.id.clone())
@@ -6343,96 +6339,12 @@ fn workspace_set_tabs_mode(
             .find(|w| w.id == workspace_id)
             .ok_or_else(|| "workspace not found".to_string())?;
         ws.tabs_mode = tabs_mode;
-        // Phase 91: at most one of the two view flags is ever true.
-        if tabs_mode {
-            ws.sessions_mode = false;
-        }
         file.clone()
     };
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
     log_info("WORKSPACE", &format!("ws={workspace_id} tabs_mode={tabs_mode}"));
     Ok(snapshot)
-}
-
-/// Phase 91: the one writer of the view-mode pair. `mode` is
-/// `split | tabs | sessions`; the two flags are set together so no
-/// caller can leave both true. The layout tree is untouched in every
-/// mode — see `tabs_mode` / `sessions_mode` in `ymux-types`.
-#[tauri::command]
-fn workspace_set_view_mode(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    workspace_id: String,
-    mode: String,
-) -> Result<WorkspacesFile, String> {
-    let (tabs, sessions) = match mode.as_str() {
-        "split" => (false, false),
-        "tabs" => (true, false),
-        "sessions" => (false, true),
-        other => return Err(format!("unknown view mode: {other}")),
-    };
-    let snapshot = {
-        let mut file = state
-            .workspaces
-            .lock()
-            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
-        let ws = file
-            .workspaces
-            .iter_mut()
-            .find(|w| w.id == workspace_id)
-            .ok_or_else(|| "workspace not found".to_string())?;
-        ws.tabs_mode = tabs;
-        ws.sessions_mode = sessions;
-        file.clone()
-    };
-    persist(&state)?;
-    let _ = app.emit("workspaces:changed", ());
-    log_info("WORKSPACE", &format!("ws={workspace_id} view_mode={mode}"));
-    Ok(snapshot)
-}
-
-/// Phase 91: remember which session the user selected last in sessions
-/// mode (`Workspace.tmux_session`, see its doc for the meaning shift).
-/// `None` / empty clears. A no-op write is skipped entirely — the strip
-/// calls this on every click and most clicks re-select the same session.
-/// Session names are metadata, so the log line may carry the name.
-#[tauri::command]
-fn workspace_set_session(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    workspace_id: String,
-    name: Option<String>,
-) -> Result<Workspace, String> {
-    let name = name
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty());
-    let (updated, changed) = {
-        let mut file = state
-            .workspaces
-            .lock()
-            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
-        let ws = file
-            .workspaces
-            .iter_mut()
-            .find(|w| w.id == workspace_id)
-            .ok_or_else(|| "workspace not found".to_string())?;
-        let changed = ws.tmux_session != name;
-        ws.tmux_session = name.clone();
-        (ws.clone(), changed)
-    };
-    if changed {
-        persist(&state)?;
-        let _ = app.emit("workspaces:changed", ());
-        log_info(
-            "WORKSPACE",
-            &format!(
-                "ws={workspace_id} session={}",
-                name.as_deref().unwrap_or("-")
-            ),
-        );
-    }
-    Ok(updated)
 }
 
 /// One row of a `workspace_remember_sessions` call — the live list as the
@@ -6449,8 +6361,8 @@ pub(crate) struct KnownSessionInput {
 }
 
 /// How stale a `last_seen` may be before a refresh that changes nothing
-/// else still counts as a change worth persisting. The strip polls every
-/// 30 s; without this every tick would rewrite workspaces.json.
+/// else still counts as a change worth persisting. The sidebar mirror polls
+/// every 30 s; without this every tick would rewrite workspaces.json.
 const KNOWN_SESSION_TOUCH_SECS: u64 = 300;
 
 /// Phase 91: the merge behind `workspace_remember_sessions`, disk-free so
@@ -12140,8 +12052,6 @@ pub fn run() {
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
-            workspace_set_view_mode,
-            workspace_set_session,
             workspace_remember_sessions,
             workspace_set_intent,
             pane_agent_states,

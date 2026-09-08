@@ -1094,11 +1094,9 @@ export function Sidebar(p: Props) {
           {/* Phase 90.B: a row opened FOR a multiplexer session wears a
               terminal glyph instead of the colour dot; the raw session
               name is the tooltip. Everything else about the row — click,
-              collapse, drag, delete — is the plain child-workspace path.
-              Phase 91: in sessions mode tmux_session is a bookmark, not
-              the row's identity, so no glyph there. */}
+              collapse, drag, delete — is the plain child-workspace path. */}
           <Show
-            when={!w.tmux_session || w.sessions_mode}
+            when={!w.tmux_session}
             fallback={
               <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
                 <IconTerminal size={13} />

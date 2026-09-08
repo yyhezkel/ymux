@@ -83,7 +83,7 @@ rather than duplicated:
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box
   nobody reads. This spells out what is about to go. Since Phase 91 it takes
   `sessionNames` and names the tmux/zellij sessions behind the subtree's session rows
-  (`tmux_session && !sessions_mode`) — those are KILLED on the host, the one thing the
+  (every row with `tmux_session`) — those are KILLED on the host, the one thing the
   dialog does that reaches the host; App's `commitDelete` does the kill before the delete.
 - **`DirPicker.tsx` (176)** — remote directory browser over the workspace's live SSH
   session. Its markup, CSS classes (`dir-picker-*`), i18n keys (`connect.dirPicker.*`)

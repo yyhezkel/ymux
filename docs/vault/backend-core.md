@@ -92,22 +92,16 @@ put logic there.
   content. Adding the field bumped `WORKSPACES_SCHEMA_VERSION` 2→3.
 - **`workspace_set_tabs_mode`** — flips `Workspace.tabs_mode` and emits
   `workspaces:changed`. The layout tree is not touched; see `crates.md` for why this is
-  a flag and not a `LayoutNode` variant. Since Phase 91 it also clears `sessions_mode`,
-  and the frontend no longer calls it — **`workspace_set_view_mode(ws, "split" |
-  "tabs" | "sessions")`** is the one writer of the pair and sets both flags together.
-- **`workspace_set_session`** (Phase 91) — sets/clears `Workspace.tmux_session` as
-  "the session the user selected last" in sessions mode; a no-op write persists and
-  emits nothing (the strip calls it on every click). Session names are metadata, so the
-  log line carries the name. **`workspace_remember_sessions(ws, entries, forget)`** folds
-  the live list into `Workspace.known_sessions` through the disk-free
+  a flag and not a `LayoutNode` variant.
+- **`workspace_remember_sessions(ws, entries, forget)`** (Phase 91) folds a host's live
+  session list into the ROOT workspace's `known_sessions` through the disk-free
   `merge_known_sessions` (`known_sessions_tests`): matched by name, an incoming `Some`
   overwrites and a `None` never erases (a quiet hook must not drop the `--resume`
   handle), unknown names append in first-seen order, `forget` removes, and rows absent
   from the live list are KEPT — that absence is the grey list. It persists only when the
   merge reports a change, and a refresh that only bumps `last_seen` counts as a change
-  once per `KNOWN_SESSION_TOUCH_SECS` (300 s), so the strip's 30 s poll does not churn
-  workspaces.json. `workspace_open_session`'s idempotency match skips rows with
-  `sessions_mode` — there `tmux_session` is a bookmark, not an identity.
+  once per `KNOWN_SESSION_TOUCH_SECS` (300 s), so the sidebar mirror's 30 s poll does
+  not churn workspaces.json.
 - **`workspace_pin_project_folder`** — persist a folder as a child workspace (CLONE of
   the parent's connection, `single_terminal_layout`). It only persists; validation is
   the caller's `project_folder_probe` (`backend-panes.md` § Git), and since the no-git
@@ -132,7 +126,7 @@ put logic there.
    the older binary silently drops every field its structs don't know.
 3. **The schema gate**, between reading the file and merging onto it.
    `WORKSPACES_SCHEMA_VERSION` (currently 4: v2 nesting, v3 `intent`, v4 Phase 91's
-   `sessions_mode` + `known_sessions`) is stamped on every write through
+   `known_sessions`) is stamped on every write through
    `serialize_with`, not by assigning the field — the invariant is "what we WRITE is
    current", and serialization is the one place that cannot be bypassed.
    `schema_gate(on_disk, last_written)` is a pure function (extracted for the same

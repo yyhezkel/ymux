@@ -424,26 +424,16 @@ pub struct Workspace {
     // untouched file round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
-    // Phase 91: the third view mode — a sessions strip above the terminal,
-    // one pane per multiplexer session. Mutually exclusive with
-    // `tabs_mode`: `workspace_set_view_mode` is the only writer and keeps
-    // at most one of the two true. Same flag-not-LayoutNode reasoning as
-    // `tabs_mode` above. In this mode `tmux_session` means "the session the
-    // user selected last", NOT "this row IS that session" — every reader of
-    // `tmux_session` that assumes the latter gates on `!sessions_mode`.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub sessions_mode: bool,
-    // Phase 91: every session this workspace has SEEN in sessions mode, in
-    // first-seen order (= strip order). Merged by
-    // `workspace_remember_sessions`; a session that vanished from the host
-    // stays here so the strip can show it greyed and resume it. Elided when
-    // empty, so a workspace that never used the mode round-trips
-    // byte-identical.
+    // Phase 91.C: every multiplexer session this ROOT workspace has seen on
+    // its host, in first-seen order. Merged by `workspace_remember_sessions`
+    // after each mirror refresh; a session that vanished from the host stays
+    // here so its sidebar row can be shown greyed and resumed. Elided when
+    // empty, so a workspace that never mirrored round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub known_sessions: Vec<KnownSession>,
 }
 
-/// Phase 91: a multiplexer session a workspace has seen in sessions mode.
+/// Phase 91.C: a multiplexer session a root workspace has seen on its host.
 ///
 /// Persisted so a session killed externally (reboot, `tmux kill-server`,
 /// a kill from another client) stays in the strip greyed and can be
@@ -885,7 +875,6 @@ mod tests {
         assert!(!w.is_project_root);
         assert!(!w.is_collapsed);
         assert!(!w.tabs_mode);
-        assert!(!w.sessions_mode);
         assert!(w.known_sessions.is_empty());
     }
 
@@ -902,7 +891,7 @@ mod tests {
         // written — they predate the skip_serializing_if convention and
         // are grandfathered. The three tree keys must NOT join them, and
         // neither must Phase 84.A's `tabs_mode`, nor Phase 91's
-        // `sessions_mode` / `known_sessions`.
+        // `known_sessions`.
         let raw = json!({
             "id": "w1",
             "name": "legacy",
@@ -919,7 +908,6 @@ mod tests {
             "tabs_mode",
             "tmux_session",
             "intent",
-            "sessions_mode",
             "known_sessions",
         ] {
             assert!(back.get(key).is_none(), "{key} must be elided, got {back}");

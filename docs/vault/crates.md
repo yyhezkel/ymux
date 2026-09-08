@@ -87,19 +87,14 @@ untouched files; it is in the elision test's key list), but a SET intent is a fi
 0.5.0 build would drop on save — which is why its addition bumped
 `WORKSPACES_SCHEMA_VERSION` to 3 (see the constant's doc in `app/src/lib.rs`).
 
-**`Workspace.sessions_mode: bool` + `known_sessions: Vec<KnownSession>`** (Phase 91) —
-the third view mode and its memory. `sessions_mode` is a sibling flag of `tabs_mode`
-(same flag-not-variant reasoning; `workspace_set_view_mode` is the only writer and keeps
-at most one of the two true). In that mode **`tmux_session` changes meaning** to "the
-session the user selected last" — every reader that takes it as "this row IS that
-session" (`workspace_open_session`'s idempotency, the sidebar glyph, delete-kills-session)
-gates on `!sessions_mode`. `KnownSession { name, display?, claude_session_id?, cwd?,
-last_seen }` is one row of the strip: everything but `name` elided, so a plain shell
-session costs two keys. Rows are merged by `workspace_remember_sessions` (backend-core.md)
-and are what lets a session that vanished from the host stay in the strip greyed and be
-resumed with `claude --resume`. Both fields are in the elision test's key list (now eight
-keys), and adding them bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop
-both.
+**`Workspace.known_sessions: Vec<KnownSession>`** (Phase 91.C) — a ROOT workspace's memory
+of the sessions seen on its host, in first-seen order. `KnownSession { name, display?,
+claude_session_id?, cwd?, last_seen }`: everything but `name` elided, so a plain shell
+session costs two keys. Merged by `workspace_remember_sessions` (backend-core.md); it is
+what lets a sidebar row for a session that vanished from the host be shown greyed and
+resumed with `claude --resume`. In the elision test's key list (seven keys), and adding
+it bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop it. (Round 1's
+`sessions_mode` flag was removed the same day, before any release.)
 
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding
