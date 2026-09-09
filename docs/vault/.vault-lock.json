@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "36d848e59283e13bac634fbf8a3f7432fec45864673368e86b064bb3e822fa5b",
+    "app/src-tauri/src/lib.rs": "ed78b2c28937e634aee0555521f36126aa1b777fe4bf025581e6ae6cff670a07",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
@@ -167,13 +167,13 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "5a767009cbab239e4c7f31d30b8261292af8efe97226cf36035f1189800014f1",
+    "app/src/App.tsx": "34aebc91dfba053b6d72d0f6b92509a9e8f6d126d93b3fce6ee79a4f8031d96b",
     "app/src/BriefingCard.tsx": "6b94ea7667f66046db629bbbb0248a0891ca81d90678f9170bc6d73d12c2d9f8",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
     "app/src/LayoutView.tsx": "0eacf34c6267e33be65afe4142e2058a10f1e032e6c08e837be4fd8afa9eb433",
     "app/src/PaneTabs.tsx": "24c45c6948eaea14b09a29aac2c1297d310517f1dc87de2c1cc15b7fa4261a20",
-    "app/src/PaneView.tsx": "9704ae3c8ff06a5b3ae517c59f57d86f360b2975cf479b9f54e2038394e6215a",
+    "app/src/PaneView.tsx": "675834f24de849f317a5450280ebd8268745aba1d10bdcaede71ec7cfaa9e379",
     "app/src/PanelChrome.tsx": "784073f0b0e87e11eeb7b9eb0f8edbde221e4bf7fe757f412e59f1a427b8c2f5",
     "app/src/PanelFloat.tsx": "c73d3b1ec18f5c31f84079445ef786ed51005b9da60bb2435ad17b9316ebbe51",
     "app/src/PanelSurface.tsx": "d7baafe4d0187a3ccbb30d8ddaf6af44e8fe12ad09dbc84ede5aabfaed4ebf00",

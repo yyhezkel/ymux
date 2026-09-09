@@ -8652,26 +8652,26 @@ async fn pane_connect(
     // shell that gets restarted, or a live `claude` that receives
     // `cd … && claude --resume …` as a chat message. Yossi's report, exactly.
     //
-    // WHEN THE HOST CANNOT BE ASKED the fallback is deliberately asymmetric,
-    // and the asymmetry is the whole design:
-    //   - an EXPLICIT `tmux_session_name` came from the picker, which only
-    //     ever lists sessions that exist → live, no question asked;
-    //   - a DERIVED name (pane title / `ymux-<paneid>`) on an unreachable host
-    //     falls back to "not live", i.e. today's behaviour. Assuming "live"
-    //     instead would silently drop the command on every FIRST connect to an
-    //     SSH workspace, where there is no handle yet by definition — trading
-    //     a real bug for a worse one.
-    // The frontend closes that residual gap: the wizard asks
-    // `pane_target_session_state` (after `workspace_ensure_connected`) and
-    // simply does not send a command when the session already exists.
+    // WHEN THE HOST CANNOT BE ASKED the fallback is "not live" (first-connect
+    // case): an unreachable host has no session yet by definition, so assuming
+    // "live" would silently drop the command on every FIRST connect to an SSH
+    // workspace — a worse bug than the one this guards.
+    //
+    // Phase 91.G (2026-09-09): an EXPLICIT `tmux_session_name` no longer means
+    // "live, no question asked". It used to — the only source was the picker,
+    // which lists sessions that exist. Phase 91.C added two sources that name a
+    // session BEFORE it exists: the `+` new-session row (`newSessionRow` picks
+    // a free name precisely because it is unused) and `sessionForPane` (every
+    // connect from a session row's first pane). Treating those as live dropped
+    // the folder `cd` on the creating connect and any command the wizard chose
+    // — exactly Yossi's report. So an explicit name now runs the SAME
+    // reachability probe as a derived one: it is only "live" when the host can
+    // be reached AND actually lists it.
     let target_name = session_name_for_pane(
         tmux_session_name.as_deref(),
         pane_title.as_deref(),
         &pane_id,
     );
-    let explicit_pick = tmux_session_name
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty());
     // Only ask when the answer can change what we do. A plain connect injects
     // nothing either way, and this probe is a `tmux list-sessions` over SSH or
     // a `zellij list-sessions` subprocess — real latency on the critical path
@@ -8680,8 +8680,6 @@ async fn pane_connect(
         || cwd_override.as_deref().is_some_and(|s| !s.trim().is_empty());
     let target_was_live = if !would_inject {
         false
-    } else if explicit_pick {
-        true
     } else if workspace_sessions_reachable(&state, &workspace_id) {
         list_workspace_tmux_sessions(&state, &workspace_id)
             .await
@@ -8940,6 +8938,9 @@ async fn pane_connect(
                 "session_name": target_name,
                 "skipped": "attach-only",
                 "had_command": matches!(smart_mode.as_deref(), Some("cmd") | Some("claude")),
+                // Phase 91.G: a dropped `cd` was invisible before — the toast
+                // only fired for a command. Surface it too.
+                "had_cwd": has_cwd,
             }),
         );
         return Ok(session_id);

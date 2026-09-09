@@ -557,7 +557,12 @@ export function PaneView(p: Props) {
         setTargetState(await invoke<TargetSessionState>("pane_target_session_state", {
           workspaceId: p.workspaceId,
           paneId: p.pane.pane_id,
-          tmuxSessionName: p.tmuxSession ?? null,
+          // Phase 91.G: fall back to the row's bound session name when the
+          // pane is not locally attached (panePersistence is empty). Without
+          // it the probe asks about the derived `ymux-<paneid>` name, reports
+          // "not live" for a session that is actually running on the host, and
+          // the wizard would enable a command the backend then drops.
+          tmuxSessionName: p.tmuxSession ?? p.boundSession?.name ?? null,
         }));
       } catch (e) {
         log.warn("pane_target_session_state failed", e);

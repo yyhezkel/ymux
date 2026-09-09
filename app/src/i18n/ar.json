@@ -1312,7 +1312,7 @@
   "connect.newConn.attachOnly.banner": "الجلسة ‎{name}‎ قيد التشغيل بالفعل. الاتصال ينضم إليها — ولن يُرسل أي أمر.",
   "connect.newConn.attachOnly.newSession": "ابدأ جلسة جديدة بدلاً من ذلك",
   "connect.newConn.attachOnly.hint": "معطّل أثناء الانضمام إلى جلسة قيد التشغيل: الكتابة هنا ستصل إلى ما يعمل بداخلها.",
-  "connect.attachOnly.toast": "تمّ الانضمام إلى الجلسة القائمة ‎{name}‎ — لم يُرسل أمرك.",
+  "connect.attachOnly.toast": "تمّ الانضمام إلى الجلسة القائمة ‎{name}‎ — بقيت كما هي؛ لم يُرسل إليها شيء.",
   "sessions.title": "الجلسات النشطة — {workspace}",
   "sessions.refresh": "تحديث",
   "sessions.loading": "جارٍ عرض الجلسات…",

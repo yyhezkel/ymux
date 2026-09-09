@@ -179,6 +179,16 @@ a wide argument list because every connection mode funnels through it: `persiste
 - `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it.
+- **The attach-only guard** decides whether to type the `cwd`/command into the session or
+  nothing. `new-session -A` attaches-or-creates, so injecting into a name that is *already
+  live* could land `cd … && claude …` in a running agent — it therefore skips injection
+  (`target_was_live`) and emits `pane-connect-notice` so the UI can toast (`had_command` /
+  `had_cwd`). It probes liveness with `workspace_sessions_reachable` + `list_workspace_tmux_sessions`;
+  an unreachable host falls back to "not live" (a first SSH connect has no session yet).
+  **Phase 91.G**: an explicit `tmux_session_name` runs the SAME probe — it used to be
+  assumed live because the only source was the picker, but Phase 91.C's `+` new-session row
+  and `sessionForPane` name a session *before* it exists, and assuming live dropped the
+  folder `cd` on the creating connect and any wizard command.
 
 ## Multiplexer wrappers
 

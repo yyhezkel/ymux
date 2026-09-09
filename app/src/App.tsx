@@ -2435,9 +2435,21 @@ function App() {
   // only (re)connected when it is not live, because `pane_connect` on a live
   // pane kills and respawns. NOTHING is typed into the session: an explicit
   // picker name is treated as live (the 2026-08-23 attach-only guard).
+  // `autoConnect` = attach the row's pane immediately. TRUE for "Open an
+  // existing session" (the session is live; attach-only is exactly right).
+  // FALSE for the `+` new-session row (Phase 91.G): the session does not
+  // exist yet, so blind-connecting would spawn a bare shell in $HOME and the
+  // creating connect would be the attach-only case — the command the user
+  // then picks in the wizard, and the folder's cd, would both be dropped.
+  // Instead the fresh row lands on its disconnected overlay, where [Connect]
+  // creates a plain shell in the folder and the wizard creates one running a
+  // command in the folder. Either way that connect is now the CREATE, so it
+  // injects (the attach-only guard's reachability probe sees the name is not
+  // live).
   const openSessionRow = async (
     wsId: string,
     s: { name: string; display: string; cwd: string | null },
+    autoConnect = true,
   ) => {
     const f = await invoke<WorkspacesFile>("workspace_open_session", {
       workspaceId: wsId,
@@ -2453,6 +2465,7 @@ function App() {
     const pid = layout ? (collectPanes(layout)[0] ?? null) : null;
     if (!pid) throw new Error("the session row has no pane");
     focusPane(pid);
+    if (!autoConnect) return; // Phase 91.G: the overlay/wizard connects it
     if (paneToSession.has(pid)) return; // already attached (second Open)
     await waitForPaneMount(pid);
     await connectPane(pid, { persistent: true, tmuxSession: s.name });
@@ -2770,7 +2783,10 @@ function App() {
     let name = base;
     for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
     try {
-      await openSessionRow(w.id, { name, display: name, cwd: w.cwd ?? null });
+      // Phase 91.G: do NOT auto-connect — land on the disconnected overlay so
+      // the pane's own [Connect] / connect wizard is the CREATE, carrying the
+      // folder cwd (and any command the user picks) into a brand-new session.
+      await openSessionRow(w.id, { name, display: name, cwd: w.cwd ?? null }, false);
     } catch (e) {
       log.error("new session row failed", e);
       flashSummaryToast("err", String(e));
@@ -4028,8 +4044,16 @@ function App() {
         session_name: string;
         skipped: string;
         had_command: boolean;
+        had_cwd?: boolean;
       }>("pane-connect-notice", (e) => {
-        if (e.payload.skipped !== "attach-only" || !e.payload.had_command) return;
+        // Phase 91.G: also announce a dropped `cd` — a session that was
+        // already live keeps its own directory, so "open this folder" is
+        // silently ignored otherwise.
+        if (
+          e.payload.skipped !== "attach-only" ||
+          !(e.payload.had_command || e.payload.had_cwd)
+        )
+          return;
         flashSummaryToast(
           "err",
           t("connect.attachOnly.toast", { name: e.payload.session_name }),

@@ -294,10 +294,16 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
 - **`+` on a server / folder row** (`sessionsAsRows && !tmux_session &&
   wsCaps(w).sessionPersistence`, `IconTerminal`, `sidebar.newSession.tooltip`) →
   `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory
-  and every `tmux_session` in the file → `openSessionRow(w.id, {name, display, cwd:
-  w.cwd})` — the body `openSessionAsWorkspace` now wraps: `workspace_open_session` (placed
-  under the folder by cwd) → `handleSetActive` → focus the first pane → `connectPane`, which
-  creates the session.
+  and every `tmux_session` in the file → `openSessionRow(w.id, {name, display, cwd: w.cwd},
+  false)` — `workspace_open_session` (placed under the folder by cwd) → `handleSetActive` →
+  focus the first pane. **Phase 91.G: `autoConnect` is FALSE for `+`** — the fresh row lands
+  on its disconnected overlay rather than blind-connecting. Blind-connecting spawned a bare
+  shell in `$HOME` and made that creating connect the attach-only case, so the folder `cd`
+  and any command the wizard then offered were both dropped (Yossi's report). Now the pane's
+  own [Connect] (a plain shell in the folder) or connect wizard (a command in the folder) is
+  the CREATE; the attach-only guard's reachability probe sees the name is not live and lets
+  the injection through. `openSessionAsWorkspace` (Open an existing session) still passes
+  `autoConnect` true — that session IS live, so attach-only is correct.
 - Setting OFF: rows stay (ordinary workspaces); refreshes, greying and `+` stop. ON with
   rows already opened by hand: the host-wide dedupe skips them. Two roots to one host: rows
   land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
@@ -310,6 +316,15 @@ session picker (tmux/zellij sessions, Claude sessions), pane title and annotatio
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
 based on its effective connection.
+
+**The connect wizard probes for a live session before offering a command.**
+`openNewConnModal` calls `pane_target_session_state` and disables the command controls
+(`attachOnly()`) when the target session is already running — the client half of the
+attach-only guard (`backend-core.md`). **Phase 91.G**: the probe's name is
+`p.tmuxSession ?? p.boundSession?.name` — a session row whose pane is not locally attached
+has no `panePersistence` entry, so without the `boundSession` fallback the probe asked
+about the derived `ymux-<paneid>` name, reported "not live" for a session alive on the
+host, and the wizard would have enabled a command the backend then dropped.
 
 **The tmux picker's scope toggle owns no data.** *This folder* vs *Whole server* is a
 client-side filter over one response — `inWorkspaceScope = s => s.owned || s.in_cwd`,

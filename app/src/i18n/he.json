@@ -1312,7 +1312,7 @@
   "connect.newConn.attachOnly.banner": "הסשן ‎{name}‎ כבר רץ. החיבור מצרף אליו — שום פקודה לא תישלח.",
   "connect.newConn.attachOnly.newSession": "פתח סשן חדש במקום",
   "connect.newConn.attachOnly.hint": "מנוטרל בזמן הצטרפות לסשן רץ: הקלדה כאן הייתה נוחתת בתוך מה שרץ שם.",
-  "connect.attachOnly.toast": "הצטרפת לסשן הרץ ‎{name}‎ — הפקודה שלך לא נשלחה.",
+  "connect.attachOnly.toast": "הצטרפת לסשן הרץ ‎{name}‎ — הוא נשמר כפי שהוא; לא נשלח אליו דבר.",
   "sessions.title": "סשנים פעילים — {workspace}",
   "sessions.refresh": "רענן",
   "sessions.loading": "טוען סשנים…",

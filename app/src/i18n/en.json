@@ -1312,7 +1312,7 @@
   "connect.newConn.attachOnly.banner": "Session “{name}” is already running. Connecting joins it — no command is sent.",
   "connect.newConn.attachOnly.newSession": "Start a new session instead",
   "connect.newConn.attachOnly.hint": "Disabled while joining a running session: typing here would land inside whatever it is running.",
-  "connect.attachOnly.toast": "Joined the running session “{name}” — your command was not sent.",
+  "connect.attachOnly.toast": "Joined the running session “{name}” — it kept its own state; nothing was sent to it.",
   "sessions.title": "Active sessions — {workspace}",
   "sessions.refresh": "Refresh",
   "sessions.loading": "Listing sessions…",

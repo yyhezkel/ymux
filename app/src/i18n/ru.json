@@ -1312,7 +1312,7 @@
   "connect.newConn.attachOnly.banner": "Сеанс «{name}» уже запущен. Подключение присоединяет к нему — команда не отправляется.",
   "connect.newConn.attachOnly.newSession": "Создать новый сеанс",
   "connect.newConn.attachOnly.hint": "Отключено при подключении к запущенному сеансу: ввод попадёт в то, что в нём работает.",
-  "connect.attachOnly.toast": "Подключено к запущенному сеансу «{name}» — ваша команда не отправлена.",
+  "connect.attachOnly.toast": "Подключено к запущенному сеансу «{name}» — он остался как есть; в него ничего не отправлено.",
   "sessions.title": "Активные сессии — {workspace}",
   "sessions.refresh": "Обновить",
   "sessions.loading": "Загрузка сессий…",
