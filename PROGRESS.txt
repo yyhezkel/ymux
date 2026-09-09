@@ -7544,3 +7544,8 @@ tree stays) and "3 lines like cmux". Commits:
  active rule's RTL twin shares its substring, so the replace order had to put the RTL rule
  first.
 Result: compiles-untested (Rule #17) — pushed for CI; build-windows to be dispatched.
+
+2026-09-09 — Phase 91.D/91.E on PR #44: frontend job red once on the cwdShort test itself (a 31-char
+path never tripped the 34-char rule — the test was wrong, not the code), fixed in da42235. All 5
+PR checks green on da42235. build-windows dispatched on da42235 (run 34353010145, green):
+ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.8 MB. Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.
