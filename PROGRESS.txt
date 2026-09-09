@@ -7572,3 +7572,11 @@ CI caught along the way: a missed pane literal (local_setup.rs), Bundle needs De
 moved AppState in the watcher, and a bundle_script test asserting output not script text.
 Result: compiles-untested (Rule #17) — CI; build-windows for the smoke. FOLLOWUPS:109 diff
 P2 closed; three new P3s (SSH status cost, unborn HEAD, /dev/null on Windows git).
+
+2026-09-09 — Phase 91.F/91.G on PR #44: green after a run of CI-only fixes (Rule #17 —
+each caught by CI, none reproducible locally): a missed pane literal (local_setup.rs), Bundle
+needing Debug + a moved AppState in the watcher, a bundle_script test asserting output not
+script text, a JSX comment in the Sidebar props position (TS1005), and an unused log (TS6133).
+All 5 PR checks green on 17ceb0e (ci-windows + build-macos x64/arm64). build-windows dispatched
+on 17ceb0e (run 34368955989, green): ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.9 MB.
+Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.
