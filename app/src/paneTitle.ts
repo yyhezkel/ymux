@@ -20,3 +20,16 @@ export function paneLabel(
         : "—")
   );
 }
+
+// Phase 91: the display-name precedence for a multiplexer session, shared by
+// the sessions strip, the active-sessions overview and "Open". `label` is
+// the user's own name, `auto_name` the stable identity derived from the
+// first prompt, `claude_title` the drifting conversation title.
+export function sessionDisplay(s: {
+  name: string;
+  label?: string;
+  auto_name?: string;
+  claude_title?: string;
+}): string {
+  return s.label ?? s.auto_name ?? s.claude_title ?? s.name;
+}

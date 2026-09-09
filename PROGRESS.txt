@@ -7429,8 +7429,154 @@ on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested �
   Files: app/src-tauri/src/worktrees.rs, app/src-tauri/src/lib.rs, app/src/App.tsx, app/src/ProjectFolderModal.tsx, app/src/i18n/{en,he,ar,ru}.json, vault (backend-core, backend-panes, frontend-shell, frontend-flows) + .vault-lock.json, FOLLOWUPS.md smoke step (7).
   Result: compiles untested locally per Rule #17 — pushed for CI; needs a live smoke (pin a non-git folder on Local + WSL + SSH).
 
+2026-09-08 — Phase 91: sessions view mode + tmux lock (mouse OFF) + delete-kills-session + live-only sidebar
+Branch yos/sessions-row-tmux-display-f97645 (worktree install-file-lock-windows-6ca4a6). Plan
+.claude/plans/glimmering-meandering-dahl.md, approved by Yossi after 3 AskUserQuestion rounds
+(cmux's remote-tmux model was put to him; he chose a strip-above-the-terminal third view mode).
+Commits, in order:
+ 1. feat(types): Workspace.sessions_mode + known_sessions (KnownSession), WORKSPACES_SCHEMA_VERSION 3->4,
+    bindings hand-mirrored, elision test 8 keys. Vault crates/backend-core.
+ 2. feat(workspaces): workspace_set_view_mode (one writer of the tabs/sessions pair), workspace_set_session
+    (tmux_session as "last selected"), workspace_remember_sessions -> merge_known_sessions (Some overwrites,
+    None never erases the --resume handle, absent rows KEPT = the grey list, 300 s touch throttle; 6 tests);
+    workspace_open_session idempotency gated on !sessions_mode.
+ 3. feat(shell): viewMode split|tabs|sessions; oneLeafMode() replaces nine tabsMode() guards; header ⋯ menu =
+    three menuitemradio entries; palette cycles; sidebar glyph gated. i18n x4.
+ 4. feat(shell): SessionTabs.tsx + App.tsx sessions state (sessionLists w/ reachable, pendingSessionPanes,
+    paneBySession, sessionEntries, unboundPanes, the four flows incl. resumeGoneSession with mode:"claude" +
+    claudeArgs "--resume <id>" (STRING) in known.cwd, id-guarded refresh, post-connect refresh, 30 s poll);
+    sessionDisplay lifted into paneTitle.ts. boundSessions -> LayoutView -> PaneView.boundSession: smartConnect
+    attaches straight to it (closes the 90.B [Connect]-opens-the-picker gap).
+ 5. (folded into 4)
+ 6. feat(workspaces): deleting a session row KILLS its session (reverses 90.B detach-only): commitDelete kills via
+    killSessionByName BEFORE workspace_delete; ConfirmDeleteWorkspace names them; teardown_workspace_runtime
+    prunes session-owners.json claims (prune_owners_of_workspace, 2 tests). DECISIONS Phase 91 entry.
+ 7. feat(sidebar): "only rows with live sessions" toggle (localStorage ymux.sidebar.liveOnly; isLiveTree =
+    connectedIds || active || live descendant; empty groups hidden). i18n x4.
+ 8. fix(tmux) Phase 91.B: ymux-tmux.conf rewritten — mouse off (Yossi's bug was LEFT-CLICK on Claude Code
+    redraws, not the wheel), status off, `unbind -a -T prefix` + only `[` `d` `C-b send-prefix`, root PPage ->
+    copy-mode -eu under !alternate_on, `set -gu` before every `-ga` (re-source was NOT idempotent);
+    build_tmux_attach_script drops `\; set -g mouse on` and chains `\; source-file -q ~/.ymux/tmux.conf` when
+    the setting is on (running servers adopt it, no kill-server); remote-manifest.json tmux-conf sha/size
+    recomputed (aa59221d…, 8286 B); NEW tmux_attach_script_tests (4 line tests + conf lint over code lines +
+    manifest pin). Stale prose fixed: settings.rs, TerminalSettings.ts, terminalInstance.ts, i18n hint x4,
+    ZELLIJ.md, BACKLOG.md, ymux-zellij.kdl, ymux-bootstrap comment, MOUSE-DEBUG.md (decided: #2 + the lock).
+    FOLLOWUPS: the 2026-08-11 `mouse on` P2 archived; NEW P1 smoke list for all of Phase 91.
+Result: compiles-untested (Rule #17) — CI decides; Rule #14 until the FOLLOWUPS P1 smoke runs live.
+
+[2026-09-08] Phase 91 PR #44 CI: one tsc round-trip (TS2783 double spread in the strip's list-state patch, fixed in
+  aef16e6), then all 5 checks green (ci-windows frontend/rust/go + build-macos x64/arm64 — the macOS legs are the
+  only ones compiling the cfg(not(windows)) local-tmux arm). build-windows.yml dispatched on the branch by hand
+  (run 34239269309, green): artifacts ymux-windows-nsis (16.9 MB) + ymux-windows-exe (21.8 MB) for the Rule #14
+  live smoke — FOLLOWUPS P1 (2026-09-08). Yossi's question "we build only for mac — what about Windows?": ci-windows
+  is a compile/test gate with no installer; the installer is workflow_dispatch / v* tag only, hence the dispatch.
+
+2026-09-08 — Phase 91.C: sessions as SIDEBAR ROWS (the strip lasted one live smoke)
+Yossi's first live run of PR #44: "how do I open something so it appears as a new row in the
+workspaces bar? — it added an option next to the tabs — that should be in Settings and apply to
+every server — clicking it opens a new tab, not a new row". Also: tmux pane looks better without
+the status bar (keep), live-only button works (keep), "assume the mouse works for now" (91.D wheel
+proxy DEFERRED → FOLLOWUPS P2 with the full design). Plan round 2 approved; commits:
+ 1. refactor(shell): remove the sessions view mode — SessionTabs.tsx, App.tsx back to tabsMode/
+    setTabsMode + the two-entry ⋯ toggle, Workspace.sessions_mode dropped (never shipped; v4 stays
+    for known_sessions), workspace_set_view_mode + workspace_set_session removed, i18n/CSS cleanup.
+    Kept: known_sessions + remember, sessionDisplay, boundSessions → PaneView.boundSession. DECISIONS
+    91.C addendum.
+ 2. feat(settings): Settings.sessions_as_rows (flat bool, #[serde(default)], General tab, i18n x4).
+ 3. feat(workspaces): push_session_row extracted from workspace_open_session (which goes HOST-wide
+    idempotent via session_row_on_host); workspace_mirror_sessions → mirror_sessions_into (skips
+    names any same-host row carries and pane-derived names of same-host panes; 3 tests).
+ 4. feat(shell): refreshSessionRows keyed on the ROOT id (activeRootId memo; activation once per
+    root with ensure = auto-connect opt-out; post-connect timer; 30 s visible-only poll; after a
+    delete), mirrorCandidates (minus foreign-workspace, minus names our own panes hold — live map
+    + restore hints), goneWorkspaceIds → Sidebar .ws-gone, BoundSession {name, gone,
+    claudeSessionId, cwd} → PaneView "Resume" = claude --resume in the remembered cwd, + on
+    server/folder rows → newSessionRow → openSessionRow (openSessionAsWorkspace wraps it),
+    commitDelete skips the kill on gone rows and forgets the name. Vault frontend-shell/lib.
+ Bugs on the way: a scratch write helper truncated Settings.ts when its edit assert failed
+ (open-for-write before compute) — restored from git, helper fixed to compute-then-write.
+Result: compiles-untested (Rule #17) — CI; FOLLOWUPS P1 rewritten for rows; build-windows to be
+dispatched for the live smoke.
 [2026-09-08] Worktree scan retry loop — user-reported (log: eight "worktree scan start … deferred — host not connected yet" lines in 30ms, forever, with a project folder open on a disconnected SSH host).
   Root cause (Sidebar.tsx): the "resume parked scans" effect tracked `scans()` — which `scanFolder` writes to — and retried on ANY live workspace. Local workspace up + folder's SSH host down → scan fails → parked as offline → effect re-runs → scan again. Also `connectedIds` is a fresh Set on every App `tick()`, so even without the self-trigger it re-ran every bump.
   Fix: `liveSshHosts` createMemo collapses connectedIds to a sorted `user@host:port` string (effect fires only when the live-host set changes); retry only parked folders whose own host is live (matches the backend's `pick_ssh_handle_for_host` resolution); body wrapped in `untrack`. No new deps, no polling.
   Files: app/src/Sidebar.tsx, docs/vault/frontend-shell.md + .vault-lock.json.
   Result: compiles untested locally per Rule #17 — pushed for CI; live check = open a folder pinned to a disconnected SSH host, confirm ONE deferred line, then connect the host and confirm one "scan ok".
+
+[2026-09-08] Phase 91.C on PR #44: one tsc round-trip (unused `For` import, 77bed98), then main moved (PR #45,
+  worktree-scan retry fix) → merged origin/main (f5e406b; conflicts: Sidebar imports union, PROGRESS append-only,
+  vault lock regenerated). All 5 PR checks green on f5e406b. build-windows dispatched on f5e406b (run 34250666442,
+  green): ymux-windows-nsis + ymux-windows-exe for the Rule #14 smoke — FOLLOWUPS P1 (2026-09-08, rewritten for rows).
+
+2026-09-09 — Phase 91.D: the wheel proxy on multiplexer panes (the 91.C deferral lasted one smoke)
+Yossi's second live run of PR #44: "you did touch the mouse — now the wheel really doesn't work".
+Cause confirmed: with tmux mouse off (91.B) xterm.js 6.0 converts a wheel event on the alt
+buffer into one plain Up/Down = bash history. Built the FOLLOWUPS P2 design as filed plus one
+guard (normal buffer → xterm keeps the wheel): terminalInstance.ts setTmuxScroll + the
+attachCustomWheelEventHandler (Shift+Up/Down x3 via term.input, only when armed, alt buffer,
+no mouse tracking); App.tsx arms from refreshPersistence's map and disarms on pty:exit;
+ymux-tmux.conf root S-Up/S-Down → copy-mode -e + scroll on the main screen, pass-through
+under #{alternate_on}, the pair in both copy-mode tables; lib.rs conf lint allowlist grows to
+S-Up/S-Down and must-contain the new binds; remote-manifest.json tmux-conf sha
+992b1ecd… size 9428. Docs: vault frontend-lib (mouse contract) / frontend-shell / backend-core,
+MOUSE-DEBUG decided 91.D, DECISIONS entry, FOLLOWUPS P2 → ARCHIVE.
+Result: compiles-untested (Rule #17) — CI. Live checks in the P1 smoke list.
+
+2026-09-09 — Phase 91.E: cmux-style sidebar — slim headers + three-line cards (PR #44 round 3)
+Yossi: "I wanted the rows to look like cmux — that completely changes the sidebar design".
+Read cmux's README screenshots (not recalled): a FLAT list of multi-line cards — bold title +
+agent glyph + count badge, dim status line with the latest notification text / Idle / Running /
+Connected, `branch • cwd` mono, `:port` links, active = solid accent block. Asked two questions;
+Yossi chose "headers + cards" (containers stay slim one-line headers, every leaf is a card, the
+tree stays) and "3 lines like cmux". Commits:
+ 1. feat(shell): WorkspaceCardInfo memo (App, one memo for the whole tree; line-2 precedence
+    blocking → unread notification text → gone → agent QueueRow → connected → idle; title/cwd
+    of a session row from the root's live list → known_sessions → the row), cwdShort.ts +
+    node test, types, i18n x4.
+ 2. feat(shell): Sidebar isHeaderRow / renderCardBody inside the ONE .ws-item[data-ws-id]
+    (drag/drop + menu untouched), branchFor from the parent folder's scan cache, sidebar.css
+    header + card rules, --w-on-accent from the accent's luminance in applyTheme,
+    themes-redesign.css active rules re-scoped to .ws-header, App.css fallback token. Vault
+    frontend-shell, DECISIONS 91.E, FOLLOWUPS P1 smoke (19 items incl. the 91.D wheel).
+ Bugs on the way: a heredoc python script died on a backslash-U escape inside a doc path and
+ the E1 commit went in without its vault prose — caught by re-reading the stat, amended from a
+ scratch .py with raw strings (twice: PROGRESS itself hit the same escape); the modernist
+ active rule's RTL twin shares its substring, so the replace order had to put the RTL rule
+ first.
+Result: compiles-untested (Rule #17) — pushed for CI; build-windows to be dispatched.
+
+2026-09-09 — Phase 91.D/91.E on PR #44: frontend job red once on the cwdShort test itself (a 31-char
+path never tripped the 34-char rule — the test was wrong, not the code), fixed in da42235. All 5
+PR checks green on da42235. build-windows dispatched on da42235 (run 34353010145, green):
+ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.8 MB. Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.
+
+2026-09-09 — Phase 91.G + 91.F (PR #44 round 4)
+91.G: the + new-session row dropped the folder cd and any wizard command. Fixes: the
+attach-only guard (lib.rs) runs the reachability probe for an explicit tmux_session_name
+too (a name that is not live is a CREATE and injects), newSessionRow opens the row without
+auto-connecting so the [Connect]/wizard connect is the create, the wizard probes
+boundSession.name when the pane is not attached, and pane-connect-notice carries had_cwd.
+91.F: worktrees moved out of the sidebar into the Diff pane, and the diff works on every
+host. worktrees.rs: run_git_raw (GitRaw code+streams, kill_on_drop) + exec_script_over
+(sh -c one round trip). diff_pane.rs rewritten on that transport: bundle (status -z +
+diff HEAD + --no-index per untracked, caps 40/256KiB/2MB), event files/error/branch/cwd/
+truncated, diff_cwd override + set_cwd, start/stop mounted-only watchers, worktrees cmd,
+validate_ref, no unwrap, continue-not-?. LayoutNode.diff_cwd (no schema bump; ~27 pane
+literals + local_setup missed once, caught by CI). open_diff shortcut Ctrl+Shift+G.
+diffModel.ts (parse/statusLetter/pathKey + node test). DiffPane: worktree strip, file
+list, listen-before-start, error verbatim. App: worktreeLists/worktreesVersion,
+branchForCard (card branch), openDiffPane (menu+palette+shortcut). Sidebar: scan cache /
+stubs / +・⟳ / branchFor removed; card branch from cardInfo.branch. i18n: diff source
+relabelled, notGitRepo dropped, diff.wt.*/files/truncated added, six pf.* removed.
+CI caught along the way: a missed pane literal (local_setup.rs), Bundle needs Debug + a
+moved AppState in the watcher, and a bundle_script test asserting output not script text.
+Result: compiles-untested (Rule #17) — CI; build-windows for the smoke. FOLLOWUPS:109 diff
+P2 closed; three new P3s (SSH status cost, unborn HEAD, /dev/null on Windows git).
+
+2026-09-09 — Phase 91.F/91.G on PR #44: green after a run of CI-only fixes (Rule #17 —
+each caught by CI, none reproducible locally): a missed pane literal (local_setup.rs), Bundle
+needing Debug + a moved AppState in the watcher, a bundle_script test asserting output not
+script text, a JSX comment in the Sidebar props position (TS1005), and an unused log (TS6133).
+All 5 PR checks green on 17ceb0e (ci-windows + build-macos x64/arm64). build-windows dispatched
+on 17ceb0e (run 34368955989, green): ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.9 MB.
+Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.

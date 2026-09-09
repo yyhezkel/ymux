@@ -556,12 +556,13 @@ pub(crate) struct TerminalSettings {
     #[serde(default = "default_rtl_mode")]
     pub rtl_mode: String,
     /// Phase tmux-conf: when true (default), tmux is launched with
-    /// `-f ~/.ymux/tmux.conf` so the bundled scrollback-friendly
-    /// config applies (wheel scrolls the scrollback ring instead of
-    /// shell history, 50k-line buffer, mouse on, sane truecolour).
-    /// Set false to fall back to the user's own `~/.tmux.conf`. The
-    /// conf file is uploaded by the bootstrap regardless, so the
-    /// toggle takes effect on the NEXT pane connect.
+    /// `-f ~/.ymux/tmux.conf` (and re-sources it on every attach) so the
+    /// bundled config applies: mouse OFF so clicks and drag-select stay
+    /// native, no status bar, the prefix table reduced to `[` / `d` /
+    /// `C-b`, PageUp as keyboard scrollback, 50k-line buffer, sane
+    /// truecolour (Phase 91.B). Set false to fall back to the user's own
+    /// `~/.tmux.conf`. The conf file is uploaded by the bootstrap
+    /// regardless, so the toggle takes effect on the NEXT pane connect.
     /// `alias`: settings.json files written before the winmux → ymux
     /// rename carry the old key. Without it a user who had explicitly
     /// turned this OFF would silently get it back on after upgrading,
@@ -855,6 +856,8 @@ pub(crate) struct Shortcuts {
     pub toggle_queue: String,
     /// BRIEF: show the Briefing card for the active workspace.
     pub show_briefing: String,
+    /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
+    pub open_diff: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -1000,6 +1003,7 @@ impl Default for Shortcuts {
             tab_prev: "Ctrl+Shift+Tab".into(),
             toggle_queue: "Ctrl+Shift+Q".into(),
             show_briefing: "Ctrl+Alt+Q".into(),
+            open_diff: "Ctrl+Shift+G".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }
@@ -1058,6 +1062,16 @@ pub(crate) struct Settings {
     /// settings.json keeps the old startup behavior until the user asks.
     #[serde(default)]
     pub restore_sessions_on_start: bool,
+    /// Phase 91.C. When true, every tmux/zellij session on a host is
+    /// mirrored into the sidebar tree as a session row under that server (or
+    /// under the pinned project folder whose cwd contains it), `+` on a
+    /// server / folder row makes a new session as a new row, and a session
+    /// that vanished from the host keeps its row greyed until deleted. OFF
+    /// by default: turning it on fills the tree with a row per session on
+    /// every server you activate, which is the point, but not something an
+    /// update should do unasked. `#[serde(default)]` → missing field is false.
+    #[serde(default)]
+    pub sessions_as_rows: bool,
     /// Phase 80.1. When true, the file manager reopens at the last directory
     /// each column was showing (per workspace) instead of `$HOME`. OFF by
     /// default so the pre-80.1 behavior is what an untouched install gets.
@@ -1451,6 +1465,7 @@ impl Default for Settings {
             ssh_key_offer_disabled: false,
             auto_connect_on_workspace_select: true,
             restore_sessions_on_start: false,
+            sessions_as_rows: false,
             file_manager_remember_path: false,
             auto_destroy_empty_workspaces_days: None,
             migrations: MigrationFlags::default(),
@@ -2709,14 +2724,17 @@ mod tests {
         let d = Settings::default();
         assert!(!d.restore_sessions_on_start);
         assert!(!d.file_manager_remember_path);
+        assert!(!d.sessions_as_rows);
 
         let mut s = Settings::default();
         s.restore_sessions_on_start = true;
         s.file_manager_remember_path = true;
+        s.sessions_as_rows = true;
         let json = serde_json::to_string(&s).unwrap();
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert!(back.restore_sessions_on_start);
         assert!(back.file_manager_remember_path);
+        assert!(back.sessions_as_rows);
     }
 
     #[test]

@@ -30,6 +30,7 @@ toggle_queue: string,
  * BRIEF: show the Briefing card for the active workspace.
  */
 show_briefing: string,
+open_diff: string,
 /**
  * When true and the terminal has a selection, plain Ctrl+C copies
  * to clipboard instead of sending SIGINT. Matches Windows Terminal

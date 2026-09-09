@@ -1,7 +1,8 @@
-import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount, untrack } from "solid-js";
-import { collectPanes, findPane, isRemoteConn, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
+import { For, Show, createSignal, createMemo, onCleanup, onMount } from "solid-js";
+import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type ForwardRow, type WorkspaceCardInfo } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
+import { shortenCwd } from "./cwdShort";
 import {
   IconNotes,
   IconSettings,
@@ -12,13 +13,10 @@ import {
   IconChevronRight,
   IconFolder,
   IconTerminal,
-  IconRefresh,
-  IconWarning,
+  IconActivity,
+  IconSparkles,
 } from "./icons";
 import type { SidebarMode } from "./settings";
-import { createLogger } from "./logger";
-
-const log = createLogger("SIDEBAR");
 
 // cmux-A A2: eight-color palette for workspace group swatches. Kept
 // intentionally small so a group's dot in the sidebar is easy to
@@ -65,6 +63,19 @@ interface Props {
   workspaces: Workspace[];
   activeId: string | null;
   connectedIds: Set<string>;
+  // Phase 91.C: session rows whose session the host no longer lists —
+  // rendered dim; their [Connect] resumes. App decides, from the root's
+  // live list.
+  goneIds: Set<string>;
+  // Phase 91.E: what a CARD row prints beyond the Workspace itself — title,
+  // status line, cwd, agent glyph, attention count. App's `workspaceCardInfo`
+  // memo builds it for the whole tree; a row missing here falls back to the
+  // Workspace's own name / cwd and "idle".
+  cardInfo: Record<string, WorkspaceCardInfo>;
+  // Phase 91.C: Settings → "Show every session as a sidebar row". Gates the
+  // per-row "new session" button; the mirroring itself is App's.
+  sessionsAsRows: boolean;
+  onNewSession: (w: Workspace) => void;
   // Phase 26: workspaces that contain at least one pane with a
   // pending blocking permission request. Renders a pulsing dot on
   // the workspace row so the user can spot waiting work across
@@ -99,19 +110,12 @@ interface Props {
       | "add_project_folder"
       | "check_git",
   ) => void;
-  // Project folders are workspaces now (`is_project_root`), nested
-  // under whatever workspace they were pinned from. The Sidebar owns
-  // the worktree scan cache — lazy and never polled, because a scan is
-  // a round-trip over that workspace's connection; the App owns
-  // persistence and workspace creation.
+  // Project folders are workspaces now (`is_project_root`), nested under
+  // whatever workspace they were pinned from. Phase 91.F: their worktrees
+  // moved to the Diff pane, so the sidebar keeps only the folder header and
+  // its child workspaces — the scan cache, the stubs and the +/⟳ buttons
+  // are gone.
   onSetCollapsed: (workspaceId: string, isCollapsed: boolean) => void;
-  onNewWorktree: (w: Workspace) => void;
-  /** List a project-folder workspace's worktrees. Rejects with no live session. */
-  onListWorktrees: (workspaceId: string) => Promise<WorktreeEntry[]>;
-  /** Open a worktree that has no workspace yet as a child of the root. */
-  onOpenWorktree: (rootWorkspaceId: string, wt: WorktreeEntry) => void;
-  /** git says this directory is not a repo — stop treating it as one. */
-  onNotARepo: (workspaceId: string) => void;
   // Phase 36.A / 39: all forwards across workspaces, for the per-
   // workspace inline 🌐 badge. Clicking the badge opens the Ports
   // window scoped to that workspace.
@@ -486,119 +490,8 @@ export function Sidebar(p: Props) {
     setMoveMenuFor(null);
   };
 
-  // ── project-folder workspaces ────────────────────────────────────
-  //
-  // A pinned repo IS a workspace (`is_project_root`), nested under the
-  // one it was pinned from, and its git worktrees render beneath it. A
-  // worktree that already has a workspace renders as that workspace's
-  // ordinary row; one that doesn't renders dim, and clicking it creates
-  // the workspace.
-  //
-  // Scans are keyed by workspace id and never polled: `git worktree
-  // list` is a round-trip over that workspace's connection, so it runs
-  // when a subtree is open and has no result yet, and on an explicit ⟳.
-  type ScanState =
-    | { status: "loading" }
-    | { status: "ok"; entries: WorktreeEntry[] }
-    // "There is no session yet" is not a failure, it is a not-yet. The
-    // scan fires while the sidebar paints, which on a cold start is
-    // BEFORE anything has connected, so treating it as an error left a
-    // red block on every launch that only a manual ⟳ could clear.
-    | { status: "offline" }
-    | { status: "error"; message: string };
-  const [scans, setScans] = createSignal<Record<string, ScanState>>({});
-
-  // Logged at every outcome: a failing round-trip to another machine is
-  // otherwise invisible, and "it just doesn't show" is undiagnosable
-  // without it. Metadata only — never the worktree paths.
-  const scanFolder = async (ws: Workspace) => {
-    setScans((prev) => ({ ...prev, [ws.id]: { status: "loading" } }));
-    log.info(`worktree scan start ws=${ws.id}`);
-    try {
-      const entries = await p.onListWorktrees(ws.id);
-      setScans((prev) => ({ ...prev, [ws.id]: { status: "ok", entries } }));
-      log.info(`worktree scan ok ws=${ws.id} count=${entries.length}`);
-    } catch (e) {
-      const msg = String(e);
-      // Two very different failures wear the same red row otherwise.
-      // "No live SSH session" is transient and worth retrying; "not a git
-      // repository" is a permanent answer about this directory, so the
-      // workspace stops claiming to be a repo instead of asking again on
-      // every expand and every restart.
-      // No session yet: park it and let the connectivity effect retry.
-      if (/no live SSH session/i.test(msg)) {
-        setScans((prev) => ({ ...prev, [ws.id]: { status: "offline" } }));
-        log.info(`worktree scan deferred ws=${ws.id} — host not connected yet`);
-        return;
-      }
-      if (/not a git repository/i.test(msg)) {
-        setScans((prev) => {
-          const next = { ...prev };
-          delete next[ws.id];
-          return next;
-        });
-        log.info(`ws=${ws.id} is not a git repo — dropping the project-root flag`);
-        p.onNotARepo(ws.id);
-        return;
-      }
-      setScans((prev) => ({
-        ...prev,
-        [ws.id]: { status: "error", message: msg },
-      }));
-      log.error(`worktree scan failed ws=${ws.id}`, e);
-    }
-  };
-
-  /** `~/src/ymux-feature-x` → `ymux-feature-x`, for the dim path hint. */
-  const pathTail = (path: string) => {
-    const norm = path.replace(/\\/g, "/").replace(/\/+$/, "");
-    const i = norm.lastIndexOf("/");
-    return i === -1 ? norm : norm.slice(i + 1);
-  };
-
-  /**
-   * Normalize a path for worktree↔workspace binding: git and the shell
-   * disagree about separators and trailing slashes, and a mismatch here
-   * would silently render a duplicate row instead of adopting the
-   * existing workspace.
-   */
-  const pathKey = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-
-  // A parked scan resumes when ITS host comes up — the backend resolves
-  // the SSH handle by `user@host:port` (`pick_ssh_handle_for_host`), so
-  // that is the only event that can turn "no live SSH session" into an
-  // answer. The first version of this effect retried on *any* live
-  // workspace and also tracked `scans()`, which it writes to itself:
-  // with a local workspace up and the folder's SSH host down, every
-  // failed retry re-parked the scan, re-ran the effect, and retried
-  // again — eight `worktree scan start` lines in 30ms, forever
-  // (2026-09-08). The memo collapses `connectedIds` (a fresh Set on
-  // every tick) to the sorted host-key string, so the effect fires only
-  // when the set of live SSH hosts actually changes, and `untrack`
-  // keeps its own writes from re-triggering it.
-  const liveSshHosts = createMemo(() => {
-    const keys = new Set<string>();
-    for (const id of p.connectedIds) {
-      const c = p.workspaces.find((w) => w.id === id)?.connection;
-      if (isRemoteConn(c)) keys.add(`${c.user}@${c.host}:${c.port}`);
-    }
-    return [...keys].sort().join("\n");
-  });
-  createEffect(() => {
-    const live = liveSshHosts();
-    if (live.length === 0) return;
-    const hosts = new Set(live.split("\n"));
-    untrack(() => {
-      for (const [id, st] of Object.entries(scans())) {
-        if (st.status !== "offline") continue;
-        const ws = p.workspaces.find((w) => w.id === id);
-        const c = ws?.connection;
-        if (ws && isRemoteConn(c) && hosts.has(`${c.user}@${c.host}:${c.port}`)) {
-          void scanFolder(ws);
-        }
-      }
-    });
-  });
+  // Phase 91.F: the worktree scan cache, scanFolder, pathTail, pathKey and the
+  // liveSshHosts retry effect moved OUT — worktrees now live in the Diff pane.
 
   /**
    * parent id → its children, sorted the same way the flat list is
@@ -627,6 +520,73 @@ export function Sidebar(p: Props) {
     }
     return out;
   });
+
+  // Phase 91.E: two row kinds. A row that can HOLD rows — a pinned folder,
+  // anything with children, a remote root (the machine itself, even before
+  // the sessions setting has given it children — so its look never flips
+  // with the setting) — is a slim one-line HEADER; every leaf (a session
+  // row, a worktree workspace, a local root without children) is a
+  // three-line cmux-style CARD. `const`s, above the `return`, like
+  // `childrenOf` — the TDZ note on it applies here too.
+  const isHeaderRow = (w: Workspace): boolean =>
+    w.is_project_root
+    || (childrenOf().get(w.id) ?? []).length > 0
+    || (!w.parent_id && !w.tmux_session && isRemoteConn(w.connection));
+  const cardInfoOf = (w: Workspace): WorkspaceCardInfo =>
+    p.cardInfo[w.id] ?? {
+      title: w.name,
+      status: { kind: "idle", text: t("sidebar.card.status.idle") },
+      cwd: w.cwd,
+      agent: false,
+      attention: 0,
+      branch: null,
+    };
+  const cardTooltip = (w: Workspace): string => {
+    const i = cardInfoOf(w);
+    return `${i.title}\n${i.status.text}${i.cwd ? `\n${i.cwd}` : ""}`;
+  };
+  const sshUserOf = (w: Workspace): string | null =>
+    isRemoteConn(w.connection) ? w.connection.user : null;
+  // Phase 91.F: the card's branch now comes from App's `workspaceCardInfo`
+  // (`info().branch`), fed by a Diff pane's worktree listing — the sidebar no
+  // longer scans worktrees itself.
+
+  // Phase 91.A: "only active rows". A workspace is live when one of its
+  // panes is connected (`connectedIds`, App's local truth — no round trip)
+  // or when a descendant is; the active workspace is always shown so the
+  // filter can never hide what you are looking at. Per-machine UI state,
+  // so localStorage like the sidebar width and the window rects.
+  const LIVE_ONLY_KEY = "ymux.sidebar.liveOnly";
+  const [liveOnly, setLiveOnlyRaw] = createSignal<boolean>((() => {
+    try {
+      return localStorage.getItem(LIVE_ONLY_KEY) === "1";
+    } catch {
+      return false;
+    }
+  })());
+  const setLiveOnly = (on: boolean) => {
+    setLiveOnlyRaw(on);
+    try {
+      if (on) localStorage.setItem(LIVE_ONLY_KEY, "1");
+      else localStorage.removeItem(LIVE_ONLY_KEY);
+    } catch {
+      // Storage unavailable — the toggle still works for this session.
+    }
+  };
+  const isLiveTree = (w: Workspace, depth = 0): boolean => {
+    if (p.connectedIds.has(w.id) || p.activeId === w.id) return true;
+    if (depth > 8) return false;
+    return (childrenOf().get(w.id) ?? []).some((k) => isLiveTree(k, depth + 1));
+  };
+  const rowVisible = (w: Workspace): boolean => !liveOnly() || isLiveTree(w);
+  const visibleUngrouped = () => groupedWorkspaces().ungrouped.filter(rowVisible);
+  const visibleMembers = (gid: string) =>
+    (groupedWorkspaces().byGroup.get(gid) ?? []).filter(rowVisible);
+  const nothingVisible = () =>
+    liveOnly()
+    && p.workspaces.length > 0
+    && visibleUngrouped().length === 0
+    && sortedGroups().every((g) => visibleMembers(g.id).length === 0);
 
   return (
     <div
@@ -693,6 +653,17 @@ export function Sidebar(p: Props) {
         </svg>
         <span class="sidebar-brand">{t("sidebar.title")}</span>
         </button>
+        {/* Phase 91.A: show only the rows with something live in them. */}
+        <button
+          class="sidebar-live-toggle"
+          classList={{ on: liveOnly() }}
+          aria-pressed={liveOnly()}
+          title={t("sidebar.liveOnly.tooltip")}
+          aria-label={t("sidebar.liveOnly.tooltip")}
+          onClick={() => setLiveOnly(!liveOnly())}
+        >
+          <IconActivity size={13} />
+        </button>
       </div>
       <div class="sidebar-list">
         {/* Design Pass 01 (#1): friendly CTA card while the list is empty,
@@ -707,22 +678,25 @@ export function Sidebar(p: Props) {
             </button>
           </div>
         </Show>
-        <Show when={p.groups.length > 0}>
+        <Show when={nothingVisible()}>
+          <div class="sidebar-live-empty">{t("sidebar.liveOnly.empty")}</div>
+        </Show>
+        <Show when={p.groups.length > 0 && (!liveOnly() || visibleUngrouped().length > 0)}>
           <div
             data-group-id=""
             class={`group-header ${dropIntoGroup(null) ? "drop-into" : ""}`}
             style="cursor: default"
           >
             <span class="group-header-name">{t("sidebar.ungrouped")}</span>
-            <span class="group-header-count">({groupedWorkspaces().ungrouped.length})</span>
+            <span class="group-header-count">({visibleUngrouped().length})</span>
           </div>
         </Show>
-        <For each={groupedWorkspaces().ungrouped}>
+        <For each={visibleUngrouped()}>
           {(w) => renderWorkspaceItem(w)}
         </For>
-        <For each={sortedGroups()}>
+        <For each={sortedGroups().filter((g) => !liveOnly() || visibleMembers(g.id).length > 0)}>
           {(g) => {
-            const members = () => groupedWorkspaces().byGroup.get(g.id) ?? [];
+            const members = () => visibleMembers(g.id);
             const collapsed = () => g.is_collapsed;
             return (
               <>
@@ -905,91 +879,14 @@ export function Sidebar(p: Props) {
     if (ancestors.includes(w.id) || depth > 8) return null;
     const chain = [...ancestors, w.id];
     const kids = () => childrenOf().get(w.id) ?? [];
-    const scan = () => scans()[w.id];
-    // One rule covers every way a subtree ends up open: this click, a
-    // freshly pinned folder, and a restart with it already open.
-    createEffect(() => {
-      if (w.is_project_root && !w.is_collapsed && !scans()[w.id]) void scanFolder(w);
-    });
+    // Phase 91.F: no worktree scan here any more — a project folder's
+    // worktrees are listed and opened from the Diff pane. The folder row
+    // and its child workspaces are all the sidebar draws.
     return (
       <>
         {renderWorkspaceRow(w, depth)}
         <Show when={!w.is_collapsed}>
-          <For each={kids()}>{(k) => renderWorkspaceSubtree(k, depth + 1, chain)}</For>
-          <Show when={w.is_project_root}>
-            <Show when={scan()?.status === "loading"}>
-              <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>{t("pf.scanning")}</div>
-            </Show>
-            <Show when={scan()?.status === "offline"}>
-              <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>
-                {t("pf.waitingForConnection")}
-              </div>
-            </Show>
-            <Show when={scan()?.status === "error"}>
-              {/* git's own message — a bad path and a dead connection
-                  read very differently and the user needs to tell them
-                  apart. */}
-              <div
-                class="pf-hint pf-error"
-                style={`--ws-depth: ${depth + 1}`}
-                title={(scan() as { message: string }).message}
-              >
-                <IconWarning size={12} /> {(scan() as { message: string }).message}
-              </div>
-            </Show>
-            <Show when={scan()?.status === "ok"}>
-              {(() => {
-                const bound = () => {
-                  const m = new Map<string, Workspace>();
-                  for (const k of kids()) if (k.cwd) m.set(pathKey(k.cwd), k);
-                  return m;
-                };
-                // `git worktree list` includes the repo root itself —
-                // that entry IS this workspace, so rendering a stub for
-                // it would offer to open a child sharing its parent's
-                // directory.
-                const stubs = () =>
-                  (scan() as { entries: WorktreeEntry[] }).entries.filter(
-                    (wt) =>
-                      pathKey(wt.path) !== pathKey(w.cwd ?? "") &&
-                      !bound().has(pathKey(wt.path)),
-                  );
-                return (
-                  <>
-                    <For each={stubs()}>
-                      {(wt) => (
-                        <div
-                          class={`ws-item pf-unopened ${wt.is_prunable ? "prunable" : ""}`}
-                          style={`--ws-depth: ${depth + 1}`}
-                          title={`${wt.path}${wt.is_locked ? " — " + t("pf.locked") : ""}${
-                            wt.is_prunable ? " — " + t("pf.prunable") : ""
-                          }\n${t("pf.openWorktree")}`}
-                          onClick={() => p.onOpenWorktree(w.id, wt)}
-                        >
-                          <span class="wt-icon"><IconGitBranch size={12} /></span>
-                          <span class="wt-branch">
-                            <TechText text={wt.branch ?? (wt.is_detached ? wt.head.slice(0, 7) : "—")} />
-                          </span>
-                          <span class="wt-path"><TechText text={pathTail(wt.path)} /></span>
-                          <Show when={wt.is_locked}>
-                            <span class="wt-flag" title={t("pf.locked")}>🔒</span>
-                          </Show>
-                          <Show when={wt.is_prunable}>
-                            <span class="wt-flag" title={t("pf.prunable")}>⚠</span>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                    <Show when={kids().length === 0 && stubs().length === 0}>
-                      <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>
-                        {t("pf.noWorktrees")}
-                      </div>
-                    </Show>
-                  </>
-                );
-              })()}
-            </Show>
-          </Show>
+          <For each={kids().filter(rowVisible)}>{(k) => renderWorkspaceSubtree(k, depth + 1, chain)}</For>
         </Show>
       </>
     );
@@ -999,9 +896,11 @@ export function Sidebar(p: Props) {
     return (
       <div
         data-ws-id={w.id}
-        class={`ws-item ${p.activeId === w.id ? "active" : ""} ${
-          p.waitingWorkspaceIds.has(w.id) ? "has-waiting" : ""
-        } ${
+        class={`ws-item ${isHeaderRow(w) ? "ws-header" : "ws-card"} ${
+          p.activeId === w.id ? "active" : ""
+        } ${p.waitingWorkspaceIds.has(w.id) ? "has-waiting" : ""} ${
+          !isHeaderRow(w) && cardInfoOf(w).attention > 0 ? "has-attn" : ""
+        } ${p.goneIds.has(w.id) ? "ws-gone" : ""} ${
           p.hookPulseWorkspaceIds?.has(w.id) ? "hook-pulse" : ""
         } ${dragKind() === "ws" && dragId() === w.id ? "dragging" : ""} ${
           dropWsWhere(w.id) ? `drop-${dropWsWhere(w.id)}` : ""
@@ -1013,7 +912,11 @@ export function Sidebar(p: Props) {
         // Always, not just in icons mode: `full` mode can be dragged down to
         // 160px, where .ws-name ellipsizes and the tooltip is the only way
         // left to read the name.
-        title={w.name}
+        title={
+          p.goneIds.has(w.id)
+            ? t("ws.gone.tooltip", { name: w.tmux_session ?? w.name })
+            : isHeaderRow(w) ? w.name : cardTooltip(w)
+        }
         // beta.3 (ws-dragdrop): pointer-drag reorder. A press that never crosses
         // the move threshold is a click → switch; a completed drag sets
         // `didDrag`, which swallows the trailing click here.
@@ -1034,6 +937,12 @@ export function Sidebar(p: Props) {
           setMoveMenuFor(null);
         }}
       >
+        {/* Phase 91.E: ONE outer element for both row kinds — `data-ws-id`
+            on it is what drag/drop hit-tests (`closest("[data-ws-id]")`)
+            and the menu below is shared. The header body is the pre-91.E
+            row verbatim (left at its indentation on purpose: the diff is
+            the wrapper, not the row); the card body is renderCardBody. */}
+        <Show when={isHeaderRow(w)} fallback={renderCardBody(w)}>
         <Show when={w.is_project_root || (childrenOf().get(w.id) ?? []).length > 0}>
           {/* A <button> so `startPointerDrag`'s interactive-child
               exclusion already skips it; stopPropagation keeps the click
@@ -1084,22 +993,19 @@ export function Sidebar(p: Props) {
         <Show when={w.git_worktree}>
           <span class="ws-worktree-chip" title={w.git_worktree!}><IconGitBranch size={13} /></span>
         </Show>
-        <Show when={w.is_project_root}>
+        {/* Phase 91.F: the + new-worktree and ⟳ rescan buttons moved to the
+            Diff pane's worktree strip. */}
+        {/* Phase 91.C: a new session as a new row — on any server or folder
+            row (never on a session row), only while the setting is on. The
+            terminal glyph keeps it apart from the worktree + above. */}
+        <Show when={p.sessionsAsRows && !w.tmux_session && wsCaps(w).sessionPersistence}>
           <button
             class="pf-btn"
-            title={t("pf.newWorktree")}
+            title={t("sidebar.newSession.tooltip")}
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); p.onNewWorktree(w); }}
+            onClick={(e) => { e.stopPropagation(); p.onNewSession(w); }}
           >
-            <IconPlus size={12} />
-          </button>
-          <button
-            class="pf-btn"
-            title={t("pf.refresh")}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); void scanFolder(w); }}
-          >
-            <IconRefresh size={12} />
+            <IconTerminal size={12} />
           </button>
         </Show>
         {/* Every status marker lives in ONE trailing cluster, in a fixed
@@ -1164,6 +1070,7 @@ export function Sidebar(p: Props) {
           </Show>
           <WorkspaceBadge w={w} />
         </span>
+        </Show>
         <Show when={menuFor() === w.id}>
           <div
             class="ws-menu ws-menu-fixed"
@@ -1306,6 +1213,136 @@ export function Sidebar(p: Props) {
           </div>
         </Show>
       </div>
+    );
+  }
+
+  /**
+   * Phase 91.E: the cmux-style card body — title line, status line, path
+   * line, ports. Inside the same `.ws-item[data-ws-id]` as a header, so
+   * click / drag / menu / .ws-gone / hook-pulse are the one row path.
+   * `info()` is a plain accessor over App's memo: this runs inside <For>
+   * and a per-row createMemo would be re-created on every updateFile().
+   *
+   * Line 1: the `.ws-dot` / terminal glyph (hidden in `full`, it IS the
+   * card in icons mode), ✳ when an agent has a signal, the display name
+   * (keeps `.ws-name` so the per-string bidi and the .ws-gone dimming
+   * apply), the attention pill, the pane-count badge (the S/L/B/F letter
+   * is a header's business). Line 2: ONE indicator slot (Design Pass 01
+   * P3 — waiting > brief > activity, else the live dot) and the status
+   * text. Line 3: branch • cwd, forced LTR — a path is a path in a Hebrew
+   * rail too, and TechText would pill the whole thing. Ports keep the
+   * `.ws-port-badge` class: that is the drag-start exclusion.
+   */
+  function renderCardBody(w: Workspace) {
+    const info = () => cardInfoOf(w);
+    const fwds = () => p.allForwards.filter((f) => f.workspace_id === w.id);
+    const attn = () =>
+      p.waitingWorkspaceIds.has(w.id)
+      || p.briefAttentionWorkspaceIds?.has(w.id)
+      || p.notifiedWorkspaceIds.has(w.id);
+    return (
+      <>
+        {/* A real element: ::before / ::after are the drop lines. */}
+        <Show when={w.color}>
+          <span class="ws-card-stripe" aria-hidden="true" />
+        </Show>
+        <div class="ws-card-l1">
+          <Show
+            when={!w.tmux_session}
+            fallback={
+              <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
+                <IconTerminal size={13} />
+              </span>
+            }
+          >
+            <span class="ws-dot" style={{ background: w.color || "#6b7682" }} />
+          </Show>
+          <Show when={info().agent}>
+            <span class="ws-card-glyph" title={t("sidebar.card.agentTitle")}>
+              <IconSparkles size={11} />
+            </span>
+          </Show>
+          <span class="ws-name ws-card-title">
+            <Show when={w.emoji}>{w.emoji} </Show>
+            <TechText text={info().title} />
+          </span>
+          <Show when={info().attention > 0}>
+            <span
+              class="ws-card-count"
+              title={t("sidebar.card.count.tooltip", { count: info().attention })}
+            >
+              {info().attention}
+            </span>
+          </Show>
+          <Show when={workspaceBadge(w).cls === "split"}>
+            <WorkspaceBadge w={w} />
+          </Show>
+        </div>
+        <div class={`ws-card-status is-${info().status.kind}`}>
+          <Show
+            when={attn()}
+            fallback={
+              <Show when={p.connectedIds.has(w.id)}>
+                <span class="ws-live" title={t("sidebar.workspaceConnectedTitle")} />
+              </Show>
+            }
+          >
+            <span
+              class={`ws-waiting-dot ${
+                p.waitingWorkspaceIds.has(w.id)
+                  ? ""
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "brief-attn"
+                    : "activity"
+              }`}
+              title={t(
+                p.waitingWorkspaceIds.has(w.id)
+                  ? "sidebar.workspaceWaitingTitle"
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "sidebar.workspaceBriefTitle"
+                    : "sidebar.workspaceActivityTitle",
+              )}
+            />
+          </Show>
+          <span class="ws-card-status-text">
+            <TechText text={info().status.text} />
+          </span>
+        </div>
+        <Show when={info().cwd || info().branch}>
+          <div class="ws-card-path" title={info().cwd ?? undefined}>
+            <Show when={info().branch}>
+              <span class="ws-card-branch">
+                <IconGitBranch size={10} />
+                {info().branch}
+              </span>
+              <span class="ws-card-sep" aria-hidden="true">•</span>
+            </Show>
+            <Show when={info().cwd}>
+              <span class="ws-card-cwd" dir="ltr">
+                {shortenCwd(info().cwd ?? "", sshUserOf(w))}
+              </span>
+            </Show>
+          </div>
+        </Show>
+        <Show when={fwds().length > 0}>
+          <div class="ws-card-ports">
+            <For each={fwds()}>
+              {(f) => (
+                <span
+                  class="ws-port-badge ws-card-port"
+                  title={t("ports.workspaceBadge.tooltipOne", { count: 1 })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onOpenPorts(w.id);
+                  }}
+                >
+                  :{f.local_port}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
+      </>
     );
   }
 }

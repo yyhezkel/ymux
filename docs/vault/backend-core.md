@@ -67,7 +67,10 @@ put logic there.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
 - **`Connection`, `LayoutNode`, `Workspace`** — `ymux-types`. `LayoutNode::Pane` carries
-  its own optional `connection`, so one workspace's leaves can target different hosts.
+  its own optional `connection`, so one workspace's leaves can target different hosts. It
+  also carries `diff_source` and (Phase 91.F) `diff_cwd` — which worktree a Diff pane is
+  looking at, `None` = the workspace's own cwd. `diff_cwd` is view state, so it did **not**
+  bump `WORKSPACES_SCHEMA_VERSION` (a bump makes an older build refuse to save).
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
@@ -93,6 +96,15 @@ put logic there.
 - **`workspace_set_tabs_mode`** — flips `Workspace.tabs_mode` and emits
   `workspaces:changed`. The layout tree is not touched; see `crates.md` for why this is
   a flag and not a `LayoutNode` variant.
+- **`workspace_remember_sessions(ws, entries, forget)`** (Phase 91) folds a host's live
+  session list into the ROOT workspace's `known_sessions` through the disk-free
+  `merge_known_sessions` (`known_sessions_tests`): matched by name, an incoming `Some`
+  overwrites and a `None` never erases (a quiet hook must not drop the `--resume`
+  handle), unknown names append in first-seen order, `forget` removes, and rows absent
+  from the live list are KEPT — that absence is the grey list. It persists only when the
+  merge reports a change, and a refresh that only bumps `last_seen` counts as a change
+  once per `KNOWN_SESSION_TOUCH_SECS` (300 s), so the sidebar mirror's 30 s poll does
+  not churn workspaces.json.
 - **`workspace_pin_project_folder`** — persist a folder as a child workspace (CLONE of
   the parent's connection, `single_terminal_layout`). It only persists; validation is
   the caller's `project_folder_probe` (`backend-panes.md` § Git), and since the no-git
@@ -116,7 +128,8 @@ put logic there.
    `WINMUX_CONFIG_DIR`, and a plain dump is last-write-wins across the whole document —
    the older binary silently drops every field its structs don't know.
 3. **The schema gate**, between reading the file and merging onto it.
-   `WORKSPACES_SCHEMA_VERSION` (currently 2) is stamped on every write through
+   `WORKSPACES_SCHEMA_VERSION` (currently 4: v2 nesting, v3 `intent`, v4 Phase 91's
+   `known_sessions`) is stamped on every write through
    `serialize_with`, not by assigning the field — the invariant is "what we WRITE is
    current", and serialization is the one place that cannot be bypassed.
    `schema_gate(on_disk, last_written)` is a pure function (extracted for the same
@@ -169,6 +182,16 @@ a wide argument list because every connection mode funnels through it: `persiste
 - `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it.
+- **The attach-only guard** decides whether to type the `cwd`/command into the session or
+  nothing. `new-session -A` attaches-or-creates, so injecting into a name that is *already
+  live* could land `cd … && claude …` in a running agent — it therefore skips injection
+  (`target_was_live`) and emits `pane-connect-notice` so the UI can toast (`had_command` /
+  `had_cwd`). It probes liveness with `workspace_sessions_reachable` + `list_workspace_tmux_sessions`;
+  an unreachable host falls back to "not live" (a first SSH connect has no session yet).
+  **Phase 91.G**: an explicit `tmux_session_name` runs the SAME probe — it used to be
+  assumed live because the only source was the picker, but Phase 91.C's `+` new-session row
+  and `sessionForPane` name a session *before* it exists, and assuming live dropped the
+  folder `cd` on the creating connect and any wizard command.
 
 ## Multiplexer wrappers
 
@@ -183,6 +206,26 @@ tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` mark
 the listing output so `parse_tmux_sessions` can read it back unambiguously.
 `session-meta` labels cross the wire **hex-encoded** (`hex_utf8`) so Hebrew/RTL labels
 never meet shell quoting.
+
+**`build_tmux_attach_script` is the one builder of the tmux attach line** (SSH, macOS
+local tmux and the legacy WSL arm all call it; the macOS site ANDs
+`local_tmux_conf_ready()` into the flag). With `terminal.use_ymux_tmux_config` on it
+types `exec tmux -f $HOME/.ymux/tmux.conf new-session -A -s <name> \; source-file -q
+$HOME/.ymux/tmux.conf`; off, plain `new-session -A` and nothing chained. Since Phase
+91.B **Rust never touches tmux's `mouse` option** — the Phase 65 EE `\; set -g mouse on`
+injection is gone, and `source-file -q` is what makes a running server adopt a changed
+conf (`-f` is read only when the server starts). The conf (`resources/ymux-tmux.conf`)
+states the same invariant as `ymux-zellij.kdl` — *1 ymux pane == 1 session == 1 window
+== 1 pane, zero chrome*: `mouse off`, `status off`, `unbind -a -T prefix` then only `[`,
+`d` and `C-b send-prefix`, root `PPage` → `copy-mode -eu` under `!#{alternate_on}`, root
+`S-Up`/`S-Down` (Phase 91.D — what the frontend's wheel proxy sends) → `copy-mode -e` +
+`scroll-up`/`scroll-down` on the main screen and plain Up/Down under `#{alternate_on}`,
+the same pair in both copy-mode tables, and a `set -gu` before every `set -ga` so
+re-sourcing is idempotent. `tmux_attach_script_tests` lints it (allowed key names `[ d
+C-b PPage S-Up S-Down` — Phase 65 CRITICAL is why —, the `-gu`/`-ga` pairing, no
+`mouse on`, no `-t =`) and pins `remote-manifest.json`'s `tmux-conf` sha/size to the
+embedded bytes: only ci-windows regenerates that file, so a stale committed entry makes
+the mac build re-upload the conf on every connect.
 
 **A session NAME is a security boundary, because one path types it into a shell.**
 `build_zellij_attach_command` produces a line that is typed verbatim into the user's
@@ -227,7 +270,14 @@ Two independent signals feed it, and it needs both:
   `/srv/app`.
 - **`session-owners.json`** (`%APPDATA%\ymux`, host → session name → `SessionOwner`),
   giving `owned`. This half exists because `zellij list-sessions` reports **no directory
-  at all**, so on Windows ownership is the only workspace signal there is.
+  at all**, so on Windows ownership is the only workspace signal there is. A claim is
+  made by `pane_connect` / `workspace_open_session`, released by a kill that reports
+  `killed | already_gone`, renamed by `tmux_rename_session`, and — since Phase 91 —
+  **pruned by workspace delete**: `teardown_workspace_runtime` calls
+  `release_session_owners_of_workspace`, whose disk-free core `prune_owners_of_workspace`
+  (`session_owner_prune_tests`) drops every claim of that workspace id on every host and
+  any host left empty. The kill of a session row's session is the frontend's job, before
+  the delete (the kill helpers are async and resolve the connection by a workspace id).
 
 `foreign: Option<ForeignScope>` (2026-08-24) is the third verdict and the "Whole server"
 view's mess-guard: a row nobody can place is free to attach, a row we *can* place already
@@ -281,11 +331,21 @@ list command. The module owns what the picker never needed:
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
 - **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
-  command beside `workspace_pin_project_folder` / `workspace_open_worktree`, same construction
-  (a CLONE of the root's connection, `single_terminal_layout`, no `sort_order`). It walks up
-  to the root first (the dialog may have been opened from a project-folder child; sessions
-  belong to the host), then is **idempotent on `Workspace.tmux_session`**: a row already opened
-  for that name anywhere under the root is activated, never duplicated. Placement is
+  command beside `workspace_pin_project_folder` / `workspace_open_worktree`. Since Phase 91.C
+  the construction lives in **`push_session_row`** (a CLONE of the root's connection,
+  `single_terminal_layout`, `parent_id` from `pick_session_parent`, no `sort_order`, never
+  touches `active_workspace_id`), shared with the mirror below. It walks up to the root first
+  (the dialog may have been opened from a project-folder child; sessions belong to the host),
+  then is **idempotent on `Workspace.tmux_session` HOST-wide** (`session_row_on_host`,
+  `conn_same_host` over every workspace): a row already standing for that name anywhere on
+  the host is activated, never duplicated. **`workspace_mirror_sessions(ws, sessions)`**
+  (91.C) is the batch form behind Settings → "Show every session as a sidebar row": its
+  disk-free core `mirror_sessions_into` (`session_mirror_tests`) creates a row under the root
+  for every offered `{name, display?, cwd?}` that no same-host row carries and that is not
+  the pane-derived name (`sanitize_tmux_session_name`) of a pane in any same-host workspace —
+  that session belongs to a plain pane that already holds it, and a row would attach a second
+  client. One persist + one `workspaces:changed`, only when something was created; nothing
+  is activated. Placement is
   `pick_session_parent`: the deepest `is_project_root` descendant whose `cwd` contains the
   session cwd (`path_is_within`, boundary-aware, `session_workspace_tests`), else the root —
   it never pins a folder on the user's behalf. The frontend then attaches the row's single

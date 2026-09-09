@@ -266,6 +266,13 @@ pub enum LayoutNode {
         // Latin runs near RTL context. Persists across reloads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         smart_bidi: Option<bool>,
+        // Phase 91.F: the worktree the Diff pane is looking at, when it is
+        // not the workspace's own cwd. None = follow `ws.cwd`. This is view
+        // state — losing it costs one click — so WORKSPACES_SCHEMA_VERSION
+        // did NOT bump for it (a bump makes older builds refuse to save at
+        // all; v3 bumped for `intent`, which the user typed, not for this).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff_cwd: Option<String>,
     },
     Split {
         split_id: String,
@@ -424,6 +431,44 @@ pub struct Workspace {
     // untouched file round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
+    // Phase 91.C: every multiplexer session this ROOT workspace has seen on
+    // its host, in first-seen order. Merged by `workspace_remember_sessions`
+    // after each mirror refresh; a session that vanished from the host stays
+    // here so its sidebar row can be shown greyed and resumed. Elided when
+    // empty, so a workspace that never mirrored round-trips byte-identical.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub known_sessions: Vec<KnownSession>,
+}
+
+/// Phase 91.C: a multiplexer session a root workspace has seen on its host.
+///
+/// Persisted so a session killed externally (reboot, `tmux kill-server`,
+/// a kill from another client) stays in the strip greyed and can be
+/// resumed: `claude --resume <claude_session_id>` in a fresh session of
+/// the same name, started in `cwd`. Everything but `name` is optional and
+/// elided, because a plain shell session has none of it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[ts(export, export_to = "../../../../src/bindings/")]
+pub struct KnownSession {
+    pub name: String,
+    /// The display name the strip last showed (label / auto_name /
+    /// claude_title precedence, resolved by the frontend). `None` when it
+    /// was just the raw name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
+    /// The Claude session UUID that was running inside it — the `--resume`
+    /// target. Kept across refreshes that report `None`, so a session whose
+    /// hooks went quiet does not lose its resume handle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_session_id: Option<String>,
+    /// `cwd ?? owner_cwd` of the live row — where a resume should land.
+    /// `claude --resume` from `$HOME` on a root workspace with no `cwd`
+    /// would not find the project's transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Unix seconds of the last refresh that listed it live.
+    #[serde(default)]
+    pub last_seen: u64,
 }
 
 /// `skip_serializing_if` for bools. Plain `#[serde(default)]` still
@@ -685,6 +730,7 @@ mod tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -700,7 +746,7 @@ mod tests {
         // pane_kind MUST be absent from the JSON.
         assert!(v.get("pane_kind").is_none());
         // browser / title / annotation / color / emoji / help_topic /
-        // diff_source / smart_bidi all elided too.
+        // diff_source / smart_bidi / diff_cwd all elided too.
         for f in [
             "browser",
             "title",
@@ -711,6 +757,7 @@ mod tests {
             "help_topic",
             "diff_source",
             "smart_bidi",
+            "diff_cwd",
         ] {
             assert!(v.get(f).is_none(), "field {f} should be elided");
         }
@@ -731,10 +778,14 @@ mod tests {
             help_topic: None,
             diff_source: Some(DiffSource::Head),
             smart_bidi: None,
+            diff_cwd: Some("/home/y/src/ymux-feature".into()),
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["pane_kind"], "diff");
         assert_eq!(v["diff_source"], json!({ "kind": "head" }));
+        // Phase 91.F: diff_cwd persists (present) when set; a None diff_cwd
+        // elides like every other Option pane field (checked above).
+        assert_eq!(v["diff_cwd"], "/home/y/src/ymux-feature");
     }
 
     #[test]
@@ -837,6 +888,7 @@ mod tests {
         assert!(!w.is_project_root);
         assert!(!w.is_collapsed);
         assert!(!w.tabs_mode);
+        assert!(w.known_sessions.is_empty());
     }
 
     #[test]
@@ -851,7 +903,8 @@ mod tests {
         // `claude_separate_account` and `last_active_at` are always
         // written — they predate the skip_serializing_if convention and
         // are grandfathered. The three tree keys must NOT join them, and
-        // neither must Phase 84.A's `tabs_mode`.
+        // neither must Phase 84.A's `tabs_mode`, nor Phase 91's
+        // `known_sessions`.
         let raw = json!({
             "id": "w1",
             "name": "legacy",
@@ -861,10 +914,40 @@ mod tests {
         });
         let w: Workspace = serde_json::from_value(raw.clone()).unwrap();
         let back = serde_json::to_value(&w).unwrap();
-        for key in ["parent_id", "is_project_root", "is_collapsed", "tabs_mode", "tmux_session", "intent"] {
+        for key in [
+            "parent_id",
+            "is_project_root",
+            "is_collapsed",
+            "tabs_mode",
+            "tmux_session",
+            "intent",
+            "known_sessions",
+        ] {
             assert!(back.get(key).is_none(), "{key} must be elided, got {back}");
         }
         assert_eq!(raw, back, "an untouched workspace must round-trip byte-identical");
+    }
+
+    #[test]
+    fn known_session_round_trips_and_elides_nones() {
+        // Phase 91: a plain shell session has a name and a timestamp and
+        // nothing else — those two keys are all that may hit the disk.
+        let k = KnownSession {
+            name: "srv-2".into(),
+            display: None,
+            claude_session_id: None,
+            cwd: None,
+            last_seen: 42,
+        };
+        let v = serde_json::to_value(&k).unwrap();
+        assert_eq!(v, json!({ "name": "srv-2", "last_seen": 42 }));
+        let back: KnownSession = serde_json::from_value(v).unwrap();
+        assert_eq!(back, k);
+        // And a file written before the field existed loads with an empty
+        // list, never an error.
+        let bare: KnownSession = serde_json::from_value(json!({ "name": "x" })).unwrap();
+        assert_eq!(bare.last_seen, 0);
+        assert!(bare.claude_session_id.is_none());
     }
 
     #[test]

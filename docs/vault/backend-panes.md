@@ -23,14 +23,25 @@ Manager, and Browser are panes too, and they share the layout tree with terminal
 
 ## Panes
 
-**`diff_pane.rs` (322)** — one background tokio task per Diff pane, polling `git diff`
-every `POLL_INTERVAL_MS` and emitting `diff-pane-updated` when the output hash changes.
-Duplicate suppression uses a cheap fnv-style `u64` rather than a string compare, so an
-unchanged large diff costs a read and zero allocations. Each tick re-reads the
-workspace's cwd + `DiffSource` under a **short** lock — the cwd can change (worktree
-re-anchor) and later polls must see it. The task self-terminates when the workspace is
-gone or its layout no longer contains the pane id. Handles live in
-`CoreState.diff_pane_watchers`.
+**`diff_pane.rs`** — one background tokio task per **mounted** Diff pane (Phase 91.F:
+`diff_pane_start` on mount, `diff_pane_stop` from `onCleanup`, plus the close-pane and
+workspace-teardown stops), polling a **bundle** and emitting `diff-pane-updated` when its
+hash changes. The bundle is `git status --porcelain=v1 -z --branch --untracked-files=all`
+(branch + `StatusEntry` list), `git diff` against the pane's `DiffSource` (default **Head**
+= staged + unstaged), and a `git diff --no-index` per untracked file (capped at 40 files /
+256 KiB each). Git runs through `worktrees::run_git_raw` (Local, sequential) or
+`exec_script_over` (WSL/SSH, **one round trip** — a marker-delimited `sh` script that runs
+`tr '\0' '\n'` because the WSL transport strips NULs, and `sh -c`-wrapped so a fish login
+shell can't choke); the old `cwd.join(".git").exists()` pre-check is **gone**, so a
+subdirectory workspace and every remote workspace now work, and git's own error text
+reaches the pane verbatim (`error` in the event; `is_git_repo` is retired). The context is
+`ws.cwd` unless the pane's `diff_cwd` override (the worktree strip, via `diff_pane_set_cwd`)
+points it at a sibling worktree. `lookup_pane_context` uses `continue`, never `?`, so one
+layout-less workspace can't abort the search. Cadence is 1 s local / 3 s remote; the hash
+covers diff + files + branch. `diff_pane_worktrees` lists the repo's worktrees for the
+strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_status_z`,
+`diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
+`--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
 **`file_manager.rs` (1,741)** — dual-column file manager: lists, transfers, mutations on
 both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
@@ -172,7 +183,13 @@ dispatches on that workspace's connection:
 | `Ssh` | an exec channel on a **live** handle to that host |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
-from any session to the same host.
+from any session to the same host. The dispatch is `run_git_over` on top of
+**`run_git_raw`** (Phase 91.F), which returns `GitRaw { code, out, err }` verbatim so a
+caller that wants a non-zero exit (`git diff --no-index` returns 1 when files differ) can
+read the output instead of an error; `run_git_over` still folds a non-zero code into
+`git_error`. **`exec_script_over`** runs one arbitrary `sh` script on the host (WSL/SSH
+only — the SSH arm wraps it in `sh -c` so a fish login shell can't choke on it), which is
+how the Diff pane fetches status + diff + untracked-file diffs in a single round trip.
 
 **`workspaces_merge.rs` (415)** — the three-way merge `save_to_disk` calls. A save is not
 "dump what I have": it re-reads the file and, if it changed since we last touched it,

@@ -15,6 +15,7 @@ export type { BrowserState } from "./bindings/BrowserState";
 export type { EnvVar } from "./bindings/EnvVar";
 export type { LayoutNode } from "./bindings/LayoutNode";
 export type { Workspace } from "./bindings/Workspace";
+export type { KnownSession } from "./bindings/KnownSession";
 // cmux-A A2: sidebar collapsible groups.
 export type { WorkspaceGroup } from "./bindings/WorkspaceGroup";
 // One row of `git worktree list --porcelain`, for a workspace flagged
@@ -73,6 +74,44 @@ export interface KillSessionOutcome {
   session?: string;
   /** The multiplexer's own stderr, truncated. Never PTY content. */
   detail?: string;
+}
+
+/** Phase 91.C: what a pane's [Connect] must attach to. App computes it for
+ *  the first NOT-live pane of a workspace with `tmux_session`; PaneView's
+ *  smartConnect short-circuits on it (no probe, no picker). `gone` +
+ *  `claudeSessionId` turn the button into "Resume" (`claude --resume`). */
+export interface BoundSession {
+  name: string;
+  gone: boolean;
+  claudeSessionId: string | null;
+  cwd: string | null;
+}
+
+/** Phase 91.E: what a sidebar CARD prints beyond the Workspace row itself.
+ *  Built once per tick by App's `workspaceCardInfo` memo (line-2 precedence
+ *  lives there); the Sidebar only reads. `status.text` is already i18n-resolved;
+ *  `kind` picks the colour class. */
+export type CardStatusKind =
+  | "waiting"
+  | "notif"
+  | "agent-attn"
+  | "agent"
+  | "gone"
+  | "connected"
+  | "idle";
+export interface WorkspaceCardInfo {
+  /** sessionDisplay(live row) → known_sessions.display → w.name */
+  title: string;
+  status: { kind: CardStatusKind; text: string };
+  /** live row cwd → owner_cwd → known cwd → w.cwd */
+  cwd: string | null;
+  /** any pane of this workspace has an agent signal (inQueue) → the ✳ glyph */
+  agent: boolean;
+  /** panes that need you: blocking card ∪ unread notification ∪ needs-input/stuck */
+  attention: number;
+  /** Phase 91.F: branch from the nearest ancestor's worktree list — filled
+   *  by a Diff pane's listing or Check-git; null until one has run. */
+  branch: string | null;
 }
 
 export interface TmuxSessionInfo {

@@ -81,7 +81,10 @@ rather than duplicated:
 - **`ConfirmDeleteWorkspace.tsx` (123)** — deleting a workspace takes its **whole
   subtree**: pinned project folders, the worktree workspaces under them, and any live
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box
-  nobody reads. This spells out what is about to go.
+  nobody reads. This spells out what is about to go. Since Phase 91 it takes
+  `sessionNames` and names the tmux/zellij sessions behind the subtree's session rows
+  (every row with `tmux_session`) — those are KILLED on the host, the one thing the
+  dialog does that reaches the host; App's `commitDelete` does the kill before the delete.
 - **`DirPicker.tsx` (176)** — remote directory browser over the workspace's live SSH
   session. Its markup, CSS classes (`dir-picker-*`), i18n keys (`connect.dirPicker.*`)
   and localStorage recents were lifted out of `PaneView`, where the dialog had been
@@ -94,7 +97,8 @@ The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hoo
 notifications, logs, Claude, updates, shortcuts. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
-modal. The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
+modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"
+checkbox (`sessions_as_rows`, the `restore_sessions_on_start` row's shape). The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
 toggles + two minute thresholds); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
 group.

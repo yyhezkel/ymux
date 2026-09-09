@@ -2286,6 +2286,7 @@ fn finalize_workspace(
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
         auto_title: None,
     };
     let ws = Workspace {

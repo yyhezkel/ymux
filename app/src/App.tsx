@@ -1,5 +1,5 @@
-import { createEffect, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
-import type { RtlProfileKind } from "./types";
+import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
+import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,8 +15,9 @@ import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
-import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel";
-import { paneLabel, type PaneNode } from "./paneTitle";
+import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
+import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
+import { pathKey } from "./diffModel";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
   allPaneSessions,
@@ -115,6 +116,7 @@ import {
   type ForwardRow,
   type WorktreeEntry,
   type FeedResolvedEvent,
+  type BoundSession,
   type KillSessionOutcome,
   type LayoutNode,
   type Note,
@@ -855,10 +857,26 @@ function App() {
   );
   // Phase 11.A: per-pane tmux persistence map { pane_id → session_name }.
   const [panePersistence, setPanePersistence] = createSignal<Record<string, string>>({});
+  // Phase 91.C: a host's live session list, per ROOT workspace. `reachable`
+  // is false when the host could not be asked (a cold password-auth SSH
+  // workspace returns an EMPTY list, not an error) — then no row is painted
+  // as gone, because "we do not know" must never read as "dead".
+  type SessionListState = {
+    rows: TmuxSessionInfo[];
+    reachable: boolean;
+    loading: boolean;
+    error: string | null;
+    fetchedAt: number;
+  };
+  const [sessionLists, setSessionLists] = createSignal<Record<string, SessionListState>>({});
   const refreshPersistence = async () => {
     try {
       const m = await invoke<Record<string, string>>("pane_persistence_list");
       setPanePersistence(m ?? {});
+      // Phase 91.D: the wheel proxy is armed from THIS map and nothing else —
+      // a pane the backend lists holds a tmux/zellij session, a pane it
+      // does not list is a plain shell whose wheel xterm.js must keep.
+      for (const [pid, ti] of terms) ti.setTmuxScroll(!!m?.[pid]);
       // Phase 80: every refresh is a fresh, authoritative "pane → tmux session"
       // answer from the backend, so record it here rather than only in the
       // post-connect callback. That callback fires on one 100ms timer down one
@@ -1100,6 +1118,8 @@ function App() {
       { id: "pane.maximize", label: t("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
       // Phase 84.A: split ⇄ tabs for the active workspace.
       { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
+      // Phase 91.F: open (or focus) the git-diff pane.
+      { id: "pane.openDiff", label: t("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
       // Phase 55-B: distribute splits evenly (Ctrl+Alt+=).
       { id: "pane.distributeEvenly", label: t("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
       { id: "pane.rename", label: t("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
@@ -1585,8 +1605,40 @@ function App() {
     setPendingDelete(subtreeOf(id));
   };
 
+  // Phase 91: the tmux/zellij sessions behind a subtree's session rows.
+  const sessionRowsIn = (subtree: Workspace[]): Workspace[] =>
+    subtree.filter((w) => !!w.tmux_session);
+
   const commitDelete = async (id: string) => {
     setPendingDelete(null);
+    // Phase 91: deleting a session row KILLS its session (reverses 90.B's
+    // detach-only). Kill BEFORE the delete — the kill helpers resolve the
+    // connection by workspace id, which is gone afterwards — and through
+    // the existing path, so PTY, maps, restore hint and the ownership
+    // claim all go the tested way. Best-effort SSH arm first: the by-name
+    // kill needs a live handle and killSessionByName swallows to null.
+    // 91.C: a row the host already reported GONE gets no kill attempt (a
+    // password-auth host would only toast "kill failed" for it); either
+    // way the root forgets the name so dead resume handles do not pile up.
+    const rootId = rootIdOf(id);
+    const gone = goneWorkspaceIds();
+    let touchedSessions = false;
+    for (const w of sessionRowsIn(subtreeOf(id))) {
+      const name = w.tmux_session;
+      if (!name) continue;
+      touchedSessions = true;
+      if (!gone.has(w.id)) {
+        if (wsCaps(w).sessionBound) {
+          try { await invoke("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
+        }
+        const out = await killSessionByName(w.id, name);
+        const ok = !!out && ["killed", "already_gone", "no_session", "attempted"].includes(out.result);
+        if (!ok) flashSummaryToast("err", t("workspace.delete.sessionKillFailed", { name }));
+      }
+      try {
+        await invoke("workspace_remember_sessions", { workspaceId: rootId, entries: [], forget: [name] });
+      } catch { /* memory only */ }
+    }
     try {
       const f = await invoke<WorkspacesFile>("workspace_delete", {
         workspaceId: id,
@@ -1596,6 +1648,7 @@ function App() {
       log.error("workspace_delete failed", e);
       flashSummaryToast("err", String(e));
     }
+    if (touchedSessions && sessionsAsRows() && rootId !== id) void refreshSessionRows(rootId, { ensure: false });
   };
 
   const handleSetActive = async (id: string) => {
@@ -1720,10 +1773,12 @@ function App() {
     const ws = file().workspaces.find((w) => w.id === workspaceId);
     if (!ws?.cwd) return;
     try {
-      await invoke<WorktreeEntry[]>("git_probe_worktrees", {
+      const list = await invoke<WorktreeEntry[]>("git_probe_worktrees", {
         path: ws.cwd,
         connection: ws.connection ?? null,
       });
+      // Phase 91.F: feed the sidebar card's branch line (branchForCard).
+      setWorktreeLists((prev) => ({ ...prev, [workspaceId]: list }));
       const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
         workspaceId,
         isProjectRoot: true,
@@ -1881,6 +1936,24 @@ function App() {
     const added = collectPanes(after).find((p) => !before.has(p));
     if (added) focusPane(added);
     return added ?? null;
+  };
+
+  // Phase 91.F: open the Diff pane — focus an existing one in this
+  // workspace, else split one off the active pane. Shared by the ⋯ menu,
+  // the command palette and the Ctrl+Shift+G shortcut.
+  const openDiffPane = () => {
+    const ws = activeWs();
+    if (!ws?.layout) return;
+    const existing = collectPanes(ws.layout).find((pid) => {
+      const node = findPane(ws.layout!, pid);
+      return node ? paneKindOf(node) === "diff" : false;
+    });
+    if (existing) {
+      focusPane(existing);
+      return;
+    }
+    const pid = activePaneId();
+    if (pid) void splitPane(pid, "horizontal", "diff");
   };
 
   // Phase 84.A: close a tab and land on a sensible neighbour. The
@@ -2163,6 +2236,11 @@ function App() {
           const name = panePersistence()[paneId];
           if (name) rememberPaneSession(paneId, name);
           else forgetPaneSession(paneId);
+          // Phase 91.C: a connect can have CREATED a session (the sidebar's
+          // +, a resume) — the tree learns about it from the host, not from
+          // us, and the map above is what keeps the mirror from re-rowing
+          // the sessions our own panes hold.
+          if (sessionsAsRows()) void refreshSessionRows(rootIdOf(ws.id), { ensure: false });
         });
       }, 100);
     } catch (e) {
@@ -2380,13 +2458,27 @@ function App() {
   // only (re)connected when it is not live, because `pane_connect` on a live
   // pane kills and respawns. NOTHING is typed into the session: an explicit
   // picker name is treated as live (the 2026-08-23 attach-only guard).
-  const openSessionAsWorkspace = async (wsId: string, s: TmuxSessionInfo) => {
-    setSessionsWin(null);
+  // `autoConnect` = attach the row's pane immediately. TRUE for "Open an
+  // existing session" (the session is live; attach-only is exactly right).
+  // FALSE for the `+` new-session row (Phase 91.G): the session does not
+  // exist yet, so blind-connecting would spawn a bare shell in $HOME and the
+  // creating connect would be the attach-only case — the command the user
+  // then picks in the wizard, and the folder's cd, would both be dropped.
+  // Instead the fresh row lands on its disconnected overlay, where [Connect]
+  // creates a plain shell in the folder and the wizard creates one running a
+  // command in the folder. Either way that connect is now the CREATE, so it
+  // injects (the attach-only guard's reachability probe sees the name is not
+  // live).
+  const openSessionRow = async (
+    wsId: string,
+    s: { name: string; display: string; cwd: string | null },
+    autoConnect = true,
+  ) => {
     const f = await invoke<WorkspacesFile>("workspace_open_session", {
       workspaceId: wsId,
       sessionName: s.name,
-      displayName: s.label ?? s.auto_name ?? s.claude_title ?? s.name,
-      cwd: s.cwd ?? s.owner_cwd ?? null,
+      displayName: s.display,
+      cwd: s.cwd,
     });
     updateFile(f);
     const rowId = f.active_workspace_id;
@@ -2396,9 +2488,19 @@ function App() {
     const pid = layout ? (collectPanes(layout)[0] ?? null) : null;
     if (!pid) throw new Error("the session row has no pane");
     focusPane(pid);
+    if (!autoConnect) return; // Phase 91.G: the overlay/wizard connects it
     if (paneToSession.has(pid)) return; // already attached (second Open)
     await waitForPaneMount(pid);
     await connectPane(pid, { persistent: true, tmuxSession: s.name });
+  };
+
+  const openSessionAsWorkspace = async (wsId: string, s: TmuxSessionInfo) => {
+    setSessionsWin(null);
+    await openSessionRow(wsId, {
+      name: s.name,
+      display: sessionDisplay(s),
+      cwd: s.cwd ?? s.owner_cwd ?? null,
+    });
   };
 
   const paneHoldingSession = (name: string): string | undefined =>
@@ -2424,6 +2526,386 @@ function App() {
       return null;
     }
   };
+
+  // ─── Phase 91.C: sessions as sidebar rows ────────────────────────────
+  //
+  // Settings → "Show every session as a sidebar row". The host's live list
+  // is mirrored into the tree as Phase 90.B session rows (backend:
+  // workspace_mirror_sessions), the ROOT remembers every session it has
+  // seen (known_sessions), a session that vanished keeps its row greyed,
+  // and the row's [Connect] resumes it. Everything keys on the ROOT id —
+  // a string — never on the workspace object, which changes identity on
+  // every persist and would restart timers and re-fire guards.
+
+  const sessionsAsRows = (): boolean => settings()?.sessions_as_rows === true;
+
+  const rootIdOf = (wsId: string): string => {
+    const all = file().workspaces;
+    let cur = all.find((w) => w.id === wsId);
+    let hops = 0;
+    while (cur?.parent_id && hops < all.length) {
+      const parent = all.find((w) => w.id === cur?.parent_id);
+      if (!parent) break;
+      cur = parent;
+      hops++;
+    }
+    return cur?.id ?? wsId;
+  };
+
+  const activeRootId = createMemo((): string | null => {
+    const id = file().active_workspace_id;
+    return id ? rootIdOf(id) : null;
+  });
+
+  // Names our own panes already hold — live (the backend's map) and the
+  // restore hints (a restart before restore re-attaches). A session one
+  // of our plain panes holds is `owned`, not `foreign`, so the scope
+  // filter alone would give it a duplicate row that attaches a second
+  // client. The backend applies the pane-derived-name rule as well.
+  const mirrorCandidates = (rows: TmuxSessionInfo[]) => {
+    const held = new Set<string>([
+      ...Object.values(panePersistence()),
+      ...Object.values(allPaneSessions()),
+    ]);
+    return rows
+      .filter((r) => r.foreign?.kind !== "workspace" && !held.has(r.name))
+      .map((r) => ({ name: r.name, display: sessionDisplay(r), cwd: r.cwd ?? r.owner_cwd ?? null }));
+  };
+
+  const mirrorInFlight = new Set<string>();
+  const refreshSessionRows = async (rootId: string, opts: { ensure: boolean }) => {
+    if (!sessionsAsRows()) return;
+    const ws = file().workspaces.find((w) => w.id === rootId);
+    if (!ws) return;
+    const caps = wsCaps(ws);
+    const patch = (p: Partial<SessionListState>) =>
+      setSessionLists((m) => {
+        const cur: SessionListState = m[rootId] ?? {
+          rows: [],
+          reachable: false,
+          loading: false,
+          error: null,
+          fetchedAt: 0,
+        };
+        return { ...m, [rootId]: { ...cur, ...p } };
+      });
+    if (!caps.sessionPersistence) {
+      patch({ rows: [], reachable: false, loading: false });
+      return;
+    }
+    if (mirrorInFlight.has(rootId)) return;
+    mirrorInFlight.add(rootId);
+    try {
+      patch({ loading: true, error: null });
+      if (caps.sessionBound && opts.ensure) {
+        // Idempotent, PTY-free; a password-auth workspace no-ops here and
+        // the list below comes back empty — which `reachable` records.
+        try {
+          await invoke("workspace_ensure_connected", { workspaceId: rootId });
+        } catch (e) {
+          patch({ loading: false, reachable: false, error: String(e) });
+          return;
+        }
+      }
+      let rows: TmuxSessionInfo[];
+      try {
+        rows = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+          workspaceId: rootId,
+          projectPath: null,
+        });
+      } catch (e) {
+        log.warn("sessions mirror: list failed", e);
+        patch({ loading: false, reachable: false, error: String(e) });
+        return;
+      }
+      // An empty list from a session-bound host is ambiguous (cold SSH, no
+      // handle) — the restoreSessions precedent. Local multiplexers answer
+      // from cold, so their empty list is real.
+      const reachable = rows.length > 0 || !caps.sessionBound;
+      patch({ rows, reachable, loading: false, error: null, fetchedAt: Date.now() });
+      if (!reachable || rows.length === 0) return;
+      const remembered = rows
+        .filter((r) => r.foreign?.kind !== "workspace")
+        .map((r) => ({
+          name: r.name,
+          display: sessionDisplay(r) === r.name ? null : sessionDisplay(r),
+          claude_session_id: r.claude_session_id ?? null,
+          cwd: r.cwd ?? r.owner_cwd ?? null,
+        }));
+      try {
+        const f = await invoke<WorkspacesFile>("workspace_remember_sessions", {
+          workspaceId: rootId,
+          entries: remembered,
+          forget: [],
+        });
+        updateFile(f);
+      } catch (e) {
+        log.warn("workspace_remember_sessions failed", e);
+      }
+      const carried = new Set(
+        file().workspaces.map((w) => w.tmux_session).filter((n): n is string => !!n),
+      );
+      const candidates = mirrorCandidates(rows).filter((c) => !carried.has(c.name));
+      if (candidates.length === 0) return;
+      try {
+        const f = await invoke<WorkspacesFile>("workspace_mirror_sessions", {
+          workspaceId: rootId,
+          sessions: candidates,
+        });
+        updateFile(f);
+      } catch (e) {
+        log.warn("workspace_mirror_sessions failed", e);
+      }
+    } finally {
+      mirrorInFlight.delete(rootId);
+    }
+  };
+
+  // Session rows whose session the host no longer lists. Only a host that
+  // ANSWERED can grey a row; zellij `exited` rows are in the list, so they
+  // count as live (attaching resurrects them).
+  const goneWorkspaceIds = (): Set<string> => {
+    const out = new Set<string>();
+    if (!sessionsAsRows()) return out;
+    const lists = sessionLists();
+    for (const w of file().workspaces) {
+      const name = w.tmux_session;
+      if (!name) continue;
+      const st = lists[rootIdOf(w.id)];
+      if (st?.reachable && !st.rows.some((r) => r.name === name)) out.add(w.id);
+    }
+    return out;
+  };
+
+  // pane id → the session its [Connect] must attach to. Only panes that
+  // are NOT live carry one (a live pane has no [Connect]). The workspace's
+  // first pane is bound to `tmux_session` — that is what makes a Phase 90.B
+  // session row honest after a restart (PaneView's smartConnect
+  // short-circuits on it instead of probing and opening the picker). A
+  // gone row carries the Claude id + cwd to resume with: the live row
+  // first, else the root's memory.
+  const boundSessions = (): Record<string, BoundSession> => {
+    const out: Record<string, BoundSession> = {};
+    const ws = activeWs();
+    const name = ws?.tmux_session;
+    if (!ws?.layout || !name) return out;
+    const first = collectPanes(ws.layout)[0];
+    if (!first || paneToSession.has(first)) return out;
+    const rootId = rootIdOf(ws.id);
+    const root = file().workspaces.find((w) => w.id === rootId);
+    const live = sessionLists()[rootId]?.rows.find((r) => r.name === name) ?? null;
+    const known = (root?.known_sessions ?? []).find((k) => k.name === name) ?? null;
+    out[first] = {
+      name,
+      gone: goneWorkspaceIds().has(ws.id),
+      claudeSessionId: live?.claude_session_id ?? known?.claude_session_id ?? null,
+      cwd: live?.cwd ?? live?.owner_cwd ?? known?.cwd ?? ws.cwd ?? null,
+    };
+    return out;
+  };
+
+  // Phase 91.E: everything a sidebar CARD prints that the Workspace row
+  // does not carry, keyed by workspace id. One memo for the whole tree —
+  // the Sidebar renders inside <For> and must not create per-row memos.
+  // Re-runs on the 250 ms agent clock (allPaneAgentRows) and on every
+  // signal it reads; O(workspaces × panes + notifications).
+  //
+  // Line 2 precedence, most urgent first: a blocking permission card (it
+  // is synchronous with its own card) → an UNREAD notification's text (the
+  // thing cmux prints; clears itself on focus via clearPaneNotified) → a
+  // gone session (a gone row can still carry a stale brief) → the agent's
+  // most urgent row (needs-input / stuck / waiting outrank working / done;
+  // text = whatsHappening, else the status word) → connected → idle.
+  // Phase 91.F: worktrees moved out of the sidebar into the Diff pane. The
+  // pane feeds its `git worktree list` back here (onWorktreesListed) and
+  // `recheckGit` fills it too, so a sidebar CARD can still show its branch
+  // (`branchFor` is gone from the sidebar). `worktreesVersion` bumps after a
+  // worktree is created so an open Diff strip re-lists.
+  const [worktreeLists, setWorktreeLists] = createSignal<Record<string, WorktreeEntry[]>>({});
+  const [worktreesVersion, setWorktreesVersion] = createSignal(0);
+
+  // Nearest ancestor-or-self flagged `is_project_root`, else the id itself —
+  // where `workspace_open_worktree` should hang a new worktree workspace.
+  const projectRootOf = (wsId: string): string => {
+    const all = file().workspaces;
+    let cur = all.find((w) => w.id === wsId);
+    let hops = 0;
+    while (cur && hops < all.length) {
+      if (cur.is_project_root) return cur.id;
+      if (!cur.parent_id) break;
+      cur = all.find((w) => w.id === cur?.parent_id);
+      hops++;
+    }
+    return wsId;
+  };
+
+  // The branch a sidebar card shows: the longest scanned worktree path that
+  // is a prefix of the card's cwd, looked up against the nearest ancestor
+  // that a Diff pane has listed. Null until a Diff pane (or Check-git) has
+  // run for that repo.
+  const branchForCard = (wsId: string, cwd: string | null): string | null => {
+    if (!cwd) return null;
+    const all = file().workspaces;
+    const key = pathKey(cwd);
+    // Walk ancestors-or-self for the first id present in worktreeLists.
+    let cur = all.find((w) => w.id === wsId);
+    let hops = 0;
+    const lists = worktreeLists();
+    while (cur && hops < all.length) {
+      const entries = lists[cur.id];
+      if (entries && entries.length > 0) {
+        let best: WorktreeEntry | null = null;
+        for (const e of entries) {
+          const ek = pathKey(e.path);
+          if (key === ek || key.startsWith(ek + "/")) {
+            if (!best || ek.length > pathKey(best.path).length) best = e;
+          }
+        }
+        if (best) return best.branch ?? (best.is_detached ? best.head.slice(0, 7) : null);
+        return null;
+      }
+      if (!cur.parent_id) break;
+      cur = all.find((w) => w.id === cur?.parent_id);
+      hops++;
+    }
+    return null;
+  };
+
+  const workspaceCardInfo = createMemo((): Record<string, WorkspaceCardInfo> => {
+    const out: Record<string, WorkspaceCardInfo> = {};
+    const wss = file().workspaces;
+    const lists = sessionLists();
+    const notified = paneNotified();
+    const waitingPanes = waitingPaneIds();
+    const live = liveWorkspaceIds();
+    const gone = goneWorkspaceIds();
+    // pushNotif prepends, so the first hit per pane / workspace is the latest.
+    const latestByPane = new Map<string, NotifItem>();
+    const latestByWs = new Map<string, NotifItem>();
+    for (const n of notifications()) {
+      if (n.pane_id && !latestByPane.has(n.pane_id)) latestByPane.set(n.pane_id, n);
+      if (n.workspace_id && !latestByWs.has(n.workspace_id)) latestByWs.set(n.workspace_id, n);
+    }
+    const rowsByWs = new Map<string, QueueRow[]>();
+    for (const r of allPaneAgentRows()) {
+      if (!inQueue(r)) continue;
+      const list = rowsByWs.get(r.wsId) ?? [];
+      list.push(r);
+      rowsByWs.set(r.wsId, list);
+    }
+    for (const w of wss) {
+      const panes = w.layout ? collectPanes(w.layout) : [];
+      let title = w.name;
+      let cwd: string | null = w.cwd ?? null;
+      if (w.tmux_session) {
+        const rootId = rootIdOf(w.id);
+        const root = wss.find((x) => x.id === rootId);
+        const liveRow = lists[rootId]?.rows.find((r) => r.name === w.tmux_session) ?? null;
+        const known = (root?.known_sessions ?? []).find((k) => k.name === w.tmux_session) ?? null;
+        title = liveRow ? sessionDisplay(liveRow) : (known?.display ?? w.name);
+        cwd = liveRow?.cwd ?? liveRow?.owner_cwd ?? known?.cwd ?? w.cwd ?? null;
+      }
+      const rows = (rowsByWs.get(w.id) ?? []).sort((a, b) => {
+        const ba = QUEUE_BUCKET[queueStatus(a)];
+        const bb = QUEUE_BUCKET[queueStatus(b)];
+        if (ba !== bb) return ba - bb;
+        return (rowSinceMs(a) ?? Infinity) - (rowSinceMs(b) ?? Infinity);
+      });
+      const top = rows[0];
+      const unreadPane = panes.find((pid) => notified.has(pid));
+      let status: WorkspaceCardInfo["status"];
+      if (panes.some((pid) => waitingPanes.has(pid))) {
+        status = { kind: "waiting", text: t("sidebar.card.status.waiting") };
+      } else if (unreadPane) {
+        const n = latestByPane.get(unreadPane) ?? latestByWs.get(w.id);
+        status = { kind: "notif", text: n ? (n.title || n.body) : t("sidebar.workspaceActivityTitle") };
+      } else if (gone.has(w.id)) {
+        status = { kind: "gone", text: t("sidebar.card.status.gone") };
+      } else if (top) {
+        const st = queueStatus(top);
+        const attn = st === "needs-input" || st === "stuck" || st === "waiting";
+        const word =
+          st === "working" ? t("sidebar.card.status.running")
+          : st === "done" ? t("sidebar.card.status.done")
+          : t(`queue.status.${st}`);
+        status = { kind: attn ? "agent-attn" : "agent", text: whatsHappening(top)?.text ?? word };
+      } else if (live.has(w.id)) {
+        status = { kind: "connected", text: t("sidebar.workspaceConnectedTitle") };
+      } else {
+        status = { kind: "idle", text: t("sidebar.card.status.idle") };
+      }
+      let attention = 0;
+      for (const pid of panes) if (waitingPanes.has(pid) || notified.has(pid)) attention++;
+      for (const r of rows) {
+        const st = queueStatus(r);
+        if ((st === "needs-input" || st === "stuck") && !waitingPanes.has(r.paneId) && !notified.has(r.paneId)) attention++;
+      }
+      out[w.id] = {
+        title,
+        status,
+        cwd,
+        agent: rows.length > 0,
+        attention,
+        branch: branchForCard(w.id, cwd),
+      };
+    }
+    return out;
+  });
+
+  // +: a fresh session named after the row, `-2`, `-3`… past every name the
+  // host, the root's memory or any same-host row already uses. The row is
+  // created by Open (placed under the folder by cwd) and its first connect
+  // creates the session — `tmux new-session -A`.
+  const newSessionRow = async (w: Workspace) => {
+    const rootId = rootIdOf(w.id);
+    const rootWs = file().workspaces.find((x) => x.id === rootId);
+    const base = w.name.replace(/[^A-Za-z0-9_-]/g, "") || "ymux";
+    const taken = new Set<string>([
+      ...(sessionLists()[rootId]?.rows ?? []).map((r) => r.name),
+      ...(rootWs?.known_sessions ?? []).map((k) => k.name),
+      ...file().workspaces.map((x) => x.tmux_session ?? "").filter((n) => n !== ""),
+    ]);
+    let name = base;
+    for (let n = 2; taken.has(name); n++) name = `${base}-${n}`;
+    try {
+      // Phase 91.G: do NOT auto-connect — land on the disconnected overlay so
+      // the pane's own [Connect] / connect wizard is the CREATE, carrying the
+      // folder cwd (and any command the user picks) into a brand-new session.
+      await openSessionRow(w.id, { name, display: name, cwd: w.cwd ?? null }, false);
+    } catch (e) {
+      log.error("new session row failed", e);
+      flashSummaryToast("err", String(e));
+    }
+  };
+
+  // (a) Activation / boot: the active ROOT, once per root, with the SSH
+  // handle armed unless auto-connect is off (Phase 41's opt-out). Keyed on
+  // the memoised id so persists inside the same root do not re-fire.
+  let lastMirrorRoot: string | null = null;
+  createEffect(() => {
+    const root = activeRootId();
+    const s = settings();
+    if (!s) return; // settings still loading — keep the guard untouched
+    if (!root || s.sessions_as_rows !== true) {
+      lastMirrorRoot = null;
+      return;
+    }
+    if (root === lastMirrorRoot) return;
+    lastMirrorRoot = root;
+    void refreshSessionRows(root, { ensure: s.auto_connect_on_workspace_select !== false });
+  });
+
+  // (c) A light poll for the active root while the window is visible —
+  // this is how a session killed from elsewhere goes grey.
+  createEffect(() => {
+    const root = activeRootId();
+    if (!root || !sessionsAsRows()) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void refreshSessionRows(root, { ensure: false });
+    }, 30_000);
+    onCleanup(() => window.clearInterval(timer));
+  });
 
   // Rename = a real `tmux rename-session` (ASCII-only; the backend
   // validates too). The backend migrates its own maps; here the restore
@@ -2954,6 +3436,8 @@ function App() {
     // V: that collides with STT push-to-talk, which is exactly the class of
     // clash conflictingAccels() now surfaces in Settings.
     { id: "focus_zoom", run: (e) => { e.preventDefault(); toggleMaximize(); } },
+    // Phase 91.F: open (or focus) the git-diff pane.
+    { id: "open_diff", when: () => !!activeWs(), run: (e) => { e.preventDefault(); openDiffPane(); } },
     // v0.4.4-beta.2: reset the active terminal — clears leaked mouse-tracking
     // modes (the escape-text leak from an unclean vim/fzf/less exit) + text
     // attributes.
@@ -3325,6 +3809,9 @@ function App() {
         // user clicks around while re-reading the "[disconnected]" notice.
         // Fixed control string — never PTY content (Rule #1).
         ti?.resetMouseModes();
+        // Phase 91.D: the session behind this pane is gone with the PTY, so
+        // the wheel goes back to xterm.js before the async refresh confirms it.
+        ti?.setTmuxScroll(false);
         ti?.detach();
         bump();
         void refreshPersistence();
@@ -3644,8 +4131,16 @@ function App() {
         session_name: string;
         skipped: string;
         had_command: boolean;
+        had_cwd?: boolean;
       }>("pane-connect-notice", (e) => {
-        if (e.payload.skipped !== "attach-only" || !e.payload.had_command) return;
+        // Phase 91.G: also announce a dropped `cd` — a session that was
+        // already live keeps its own directory, so "open this folder" is
+        // silently ignored otherwise.
+        if (
+          e.payload.skipped !== "attach-only" ||
+          !(e.payload.had_command || e.payload.had_cwd)
+        )
+          return;
         flashSummaryToast(
           "err",
           t("connect.attachOnly.toast", { name: e.payload.session_name }),
@@ -3931,6 +4426,10 @@ function App() {
           hookPulseWorkspaceIds={activeHookWorkspaceIdsReactive()}
           notifiedWorkspaceIds={notifiedWorkspaceIds()}
           briefAttentionWorkspaceIds={queueAttentionWorkspaceIds()}
+          goneIds={goneWorkspaceIds()}
+          cardInfo={workspaceCardInfo()}
+          sessionsAsRows={sessionsAsRows()}
+          onNewSession={(w) => void newSessionRow(w)}
           groups={file().groups ?? []}
           onGroupCreate={async (name, color) => {
             try {
@@ -4051,27 +4550,6 @@ function App() {
                 });
                 updateFile(f);
               } catch (e) { log.error("workspace_set_collapsed failed", e); }
-            })();
-          }}
-          onNewWorktree={(w) => setProjectFolderModal({ kind: "worktree", workspace: w })}
-          // Rejection is meaningful here — the Sidebar renders git's own
-          // message (bad path, no live SSH session) rather than an empty
-          // list, which would read as "this repo has no worktrees".
-          onListWorktrees={(workspaceId) =>
-            invoke<WorktreeEntry[]>("workspace_list_worktrees", { workspaceId })
-          }
-          onOpenWorktree={(rootWorkspaceId, wt) => void openWorktree(rootWorkspaceId, wt)}
-          onNotARepo={(workspaceId) => {
-            void (async () => {
-              try {
-                const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
-                  workspaceId,
-                  isProjectRoot: false,
-                });
-                updateFile(f);
-              } catch (e) {
-                log.error("workspace_set_project_root failed", e);
-              }
             })();
           }}
           allForwards={portForwards()}
@@ -4225,8 +4703,7 @@ function App() {
                       title={t("ws_header.split_diff_title")}
                       onClick={() => {
                         setWsMenuOpen(false);
-                        const pid = activePaneId();
-                        if (pid) splitPane(pid, "horizontal", "diff");
+                        openDiffPane();
                       }}
                     >
                       <IconGitCompare />
@@ -4420,6 +4897,15 @@ function App() {
                     workspaceEmoji={activeWs()?.emoji ?? undefined}
                     maximizedPaneId={maximizedPaneId()}
                     tabsMode={tabsMode()}
+                    worktreesVersion={worktreesVersion()}
+                    onWorktreesListed={(id, list) =>
+                      setWorktreeLists((prev) => ({ ...prev, [id]: list }))
+                    }
+                    onDiffOpenWorktree={(wsId, wt) => void openWorktree(projectRootOf(wsId), wt)}
+                    onDiffNewWorktree={(wsId) => {
+                      const root = file().workspaces.find((w) => w.id === projectRootOf(wsId));
+                      if (root) setProjectFolderModal({ kind: "worktree", workspace: root });
+                    }}
                     workspacePaneCount={(() => {
                       const l = activeWs()?.layout;
                       return l ? collectPanes(l).length : 0;
@@ -4443,6 +4929,7 @@ function App() {
                     agentRuns={agentRuns()}
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}
+                    boundSessions={boundSessions()}
                     ensureTerm={ensureTerm}
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}
@@ -4883,6 +5370,7 @@ function App() {
           <ConfirmDeleteWorkspace
             subtree={sub()}
             liveIds={liveWorkspaceIds()}
+            sessionNames={sessionRowsIn(sub()).map((w) => w.tmux_session ?? "")}
             noteCount={notesInSubtree(sub())}
             onClose={() => setPendingDelete(null)}
             onConfirm={() => void commitDelete(sub()[0].id)}
@@ -4897,7 +5385,12 @@ function App() {
           <ProjectFolderModal
             mode={m()}
             onClose={() => setProjectFolderModal(null)}
-            onDone={() => void reloadWorkspaces()}
+            onDone={() => {
+              void reloadWorkspaces();
+              // Phase 91.F: a worktree was just created — nudge any open
+              // Diff strip to re-list.
+              setWorktreesVersion((v) => v + 1);
+            }}
           />
         )}
       </Show>

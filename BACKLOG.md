@@ -101,8 +101,9 @@ add tickets without touching what already works, and this touches a lot
 of working code. `tickets.rs::resolve` is the reference implementation of
 the dispatch if someone wants a starting point.
 
-Payoff is real though — it is what would fix the two FOLLOWUPS above
-(diff_pane on remote workspaces, addons misclassifying WSL) rather than
+Payoff is real though — diff_pane on remote workspaces is now fixed on the
+shared transport (Phase 91.F, `worktrees::run_git_raw`); only addons
+misclassifying WSL remains, which this would fix rather than
 patching each one separately.
 
 ### Single-instance lock on the config dir (2026-08-23)
@@ -151,8 +152,10 @@ behind zellij's alt screen — so a zellij pane could not scroll back at all.
 
 Closed by giving zellij the wheel (`mouse_mode true`) rather than by building the
 `dump-screen --full` viewer this entry proposed. That viewer is not needed: the wheel is
-the affordance, and it is the same bet the tmux side already took (`set -g mouse on`,
-decision O-3 in docs/MOUSE-DEBUG.md).
+the affordance, and it was the same bet the tmux side had taken (`set -g mouse on`,
+decision O-3 in docs/MOUSE-DEBUG.md). 2026-09-08: the tmux side reversed that (Phase
+91.B, mouse off + PageUp scrollback — left-click capture was the bug); zellij keeps
+`true` because cleared keybinds leave it no scroll mode.
 
 (Also: this entry was originally appended below the `## Done` heading by mistake, so it
 read as done on the day it was filed. It is done now, which is a coincidence.)

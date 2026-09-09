@@ -191,7 +191,18 @@ pub(crate) fn parse_worktree_porcelain(text: &str) -> Vec<WorktreeEntry> {
 // ─── transports ────────────────────────────────────────────────────────
 
 /// Run `git -C <cwd> <args…>` locally. Arg array, never a shell string.
-async fn run_git_local(cwd: &str, args: &[&str]) -> Result<String, String> {
+/// A completed git run, exit code and streams kept separate so a caller
+/// that wants a non-zero exit (e.g. `git diff --no-index`, which returns 1
+/// when files differ) can read the output instead of an error. On the WSL
+/// and SSH transports `err` is empty — `git_script` folds stderr into
+/// stdout with `2>&1`, so `out` carries both.
+pub(crate) struct GitRaw {
+    pub code: i32,
+    pub out: String,
+    pub err: String,
+}
+
+pub(crate) async fn run_git_local_raw(cwd: &str, args: &[&str]) -> Result<GitRaw, String> {
     let mut cmd = tokio::process::Command::new("git");
     cmd.arg("-C").arg(cwd).arg("--no-pager");
     for a in args {
@@ -200,11 +211,15 @@ async fn run_git_local(cwd: &str, args: &[&str]) -> Result<String, String> {
     // Don't flash a console window out of the GUI process.
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    // An aborted watcher (Phase 91.F: the Diff pane stops its poll on
+    // unmount) must not leave a git process orphaned.
+    cmd.kill_on_drop(true);
     let out = cmd.output().await.map_err(|e| format!("spawn git: {e}"))?;
-    if !out.status.success() {
-        return Err(git_error(&String::from_utf8_lossy(&out.stderr)));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).to_string())
+    Ok(GitRaw {
+        code: out.status.code().unwrap_or(-1),
+        out: String::from_utf8_lossy(&out.stdout).to_string(),
+        err: String::from_utf8_lossy(&out.stderr).to_string(),
+    })
 }
 
 /// Build the `sh` one-liner used by the WSL and SSH transports. Every
@@ -221,12 +236,59 @@ fn git_script(cwd: &str, args: &[&str]) -> String {
     s
 }
 
-async fn run_git_wsl(distro: Option<&str>, cwd: &str, args: &[&str]) -> Result<String, String> {
-    let (code, text) = local_setup::wsl_exec(distro, None, &git_script(cwd, args)).await?;
-    if code != 0 {
-        return Err(git_error(&text));
+/// Run one git subcommand and return its exit code + streams verbatim,
+/// whatever the host. The dispatch `run_git_over` builds its Result on
+/// this; `diff_pane` uses it directly on the Local path so a non-zero
+/// `--no-index` is data, not an error.
+pub(crate) async fn run_git_raw(
+    state: &AppState,
+    conn: &Option<Connection>,
+    cwd: &str,
+    args: &[&str],
+) -> Result<GitRaw, String> {
+    match conn {
+        None | Some(Connection::Local { .. }) => run_git_local_raw(cwd, args).await,
+        Some(Connection::Wsl { distro }) => {
+            let (code, text) =
+                local_setup::wsl_exec(distro.as_deref(), None, &git_script(cwd, args)).await?;
+            Ok(GitRaw { code, out: text, err: String::new() })
+        }
+        Some(Connection::Ssh { host, user, port, .. }) => {
+            let handle = pick_ssh_handle_for_host(state, host, user, *port).ok_or_else(|| {
+                format!("no live SSH session to {user}@{host} — connect a pane there first")
+            })?;
+            let (code, text) = ssh_exec_capture(&handle, &git_script(cwd, args), 20).await?;
+            Ok(GitRaw { code, out: text, err: String::new() })
+        }
     }
-    Ok(text)
+}
+
+/// Run an arbitrary `sh` script on a workspace's host — WSL/SSH only, for
+/// the Phase 91.F diff bundle (status + diff + per-untracked-file diffs in
+/// one round trip). Local has no script transport; the diff bundle issues
+/// its Local calls one at a time through `run_git_raw` instead. The SSH arm
+/// wraps the script in `sh -c` so a non-POSIX login shell (fish) can't
+/// choke on it; WSL's `wsl_exec` already runs `sh`.
+pub(crate) async fn exec_script_over(
+    state: &AppState,
+    conn: &Option<Connection>,
+    script: &str,
+    timeout_secs: u64,
+) -> Result<(i32, String), String> {
+    match conn {
+        Some(Connection::Wsl { distro }) => {
+            local_setup::wsl_exec(distro.as_deref(), None, script).await
+        }
+        Some(Connection::Ssh { host, user, port, .. }) => {
+            let handle = pick_ssh_handle_for_host(state, host, user, *port).ok_or_else(|| {
+                format!("no live SSH session to {user}@{host} — connect a pane there first")
+            })?;
+            ssh_exec_capture(&handle, &format!("sh -c {}", shell_quote(script)), timeout_secs).await
+        }
+        None | Some(Connection::Local { .. }) => {
+            Err("script transport is not available locally".to_string())
+        }
+    }
 }
 
 /// One-shot exec channel on an existing handle, stdout captured.
@@ -326,7 +388,7 @@ fn pick_ssh_handle_for_host(
 /// Trim git's stderr into something worth putting in front of a user.
 /// Keeps the first non-empty line; git puts the actual reason there and
 /// the rest is usually a usage dump.
-fn git_error(stderr: &str) -> String {
+pub(crate) fn git_error(stderr: &str) -> String {
     let first = stderr
         .lines()
         .map(str::trim)
@@ -376,23 +438,14 @@ pub(crate) async fn run_git_over(
     cwd: &str,
     args: &[&str],
 ) -> Result<String, String> {
-    match conn {
-        None | Some(Connection::Local { .. }) => run_git_local(cwd, args).await,
-        Some(Connection::Wsl { distro }) => run_git_wsl(distro.as_deref(), cwd, args).await,
-        Some(Connection::Ssh { host, user, port, .. }) => {
-            // No live session is an explicit error, never an empty list:
-            // an empty list reads as "this repo has no worktrees", which
-            // is a different and far more misleading claim.
-            let handle = pick_ssh_handle_for_host(state, host, user, *port).ok_or_else(|| {
-                format!("no live SSH session to {user}@{host} — connect a pane there first")
-            })?;
-            let (code, text) = ssh_exec_capture(&handle, &git_script(cwd, args), 20).await?;
-            if code != 0 {
-                return Err(git_error(&text));
-            }
-            Ok(text)
-        }
+    // No live SSH session is an explicit error (inside `run_git_raw`), never
+    // an empty list: an empty list reads as "this repo has no worktrees",
+    // which is a different and far more misleading claim.
+    let r = run_git_raw(state, conn, cwd, args).await?;
+    if r.code != 0 {
+        return Err(git_error(if r.err.is_empty() { &r.out } else { &r.err }));
     }
+    Ok(r.out)
 }
 
 // ─── commands ──────────────────────────────────────────────────────────
@@ -711,5 +764,23 @@ branch refs/heads/main
         let e = git_error("\n\nfatal: not a git repository\nusage: git ...\n");
         assert_eq!(e, "git: fatal: not a git repository");
         assert_eq!(git_error("   "), "git: git failed");
+    }
+
+    // Phase 91.F: the raw local runner reports the real exit code and both
+    // streams instead of collapsing a non-zero exit into an Err — that is
+    // what lets `git diff --no-index` (exit 1 = files differ) be read as
+    // output. English CI runners, so the stderr text match is safe.
+    #[tokio::test]
+    async fn run_git_local_raw_reports_exit_code() {
+        let ok = run_git_local_raw(".", &["--version"]).await.expect("git present");
+        assert_eq!(ok.code, 0);
+        assert!(ok.out.starts_with("git version"));
+
+        let tmp = tempfile::tempdir().expect("tmpdir");
+        let bad = run_git_local_raw(tmp.path().to_str().unwrap(), &["status"])
+            .await
+            .expect("git spawned");
+        assert_ne!(bad.code, 0);
+        assert!(bad.err.to_lowercase().contains("not a git repository"));
     }
 }
