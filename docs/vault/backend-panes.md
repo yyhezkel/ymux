@@ -172,7 +172,13 @@ dispatches on that workspace's connection:
 | `Ssh` | an exec channel on a **live** handle to that host |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
-from any session to the same host.
+from any session to the same host. The dispatch is `run_git_over` on top of
+**`run_git_raw`** (Phase 91.F), which returns `GitRaw { code, out, err }` verbatim so a
+caller that wants a non-zero exit (`git diff --no-index` returns 1 when files differ) can
+read the output instead of an error; `run_git_over` still folds a non-zero code into
+`git_error`. **`exec_script_over`** runs one arbitrary `sh` script on the host (WSL/SSH
+only — the SSH arm wraps it in `sh -c` so a fish login shell can't choke on it), which is
+how the Diff pane fetches status + diff + untracked-file diffs in a single round trip.
 
 **`workspaces_merge.rs` (415)** — the three-way merge `save_to_disk` calls. A save is not
 "dump what I have": it re-reads the file and, if it changed since we last touched it,

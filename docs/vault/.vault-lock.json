@@ -24,7 +24,7 @@
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
     "app/src-tauri/src/workspace_browser.rs": "cfdf8bb2730919ecff8ef96df415c443a27e0f3a712d8fd0e7c87a5dd6ad4300",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",
-    "app/src-tauri/src/worktrees.rs": "da33ba4543a21f77574f3f1293e85651a80edbb75e64ad8685b84cef49830cbc"
+    "app/src-tauri/src/worktrees.rs": "9397923a98f1cbb2744d950fee137cb5a437beace86fbb5795e16bf4a9706949"
   },
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
