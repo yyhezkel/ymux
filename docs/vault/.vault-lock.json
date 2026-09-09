@@ -7,14 +7,14 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "f8f6f07e9e7b8e83ca5b30d790a29e71fa2d7f653ba90dd7d4fc9f6e7ad2ffb3",
+    "app/src-tauri/src/lib.rs": "94836b5c2b2312e1436d31d24a75b13e2705ddb985a0ba42864ce00e79e47adc",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
     "app/src-tauri/src/dev.rs": "7fe2df26da158a6741e1ade23117b2777988a34ca2776eb56f6dd3101b74ff64",
-    "app/src-tauri/src/diff_pane.rs": "88ea954be2f15bf762a043f0c9deea6ca8a5e33438c393995fc8043f078f6114",
+    "app/src-tauri/src/diff_pane.rs": "c920cf0adcf0ed763bc789168342de4f680bdab9d99888360d72efbe6e5e53ef",
     "app/src-tauri/src/file_manager.rs": "d230dead31918d21d66fd291ce912296b78c5fb0d3fccffec3af5b44d572d1b6",
     "app/src-tauri/src/fonts.rs": "f0644c988e0fb77af46ea3a56bd58fc3132c2de209536df42b15208c3ebd79aa",
     "app/src-tauri/src/notes.rs": "c66ce93fe4ad80e03f01ab62b367895aa3430872cdc48740175620fe0dde7ffe",
@@ -24,7 +24,7 @@
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
     "app/src-tauri/src/workspace_browser.rs": "cfdf8bb2730919ecff8ef96df415c443a27e0f3a712d8fd0e7c87a5dd6ad4300",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",
-    "app/src-tauri/src/worktrees.rs": "9397923a98f1cbb2744d950fee137cb5a437beace86fbb5795e16bf4a9706949"
+    "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
   },
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
@@ -48,7 +48,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
-    "app/src-tauri/src/local_setup.rs": "bd65cba6ecad8377e580561f56c15ef7d0e3a1149c1c205b14faa9f13cec7d97",
+    "app/src-tauri/src/local_setup.rs": "e5ce2c7393f80f7030ae76a2e8818e5c01d97758df9a43376abd9559340110d2",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "946157d160b6595c8d31c978ed54cbbbf039d289d5efc9b83bc8e0bc25cb58b9",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"

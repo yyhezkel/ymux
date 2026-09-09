@@ -202,7 +202,7 @@ pub(crate) struct GitRaw {
     pub err: String,
 }
 
-async fn run_git_local_raw(cwd: &str, args: &[&str]) -> Result<GitRaw, String> {
+pub(crate) async fn run_git_local_raw(cwd: &str, args: &[&str]) -> Result<GitRaw, String> {
     let mut cmd = tokio::process::Command::new("git");
     cmd.arg("-C").arg(cwd).arg("--no-pager");
     for a in args {

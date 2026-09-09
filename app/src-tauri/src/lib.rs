@@ -1465,10 +1465,11 @@ pub(crate) fn split_pane_in(
                         (PaneKind::Help, None, None, Some(topic), None)
                     }
                     PaneKind::Diff => {
-                        // Phase 50: new Diff panes default to Working
-                        // (git diff = working tree vs index). The user
-                        // can switch via the source dropdown later.
-                        (PaneKind::Diff, None, None, None, Some(DiffSource::Working))
+                        // Phase 91.F: new Diff panes default to Head — the
+                        // full change vs HEAD (staged + unstaged), which is
+                        // what "show me my diff" means. Working (unstaged
+                        // only) and Ref stay selectable in the dropdown.
+                        (PaneKind::Diff, None, None, None, Some(DiffSource::Head))
                     }
                 };
                 let new_pane = LayoutNode::Pane {
@@ -12291,8 +12292,12 @@ pub fn run() {
             file_manager::file_create_remote,
             file_manager::file_upload,
             file_manager::pane_upload_dropped,
+            diff_pane::diff_pane_start,
+            diff_pane::diff_pane_stop,
             diff_pane::diff_pane_set_source,
+            diff_pane::diff_pane_set_cwd,
             diff_pane::diff_pane_refresh,
+            diff_pane::diff_pane_worktrees,
             file_manager::file_download,
             file_manager::fm_transfer_cancel,
             file_manager::download_remote_file_via_osc,
