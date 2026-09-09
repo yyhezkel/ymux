@@ -1218,6 +1218,7 @@
   "briefing.noAgentRows": "אין עדיין פעילות סוכן ב-workspace הזה.",
   "cmd.briefing.show": "תדריך: הצג ל-workspace הנוכחי",
   "settings.shortcuts.show_briefing": "הצג תדריך workspace",
+  "settings.shortcuts.open_diff": "פתח את פאנל ה‑diff",
   "settings.brief.title": "כרטיס תדריך",
   "settings.brief.entryOnReturn.label": "הצג בחזרה ל-workspace אחרי היעדרות",
   "settings.brief.absenceMinutes.label": "סף היעדרות (דקות)",

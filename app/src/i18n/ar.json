@@ -1218,6 +1218,7 @@
   "briefing.noAgentRows": "لا يوجد نشاط وكيل في مساحة العمل هذه بعد.",
   "cmd.briefing.show": "الموجز: إظهار لمساحة العمل الحالية",
   "settings.shortcuts.show_briefing": "إظهار موجز مساحة العمل",
+  "settings.shortcuts.open_diff": "فتح لوحة الفرق",
   "settings.brief.title": "بطاقة الموجز",
   "settings.brief.entryOnReturn.label": "إظهار عند العودة إلى مساحة عمل بعد غياب",
   "settings.brief.absenceMinutes.label": "حد الغياب (دقائق)",

@@ -48,9 +48,9 @@ whole-document replace makes that mirror mandatory, per the `terminal.rtl`
 incident.
 
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
-30 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
+31 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
-Ctrl+Alt+Q), and per-field
+Ctrl+Alt+Q, and Phase 91.F's `open_diff` Ctrl+Shift+G), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
 the single source of truth instead, so a `settings.json` written by an older build

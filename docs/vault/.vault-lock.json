@@ -50,7 +50,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "e5ce2c7393f80f7030ae76a2e8818e5c01d97758df9a43376abd9559340110d2",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "946157d160b6595c8d31c978ed54cbbbf039d289d5efc9b83bc8e0bc25cb58b9",
+    "app/src-tauri/src/settings.rs": "a17ecf3db894116de5b0ea59e55520d45a393fbbc66344248b5f6f9478fdcaee",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
   },
   "build-glue": {
@@ -124,7 +124,7 @@
     "app/src/platform.ts": "7e6c44b3a326540d0fc88ee8230525bfef3796234c2727038a398d06ee994dbb",
     "app/src/sessionRestore.ts": "2a0d8510e07835167777dd833f9e10025fe07b1f29aac31a4eb4c748603259f3",
     "app/src/settings.ts": "8308e6c9479e076329a9693d1e953bc35bc02724273c3d53e3e3ed1d42acf98f",
-    "app/src/shortcuts.ts": "236be11fe8831ec1f4bb0ba1d79926624ebb8f96e971f86af06c8d3d6952d64d",
+    "app/src/shortcuts.ts": "40188c8824bbe531df71dbe2bff4cc05e6f81985e98c6b55c4d35e8cc29d0d8c",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
     "app/src/terminalInstance.ts": "c8a73ecfe7d79f499e2ab8de5f4a78e83d72b0ec6f892db3247ab3530a981c37",
     "app/src/textDirection.ts": "b2c78aa9f8a1e8770e7902b6bd3f75a77f290b1882cf8bcc4e999fd08d88d1fb",

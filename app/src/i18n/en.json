@@ -1218,6 +1218,7 @@
   "briefing.noAgentRows": "No agent activity in this workspace yet.",
   "cmd.briefing.show": "Briefing: Show for this workspace",
   "settings.shortcuts.show_briefing": "Show workspace briefing",
+  "settings.shortcuts.open_diff": "Open the diff pane",
   "settings.brief.title": "Briefing card",
   "settings.brief.entryOnReturn.label": "Show when returning to a workspace after an absence",
   "settings.brief.absenceMinutes.label": "Absence threshold (minutes)",
