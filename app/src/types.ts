@@ -87,6 +87,30 @@ export interface BoundSession {
   cwd: string | null;
 }
 
+/** Phase 91.E: what a sidebar CARD prints beyond the Workspace row itself.
+ *  Built once per tick by App's `workspaceCardInfo` memo (line-2 precedence
+ *  lives there); the Sidebar only reads. `status.text` is already i18n-resolved;
+ *  `kind` picks the colour class. */
+export type CardStatusKind =
+  | "waiting"
+  | "notif"
+  | "agent-attn"
+  | "agent"
+  | "gone"
+  | "connected"
+  | "idle";
+export interface WorkspaceCardInfo {
+  /** sessionDisplay(live row) → known_sessions.display → w.name */
+  title: string;
+  status: { kind: CardStatusKind; text: string };
+  /** live row cwd → owner_cwd → known cwd → w.cwd */
+  cwd: string | null;
+  /** any pane of this workspace has an agent signal (inQueue) → the ✳ glyph */
+  agent: boolean;
+  /** panes that need you: blocking card ∪ unread notification ∪ needs-input/stuck */
+  attention: number;
+}
+
 export interface TmuxSessionInfo {
   name: string;
   created: number;

@@ -128,7 +128,7 @@
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
     "app/src/terminalInstance.ts": "c8a73ecfe7d79f499e2ab8de5f4a78e83d72b0ec6f892db3247ab3530a981c37",
     "app/src/textDirection.ts": "b2c78aa9f8a1e8770e7902b6bd3f75a77f290b1882cf8bcc4e999fd08d88d1fb",
-    "app/src/types.ts": "854d12ab77e619057b1ef9ab3b4d6d75a8982a3237a7491decd67d64e785f815"
+    "app/src/types.ts": "b97ece43f1002247748a5e894dc767e1658ba5b5db461518b50a98b444d8a175"
   },
   "frontend-panes": {
     "app/src/AddonsTab.tsx": "6eff5e7b1389af86debd3194ff02917788346a7801134b41403c48d9b4578c43",
@@ -167,7 +167,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "5a1e255ed32c2c140599e49382d035a3eca48767743ed65459207ec2f677fe55",
+    "app/src/App.tsx": "5a767009cbab239e4c7f31d30b8261292af8efe97226cf36035f1189800014f1",
     "app/src/BriefingCard.tsx": "6b94ea7667f66046db629bbbb0248a0891ca81d90678f9170bc6d73d12c2d9f8",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
@@ -181,6 +181,7 @@
     "app/src/Sidebar.tsx": "0b1272b5103af5ffa33ec16f28be33cf78ebe6647c2eaeb99eae4f10d7bc12e7",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
+    "app/src/cwdShort.ts": "754aeb0df8c53cd8c08b2ec2d833697b5ce7b45bd73f3f728ec342f3c2f95faa",
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",
     "app/src/icons.tsx": "73c22f387100db90b5ae976faf25939326c0ddc9fe61a0f8634864062d46a32f",
     "app/src/index.tsx": "78b0e7e701072965530f1927ace77fe2c34415ebfdb7518b268acd211fa11fc8",

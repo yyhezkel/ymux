@@ -11,6 +11,7 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/cwdShort.ts
   - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
@@ -47,7 +48,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (5,479) — one component, ~50 signals
+## `App.tsx` (5,566) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -251,6 +252,18 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   reads "Resume"; otherwise a plain attach — `new-session -A` recreates a gone session of the
   same name. If the session reappeared between poll and click, `pane_connect`'s attach-only
   guard types nothing.
+- **`workspaceCardInfo()`** (Phase 91.E) — one `createMemo` for the whole tree, workspace id →
+  `WorkspaceCardInfo { title, status: {kind, text}, cwd, agent, attention }`, passed to the
+  Sidebar as `cardInfo` and read by the CARD rows (the Sidebar renders inside `<For>` and must
+  not create per-row memos). Title/cwd for a `tmux_session` row follow the live list of its
+  root (`sessionDisplay(row)`, `cwd → owner_cwd`), else the root's `known_sessions`
+  (`display`, `cwd`), else the row itself. Line-2 precedence, most urgent first: a blocking
+  permission card → the text of an UNREAD notification (`notifications()` newest-first, by
+  pane then by workspace; it clears itself on focus) → gone → the agent's most urgent
+  `QueueRow` (`QUEUE_BUCKET` then oldest; needs-input/stuck/waiting = `agent-attn`, text =
+  `whatsHappening`, else the status word) → connected → idle. `attention` counts panes that
+  are waiting or unread plus needs-input/stuck rows not already counted. Re-runs on the
+  250 ms agent clock; O(workspaces × panes + notifications).
 - **`+` on a server / folder row** (`sessionsAsRows && !tmux_session &&
   wsCaps(w).sessionPersistence`, `IconTerminal`, `sidebar.newSession.tooltip`) →
   `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory
@@ -326,6 +339,11 @@ and hydrated by `pane_briefs`.
 shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
+
+**`cwdShort.ts`** (Phase 91.E) — `shortenCwd(path, sshUser, maxLen = 34)` for the card's path
+line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an
+ssh root login, `/Users/<u>`, `<X>:\Users\<u>` → `~`; still too long → `…/<parent>/<leaf>`.
+Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
 
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
 → `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's

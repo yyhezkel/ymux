@@ -162,7 +162,7 @@ Selection and click positioning both land on the wrong side without this.
 
 ## Typed mirrors
 
-**`types.ts` (582)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -172,7 +172,9 @@ nullable key, not `T?` — so helpers such as `effectiveIdentity` widen their pa
 are what components use to reason about a pane.
 
 **Not everything here is generated.** `BoundSession` (Phase 91.C — what a pane's
-[Connect] attaches to, or resumes) is hand-written in `types.ts`, as are
+[Connect] attaches to, or resumes) and `WorkspaceCardInfo` / `CardStatusKind` (Phase 91.E —
+what a sidebar card prints, built by App's `workspaceCardInfo` memo, see frontend-shell) are
+hand-written in `types.ts`, as are
 `TmuxSessionInfo` and `ForeignScope`, which are
 **hand-written mirrors** of structs that live in `lib.rs` rather than `ymux-types`, so
 ts-rs never sees them and nothing regenerates them for you. A field added on the Rust

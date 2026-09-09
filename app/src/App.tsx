@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
-import type { RtlProfileKind } from "./types";
+import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -15,7 +15,7 @@ import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
-import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel";
+import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
@@ -2668,6 +2668,92 @@ function App() {
     return out;
   };
 
+  // Phase 91.E: everything a sidebar CARD prints that the Workspace row
+  // does not carry, keyed by workspace id. One memo for the whole tree —
+  // the Sidebar renders inside <For> and must not create per-row memos.
+  // Re-runs on the 250 ms agent clock (allPaneAgentRows) and on every
+  // signal it reads; O(workspaces × panes + notifications).
+  //
+  // Line 2 precedence, most urgent first: a blocking permission card (it
+  // is synchronous with its own card) → an UNREAD notification's text (the
+  // thing cmux prints; clears itself on focus via clearPaneNotified) → a
+  // gone session (a gone row can still carry a stale brief) → the agent's
+  // most urgent row (needs-input / stuck / waiting outrank working / done;
+  // text = whatsHappening, else the status word) → connected → idle.
+  const workspaceCardInfo = createMemo((): Record<string, WorkspaceCardInfo> => {
+    const out: Record<string, WorkspaceCardInfo> = {};
+    const wss = file().workspaces;
+    const lists = sessionLists();
+    const notified = paneNotified();
+    const waitingPanes = waitingPaneIds();
+    const live = liveWorkspaceIds();
+    const gone = goneWorkspaceIds();
+    // pushNotif prepends, so the first hit per pane / workspace is the latest.
+    const latestByPane = new Map<string, NotifItem>();
+    const latestByWs = new Map<string, NotifItem>();
+    for (const n of notifications()) {
+      if (n.pane_id && !latestByPane.has(n.pane_id)) latestByPane.set(n.pane_id, n);
+      if (n.workspace_id && !latestByWs.has(n.workspace_id)) latestByWs.set(n.workspace_id, n);
+    }
+    const rowsByWs = new Map<string, QueueRow[]>();
+    for (const r of allPaneAgentRows()) {
+      if (!inQueue(r)) continue;
+      const list = rowsByWs.get(r.wsId) ?? [];
+      list.push(r);
+      rowsByWs.set(r.wsId, list);
+    }
+    for (const w of wss) {
+      const panes = w.layout ? collectPanes(w.layout) : [];
+      let title = w.name;
+      let cwd: string | null = w.cwd ?? null;
+      if (w.tmux_session) {
+        const rootId = rootIdOf(w.id);
+        const root = wss.find((x) => x.id === rootId);
+        const liveRow = lists[rootId]?.rows.find((r) => r.name === w.tmux_session) ?? null;
+        const known = (root?.known_sessions ?? []).find((k) => k.name === w.tmux_session) ?? null;
+        title = liveRow ? sessionDisplay(liveRow) : (known?.display ?? w.name);
+        cwd = liveRow?.cwd ?? liveRow?.owner_cwd ?? known?.cwd ?? w.cwd ?? null;
+      }
+      const rows = (rowsByWs.get(w.id) ?? []).sort((a, b) => {
+        const ba = QUEUE_BUCKET[queueStatus(a)];
+        const bb = QUEUE_BUCKET[queueStatus(b)];
+        if (ba !== bb) return ba - bb;
+        return (rowSinceMs(a) ?? Infinity) - (rowSinceMs(b) ?? Infinity);
+      });
+      const top = rows[0];
+      const unreadPane = panes.find((pid) => notified.has(pid));
+      let status: WorkspaceCardInfo["status"];
+      if (panes.some((pid) => waitingPanes.has(pid))) {
+        status = { kind: "waiting", text: t("sidebar.card.status.waiting") };
+      } else if (unreadPane) {
+        const n = latestByPane.get(unreadPane) ?? latestByWs.get(w.id);
+        status = { kind: "notif", text: n ? (n.title || n.body) : t("sidebar.workspaceActivityTitle") };
+      } else if (gone.has(w.id)) {
+        status = { kind: "gone", text: t("sidebar.card.status.gone") };
+      } else if (top) {
+        const st = queueStatus(top);
+        const attn = st === "needs-input" || st === "stuck" || st === "waiting";
+        const word =
+          st === "working" ? t("sidebar.card.status.running")
+          : st === "done" ? t("sidebar.card.status.done")
+          : t(`queue.status.${st}`);
+        status = { kind: attn ? "agent-attn" : "agent", text: whatsHappening(top)?.text ?? word };
+      } else if (live.has(w.id)) {
+        status = { kind: "connected", text: t("sidebar.workspaceConnectedTitle") };
+      } else {
+        status = { kind: "idle", text: t("sidebar.card.status.idle") };
+      }
+      let attention = 0;
+      for (const pid of panes) if (waitingPanes.has(pid) || notified.has(pid)) attention++;
+      for (const r of rows) {
+        const st = queueStatus(r);
+        if ((st === "needs-input" || st === "stuck") && !waitingPanes.has(r.paneId) && !notified.has(r.paneId)) attention++;
+      }
+      out[w.id] = { title, status, cwd, agent: rows.length > 0, attention };
+    }
+    return out;
+  });
+
   // +: a fresh session named after the row, `-2`, `-3`… past every name the
   // host, the root's memory or any same-host row already uses. The row is
   // created by Open (placed under the folder by cwd) and its first connect
@@ -4230,6 +4316,7 @@ function App() {
           notifiedWorkspaceIds={notifiedWorkspaceIds()}
           briefAttentionWorkspaceIds={queueAttentionWorkspaceIds()}
           goneIds={goneWorkspaceIds()}
+          cardInfo={workspaceCardInfo()}
           sessionsAsRows={sessionsAsRows()}
           onNewSession={(w) => void newSessionRow(w)}
           groups={file().groups ?? []}
