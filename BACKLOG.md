@@ -101,8 +101,9 @@ add tickets without touching what already works, and this touches a lot
 of working code. `tickets.rs::resolve` is the reference implementation of
 the dispatch if someone wants a starting point.
 
-Payoff is real though — it is what would fix the two FOLLOWUPS above
-(diff_pane on remote workspaces, addons misclassifying WSL) rather than
+Payoff is real though — diff_pane on remote workspaces is now fixed on the
+shared transport (Phase 91.F, `worktrees::run_git_raw`); only addons
+misclassifying WSL remains, which this would fix rather than
 patching each one separately.
 
 ### Single-instance lock on the config dir (2026-08-23)

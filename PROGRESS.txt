@@ -7549,3 +7549,26 @@ Result: compiles-untested (Rule #17) — pushed for CI; build-windows to be disp
 path never tripped the 34-char rule — the test was wrong, not the code), fixed in da42235. All 5
 PR checks green on da42235. build-windows dispatched on da42235 (run 34353010145, green):
 ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.8 MB. Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.
+
+2026-09-09 — Phase 91.G + 91.F (PR #44 round 4)
+91.G: the + new-session row dropped the folder cd and any wizard command. Fixes: the
+attach-only guard (lib.rs) runs the reachability probe for an explicit tmux_session_name
+too (a name that is not live is a CREATE and injects), newSessionRow opens the row without
+auto-connecting so the [Connect]/wizard connect is the create, the wizard probes
+boundSession.name when the pane is not attached, and pane-connect-notice carries had_cwd.
+91.F: worktrees moved out of the sidebar into the Diff pane, and the diff works on every
+host. worktrees.rs: run_git_raw (GitRaw code+streams, kill_on_drop) + exec_script_over
+(sh -c one round trip). diff_pane.rs rewritten on that transport: bundle (status -z +
+diff HEAD + --no-index per untracked, caps 40/256KiB/2MB), event files/error/branch/cwd/
+truncated, diff_cwd override + set_cwd, start/stop mounted-only watchers, worktrees cmd,
+validate_ref, no unwrap, continue-not-?. LayoutNode.diff_cwd (no schema bump; ~27 pane
+literals + local_setup missed once, caught by CI). open_diff shortcut Ctrl+Shift+G.
+diffModel.ts (parse/statusLetter/pathKey + node test). DiffPane: worktree strip, file
+list, listen-before-start, error verbatim. App: worktreeLists/worktreesVersion,
+branchForCard (card branch), openDiffPane (menu+palette+shortcut). Sidebar: scan cache /
+stubs / +・⟳ / branchFor removed; card branch from cardInfo.branch. i18n: diff source
+relabelled, notGitRepo dropped, diff.wt.*/files/truncated added, six pf.* removed.
+CI caught along the way: a missed pane literal (local_setup.rs), Bundle needs Debug + a
+moved AppState in the watcher, and a bundle_script test asserting output not script text.
+Result: compiles-untested (Rule #17) — CI; build-windows for the smoke. FOLLOWUPS:109 diff
+P2 closed; three new P3s (SSH status cost, unborn HEAD, /dev/null on Windows git).
