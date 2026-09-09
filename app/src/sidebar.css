@@ -311,8 +311,7 @@
    the dim .pf-unopened rows are the ones you click to create one. */
 .pf-header { cursor: pointer; }
 .pf-chevron,
-.pf-icon,
-.wt-icon { display: flex; flex-shrink: 0; opacity: 0.75; }
+.pf-icon { display: flex; flex-shrink: 0; opacity: 0.75; }
 
 /* Header buttons stay out of the way until hover — the tree is scanned
    far more often than it is edited. */
@@ -339,8 +338,7 @@
    row off-center. `padding-inline-start` rather than margin so the row's
    hover/active background still spans the full width, and so RTL mirrors
    for free. */
-.sidebar.full .ws-item,
-.sidebar.full .pf-hint {
+.sidebar.full .ws-item {
   padding-inline-start: calc(8px + var(--ws-depth, 0) * 14px);
 }
 
@@ -500,60 +498,8 @@
 .ws-chevron:hover { opacity: 1; color: var(--w-text); }
 .sidebar.icons .ws-chevron { display: none; }
 
-/* A worktree with no workspace yet. Indented one level past its repo;
-   margin-inline-start so it reads correctly in RTL. */
-.pf-unopened {
-  margin-inline-start: 10px;
-  gap: 6px;
-  padding: 4px 10px;
-  font-size: var(--w-fs-sm);
-  color: var(--w-text-dim);
-  opacity: 0.75;
-}
-.pf-unopened:hover { opacity: 1; }
-.wt-branch {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 55%;
-}
-.wt-path {
-  flex: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-align: end;
-  color: var(--w-text-faint);
-  font-size: var(--w-fs-xs);
-}
-.wt-flag { flex-shrink: 0; font-size: var(--w-fs-xs); }
-.pf-unopened.prunable .wt-branch { text-decoration: line-through; opacity: 0.7; }
-
-.pf-hint {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 16px;
-  font-size: var(--w-fs-xs);
-  color: var(--w-text-faint);
-  /* A git error can be long; wrap instead of clipping it to nothing. */
-  overflow-wrap: anywhere;
-}
-.pf-hint.pf-error { color: var(--w-error); }
-/* Keep a hint on ONE line. git's messages are long enough to wrap into a
-   three-line red slab that reads as a crash rather than a status; the
-   full text stays available as the title. */
-.pf-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  overflow: hidden;
-}
-.pf-hint > :last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
+/* Phase 91.F: .pf-unopened / .wt-* / .pf-hint / .pf-error removed with the
+   sidebar's worktree stubs — worktrees live in the Diff pane now. */
 
 /* Path field + optional native browse button, on one line. Paths are
    logically LTR even in an RTL UI (same rule as .ticket-modal-code). */

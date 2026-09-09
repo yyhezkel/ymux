@@ -4552,27 +4552,10 @@ function App() {
               } catch (e) { log.error("workspace_set_collapsed failed", e); }
             })();
           }}
-          onNewWorktree={(w) => setProjectFolderModal({ kind: "worktree", workspace: w })}
-          // Rejection is meaningful here — the Sidebar renders git's own
-          // message (bad path, no live SSH session) rather than an empty
-          // list, which would read as "this repo has no worktrees".
-          onListWorktrees={(workspaceId) =>
-            invoke<WorktreeEntry[]>("workspace_list_worktrees", { workspaceId })
-          }
-          onOpenWorktree={(rootWorkspaceId, wt) => void openWorktree(rootWorkspaceId, wt)}
-          onNotARepo={(workspaceId) => {
-            void (async () => {
-              try {
-                const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
-                  workspaceId,
-                  isProjectRoot: false,
-                });
-                updateFile(f);
-              } catch (e) {
-                log.error("workspace_set_project_root failed", e);
-              }
-            })();
-          }}
+          {/* Phase 91.F: the sidebar's worktree props (onNewWorktree /
+              onListWorktrees / onOpenWorktree / onNotARepo) are gone — the
+              worktree strip in the Diff pane owns all of that now, wired
+              through LayoutView (onDiffOpenWorktree / onDiffNewWorktree). */}
           allForwards={portForwards()}
           onOpenPorts={(workspaceId) => {
             // Badge click: activate that workspace, then open the

@@ -135,12 +135,13 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,597)
+## `Sidebar.tsx` (1,364)
 
-Workspace tree with groups, nesting, pinned project folders, and worktree children.
+Workspace tree with groups, nesting and pinned project folders (Phase 91.F: worktree
+stubs moved to the Diff pane, so a folder shows only its child workspaces).
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
-`WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
+`WorkspaceGroup`, `ForwardRow` from `types.ts`.
 
 **Headers + cards (Phase 91.E — the cmux look).** Every row is still one
 `.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
@@ -155,11 +156,12 @@ local root without children — is a `.ws-card` from `renderCardBody(w)`: line 1
 `.ws-gone` dimming still apply), the `.ws-card-count` attention pill, the pane-count badge
 only when `split` (the S/L/B/F letter is a header's business); line 2 = ONE indicator slot
 (waiting > brief > activity, else the live dot — Design Pass 01 P3 kept) + the status text;
-line 3 = `branchFor(w)` • `shortenCwd(cwd, sshUser)` forced LTR (a plain span — TechText
+line 3 = `info().branch` • `shortenCwd(cwd, sshUser)` forced LTR (a plain span — TechText
 would pill the path); line 4 = `:port` links that keep the `.ws-port-badge` class because
-that is the drag-start exclusion. `branchFor` reads the PARENT folder's worktree scan cache
-by cwd prefix — never a round trip, never a new scan trigger; a card under a server root has
-no branch, and there is no dirty `*` (git status is not known). All of it is fed by App's
+that is the drag-start exclusion. **Phase 91.F**: the branch comes from `cardInfo.branch`
+(App's `branchForCard`, fed by a Diff pane's worktree listing) — the sidebar no longer scans
+worktrees itself, so a card shows a branch only after a Diff pane has listed that repo; no
+dirty `*` (git status is not known). All of it is fed by App's
 `workspaceCardInfo` memo through the `cardInfo` prop (§ Sessions as rows); `cardInfoOf`
 falls back to the row's own name / cwd and "idle". The workspace colour is a 3px
 `.ws-card-stripe` (a real element — `::before/::after` are the drop lines), hidden on the
@@ -188,16 +190,12 @@ addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
 
-**Worktree scans are lazy, keyed by workspace id, and never polled.** A subtree's
-effect runs `scanFolder` once when it is open and has no result; a scan that fails
-with "no live SSH session" parks as `offline` (not an error row). The retry lives in
-one effect over `liveSshHosts` — a memo that collapses `connectedIds` (a fresh Set on
-every App tick) to the sorted `user@host:port` string of live SSH hosts — and rescans
-only the parked folders whose own host is in that set, inside `untrack` so its own
-`setScans` never re-fires it. Both constraints are load-bearing: the earlier version
-retried on *any* live workspace and tracked `scans()`, so a local workspace up with the
-folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
-Local/WSL folders never park — the backend runs git directly for them.
+**Worktrees left the sidebar (Phase 91.F).** The scan cache, `scanFolder`, the
+`liveSshHosts` retry effect, the `.pf-unopened` stub rows and the `+`/`⟳` buttons are gone
+— a project folder's worktrees are listed, opened and created from the **Diff pane's**
+worktree strip (`frontend-panes.md` § DiffPane, `backend-panes.md` § diff_pane). The sidebar
+keeps only the pinned-folder header and its child workspaces. A card's branch comes from
+`cardInfo.branch`, which App's `branchForCard` fills from a Diff pane's listing.
 
 Header glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
 terminal icon**, tooltip = the raw session name; else the colour dot. On a card the same

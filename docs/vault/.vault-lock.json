@@ -14,7 +14,7 @@
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
     "app/src-tauri/src/dev.rs": "7fe2df26da158a6741e1ade23117b2777988a34ca2776eb56f6dd3101b74ff64",
-    "app/src-tauri/src/diff_pane.rs": "a04832fe20094d522b018370583698ad9f1cb0aae9d204e090271bbe382f3444",
+    "app/src-tauri/src/diff_pane.rs": "e6c18105c92f130348a186ea6203f550d575f96c57790be977ffd189e5a353fd",
     "app/src-tauri/src/file_manager.rs": "d230dead31918d21d66fd291ce912296b78c5fb0d3fccffec3af5b44d572d1b6",
     "app/src-tauri/src/fonts.rs": "f0644c988e0fb77af46ea3a56bd58fc3132c2de209536df42b15208c3ebd79aa",
     "app/src-tauri/src/notes.rs": "c66ce93fe4ad80e03f01ab62b367895aa3430872cdc48740175620fe0dde7ffe",
@@ -168,7 +168,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "35361f2e29bafccac473b4a8849532a37a9be3986a979630d2e4560702220f8c",
+    "app/src/App.tsx": "3e7e97235777d6a9e6ba4dab79cbafa5c97b2121d1241745d3ad6539141fe4f0",
     "app/src/BriefingCard.tsx": "6b94ea7667f66046db629bbbb0248a0891ca81d90678f9170bc6d73d12c2d9f8",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
@@ -179,7 +179,7 @@
     "app/src/PanelFloat.tsx": "c73d3b1ec18f5c31f84079445ef786ed51005b9da60bb2435ad17b9316ebbe51",
     "app/src/PanelSurface.tsx": "d7baafe4d0187a3ccbb30d8ddaf6af44e8fe12ad09dbc84ede5aabfaed4ebf00",
     "app/src/SideDrawer.tsx": "baf72d7230d67cd602586b627bf0e6204e9b3e0e788ae7dbca092d0cbd1432a9",
-    "app/src/Sidebar.tsx": "1e03ff762e58d0bbd102dc3a67ba6d82a151f0931e5c2f447271e81114a14295",
+    "app/src/Sidebar.tsx": "d00133cde0c823080a6de7fd0dd56c615f8590acfc804ee278e5429601f86fff",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
     "app/src/cwdShort.ts": "754aeb0df8c53cd8c08b2ec2d833697b5ce7b45bd73f3f728ec342f3c2f95faa",

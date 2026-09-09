@@ -1,5 +1,5 @@
-import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount, untrack } from "solid-js";
-import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow, type WorkspaceCardInfo } from "./types";
+import { For, Show, createSignal, createMemo, onCleanup, onMount } from "solid-js";
+import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type ForwardRow, type WorkspaceCardInfo } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
 import { shortenCwd } from "./cwdShort";
@@ -13,8 +13,6 @@ import {
   IconChevronRight,
   IconFolder,
   IconTerminal,
-  IconRefresh,
-  IconWarning,
   IconActivity,
   IconSparkles,
 } from "./icons";
@@ -115,19 +113,12 @@ interface Props {
       | "add_project_folder"
       | "check_git",
   ) => void;
-  // Project folders are workspaces now (`is_project_root`), nested
-  // under whatever workspace they were pinned from. The Sidebar owns
-  // the worktree scan cache — lazy and never polled, because a scan is
-  // a round-trip over that workspace's connection; the App owns
-  // persistence and workspace creation.
+  // Project folders are workspaces now (`is_project_root`), nested under
+  // whatever workspace they were pinned from. Phase 91.F: their worktrees
+  // moved to the Diff pane, so the sidebar keeps only the folder header and
+  // its child workspaces — the scan cache, the stubs and the +/⟳ buttons
+  // are gone.
   onSetCollapsed: (workspaceId: string, isCollapsed: boolean) => void;
-  onNewWorktree: (w: Workspace) => void;
-  /** List a project-folder workspace's worktrees. Rejects with no live session. */
-  onListWorktrees: (workspaceId: string) => Promise<WorktreeEntry[]>;
-  /** Open a worktree that has no workspace yet as a child of the root. */
-  onOpenWorktree: (rootWorkspaceId: string, wt: WorktreeEntry) => void;
-  /** git says this directory is not a repo — stop treating it as one. */
-  onNotARepo: (workspaceId: string) => void;
   // Phase 36.A / 39: all forwards across workspaces, for the per-
   // workspace inline 🌐 badge. Clicking the badge opens the Ports
   // window scoped to that workspace.
@@ -502,119 +493,8 @@ export function Sidebar(p: Props) {
     setMoveMenuFor(null);
   };
 
-  // ── project-folder workspaces ────────────────────────────────────
-  //
-  // A pinned repo IS a workspace (`is_project_root`), nested under the
-  // one it was pinned from, and its git worktrees render beneath it. A
-  // worktree that already has a workspace renders as that workspace's
-  // ordinary row; one that doesn't renders dim, and clicking it creates
-  // the workspace.
-  //
-  // Scans are keyed by workspace id and never polled: `git worktree
-  // list` is a round-trip over that workspace's connection, so it runs
-  // when a subtree is open and has no result yet, and on an explicit ⟳.
-  type ScanState =
-    | { status: "loading" }
-    | { status: "ok"; entries: WorktreeEntry[] }
-    // "There is no session yet" is not a failure, it is a not-yet. The
-    // scan fires while the sidebar paints, which on a cold start is
-    // BEFORE anything has connected, so treating it as an error left a
-    // red block on every launch that only a manual ⟳ could clear.
-    | { status: "offline" }
-    | { status: "error"; message: string };
-  const [scans, setScans] = createSignal<Record<string, ScanState>>({});
-
-  // Logged at every outcome: a failing round-trip to another machine is
-  // otherwise invisible, and "it just doesn't show" is undiagnosable
-  // without it. Metadata only — never the worktree paths.
-  const scanFolder = async (ws: Workspace) => {
-    setScans((prev) => ({ ...prev, [ws.id]: { status: "loading" } }));
-    log.info(`worktree scan start ws=${ws.id}`);
-    try {
-      const entries = await p.onListWorktrees(ws.id);
-      setScans((prev) => ({ ...prev, [ws.id]: { status: "ok", entries } }));
-      log.info(`worktree scan ok ws=${ws.id} count=${entries.length}`);
-    } catch (e) {
-      const msg = String(e);
-      // Two very different failures wear the same red row otherwise.
-      // "No live SSH session" is transient and worth retrying; "not a git
-      // repository" is a permanent answer about this directory, so the
-      // workspace stops claiming to be a repo instead of asking again on
-      // every expand and every restart.
-      // No session yet: park it and let the connectivity effect retry.
-      if (/no live SSH session/i.test(msg)) {
-        setScans((prev) => ({ ...prev, [ws.id]: { status: "offline" } }));
-        log.info(`worktree scan deferred ws=${ws.id} — host not connected yet`);
-        return;
-      }
-      if (/not a git repository/i.test(msg)) {
-        setScans((prev) => {
-          const next = { ...prev };
-          delete next[ws.id];
-          return next;
-        });
-        log.info(`ws=${ws.id} is not a git repo — dropping the project-root flag`);
-        p.onNotARepo(ws.id);
-        return;
-      }
-      setScans((prev) => ({
-        ...prev,
-        [ws.id]: { status: "error", message: msg },
-      }));
-      log.error(`worktree scan failed ws=${ws.id}`, e);
-    }
-  };
-
-  /** `~/src/ymux-feature-x` → `ymux-feature-x`, for the dim path hint. */
-  const pathTail = (path: string) => {
-    const norm = path.replace(/\\/g, "/").replace(/\/+$/, "");
-    const i = norm.lastIndexOf("/");
-    return i === -1 ? norm : norm.slice(i + 1);
-  };
-
-  /**
-   * Normalize a path for worktree↔workspace binding: git and the shell
-   * disagree about separators and trailing slashes, and a mismatch here
-   * would silently render a duplicate row instead of adopting the
-   * existing workspace.
-   */
-  const pathKey = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
-
-  // A parked scan resumes when ITS host comes up — the backend resolves
-  // the SSH handle by `user@host:port` (`pick_ssh_handle_for_host`), so
-  // that is the only event that can turn "no live SSH session" into an
-  // answer. The first version of this effect retried on *any* live
-  // workspace and also tracked `scans()`, which it writes to itself:
-  // with a local workspace up and the folder's SSH host down, every
-  // failed retry re-parked the scan, re-ran the effect, and retried
-  // again — eight `worktree scan start` lines in 30ms, forever
-  // (2026-09-08). The memo collapses `connectedIds` (a fresh Set on
-  // every tick) to the sorted host-key string, so the effect fires only
-  // when the set of live SSH hosts actually changes, and `untrack`
-  // keeps its own writes from re-triggering it.
-  const liveSshHosts = createMemo(() => {
-    const keys = new Set<string>();
-    for (const id of p.connectedIds) {
-      const c = p.workspaces.find((w) => w.id === id)?.connection;
-      if (isRemoteConn(c)) keys.add(`${c.user}@${c.host}:${c.port}`);
-    }
-    return [...keys].sort().join("\n");
-  });
-  createEffect(() => {
-    const live = liveSshHosts();
-    if (live.length === 0) return;
-    const hosts = new Set(live.split("\n"));
-    untrack(() => {
-      for (const [id, st] of Object.entries(scans())) {
-        if (st.status !== "offline") continue;
-        const ws = p.workspaces.find((w) => w.id === id);
-        const c = ws?.connection;
-        if (ws && isRemoteConn(c) && hosts.has(`${c.user}@${c.host}:${c.port}`)) {
-          void scanFolder(ws);
-        }
-      }
-    });
-  });
+  // Phase 91.F: the worktree scan cache, scanFolder, pathTail, pathKey and the
+  // liveSshHosts retry effect moved OUT — worktrees now live in the Diff pane.
 
   /**
    * parent id → its children, sorted the same way the flat list is
@@ -670,30 +550,9 @@ export function Sidebar(p: Props) {
   };
   const sshUserOf = (w: Workspace): string | null =>
     isRemoteConn(w.connection) ? w.connection.user : null;
-  /**
-   * The card's branch, from the PARENT folder's worktree scan — the longest
-   * scanned worktree path that is a prefix of the card's cwd. Never a round
-   * trip and never a new scan trigger (the 2026-09-08 retry-loop lesson): a
-   * card under a collapsed folder is not rendered, an expanded folder scans
-   * itself, and a card under a server root (no scan) simply has no branch.
-   * No dirty `*` — git status is not known here.
-   */
-  const branchFor = (w: Workspace): string | null => {
-    const cwd = cardInfoOf(w).cwd;
-    if (!cwd || !w.parent_id) return null;
-    const st = scans()[w.parent_id];
-    if (!st || st.status !== "ok") return null;
-    const key = pathKey(cwd);
-    let best: WorktreeEntry | null = null;
-    for (const e of st.entries) {
-      const ek = pathKey(e.path);
-      if (key === ek || key.startsWith(ek + "/")) {
-        if (!best || ek.length > pathKey(best.path).length) best = e;
-      }
-    }
-    if (!best) return null;
-    return best.branch ?? (best.is_detached ? best.head.slice(0, 7) : null);
-  };
+  // Phase 91.F: the card's branch now comes from App's `workspaceCardInfo`
+  // (`info().branch`), fed by a Diff pane's worktree listing — the sidebar no
+  // longer scans worktrees itself.
 
   // Phase 91.A: "only active rows". A workspace is live when one of its
   // panes is connected (`connectedIds`, App's local truth — no round trip)
@@ -1023,91 +882,14 @@ export function Sidebar(p: Props) {
     if (ancestors.includes(w.id) || depth > 8) return null;
     const chain = [...ancestors, w.id];
     const kids = () => childrenOf().get(w.id) ?? [];
-    const scan = () => scans()[w.id];
-    // One rule covers every way a subtree ends up open: this click, a
-    // freshly pinned folder, and a restart with it already open.
-    createEffect(() => {
-      if (w.is_project_root && !w.is_collapsed && !scans()[w.id]) void scanFolder(w);
-    });
+    // Phase 91.F: no worktree scan here any more — a project folder's
+    // worktrees are listed and opened from the Diff pane. The folder row
+    // and its child workspaces are all the sidebar draws.
     return (
       <>
         {renderWorkspaceRow(w, depth)}
         <Show when={!w.is_collapsed}>
           <For each={kids().filter(rowVisible)}>{(k) => renderWorkspaceSubtree(k, depth + 1, chain)}</For>
-          <Show when={w.is_project_root}>
-            <Show when={scan()?.status === "loading"}>
-              <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>{t("pf.scanning")}</div>
-            </Show>
-            <Show when={scan()?.status === "offline"}>
-              <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>
-                {t("pf.waitingForConnection")}
-              </div>
-            </Show>
-            <Show when={scan()?.status === "error"}>
-              {/* git's own message — a bad path and a dead connection
-                  read very differently and the user needs to tell them
-                  apart. */}
-              <div
-                class="pf-hint pf-error"
-                style={`--ws-depth: ${depth + 1}`}
-                title={(scan() as { message: string }).message}
-              >
-                <IconWarning size={12} /> {(scan() as { message: string }).message}
-              </div>
-            </Show>
-            <Show when={scan()?.status === "ok"}>
-              {(() => {
-                const bound = () => {
-                  const m = new Map<string, Workspace>();
-                  for (const k of kids()) if (k.cwd) m.set(pathKey(k.cwd), k);
-                  return m;
-                };
-                // `git worktree list` includes the repo root itself —
-                // that entry IS this workspace, so rendering a stub for
-                // it would offer to open a child sharing its parent's
-                // directory.
-                const stubs = () =>
-                  (scan() as { entries: WorktreeEntry[] }).entries.filter(
-                    (wt) =>
-                      pathKey(wt.path) !== pathKey(w.cwd ?? "") &&
-                      !bound().has(pathKey(wt.path)),
-                  );
-                return (
-                  <>
-                    <For each={stubs()}>
-                      {(wt) => (
-                        <div
-                          class={`ws-item pf-unopened ${wt.is_prunable ? "prunable" : ""}`}
-                          style={`--ws-depth: ${depth + 1}`}
-                          title={`${wt.path}${wt.is_locked ? " — " + t("pf.locked") : ""}${
-                            wt.is_prunable ? " — " + t("pf.prunable") : ""
-                          }\n${t("pf.openWorktree")}`}
-                          onClick={() => p.onOpenWorktree(w.id, wt)}
-                        >
-                          <span class="wt-icon"><IconGitBranch size={12} /></span>
-                          <span class="wt-branch">
-                            <TechText text={wt.branch ?? (wt.is_detached ? wt.head.slice(0, 7) : "—")} />
-                          </span>
-                          <span class="wt-path"><TechText text={pathTail(wt.path)} /></span>
-                          <Show when={wt.is_locked}>
-                            <span class="wt-flag" title={t("pf.locked")}>🔒</span>
-                          </Show>
-                          <Show when={wt.is_prunable}>
-                            <span class="wt-flag" title={t("pf.prunable")}>⚠</span>
-                          </Show>
-                        </div>
-                      )}
-                    </For>
-                    <Show when={kids().length === 0 && stubs().length === 0}>
-                      <div class="pf-hint" style={`--ws-depth: ${depth + 1}`}>
-                        {t("pf.noWorktrees")}
-                      </div>
-                    </Show>
-                  </>
-                );
-              })()}
-            </Show>
-          </Show>
         </Show>
       </>
     );
@@ -1214,24 +996,8 @@ export function Sidebar(p: Props) {
         <Show when={w.git_worktree}>
           <span class="ws-worktree-chip" title={w.git_worktree!}><IconGitBranch size={13} /></span>
         </Show>
-        <Show when={w.is_project_root}>
-          <button
-            class="pf-btn"
-            title={t("pf.newWorktree")}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); p.onNewWorktree(w); }}
-          >
-            <IconPlus size={12} />
-          </button>
-          <button
-            class="pf-btn"
-            title={t("pf.refresh")}
-            onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); void scanFolder(w); }}
-          >
-            <IconRefresh size={12} />
-          </button>
-        </Show>
+        {/* Phase 91.F: the + new-worktree and ⟳ rescan buttons moved to the
+            Diff pane's worktree strip. */}
         {/* Phase 91.C: a new session as a new row — on any server or folder
             row (never on a session row), only while the setting is on. The
             terminal glyph keeps it apart from the worktree + above. */}
@@ -1545,12 +1311,12 @@ export function Sidebar(p: Props) {
             <TechText text={info().status.text} />
           </span>
         </div>
-        <Show when={info().cwd || branchFor(w)}>
+        <Show when={info().cwd || info().branch}>
           <div class="ws-card-path" title={info().cwd ?? undefined}>
-            <Show when={branchFor(w)}>
+            <Show when={info().branch}>
               <span class="ws-card-branch">
                 <IconGitBranch size={10} />
-                {branchFor(w)}
+                {info().branch}
               </span>
               <span class="ws-card-sep" aria-hidden="true">•</span>
             </Show>
