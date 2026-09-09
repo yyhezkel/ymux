@@ -9,6 +9,14 @@
    LOAD ORDER MATTERS. App.tsx imports this immediately after App.css and
    before tokens.css / themes-redesign.css, so the token alias layer and
    the four design directions still override everything here.
+
+   Phase 91.E — TWO ROW KINDS share `.ws-item[data-ws-id]`: `.ws-header`
+   (a slim one-line container row: server root, pinned folder, anything
+   with children) and `.ws-card` (a three-line cmux-style card for every
+   leaf: title / status / branch • cwd, ports). The active card is a
+   SOLID accent block with `--w-on-accent` text; the header keeps the
+   inset-bar look, and themes-redesign.css keys its per-direction active
+   grammar on `.ws-header` only.
    ───────────────────────────────────────────────────────────────────── */
 
 /* ─── Shell: resizer, collapse button, ICONS mode ─── */
@@ -44,6 +52,21 @@
 .sidebar.icons .ws-worktree-chip,
 .sidebar.icons .ws-live,
 .sidebar.icons .ws-action-label { display: none; }
+/* Phase 91.E: a card in the strip is its dot / terminal glyph, nothing
+   else; the ONE attention marker becomes a warning ring on that glyph. */
+.sidebar.icons .ws-card-status,
+.sidebar.icons .ws-card-path,
+.sidebar.icons .ws-card-ports,
+.sidebar.icons .ws-card-count,
+.sidebar.icons .ws-card-glyph,
+.sidebar.icons .ws-card-stripe { display: none; }
+.sidebar.icons .ws-item.ws-card { margin: 0; }
+.sidebar.icons .ws-card-l1 { display: flex; align-items: center; justify-content: center; }
+.sidebar.icons .ws-item.ws-card.has-attn .ws-dot,
+.sidebar.icons .ws-item.ws-card.has-attn .ws-session-icon {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--w-surface), 0 0 0 4px var(--w-warning);
+}
 /* The cluster empties out here (badge/ports/live are all hidden above) but
    its `margin-inline-start: auto` would still eat the free space and shove
    the centred dot off-axis. Float it instead so the one marker that DOES
@@ -260,6 +283,19 @@
 }
 .ws-item.active .ws-name { color: var(--w-text); }
 
+/* Phase 91.E: a HEADER row — the container above a run of cards. Dim and
+   small so the cards under it read as the content and it as the label;
+   full colour when hovered or active. The inset-bar active look above
+   stays the header's. */
+.ws-item.ws-header { margin-top: 4px; }
+.ws-item.ws-header .ws-name {
+  font-size: var(--w-fs-sm);
+  font-weight: 600;
+  color: var(--w-text-dim);
+}
+.ws-item.ws-header.active .ws-name,
+.ws-item.ws-header:hover .ws-name { color: var(--w-text); }
+
 .ws-dot {
   width: 8px;
   height: 8px;
@@ -307,6 +343,145 @@
 .sidebar.full .pf-hint {
   padding-inline-start: calc(8px + var(--ws-depth, 0) * 14px);
 }
+
+/* ─── Phase 91.E: cmux-style CARDS ───────────────────────────────────
+   Title / status / branch • cwd / ports, stacked. The depth indent is a
+   MARGIN here (10px per level, not the 14px padding above): the block
+   itself narrows under its header, as a card should, instead of its
+   text sliding inside a full-width row. */
+.sidebar.full .ws-item.ws-card {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 8px 10px;
+  margin-inline-start: calc(var(--ws-depth, 0) * 10px);
+  margin-bottom: 6px;
+  border-radius: var(--w-r-md);
+}
+/* The workspace colour: the dot MOVED to a stripe (still one use of the
+   colour per row — Design Pass 01 P3 holds). Hidden on the active card,
+   where the accent block is the identity. */
+.ws-card-stripe {
+  position: absolute;
+  inset-inline-start: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--ws-color);
+}
+.ws-card-l1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+/* The glyphs are the icons-mode face of a card; the full rail has the
+   stripe and the title. */
+.sidebar.full .ws-card .ws-dot,
+.sidebar.full .ws-card .ws-session-icon { display: none; }
+.ws-card-title { font-weight: 600; font-size: var(--w-fs-md); }
+.ws-card-glyph { display: flex; flex-shrink: 0; color: var(--w-accent); }
+.ws-card-count {
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  min-width: 1.6em;
+  padding: 0 6px;
+  text-align: center;
+  border-radius: 999px;
+  background: var(--w-accent);
+  color: var(--w-on-accent, #0e1116);
+  font-family: var(--w-font-mono);
+  font-size: var(--w-fs-xs);
+  font-weight: 600;
+  line-height: 1.5;
+}
+.ws-card .ws-badge { margin-inline-start: 4px; }
+.ws-card-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: var(--w-fs-sm);
+  color: var(--w-text-dim);
+}
+.ws-card-status-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.ws-card-status.is-waiting .ws-card-status-text,
+.ws-card-status.is-agent-attn .ws-card-status-text { color: var(--w-warning); }
+.ws-card-status.is-notif .ws-card-status-text { color: var(--w-text); }
+.ws-card-status.is-gone .ws-card-status-text { font-style: italic; }
+.ws-card-path {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  font-family: var(--w-font-mono);
+  font-size: var(--w-fs-xs);
+  color: var(--w-text-faint);
+}
+.ws-card-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-card-sep { flex-shrink: 0; opacity: 0.6; }
+.ws-card-cwd { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* A path is logically LTR in a Hebrew / Arabic rail too; flex-end keeps
+   the line on the same edge as the title. */
+[dir="rtl"] .ws-card-path { direction: ltr; justify-content: flex-end; }
+.ws-card-ports {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-family: var(--w-font-mono);
+  font-size: var(--w-fs-xs);
+}
+.ws-card .ws-port-badge.ws-card-port {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--w-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ws-card .ws-port-badge.ws-card-port:hover { color: var(--w-accent-hi); background: transparent; }
+/* The active card = the solid accent block. Specificity (0,5,0) outranks
+   every `.ws-item.active` rule in themes-redesign.css (0,3,0), which now
+   target `.ws-header` anyway. `--w-on-accent` is computed by applyTheme
+   from the accent's luminance: dark text on the base pastel, white on the
+   light-mode blue. */
+.sidebar.full .ws-item.ws-card.active {
+  background: var(--w-accent);
+  color: var(--w-on-accent, #0e1116);
+  box-shadow: none;
+}
+.sidebar.full .ws-item.ws-card.active:hover { background: var(--w-accent-hi); }
+.ws-item.ws-card.active .ws-name,
+.ws-item.ws-card.active .ws-card-glyph,
+.ws-item.ws-card.active .ws-card-status-text,
+.ws-item.ws-card.active .ws-card-path,
+.ws-item.ws-card.active .ws-port-badge.ws-card-port { color: inherit; }
+.ws-item.ws-card.active .ws-card-status { opacity: 0.85; }
+.ws-item.ws-card.active .ws-card-path { opacity: 0.7; }
+.ws-item.ws-card.active .ws-card-count {
+  background: var(--w-on-accent, #0e1116);
+  color: var(--w-accent);
+}
+.ws-item.ws-card.active .ws-card-stripe { display: none; }
+.ws-item.ws-card.active .ws-badge {
+  background: color-mix(in srgb, var(--w-on-accent, #0e1116) 18%, transparent);
+  color: inherit;
+}
+.ws-item.ws-card.ws-gone .ws-card-path { opacity: 0.5; }
 
 /* Collapse toggle on any row that has a subtree. A <button> so the
    drag-start handler's interactive-child exclusion already skips it. */
@@ -641,7 +816,12 @@
    The rail resizes down to 160px. Rather than let the cluster squeeze the
    name to nothing, drop the least urgent marker; the row's `title` (set
    unconditionally in Sidebar.tsx) still carries the full name. */
-.sidebar[data-narrow] .ws-port-badge { display: none; }
+.sidebar[data-narrow] .ws-header .ws-port-badge { display: none; }
+/* Phase 91.E: a card has a whole line for ports; drop the branch instead
+   so the cwd keeps the width. */
+.sidebar[data-narrow] .ws-card-branch,
+.sidebar[data-narrow] .ws-card-sep { display: none; }
+.sidebar[data-narrow] .ws-item.ws-card { padding: 6px 8px; }
 
 /* ─── Bottom action row ─── */
 

@@ -20,6 +20,10 @@
   /* accents */
   --w-accent: #7aa2f7;
   --w-accent-hi: #94b4ff;
+  /* Text ON the accent (the active sidebar card, count pills). applyTheme()
+     recomputes it from the accent's luminance for every preset; this is
+     the fallback for the base pastel, which white fails against (2.6:1). */
+  --w-on-accent: #0e1116;
   --w-success: #4ec9b0;
   --w-warning: #e0af68;
   --w-error: #f7768e;

@@ -592,6 +592,11 @@ export function applyTheme(s: Settings): void {
   r.setProperty("--w-border-hi", mix(t.border, t.text_primary, 0.1));
   r.setProperty("--w-text-faint", mix(t.text_secondary, t.background, 0.4));
   r.setProperty("--w-accent-hi", mix(t.accent, "#ffffff", 0.18));
+  // Phase 91.E: text painted ON the accent (the active sidebar card). White
+  // fails against the base pastel (#7aa2f7, 2.6:1) and dark text fails
+  // against the light-mode blue (#365fd6), so pick per accent by WCAG
+  // relative luminance instead of per theme.
+  r.setProperty("--w-on-accent", onAccent(t.accent));
 
   // Redesign directions carry their own display font (Barlow / Source Serif /
   // Archivo / Lora), but SOFTLY: only when the user hasn't picked a custom UI
@@ -744,6 +749,19 @@ function buildTerminalTheme(t: Theme): ITheme {
 function alpha(hex: string, a: number): string {
   const c = parseHex(hex);
   return c ? `rgba(${c[0]}, ${c[1]}, ${c[2]}, ${a})` : hex;
+}
+
+/** Dark or white, whichever contrasts with `accent` (WCAG relative
+ *  luminance; 0.4 is where the two ratios cross for the accents ymux ships). */
+function onAccent(accent: string): string {
+  const c = parseHex(accent);
+  if (!c) return "#0e1116";
+  const lin = (v: number) => {
+    const x = v / 255;
+    return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4);
+  };
+  const lum = 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  return lum > 0.4 ? "#0e1116" : "#ffffff";
 }
 
 function mix(base: string, with_: string, amount: number): string {

@@ -427,7 +427,7 @@
   letter-spacing: 0.14em;
   text-transform: uppercase;
 }
-[data-theme-preset^="industry"] .ws-item.active {
+[data-theme-preset^="industry"] .ws-item.ws-header.active {
   background: color-mix(in srgb, var(--w-accent) 10%, var(--w-bg));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--w-accent) 55%, transparent);
 }
@@ -461,11 +461,11 @@
   font-weight: 600;
   letter-spacing: 0.01em;
 }
-[data-theme-preset^="broadsheet"] .ws-item.active {
+[data-theme-preset^="broadsheet"] .ws-item.ws-header.active {
   background: transparent;
   box-shadow: none;
 }
-[data-theme-preset^="broadsheet"] .ws-item.active .ws-name {
+[data-theme-preset^="broadsheet"] .ws-item.ws-header.active .ws-name {
   font-weight: 600;
   color: var(--w-accent);
 }
@@ -495,11 +495,11 @@
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
-[data-theme-preset^="modernist"] .ws-item.active {
+[data-theme-preset^="modernist"] .ws-item.ws-header.active {
   background: color-mix(in srgb, var(--w-accent) 14%, var(--w-bg));
   box-shadow: inset 4px 0 0 var(--w-accent);
 }
-[dir="rtl"][data-theme-preset^="modernist"] .ws-item.active {
+[dir="rtl"][data-theme-preset^="modernist"] .ws-item.ws-header.active {
   box-shadow: inset -4px 0 0 var(--w-accent);
 }
 [data-theme-preset^="modernist"] .ws-header-btn {
@@ -525,7 +525,10 @@
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-[data-theme-preset^="classical"] .ws-item.active {
+/* Phase 91.E: the four directions keep their active grammar on HEADER
+   rows only — a card's active state is the solid accent block in
+   sidebar.css, the same in every direction. */
+[data-theme-preset^="classical"] .ws-item.ws-header.active {
   background: transparent;
   box-shadow: inset 0 0 0 1px var(--w-accent);
 }

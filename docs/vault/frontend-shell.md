@@ -135,16 +135,42 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,286)
+## `Sidebar.tsx` (1,597)
 
 Workspace tree with groups, nesting, pinned project folders, and worktree children.
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 `WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
 
-**Session rows (Phase 90.B / 91.C)** wear a terminal glyph; the ones in `goneIds` are
-`.ws-gone`; server and folder rows carry a terminal-glyph `+` (`onNewSession`) while
-`sessionsAsRows` is on. See § Sessions as rows below.
+**Headers + cards (Phase 91.E — the cmux look).** Every row is still one
+`.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
+is shared), but there are two bodies. `isHeaderRow(w)` — a pinned folder, anything with
+children, or a remote root without children (the machine itself, so its look never flips
+with the sessions setting) — renders the pre-91.E row verbatim as a slim `.ws-header`
+(chevron, glyph, dim small-caps-weight name, worktree chip, `+` worktree / rescan / `+`
+session, the `.ws-meta` cluster). Every other row — a session row, a worktree workspace, a
+local root without children — is a `.ws-card` from `renderCardBody(w)`: line 1 = the
+`.ws-dot` / terminal glyph (hidden in `full`; it IS the card in icons mode), ✳ when
+`cardInfo.agent`, the display name as `.ws-name.ws-card-title` (so per-string bidi and
+`.ws-gone` dimming still apply), the `.ws-card-count` attention pill, the pane-count badge
+only when `split` (the S/L/B/F letter is a header's business); line 2 = ONE indicator slot
+(waiting > brief > activity, else the live dot — Design Pass 01 P3 kept) + the status text;
+line 3 = `branchFor(w)` • `shortenCwd(cwd, sshUser)` forced LTR (a plain span — TechText
+would pill the path); line 4 = `:port` links that keep the `.ws-port-badge` class because
+that is the drag-start exclusion. `branchFor` reads the PARENT folder's worktree scan cache
+by cwd prefix — never a round trip, never a new scan trigger; a card under a server root has
+no branch, and there is no dirty `*` (git status is not known). All of it is fed by App's
+`workspaceCardInfo` memo through the `cardInfo` prop (§ Sessions as rows); `cardInfoOf`
+falls back to the row's own name / cwd and "idle". The workspace colour is a 3px
+`.ws-card-stripe` (a real element — `::before/::after` are the drop lines), hidden on the
+active card, whose look is the solid accent block with `--w-on-accent` text (computed by
+`applyTheme` from the accent's luminance; themes-redesign.css keys its four per-direction
+active rules on `.ws-header` only). Icons mode collapses a card to its glyph, with a
+warning ring when `has-attn`; `[data-narrow]` drops the branch, not the cwd.
+
+**Session rows (Phase 90.B / 91.C)** are cards; the ones in `goneIds` are `.ws-gone` and
+their status line reads "gone — Connect resumes"; server and folder rows (headers) carry a
+terminal-glyph `+` (`onNewSession`) while `sessionsAsRows` is on. See § Sessions as rows.
 
 **"Only rows with live sessions" (Phase 91.A)** — a toggle under the wordmark
 (`.sidebar-live-toggle`, `aria-pressed`, localStorage `ymux.sidebar.liveOnly`). The rule
@@ -173,9 +199,10 @@ retried on *any* live workspace and tracked `scans()`, so a local workspace up w
 folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
 Local/WSL folders never park — the backend runs git directly for them.
 
-Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
-terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
-otherwise a plain child — click, collapse, drag, delete all take the same path.
+Header glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
+terminal icon**, tooltip = the raw session name; else the colour dot. On a card the same
+glyph is the icons-mode face only. A session row is otherwise a plain child — click,
+collapse, drag, delete all take the same path.
 
 **Phase 90 — the active-sessions overview's three row actions live in App, not in the
 window**, because each needs App-level state. `openSessionAsWorkspace` (90.B) closes the

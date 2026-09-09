@@ -1,7 +1,8 @@
 import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount, untrack } from "solid-js";
-import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
+import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow, type WorkspaceCardInfo } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
+import { shortenCwd } from "./cwdShort";
 import {
   IconNotes,
   IconSettings,
@@ -15,6 +16,7 @@ import {
   IconRefresh,
   IconWarning,
   IconActivity,
+  IconSparkles,
 } from "./icons";
 import type { SidebarMode } from "./settings";
 import { createLogger } from "./logger";
@@ -70,6 +72,11 @@ interface Props {
   // rendered dim; their [Connect] resumes. App decides, from the root's
   // live list.
   goneIds: Set<string>;
+  // Phase 91.E: what a CARD row prints beyond the Workspace itself — title,
+  // status line, cwd, agent glyph, attention count. App's `workspaceCardInfo`
+  // memo builds it for the whole tree; a row missing here falls back to the
+  // Workspace's own name / cwd and "idle".
+  cardInfo: Record<string, WorkspaceCardInfo>;
   // Phase 91.C: Settings → "Show every session as a sidebar row". Gates the
   // per-row "new session" button; the mirroring itself is App's.
   sessionsAsRows: boolean;
@@ -637,6 +644,56 @@ export function Sidebar(p: Props) {
     return out;
   });
 
+  // Phase 91.E: two row kinds. A row that can HOLD rows — a pinned folder,
+  // anything with children, a remote root (the machine itself, even before
+  // the sessions setting has given it children — so its look never flips
+  // with the setting) — is a slim one-line HEADER; every leaf (a session
+  // row, a worktree workspace, a local root without children) is a
+  // three-line cmux-style CARD. `const`s, above the `return`, like
+  // `childrenOf` — the TDZ note on it applies here too.
+  const isHeaderRow = (w: Workspace): boolean =>
+    w.is_project_root
+    || (childrenOf().get(w.id) ?? []).length > 0
+    || (!w.parent_id && !w.tmux_session && isRemoteConn(w.connection));
+  const cardInfoOf = (w: Workspace): WorkspaceCardInfo =>
+    p.cardInfo[w.id] ?? {
+      title: w.name,
+      status: { kind: "idle", text: t("sidebar.card.status.idle") },
+      cwd: w.cwd,
+      agent: false,
+      attention: 0,
+    };
+  const cardTooltip = (w: Workspace): string => {
+    const i = cardInfoOf(w);
+    return `${i.title}\n${i.status.text}${i.cwd ? `\n${i.cwd}` : ""}`;
+  };
+  const sshUserOf = (w: Workspace): string | null =>
+    isRemoteConn(w.connection) ? w.connection.user : null;
+  /**
+   * The card's branch, from the PARENT folder's worktree scan — the longest
+   * scanned worktree path that is a prefix of the card's cwd. Never a round
+   * trip and never a new scan trigger (the 2026-09-08 retry-loop lesson): a
+   * card under a collapsed folder is not rendered, an expanded folder scans
+   * itself, and a card under a server root (no scan) simply has no branch.
+   * No dirty `*` — git status is not known here.
+   */
+  const branchFor = (w: Workspace): string | null => {
+    const cwd = cardInfoOf(w).cwd;
+    if (!cwd || !w.parent_id) return null;
+    const st = scans()[w.parent_id];
+    if (!st || st.status !== "ok") return null;
+    const key = pathKey(cwd);
+    let best: WorktreeEntry | null = null;
+    for (const e of st.entries) {
+      const ek = pathKey(e.path);
+      if (key === ek || key.startsWith(ek + "/")) {
+        if (!best || ek.length > pathKey(best.path).length) best = e;
+      }
+    }
+    if (!best) return null;
+    return best.branch ?? (best.is_detached ? best.head.slice(0, 7) : null);
+  };
+
   // Phase 91.A: "only active rows". A workspace is live when one of its
   // panes is connected (`connectedIds`, App's local truth — no round trip)
   // or when a descendant is; the active workspace is always shown so the
@@ -1059,8 +1116,10 @@ export function Sidebar(p: Props) {
     return (
       <div
         data-ws-id={w.id}
-        class={`ws-item ${p.activeId === w.id ? "active" : ""} ${
-          p.waitingWorkspaceIds.has(w.id) ? "has-waiting" : ""
+        class={`ws-item ${isHeaderRow(w) ? "ws-header" : "ws-card"} ${
+          p.activeId === w.id ? "active" : ""
+        } ${p.waitingWorkspaceIds.has(w.id) ? "has-waiting" : ""} ${
+          !isHeaderRow(w) && cardInfoOf(w).attention > 0 ? "has-attn" : ""
         } ${p.goneIds.has(w.id) ? "ws-gone" : ""} ${
           p.hookPulseWorkspaceIds?.has(w.id) ? "hook-pulse" : ""
         } ${dragKind() === "ws" && dragId() === w.id ? "dragging" : ""} ${
@@ -1073,7 +1132,11 @@ export function Sidebar(p: Props) {
         // Always, not just in icons mode: `full` mode can be dragged down to
         // 160px, where .ws-name ellipsizes and the tooltip is the only way
         // left to read the name.
-        title={p.goneIds.has(w.id) ? t("ws.gone.tooltip", { name: w.tmux_session ?? w.name }) : w.name}
+        title={
+          p.goneIds.has(w.id)
+            ? t("ws.gone.tooltip", { name: w.tmux_session ?? w.name })
+            : isHeaderRow(w) ? w.name : cardTooltip(w)
+        }
         // beta.3 (ws-dragdrop): pointer-drag reorder. A press that never crosses
         // the move threshold is a click → switch; a completed drag sets
         // `didDrag`, which swallows the trailing click here.
@@ -1094,6 +1157,12 @@ export function Sidebar(p: Props) {
           setMoveMenuFor(null);
         }}
       >
+        {/* Phase 91.E: ONE outer element for both row kinds — `data-ws-id`
+            on it is what drag/drop hit-tests (`closest("[data-ws-id]")`)
+            and the menu below is shared. The header body is the pre-91.E
+            row verbatim (left at its indentation on purpose: the diff is
+            the wrapper, not the row); the card body is renderCardBody. */}
+        <Show when={isHeaderRow(w)} fallback={renderCardBody(w)}>
         <Show when={w.is_project_root || (childrenOf().get(w.id) ?? []).length > 0}>
           {/* A <button> so `startPointerDrag`'s interactive-child
               exclusion already skips it; stopPropagation keeps the click
@@ -1237,6 +1306,7 @@ export function Sidebar(p: Props) {
           </Show>
           <WorkspaceBadge w={w} />
         </span>
+        </Show>
         <Show when={menuFor() === w.id}>
           <div
             class="ws-menu ws-menu-fixed"
@@ -1379,6 +1449,136 @@ export function Sidebar(p: Props) {
           </div>
         </Show>
       </div>
+    );
+  }
+
+  /**
+   * Phase 91.E: the cmux-style card body — title line, status line, path
+   * line, ports. Inside the same `.ws-item[data-ws-id]` as a header, so
+   * click / drag / menu / .ws-gone / hook-pulse are the one row path.
+   * `info()` is a plain accessor over App's memo: this runs inside <For>
+   * and a per-row createMemo would be re-created on every updateFile().
+   *
+   * Line 1: the `.ws-dot` / terminal glyph (hidden in `full`, it IS the
+   * card in icons mode), ✳ when an agent has a signal, the display name
+   * (keeps `.ws-name` so the per-string bidi and the .ws-gone dimming
+   * apply), the attention pill, the pane-count badge (the S/L/B/F letter
+   * is a header's business). Line 2: ONE indicator slot (Design Pass 01
+   * P3 — waiting > brief > activity, else the live dot) and the status
+   * text. Line 3: branch • cwd, forced LTR — a path is a path in a Hebrew
+   * rail too, and TechText would pill the whole thing. Ports keep the
+   * `.ws-port-badge` class: that is the drag-start exclusion.
+   */
+  function renderCardBody(w: Workspace) {
+    const info = () => cardInfoOf(w);
+    const fwds = () => p.allForwards.filter((f) => f.workspace_id === w.id);
+    const attn = () =>
+      p.waitingWorkspaceIds.has(w.id)
+      || p.briefAttentionWorkspaceIds?.has(w.id)
+      || p.notifiedWorkspaceIds.has(w.id);
+    return (
+      <>
+        {/* A real element: ::before / ::after are the drop lines. */}
+        <Show when={w.color}>
+          <span class="ws-card-stripe" aria-hidden="true" />
+        </Show>
+        <div class="ws-card-l1">
+          <Show
+            when={!w.tmux_session}
+            fallback={
+              <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
+                <IconTerminal size={13} />
+              </span>
+            }
+          >
+            <span class="ws-dot" style={{ background: w.color || "#6b7682" }} />
+          </Show>
+          <Show when={info().agent}>
+            <span class="ws-card-glyph" title={t("sidebar.card.agentTitle")}>
+              <IconSparkles size={11} />
+            </span>
+          </Show>
+          <span class="ws-name ws-card-title">
+            <Show when={w.emoji}>{w.emoji} </Show>
+            <TechText text={info().title} />
+          </span>
+          <Show when={info().attention > 0}>
+            <span
+              class="ws-card-count"
+              title={t("sidebar.card.count.tooltip", { count: info().attention })}
+            >
+              {info().attention}
+            </span>
+          </Show>
+          <Show when={workspaceBadge(w).cls === "split"}>
+            <WorkspaceBadge w={w} />
+          </Show>
+        </div>
+        <div class={`ws-card-status is-${info().status.kind}`}>
+          <Show
+            when={attn()}
+            fallback={
+              <Show when={p.connectedIds.has(w.id)}>
+                <span class="ws-live" title={t("sidebar.workspaceConnectedTitle")} />
+              </Show>
+            }
+          >
+            <span
+              class={`ws-waiting-dot ${
+                p.waitingWorkspaceIds.has(w.id)
+                  ? ""
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "brief-attn"
+                    : "activity"
+              }`}
+              title={t(
+                p.waitingWorkspaceIds.has(w.id)
+                  ? "sidebar.workspaceWaitingTitle"
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "sidebar.workspaceBriefTitle"
+                    : "sidebar.workspaceActivityTitle",
+              )}
+            />
+          </Show>
+          <span class="ws-card-status-text">
+            <TechText text={info().status.text} />
+          </span>
+        </div>
+        <Show when={info().cwd || branchFor(w)}>
+          <div class="ws-card-path" title={info().cwd ?? undefined}>
+            <Show when={branchFor(w)}>
+              <span class="ws-card-branch">
+                <IconGitBranch size={10} />
+                {branchFor(w)}
+              </span>
+              <span class="ws-card-sep" aria-hidden="true">•</span>
+            </Show>
+            <Show when={info().cwd}>
+              <span class="ws-card-cwd" dir="ltr">
+                {shortenCwd(info().cwd ?? "", sshUserOf(w))}
+              </span>
+            </Show>
+          </div>
+        </Show>
+        <Show when={fwds().length > 0}>
+          <div class="ws-card-ports">
+            <For each={fwds()}>
+              {(f) => (
+                <span
+                  class="ws-port-badge ws-card-port"
+                  title={t("ports.workspaceBadge.tooltipOne", { count: 1 })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    p.onOpenPorts(w.id);
+                  }}
+                >
+                  :{f.local_port}
+                </span>
+              )}
+            </For>
+          </div>
+        </Show>
+      </>
     );
   }
 }
