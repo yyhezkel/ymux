@@ -290,7 +290,17 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   `QueueRow` (`QUEUE_BUCKET` then oldest; needs-input/stuck/waiting = `agent-attn`, text =
   `whatsHappening`, else the status word) → connected → idle. `attention` counts panes that
   are waiting or unread plus needs-input/stuck rows not already counted. Re-runs on the
-  250 ms agent clock; O(workspaces × panes + notifications).
+  250 ms agent clock; O(workspaces × panes + notifications). **Phase 91.F** adds `branch`,
+  from `branchForCard`: the longest scanned-worktree path that is a prefix of the card's cwd,
+  looked up in `worktreeLists` (App's `Record<wsId, WorktreeEntry[]>`, filled by a Diff pane's
+  `onWorktreesListed` or `recheckGit`) against the nearest ancestor that has been listed —
+  null until a Diff pane has run for that repo. The sidebar no longer scans worktrees itself.
+- **`openDiffPane()`** (Phase 91.F) — focuses an existing `diff` pane in the active workspace
+  (`collectPanes` + `findPane` + `paneKindOf`), else splits one off the active pane. Wired to
+  the ⋯ menu item, the palette (`pane.openDiff`) and the `open_diff` shortcut (Ctrl+Shift+G).
+  `worktreesVersion` bumps on `ProjectFolderModal`'s `onDone` so an open Diff strip re-lists;
+  `onDiffOpenWorktree` → `openWorktree(projectRootOf(wsId), wt)`, `onDiffNewWorktree` opens the
+  worktree modal for that project root. All threaded through `LayoutView` to `DiffPane`.
 - **`+` on a server / folder row** (`sessionsAsRows && !tmux_session &&
   wsCaps(w).sessionPersistence`, `IconTerminal`, `sidebar.newSession.tooltip`) →
   `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory

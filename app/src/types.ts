@@ -109,6 +109,9 @@ export interface WorkspaceCardInfo {
   agent: boolean;
   /** panes that need you: blocking card ∪ unread notification ∪ needs-input/stuck */
   attention: number;
+  /** Phase 91.F: branch from the nearest ancestor's worktree list — filled
+   *  by a Diff pane's listing or Check-git; null until one has run. */
+  branch: string | null;
 }
 
 export interface TmuxSessionInfo {

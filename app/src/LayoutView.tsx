@@ -27,6 +27,7 @@ import {
   type Connection,
   type LayoutNode,
   type SplitDirection,
+  type WorktreeEntry,
 } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { trafficLight, type PaneAgentState } from "./paneAgentState";
@@ -121,6 +122,11 @@ interface Props {
   // maximize button. SplitView spreads `{...s.all}` so it propagates
   // through nested splits for free.
   tabsMode: boolean;
+  // Phase 91.F: threaded to DiffPane's worktree strip.
+  worktreesVersion: number;
+  onDiffOpenWorktree: (workspaceId: string, wt: WorktreeEntry) => void;
+  onDiffNewWorktree: (workspaceId: string) => void;
+  onWorktreesListed: (workspaceId: string, entries: WorktreeEntry[]) => void;
   // Phase 24.D: onWorkspacesFileUpdate removed — its only consumers
   // were the (now-gone) ChatPane / ClaudeLogPane Match arms.
 }
@@ -308,6 +314,11 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           isActive={isActive()}
           onFocus={props.all.onFocus}
           onClose={props.all.onClose}
+          workspaceCwd={props.all.workspaceCwd}
+          worktreesVersion={props.all.worktreesVersion}
+          onOpenWorktree={props.all.onDiffOpenWorktree}
+          onNewWorktree={props.all.onDiffNewWorktree}
+          onWorktreesListed={props.all.onWorktreesListed}
         />
       </Match>
       <Match when={kind() === "help"}>

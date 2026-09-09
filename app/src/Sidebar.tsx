@@ -662,6 +662,7 @@ export function Sidebar(p: Props) {
       cwd: w.cwd,
       agent: false,
       attention: 0,
+      branch: null,
     };
   const cardTooltip = (w: Workspace): string => {
     const i = cardInfoOf(w);

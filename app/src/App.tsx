@@ -17,6 +17,7 @@ import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
 import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
+import { pathKey } from "./diffModel";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
   allPaneSessions,
@@ -1117,6 +1118,8 @@ function App() {
       { id: "pane.maximize", label: t("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
       // Phase 84.A: split ⇄ tabs for the active workspace.
       { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
+      // Phase 91.F: open (or focus) the git-diff pane.
+      { id: "pane.openDiff", label: t("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
       // Phase 55-B: distribute splits evenly (Ctrl+Alt+=).
       { id: "pane.distributeEvenly", label: t("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
       { id: "pane.rename", label: t("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
@@ -1770,10 +1773,12 @@ function App() {
     const ws = file().workspaces.find((w) => w.id === workspaceId);
     if (!ws?.cwd) return;
     try {
-      await invoke<WorktreeEntry[]>("git_probe_worktrees", {
+      const list = await invoke<WorktreeEntry[]>("git_probe_worktrees", {
         path: ws.cwd,
         connection: ws.connection ?? null,
       });
+      // Phase 91.F: feed the sidebar card's branch line (branchForCard).
+      setWorktreeLists((prev) => ({ ...prev, [workspaceId]: list }));
       const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
         workspaceId,
         isProjectRoot: true,
@@ -1931,6 +1936,24 @@ function App() {
     const added = collectPanes(after).find((p) => !before.has(p));
     if (added) focusPane(added);
     return added ?? null;
+  };
+
+  // Phase 91.F: open the Diff pane — focus an existing one in this
+  // workspace, else split one off the active pane. Shared by the ⋯ menu,
+  // the command palette and the Ctrl+Shift+G shortcut.
+  const openDiffPane = () => {
+    const ws = activeWs();
+    if (!ws?.layout) return;
+    const existing = collectPanes(ws.layout).find((pid) => {
+      const node = findPane(ws.layout!, pid);
+      return node ? paneKindOf(node) === "diff" : false;
+    });
+    if (existing) {
+      focusPane(existing);
+      return;
+    }
+    const pid = activePaneId();
+    if (pid) void splitPane(pid, "horizontal", "diff");
   };
 
   // Phase 84.A: close a tab and land on a sensible neighbour. The
@@ -2693,6 +2716,61 @@ function App() {
   // gone session (a gone row can still carry a stale brief) → the agent's
   // most urgent row (needs-input / stuck / waiting outrank working / done;
   // text = whatsHappening, else the status word) → connected → idle.
+  // Phase 91.F: worktrees moved out of the sidebar into the Diff pane. The
+  // pane feeds its `git worktree list` back here (onWorktreesListed) and
+  // `recheckGit` fills it too, so a sidebar CARD can still show its branch
+  // (`branchFor` is gone from the sidebar). `worktreesVersion` bumps after a
+  // worktree is created so an open Diff strip re-lists.
+  const [worktreeLists, setWorktreeLists] = createSignal<Record<string, WorktreeEntry[]>>({});
+  const [worktreesVersion, setWorktreesVersion] = createSignal(0);
+
+  // Nearest ancestor-or-self flagged `is_project_root`, else the id itself —
+  // where `workspace_open_worktree` should hang a new worktree workspace.
+  const projectRootOf = (wsId: string): string => {
+    const all = file().workspaces;
+    let cur = all.find((w) => w.id === wsId);
+    let hops = 0;
+    while (cur && hops < all.length) {
+      if (cur.is_project_root) return cur.id;
+      if (!cur.parent_id) break;
+      cur = all.find((w) => w.id === cur?.parent_id);
+      hops++;
+    }
+    return wsId;
+  };
+
+  // The branch a sidebar card shows: the longest scanned worktree path that
+  // is a prefix of the card's cwd, looked up against the nearest ancestor
+  // that a Diff pane has listed. Null until a Diff pane (or Check-git) has
+  // run for that repo.
+  const branchForCard = (wsId: string, cwd: string | null): string | null => {
+    if (!cwd) return null;
+    const all = file().workspaces;
+    const key = pathKey(cwd);
+    // Walk ancestors-or-self for the first id present in worktreeLists.
+    let cur = all.find((w) => w.id === wsId);
+    let hops = 0;
+    const lists = worktreeLists();
+    while (cur && hops < all.length) {
+      const entries = lists[cur.id];
+      if (entries && entries.length > 0) {
+        let best: WorktreeEntry | null = null;
+        for (const e of entries) {
+          const ek = pathKey(e.path);
+          if (key === ek || key.startsWith(ek + "/")) {
+            if (!best || ek.length > pathKey(best.path).length) best = e;
+          }
+        }
+        if (best) return best.branch ?? (best.is_detached ? best.head.slice(0, 7) : null);
+        return null;
+      }
+      if (!cur.parent_id) break;
+      cur = all.find((w) => w.id === cur?.parent_id);
+      hops++;
+    }
+    return null;
+  };
+
   const workspaceCardInfo = createMemo((): Record<string, WorkspaceCardInfo> => {
     const out: Record<string, WorkspaceCardInfo> = {};
     const wss = file().workspaces;
@@ -2762,7 +2840,14 @@ function App() {
         const st = queueStatus(r);
         if ((st === "needs-input" || st === "stuck") && !waitingPanes.has(r.paneId) && !notified.has(r.paneId)) attention++;
       }
-      out[w.id] = { title, status, cwd, agent: rows.length > 0, attention };
+      out[w.id] = {
+        title,
+        status,
+        cwd,
+        agent: rows.length > 0,
+        attention,
+        branch: branchForCard(w.id, cwd),
+      };
     }
     return out;
   });
@@ -3351,6 +3436,8 @@ function App() {
     // V: that collides with STT push-to-talk, which is exactly the class of
     // clash conflictingAccels() now surfaces in Settings.
     { id: "focus_zoom", run: (e) => { e.preventDefault(); toggleMaximize(); } },
+    // Phase 91.F: open (or focus) the git-diff pane.
+    { id: "open_diff", when: () => !!activeWs(), run: (e) => { e.preventDefault(); openDiffPane(); } },
     // v0.4.4-beta.2: reset the active terminal — clears leaked mouse-tracking
     // modes (the escape-text leak from an unclean vim/fzf/less exit) + text
     // attributes.
@@ -4637,8 +4724,7 @@ function App() {
                       title={t("ws_header.split_diff_title")}
                       onClick={() => {
                         setWsMenuOpen(false);
-                        const pid = activePaneId();
-                        if (pid) splitPane(pid, "horizontal", "diff");
+                        openDiffPane();
                       }}
                     >
                       <IconGitCompare />
@@ -4832,6 +4918,15 @@ function App() {
                     workspaceEmoji={activeWs()?.emoji ?? undefined}
                     maximizedPaneId={maximizedPaneId()}
                     tabsMode={tabsMode()}
+                    worktreesVersion={worktreesVersion()}
+                    onWorktreesListed={(id, list) =>
+                      setWorktreeLists((prev) => ({ ...prev, [id]: list }))
+                    }
+                    onDiffOpenWorktree={(wsId, wt) => void openWorktree(projectRootOf(wsId), wt)}
+                    onDiffNewWorktree={(wsId) => {
+                      const root = file().workspaces.find((w) => w.id === projectRootOf(wsId));
+                      if (root) setProjectFolderModal({ kind: "worktree", workspace: root });
+                    }}
                     workspacePaneCount={(() => {
                       const l = activeWs()?.layout;
                       return l ? collectPanes(l).length : 0;
@@ -5311,7 +5406,12 @@ function App() {
           <ProjectFolderModal
             mode={m()}
             onClose={() => setProjectFolderModal(null)}
-            onDone={() => void reloadWorkspaces()}
+            onDone={() => {
+              void reloadWorkspaces();
+              // Phase 91.F: a worktree was just created — nudge any open
+              // Diff strip to re-list.
+              setWorktreesVersion((v) => v + 1);
+            }}
           />
         )}
       </Show>

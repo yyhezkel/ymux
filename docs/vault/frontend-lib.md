@@ -172,7 +172,8 @@ nullable key, not `T?` — so helpers such as `effectiveIdentity` widen their pa
 are what components use to reason about a pane.
 
 **Not everything here is generated.** `BoundSession` (Phase 91.C — what a pane's
-[Connect] attaches to, or resumes) and `WorkspaceCardInfo` / `CardStatusKind` (Phase 91.E —
+[Connect] attaches to, or resumes) and `WorkspaceCardInfo` / `CardStatusKind` (Phase 91.E,
++ `branch` in 91.F —
 what a sidebar card prints, built by App's `workspaceCardInfo` memo, see frontend-shell) are
 hand-written in `types.ts`, as are
 `TmuxSessionInfo` and `ForeignScope`, which are
