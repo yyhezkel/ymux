@@ -25,7 +25,9 @@ test("long paths keep the last two segments", () => {
     shortenCwd("/srv/projects/customer/very-long-repository-name/packages/web", null),
     "…/packages/web",
   );
-  assert.equal(shortenCwd("/home/yossi/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o", "yossi"), "…/n/o");
+  // 37 chars after the ~ collapse, so it trips the 34 cutoff (the earlier
+  // single-letter version was 31 and did not — CI caught the test, not the code).
+  assert.equal(shortenCwd("/home/yossi/aa/bb/cc/dd/ee/ff/gg/hh/ii/jj/kk/ll", "yossi"), "…/kk/ll");
   // Short enough is left alone even when it has many segments.
   assert.equal(shortenCwd("/a/b/c/d/e", null), "/a/b/c/d/e");
 });
