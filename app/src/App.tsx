@@ -4552,10 +4552,6 @@ function App() {
               } catch (e) { log.error("workspace_set_collapsed failed", e); }
             })();
           }}
-          {/* Phase 91.F: the sidebar's worktree props (onNewWorktree /
-              onListWorktrees / onOpenWorktree / onNotARepo) are gone — the
-              worktree strip in the Diff pane owns all of that now, wired
-              through LayoutView (onDiffOpenWorktree / onDiffNewWorktree). */}
           allForwards={portForwards()}
           onOpenPorts={(workspaceId) => {
             // Badge click: activate that workspace, then open the
