@@ -841,8 +841,12 @@ mod tests {
     fn bundle_script_quotes_and_marks() {
         let s = bundle_script("/home/y/my repo", &DiffSource::Head, "__YMUX_DIFF_00__");
         assert!(s.contains("'/home/y/my repo'"));
-        assert!(s.contains("__YMUX_DIFF_00__ status"));
-        assert!(s.contains("__YMUX_DIFF_00__ end"));
+        // The marker is shell-quoted in the script; printf's format carries
+        // the section word. `split_bundle` reassembles `<marker> status`
+        // etc. from the OUTPUT, which is covered by its own test.
+        assert!(s.contains("'__YMUX_DIFF_00__'"));
+        assert!(s.contains("printf '%s status"));
+        assert!(s.contains("printf '\\n%s end"));
         assert!(s.contains("--no-index"));
         // A path that tries to break out stays inert.
         let evil = bundle_script("/x'; rm -rf /; echo '", &DiffSource::Working, "__M__");
