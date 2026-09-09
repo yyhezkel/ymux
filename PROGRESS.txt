@@ -7521,3 +7521,26 @@ S-Up/S-Down and must-contain the new binds; remote-manifest.json tmux-conf sha
 992b1ecd… size 9428. Docs: vault frontend-lib (mouse contract) / frontend-shell / backend-core,
 MOUSE-DEBUG decided 91.D, DECISIONS entry, FOLLOWUPS P2 → ARCHIVE.
 Result: compiles-untested (Rule #17) — CI. Live checks in the P1 smoke list.
+
+2026-09-09 — Phase 91.E: cmux-style sidebar — slim headers + three-line cards (PR #44 round 3)
+Yossi: "I wanted the rows to look like cmux — that completely changes the sidebar design".
+Read cmux's README screenshots (not recalled): a FLAT list of multi-line cards — bold title +
+agent glyph + count badge, dim status line with the latest notification text / Idle / Running /
+Connected, `branch • cwd` mono, `:port` links, active = solid accent block. Asked two questions;
+Yossi chose "headers + cards" (containers stay slim one-line headers, every leaf is a card, the
+tree stays) and "3 lines like cmux". Commits:
+ 1. feat(shell): WorkspaceCardInfo memo (App, one memo for the whole tree; line-2 precedence
+    blocking → unread notification text → gone → agent QueueRow → connected → idle; title/cwd
+    of a session row from the root's live list → known_sessions → the row), cwdShort.ts +
+    node test, types, i18n x4.
+ 2. feat(shell): Sidebar isHeaderRow / renderCardBody inside the ONE .ws-item[data-ws-id]
+    (drag/drop + menu untouched), branchFor from the parent folder's scan cache, sidebar.css
+    header + card rules, --w-on-accent from the accent's luminance in applyTheme,
+    themes-redesign.css active rules re-scoped to .ws-header, App.css fallback token. Vault
+    frontend-shell, DECISIONS 91.E, FOLLOWUPS P1 smoke (19 items incl. the 91.D wheel).
+ Bugs on the way: a heredoc python script died on a backslash-U escape inside a doc path and
+ the E1 commit went in without its vault prose — caught by re-reading the stat, amended from a
+ scratch .py with raw strings (twice: PROGRESS itself hit the same escape); the modernist
+ active rule's RTL twin shares its substring, so the replace order had to put the RTL rule
+ first.
+Result: compiles-untested (Rule #17) — pushed for CI; build-windows to be dispatched.
