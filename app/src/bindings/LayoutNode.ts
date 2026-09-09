@@ -5,4 +5,4 @@ import type { DiffSource } from "./DiffSource";
 import type { PaneKind } from "./PaneKind";
 import type { SplitDirection } from "./SplitDirection";
 
-export type LayoutNode = { "kind": "pane", pane_id: string, pane_kind: PaneKind, connection: Connection | null, browser: BrowserState | null, title: string | null, auto_title: string | null, annotation: string | null, color: string | null, emoji: string | null, help_topic: string | null, diff_source: DiffSource | null, smart_bidi: boolean | null, } | { "kind": "split", split_id: string, direction: SplitDirection, first: LayoutNode, second: LayoutNode, ratio: number, };
+export type LayoutNode = { "kind": "pane", pane_id: string, pane_kind: PaneKind, connection: Connection | null, browser: BrowserState | null, title: string | null, auto_title: string | null, annotation: string | null, color: string | null, emoji: string | null, help_topic: string | null, diff_source: DiffSource | null, smart_bidi: boolean | null, diff_cwd: string | null, } | { "kind": "split", split_id: string, direction: SplitDirection, first: LayoutNode, second: LayoutNode, ratio: number, };

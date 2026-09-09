@@ -403,6 +403,7 @@ pub fn backfill_terminal_connections(
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             let needs_fix =
                 matches!(pane_kind, PaneKind::Terminal) && connection.is_none();
@@ -429,6 +430,7 @@ pub fn backfill_terminal_connections(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 },
                 needs_fix,
             )
@@ -916,6 +918,7 @@ mod tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 

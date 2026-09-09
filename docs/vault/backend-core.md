@@ -67,7 +67,10 @@ put logic there.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
 - **`Connection`, `LayoutNode`, `Workspace`** — `ymux-types`. `LayoutNode::Pane` carries
-  its own optional `connection`, so one workspace's leaves can target different hosts.
+  its own optional `connection`, so one workspace's leaves can target different hosts. It
+  also carries `diff_source` and (Phase 91.F) `diff_cwd` — which worktree a Diff pane is
+  looking at, `None` = the workspace's own cwd. `diff_cwd` is view state, so it did **not**
+  bump `WORKSPACES_SCHEMA_VERSION` (a bump makes an older build refuse to save).
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.

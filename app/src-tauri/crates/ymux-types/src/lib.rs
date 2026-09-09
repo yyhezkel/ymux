@@ -266,6 +266,13 @@ pub enum LayoutNode {
         // Latin runs near RTL context. Persists across reloads.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         smart_bidi: Option<bool>,
+        // Phase 91.F: the worktree the Diff pane is looking at, when it is
+        // not the workspace's own cwd. None = follow `ws.cwd`. This is view
+        // state — losing it costs one click — so WORKSPACES_SCHEMA_VERSION
+        // did NOT bump for it (a bump makes older builds refuse to save at
+        // all; v3 bumped for `intent`, which the user typed, not for this).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        diff_cwd: Option<String>,
     },
     Split {
         split_id: String,
@@ -723,6 +730,7 @@ mod tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -738,7 +746,7 @@ mod tests {
         // pane_kind MUST be absent from the JSON.
         assert!(v.get("pane_kind").is_none());
         // browser / title / annotation / color / emoji / help_topic /
-        // diff_source / smart_bidi all elided too.
+        // diff_source / smart_bidi / diff_cwd all elided too.
         for f in [
             "browser",
             "title",
@@ -749,6 +757,7 @@ mod tests {
             "help_topic",
             "diff_source",
             "smart_bidi",
+            "diff_cwd",
         ] {
             assert!(v.get(f).is_none(), "field {f} should be elided");
         }
@@ -769,10 +778,14 @@ mod tests {
             help_topic: None,
             diff_source: Some(DiffSource::Head),
             smart_bidi: None,
+            diff_cwd: Some("/home/y/src/ymux-feature".into()),
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["pane_kind"], "diff");
         assert_eq!(v["diff_source"], json!({ "kind": "head" }));
+        // Phase 91.F: diff_cwd persists (present) when set; a None diff_cwd
+        // elides like every other Option pane field (checked above).
+        assert_eq!(v["diff_cwd"], "/home/y/src/ymux-feature");
     }
 
     #[test]

@@ -593,6 +593,11 @@ struct WorkspacesFile {
 /// can be resumed. Elided when empty; a 0.5.1 build would drop it on its
 /// next save. (90.B's `tmux_session` should have bumped too and did not; it
 /// rides this one.)
+/// v4 unchanged (2026-09-09, Phase 91.F): `LayoutNode::Pane.diff_cwd` is view
+/// state — which worktree a Diff pane is looking at, one click to restore — so
+/// it deliberately does NOT bump. A bump makes an older build REFUSE to save
+/// (SchemaGate::Refuse), which is far worse than an older build dropping a
+/// diff_cwd it never had a Diff pane to use.
 pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 4;
 
 /// A `version` key that is absent entirely means a pre-versioning file.
@@ -1093,6 +1098,7 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
                 help_topic: None,
                 diff_source: None,
                 smart_bidi: None,
+                diff_cwd: None,
             });
             migrated = true;
         }
@@ -1408,6 +1414,7 @@ pub(crate) fn split_pane_in(
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1480,6 +1487,7 @@ pub(crate) fn split_pane_in(
                     help_topic: new_help_t,
                     diff_source: new_diff_s,
                     smart_bidi: None,
+                    diff_cwd: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1497,6 +1505,7 @@ pub(crate) fn split_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 };
                 (
                     LayoutNode::Split {
@@ -1523,6 +1532,7 @@ pub(crate) fn split_pane_in(
                         help_topic,
                         diff_source,
                         smart_bidi,
+                        diff_cwd,
                     },
                     false,
                 )
@@ -1597,6 +1607,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1614,6 +1625,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }),
                 None,
             )
@@ -1695,6 +1707,7 @@ pub(crate) fn update_pane_in(
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1710,6 +1723,7 @@ pub(crate) fn update_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1725,6 +1739,7 @@ pub(crate) fn update_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }
             }
         }
@@ -4088,6 +4103,7 @@ async fn provision_existing_install_key(
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }),
         ..Default::default()
     };
@@ -5723,6 +5739,7 @@ fn workspace_create(
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }),
         setup_command: input.setup_command,
         teardown_command: input.teardown_command,
@@ -5860,6 +5877,7 @@ fn workspace_reset_layout(
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         });
     }
     persist(&state)?;
@@ -6711,6 +6729,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
     }
 }
 
@@ -7207,6 +7226,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
     }
 }
 
@@ -12441,6 +12461,7 @@ mod pane_swap_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -12649,6 +12670,7 @@ mod migration_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -14770,6 +14792,7 @@ mod wsl_migration_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 

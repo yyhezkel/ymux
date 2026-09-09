@@ -63,6 +63,12 @@ restricted networks.
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
 `BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`, `KnownSession`.
 
+**`LayoutNode::Pane`** carries `diff_source` and (Phase 91.F) **`diff_cwd: Option<String>`**
+— which worktree a Diff pane is looking at, `None` = the workspace's own cwd. Both elide
+when unset; `diff_cwd` is view state and deliberately did **not** bump the schema version.
+`ymux-core`'s `backfill_terminal_connections` and every `LayoutNode::Pane { … }` literal in
+the tree carry the field (a struct-literal add is exhaustive, so all of them do).
+
 **`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
 overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
 renamed by `tmux_rename_session`, elided when absent so old files round-trip byte-identical

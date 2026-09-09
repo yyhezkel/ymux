@@ -704,6 +704,7 @@ async fn dispatch(
                     help_topic: None,
                     diff_source: None,
                     smart_bidi: None,
+                    diff_cwd: None,
                 }),
                 setup_command: input.setup_command,
                 teardown_command: input.teardown_command,
@@ -2280,6 +2281,7 @@ async fn dispatch(
                     help_topic: None,
                     diff_source: None,
                     smart_bidi: None,
+                    diff_cwd: None,
                 });
             }
             persist(state)?;

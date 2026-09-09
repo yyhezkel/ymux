@@ -1088,6 +1088,7 @@ fn finalize_workspace(
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
     };
     let ws = Workspace {
         id: new_workspace_id(),
