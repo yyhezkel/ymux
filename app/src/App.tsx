@@ -872,6 +872,10 @@ function App() {
     try {
       const m = await invoke<Record<string, string>>("pane_persistence_list");
       setPanePersistence(m ?? {});
+      // Phase 91.D: the wheel proxy is armed from THIS map and nothing else —
+      // a pane the backend lists holds a tmux/zellij session, a pane it
+      // does not list is a plain shell whose wheel xterm.js must keep.
+      for (const [pid, ti] of terms) ti.setTmuxScroll(!!m?.[pid]);
       // Phase 80: every refresh is a fresh, authoritative "pane → tmux session"
       // answer from the backend, so record it here rather than only in the
       // post-connect callback. That callback fires on one 100ms timer down one
@@ -3616,6 +3620,9 @@ function App() {
         // user clicks around while re-reading the "[disconnected]" notice.
         // Fixed control string — never PTY content (Rule #1).
         ti?.resetMouseModes();
+        // Phase 91.D: the session behind this pane is gone with the PTY, so
+        // the wheel goes back to xterm.js before the async refresh confirms it.
+        ti?.setTmuxScroll(false);
         ti?.detach();
         bump();
         void refreshPersistence();

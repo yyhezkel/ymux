@@ -117,6 +117,23 @@ stood, for the record:
 
 #1 shipped in v0.4.4-beta.2; #2 (with the lock) landed 2026-09-08.
 
+## Decided 2026-09-09 (Phase 91.D): the wheel proxy, back — gated this time
+
+The "cost" line under option 2 was wrong in a way that mattered: with tmux's
+mouse off the wheel does not fall back to xterm's scrollback, because inside
+tmux xterm.js has NO scrollback (alt screen) and xterm.js 6.0 then converts
+every wheel event into one plain Up/Down key — at a shell prompt that is bash
+HISTORY. Yossi's second smoke: "now the wheel really doesn't work".
+
+Fix (`terminalInstance.ts` + `ymux-tmux.conf`): `attachCustomWheelEventHandler`
+sends Shift+Up/Down ×3 per event, **only** when App has armed the pane from
+`pane_persistence_list` (the backend says it holds a tmux/zellij session — the
+gate O-3 lacked when it fired in a plain shell), the ALT buffer is active and
+no app tracks the mouse; the conf binds `S-Up`/`S-Down` to `copy-mode -e` +
+scroll on the main screen and passes them through as plain Up/Down under
+`#{alternate_on}`. Left-click stays with xterm.js — nothing here touches
+tmux's `mouse` option.
+
 ## Deferred
 
 Monitor "Terminal state" diagnostic (live `term.modes.mouseTrackingMode`,

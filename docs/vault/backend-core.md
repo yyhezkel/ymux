@@ -204,9 +204,12 @@ injection is gone, and `source-file -q` is what makes a running server adopt a c
 conf (`-f` is read only when the server starts). The conf (`resources/ymux-tmux.conf`)
 states the same invariant as `ymux-zellij.kdl` — *1 ymux pane == 1 session == 1 window
 == 1 pane, zero chrome*: `mouse off`, `status off`, `unbind -a -T prefix` then only `[`,
-`d` and `C-b send-prefix`, root `PPage` → `copy-mode -eu` under `!#{alternate_on}`, and a
-`set -gu` before every `set -ga` so re-sourcing is idempotent. `tmux_attach_script_tests`
-lints it (allowed key names — Phase 65 CRITICAL is why —, the `-gu`/`-ga` pairing, no
+`d` and `C-b send-prefix`, root `PPage` → `copy-mode -eu` under `!#{alternate_on}`, root
+`S-Up`/`S-Down` (Phase 91.D — what the frontend's wheel proxy sends) → `copy-mode -e` +
+`scroll-up`/`scroll-down` on the main screen and plain Up/Down under `#{alternate_on}`,
+the same pair in both copy-mode tables, and a `set -gu` before every `set -ga` so
+re-sourcing is idempotent. `tmux_attach_script_tests` lints it (allowed key names `[ d
+C-b PPage S-Up S-Down` — Phase 65 CRITICAL is why —, the `-gu`/`-ga` pairing, no
 `mouse on`, no `-t =`) and pins `remote-manifest.json`'s `tmux-conf` sha/size to the
 embedded bytes: only ci-windows regenerates that file, so a stale committed entry makes
 the mac build re-upload the conf on every connect.

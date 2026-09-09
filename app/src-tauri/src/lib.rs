@@ -13137,14 +13137,15 @@ mod tmux_attach_script_tests {
             .filter(|l| !l.trim_start().starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
-        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix"] {
+        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix", "bind -n S-Up", "bind -T copy-mode-vi S-Down"] {
             assert!(code.contains(want), "conf lost `{want}`");
         }
         for forbidden in ["mouse on", "-t =", "S-PageUp", "S-PPage", "S-NPage", "status on"] {
             assert!(!code.contains(forbidden), "conf must not contain `{forbidden}`");
         }
         // Every key a `bind` names must be one tmux 3.0–3.4 spells this way.
-        let allowed = ["[", "d", "C-b", "PPage"];
+        // `S-Up` / `S-Down` are the Phase 91.D wheel proxy's keys.
+        let allowed = ["[", "d", "C-b", "PPage", "S-Up", "S-Down"];
         let mut seen_unset: Vec<String> = Vec::new();
         for line in CONF.lines() {
             let mut toks = line.split_whitespace();

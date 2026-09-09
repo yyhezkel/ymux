@@ -7507,3 +7507,17 @@ dispatched for the live smoke.
   worktree-scan retry fix) → merged origin/main (f5e406b; conflicts: Sidebar imports union, PROGRESS append-only,
   vault lock regenerated). All 5 PR checks green on f5e406b. build-windows dispatched on f5e406b (run 34250666442,
   green): ymux-windows-nsis + ymux-windows-exe for the Rule #14 smoke — FOLLOWUPS P1 (2026-09-08, rewritten for rows).
+
+2026-09-09 — Phase 91.D: the wheel proxy on multiplexer panes (the 91.C deferral lasted one smoke)
+Yossi's second live run of PR #44: "you did touch the mouse — now the wheel really doesn't work".
+Cause confirmed: with tmux mouse off (91.B) xterm.js 6.0 converts a wheel event on the alt
+buffer into one plain Up/Down = bash history. Built the FOLLOWUPS P2 design as filed plus one
+guard (normal buffer → xterm keeps the wheel): terminalInstance.ts setTmuxScroll + the
+attachCustomWheelEventHandler (Shift+Up/Down x3 via term.input, only when armed, alt buffer,
+no mouse tracking); App.tsx arms from refreshPersistence's map and disarms on pty:exit;
+ymux-tmux.conf root S-Up/S-Down → copy-mode -e + scroll on the main screen, pass-through
+under #{alternate_on}, the pair in both copy-mode tables; lib.rs conf lint allowlist grows to
+S-Up/S-Down and must-contain the new binds; remote-manifest.json tmux-conf sha
+992b1ecd… size 9428. Docs: vault frontend-lib (mouse contract) / frontend-shell / backend-core,
+MOUSE-DEBUG decided 91.D, DECISIONS entry, FOLLOWUPS P2 → ARCHIVE.
+Result: compiles-untested (Rule #17) — CI. Live checks in the P1 smoke list.

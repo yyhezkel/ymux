@@ -47,7 +47,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (4,954) — one component, ~50 signals
+## `App.tsx` (5,479) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -55,6 +55,12 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `notes`, `paneStatus`, `agentRuns`, `portForwards`, `detectedPorts`, `sidebarWidth`,
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
+
+**`refreshPersistence()` is the one place the wheel proxy is armed (Phase 91.D).** Every
+refresh of `pane_persistence_list` fans out `ti.setTmuxScroll(!!m[pid])` over `terms`,
+so a pane the backend lists as holding a tmux/zellij session gets the Shift+Up/Down wheel
+proxy and every other pane keeps xterm's native wheel; `pty:exit` disarms synchronously
+before the async refresh confirms it. See `frontend-lib.md` § mouse contract.
 
 **Keyboard dispatch is one ordered table, not a chain of `if`s.** `keyBindings`
 is a `KeyBinding[]` of `{ id, when?, run }` built once; `handleKey` walks it and the
