@@ -17,9 +17,6 @@ import {
   IconSparkles,
 } from "./icons";
 import type { SidebarMode } from "./settings";
-import { createLogger } from "./logger";
-
-const log = createLogger("SIDEBAR");
 
 // cmux-A A2: eight-color palette for workspace group swatches. Kept
 // intentionally small so a group's dot in the sidebar is easy to
