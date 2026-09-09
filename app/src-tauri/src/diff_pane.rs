@@ -226,6 +226,7 @@ printf '\n%s end\n' {m}
     )
 }
 
+#[derive(Debug)]
 struct Bundle {
     status_text: String,
     diff_text: String,
@@ -535,7 +536,9 @@ pub(crate) fn start_watcher(app: AppHandle, state: AppState, pane_id: String) {
     stop_watcher_inner(&state, &pane_id);
     let app2 = app.clone();
     let pid = pane_id.clone();
+    let state_for_task = state.clone();
     let handle = tokio::spawn(async move {
+        let state = state_for_task;
         let mut last_hash: Option<u64> = None;
         let mut last_error: Option<String> = None;
         loop {
