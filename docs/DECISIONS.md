@@ -51,24 +51,47 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
   over the internet. New scope `shell:attach`, explicitly NOT part of `AllScopes` /
   the fail-open `"all"`; `exec` + `hygiene/kill` owner-only; redeem rate-limited; revoke
   tears down live WS; Cloudflare Access / nginx allowlist recommended by the installer.
-- **Options still open (recommendation first):**
-  - Q1 truth model — **server-native workspaces, tmux sessions are the shared reality**
-    (via `session-meta.json`, the Phase-90 "session is a workspace row" bridge) / mirror
-    the desktop's `workspaces.json` (two writers, one file, no).
-  - Q2 web bundle delivery — **`ymux-web` add-on uploading a release tarball to
-    `~/.ymux/server/www/`** / `embed` in the Go binary (every frontend commit would trip
-    the server rebake gate and add 2×13 MB blob revisions per PR).
-  - Q3 "local parallel" — **defer**: it means the Rust backend re-implementing the same
-    HTTP/WS API (two implementations, two languages — the macOS-branch lesson). Later
-    "local" can be the same CGO-free Go daemon running locally with the desktop as one
-    more client.
-  - Q4 desktop + browser on the same tmux session — both see output (tmux), the hook
-    gate goes to whichever endpoint the session's `YMUX_SOCKET_ADDR` names.
-    **Accept for v1, documented.**
+- **Q1 truth model — DECIDED (Yossi, 2026-09-10): server-native workspaces, tmux
+  sessions are the shared reality** (via `session-meta.json`, the Phase-90 "session is a
+  workspace row" bridge — deleting a row kills the tmux session on the server, as it
+  does today). Mirroring the desktop's `workspaces.json` was rejected (two writers).
+- **Q5 session history — NEW (raised by Yossi with Q1): keep an ended session's
+  transcript reachable — open it to read, resume it if needed.** What the code does
+  today: the transcript is Claude's own `~/.claude/projects/<cwd>/<id>.jsonl` and
+  survives the tmux kill; what is lost is the *mapping* — `session_meta.rs::prune`
+  deletes every entry with no live `tmux ls` match on every write. The desktop's
+  resume picker (`pane_list_claude_sessions`) already scans the jsonl files, so half
+  the feature exists, unlinked from the row. **Recommendation: yes, cheap.** `prune`
+  marks `ended_at` instead of deleting (keep 90 days / N latest); an ended row stays
+  in the sidebar with **open** (transcript viewer — the daemon already parses this
+  format in `claudeusage.go`) and **resume** (`tmux new-session -s <name> -c <cwd>
+  claude --resume <id>`). Benefits the desktop too. Rule #1: the viewer renders the
+  transcript, nothing logs it. Lands in Phase B (`docs/WEB-DESIGN.md` §4.2).
+- **Q2 web bundle delivery — OPEN, expanded for Yossi.** Three options in
+  `docs/WEB-DESIGN.md` §7.1: (a) `//go:embed` — simplest to serve, but the daemon is
+  a committed 13 MB blob per arch, so every frontend fix rebakes the server and adds
+  ~26 MB of git history per PR, and the frontend's cadence is chained to the daemon's;
+  (b) **`ymux-web` add-on** — tarball bundled in `app.exe` like the CLI, uploaded over
+  the workspace SSH session to `~/.ymux/server/www/<ver>/`, sha256-gated and
+  idempotent like the CLI bootstrap, served by the daemon at `/`; offline-friendly,
+  version-aligned with the app, uses the add-on detect/update UI that exists; costs a
+  desktop for updates (the desktop is the admin — acceptable); (c) daemon
+  self-downloads from GitHub releases — headless, but adds an outbound network
+  dependency the daemon does not have and REQUIRES signature verification (a fetched
+  bundle served to the user's browser is code execution in their session).
+  **Recommendation: (b), with (c) as a later opt-in.**
+- **Q3 "local parallel" — DEFERRED (Yossi, 2026-09-10): revisit after the remote path
+  is proven end-to-end.** It means the Rust backend re-implementing the same HTTP/WS
+  API (two implementations, two languages — the macOS-branch lesson). When it comes
+  back, the candidate is the same CGO-free Go daemon running locally with the desktop
+  as one more client.
+- **Q4 desktop + browser on the same tmux session** — both see output (tmux), the hook
+  gate goes to whichever endpoint the session's `YMUX_SOCKET_ADDR` names.
+  **Accept for v1, documented.**
 - **Debt logged with it:** layout tree ops get a TS port for the web build while the
   desktop keeps the Rust one — two implementations until the desktop moves to the TS ops.
-- **Status:** design written, no code. Waiting on Yossi for Q1–Q3; Phase A can start on
-  the recommendations without blocking on them.
+- **Status:** design written, no code. Q1 decided, Q3 deferred, Q5 recommended; Q2
+  awaiting Yossi's pick. Phase A does not depend on Q2 and can start.
 
 ### 2026-08-23 - macOS: the site's JS is dead in the in-app Browser (diagnostic build)
 - **Symptom.** On macOS the workspace Browser loads a page and renders HTML/CSS,

@@ -113,6 +113,37 @@ same shapes the Tauri commands return today so the frontend types do not fork:
 | diff | `diff_pane_*` | `git diff` locally |
 | claude | `claude_summarize`, `claude_usage_fetch`, `pane_list_claude_sessions` | `claudeusage.go` already exists; summaries read `~/.claude/projects` locally |
 
+### 4.2 Session history: an ended session stays openable and resumable
+
+Decided with Q1 (Yossi, 2026-09-10). Deleting a session row kills the tmux
+session on the server, as Phase 90 does today — but the conversation should not
+vanish with it.
+
+What the code does now: the transcript is Claude's own
+`~/.claude/projects/<encoded-cwd>/<session>.jsonl` and **survives the kill**.
+What is lost is the *mapping*: `cli/src/session_meta.rs::prune` deletes every
+entry with no live `tmux ls` match on every write, so nothing remembers which
+transcript belonged to the row. The desktop's resume picker
+(`pane_list_claude_sessions`) already scans the jsonl files and offers
+`claude --resume`, so half the feature exists, unlinked from the row.
+
+The change, small and shared by both clients:
+
+- `prune` marks `ended_at` instead of deleting. Retention: 90 days or the N
+  latest, whichever is smaller; a real prune only past that.
+- The daemon's session list returns ended rows with `ended_at`,
+  `claude_session_id`, `auto_name`, `cwd`. The sidebar keeps the row with an
+  "ended" glyph and two actions:
+  - **open** — a read-only transcript viewer. The daemon already parses this
+    format (`insights/claudeusage.go`); a `GET /api/v2/claude/sessions/{id}/transcript`
+    returns the user/assistant turns, paged. **Rule #1:** rendered, never
+    logged — the handler logs the session id and byte count only.
+  - **resume** — `tmux new-session -d -s <name> -c <cwd> -- claude --resume <id>`
+    (argv array, Rule #3), then attach; the row flips back to live and
+    `session-meta` is rewritten by the hooks as usual.
+- Desktop parity is free: the same `ended_at` field reaches
+  `pane_list_tmux_sessions` through the existing SSH read of `session-meta.json`.
+
 ### 4.1 Commands that do NOT exist in browser mode (by design)
 
 Local-machine and desktop-shell affordances: `file_*_local`, `file_manager_*_local`,
@@ -205,14 +236,26 @@ browser gets those for free. The reverse (daemon → desktop) is out of scope.
 
 ## 7. Delivery, auth, and the security line
 
-**Web bundle delivery: a `ymux-web` add-on, not `embed`.** Embedding
-`app/dist` in the Go binary would make every frontend commit trip the server
-rebake gate and add two 13 MB blob revisions per PR to git history. Instead
-`vite build --mode web` produces `ymux-web-<version>.tar.gz` as a release asset;
-the add-on (registry in `crates/ymux-addons`, actions in `addons.rs`) uploads it
-to `~/.ymux/server/www/` over the workspace SSH session, and the daemon serves
-that directory at `/` with `Cache-Control` keyed on the version. Updating the
-web UI is an add-on update, the mechanism users already have.
+### 7.1 Web bundle delivery (Q2, open)
+
+The bundle is vite's output — `index.html`, hashed JS/CSS chunks, fonts, ~3 MB.
+Something has to serve it at `https://<domain>/`. Three ways:
+
+| | Mechanism | For | Against |
+|---|---|---|---|
+| (a) `//go:embed` | `app/dist` compiled into `ymux-server` | simplest to serve; one version, one artifact | the daemon is a **committed 13 MB blob per arch**; every frontend fix trips the rebake gate and adds ~26 MB of git history per PR; the frontend's release cadence is chained to the daemon's |
+| (b) **`ymux-web` add-on** | `ymux-web-<ver>.tar.gz` bundled in `app.exe` with `include_bytes!` like the CLI; the add-on (registry in `crates/ymux-addons`, actions in `addons.rs`) uploads it over the workspace SSH session to `~/.ymux/server/www/<ver>/`; the daemon serves the newest at `/` | offline-friendly; **version-aligned by construction** (app version = web version); upload is sha256-gated and idempotent exactly like the CLI bootstrap; detect / install / update reuse the add-on UI that exists | updating needs a desktop — a phone-only user cannot update (the desktop is the admin; acceptable); `app.exe` grows ~3 MB |
+| (c) daemon self-download | `ymux-server web update` fetches the release asset from GitHub | headless; no desktop in the loop | adds an outbound network dependency the daemon does not have today; **requires signature verification** — a fetched bundle served to the user's browser is code execution in their session, so a sha256 from an unauthenticated manifest is not enough |
+
+**Recommendation: (b), with (c) as a later opt-in** once there is a signed
+manifest to verify against.
+
+Serving details, whichever wins: vite emits content-hashed asset names, so
+`/assets/*` gets `Cache-Control: public, max-age=31536000, immutable` and
+`index.html` gets `no-cache`. There is no client-side router today (the desktop
+routes by window label), so `/` serves `index.html` and the only extra path is
+`?popout=<sid>` for a terminal in its own tab. `GET /api/version` reports the
+served web version so the add-on's detect step can compare.
 
 **Login.** Open `https://<domain>/` → pairing page → paste the code / scan the
 QR the desktop's Mobile tab already generates → `POST /api/pairing/redeem` →
@@ -245,7 +288,7 @@ Non-negotiable for v1:
 | Phase | Scope | Size | Verifiable how |
 |---|---|---|---|
 | A | Go: `terminal` kind, `/term` WS, tmux list/rename/kill, session-meta annotation, `shell:attach` scope | ~800 Go | `go test` + `websocat` into a real box |
-| B | Go: workspaces/layout/settings/notes/tickets/feed stores, `humanize` + brief port, hook-bridge method subset, `setup-hooks` env target | ~1.5k Go | `go test`; a `claude` run inside an attached tmux fires a gate visible on the events WS |
+| B | Go: workspaces/layout/settings/notes/tickets/feed stores, `humanize` + brief port, hook-bridge method subset, `setup-hooks` env target, session history (§4.2: `ended_at` in `session_meta.rs`, transcript endpoint, resume) | ~1.7k Go + ~100 Rust (CLI) | `go test`; a `claude` run inside an attached tmux fires a gate visible on the events WS |
 | C | TS: `Backend` interface, `TauriBackend`, codemod, `WebBackend`, `layoutOps.ts`, capability gating, `TerminalInstance` on `TermStream` | ~2–3k TS | desktop unchanged in behaviour (the regression risk); web build renders against a Phase A/B daemon over plain HTTP on localhost |
 | D | `ymux-web` add-on, nginx `location /`, pairing page, Mobile tab → "Web & devices" | ~500 Rust + Go | full path over HTTPS from a phone |
 | E | PWA: manifest, service worker, push subscription over the existing WS channel | ~300 TS | "Add to Home Screen" on Android; a hook gate arrives as a notification |
@@ -258,21 +301,20 @@ Phase E is the answer to the parked Android port (DECISIONS 2026-08-23, "Fork
 scan", options A/B/C): **option D — a PWA on this stack**. It closes that
 thread; no third platform to keep green.
 
-## 9. Open questions (in `docs/DECISIONS.md`)
+## 9. Questions (tracked in `docs/DECISIONS.md`)
 
-- **Q1 truth model** — server-native workspaces vs mirroring the desktop's
-  `workspaces.json`. Recommendation: server-native (§4).
-- **Q2 bundle delivery** — add-on vs `embed`. Recommendation: add-on (§7).
-- **Q3 "local parallel"** — a desktop that is itself reachable from another
-  browser. That means the Rust backend grows an HTTP/WS listener implementing
-  the same API — two implementations of one contract in two languages, the
-  macOS-branch lesson again. Recommendation: **defer** until the remote path has
-  users; the Go daemon is CGO-free and cross-compiles to Windows/macOS, so a
-  later "local" could be *the same daemon* running locally, with the desktop as
-  just another client. Not for v1.
+- **Q1 truth model — DECIDED 2026-09-10:** server-native workspaces; tmux
+  sessions are the shared reality (§4).
+- **Q2 bundle delivery — OPEN:** three options in §7.1. Recommendation: add-on.
+- **Q3 "local parallel" — DEFERRED 2026-09-10** until the remote path is proven
+  end-to-end. It would mean the Rust backend implementing the same HTTP/WS API
+  — two implementations of one contract in two languages, the macOS-branch
+  lesson again. When it returns, the candidate is the same CGO-free Go daemon
+  running locally, with the desktop as one more client.
 - **Q4 shared session, two clients** — desktop and browser attached to one tmux
   session both see output (tmux does that); who owns the hook gate is decided
-  by §6. Acceptable for v1? Recommendation: yes, documented.
+  by §6. Recommendation: accept for v1, documented.
+- **Q5 session history — recommended, lands in Phase B:** §4.2.
 
 ## 10. What v1 deliberately does not do
 
