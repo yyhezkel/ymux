@@ -25,6 +25,51 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-09-10 — ymux in the browser: the Go daemon becomes the brain
+- **Context:** Yossi asked what a "browser version" would mean — our server as an HTTPS
+  entry point, plus something parallel for local. Two readings were put to him:
+  "a terminal in the browser" (ttyd behind the existing `nginx-proxy`, an hour, no code
+  of ours) vs "ymux in the browser" (the full shell, panes, feed, hook gates, briefs).
+  **Decided: ymux in the browser** — the reason is full control of the presentation,
+  not being limited to the server's terminal. Design: `docs/WEB-DESIGN.md`.
+- **What it really is:** today the desktop Rust backend is the brain and the Go daemon
+  is a remote agent. A browser has no Rust, so in browser mode the daemon must absorb
+  (1) the host-relevant subset of the 184 Tauri commands and (2) the subset of the
+  `rpc_server.rs` dispatch catalog the remote CLI/hooks call back (`feed.push`,
+  `port.opened`, `set-status`, hook verbs). Without (2) there are no gates, feed or
+  traffic lights — it is the part that makes it ymux. Most of the plumbing exists:
+  nginx+LE, device tokens + scopes, the workspace events WS with `PendingRequest`
+  winner-takes-all (that IS the desktop's blocking `feed.push`), the hook listener, the
+  Files API, and `KindTerminal` already declared in `workspace/model.go` and never
+  implemented.
+- **Phases:** A daemon `terminal` kind + binary `/term` WS (tmux attach only) → B daemon
+  stores + hook bridge → C frontend `Backend` interface (`TauriBackend` first, ship the
+  desktop on it, then `WebBackend`) → D `ymux-web` add-on + pairing page → E PWA. E is
+  option **D** for the parked Android port (2026-08-23 fork-scan thread): a PWA on this
+  stack instead of a third platform.
+- **Security line (non-negotiable):** a leaked token with the wrong scope becomes a shell
+  over the internet. New scope `shell:attach`, explicitly NOT part of `AllScopes` /
+  the fail-open `"all"`; `exec` + `hygiene/kill` owner-only; redeem rate-limited; revoke
+  tears down live WS; Cloudflare Access / nginx allowlist recommended by the installer.
+- **Options still open (recommendation first):**
+  - Q1 truth model — **server-native workspaces, tmux sessions are the shared reality**
+    (via `session-meta.json`, the Phase-90 "session is a workspace row" bridge) / mirror
+    the desktop's `workspaces.json` (two writers, one file, no).
+  - Q2 web bundle delivery — **`ymux-web` add-on uploading a release tarball to
+    `~/.ymux/server/www/`** / `embed` in the Go binary (every frontend commit would trip
+    the server rebake gate and add 2×13 MB blob revisions per PR).
+  - Q3 "local parallel" — **defer**: it means the Rust backend re-implementing the same
+    HTTP/WS API (two implementations, two languages — the macOS-branch lesson). Later
+    "local" can be the same CGO-free Go daemon running locally with the desktop as one
+    more client.
+  - Q4 desktop + browser on the same tmux session — both see output (tmux), the hook
+    gate goes to whichever endpoint the session's `YMUX_SOCKET_ADDR` names.
+    **Accept for v1, documented.**
+- **Debt logged with it:** layout tree ops get a TS port for the web build while the
+  desktop keeps the Rust one — two implementations until the desktop moves to the TS ops.
+- **Status:** design written, no code. Waiting on Yossi for Q1–Q3; Phase A can start on
+  the recommendations without blocking on them.
+
 ### 2026-08-23 - macOS: the site's JS is dead in the in-app Browser (diagnostic build)
 - **Symptom.** On macOS the workspace Browser loads a page and renders HTML/CSS,
   but the site's own JavaScript never runs. Windows is fine, and
