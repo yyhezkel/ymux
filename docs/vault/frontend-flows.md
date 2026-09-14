@@ -24,7 +24,11 @@ covers:
 
 Everything with an OK button. ~5,900 lines, and the shape is set by **Phase 80's unified
 setup wizard**: one "+ new workspace" button opens `SetupWizard`, which is a mode tree,
-and each leaf is its own flow component.
+and each leaf is its own flow component. Since Phase 92 every leaf that creates a
+workspace (`workspace_create` via `onCreateWorkspace`, `provision_existing_install_key`)
+creates a **header plus its first `shell` screen** on the backend; the id handed to
+`onOpenWorkspace` is the root's, and App's `handleSetActive` resolves it to that screen
+before connecting the first pane.
 
 ## The mode tree
 

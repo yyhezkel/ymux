@@ -12,6 +12,7 @@ covers:
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
   - app/src/cwdShort.ts
+  - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
@@ -112,6 +113,19 @@ deliberate exceptions are module-scope stores — `paneDrag.ts` and `transferSto
 where prop-threading through `LayoutView → SplitView → LeafPane → PaneView` was worse
 than a module signal.
 
+**Only a screen is ever active (Phase 92).** `handleSetActive(requestedId)` first runs
+`screenOrSelf(file().workspaces, requestedId)`: a header (machine / pinned folder) resolves
+to its first screen, a header with no screens is a logged no-op, and the function **returns
+the id it actually activated** (`null` when nothing was) — the wizard's `onOpenWorkspace`
+gets the ROOT id back from the backend and must look up the first pane on the returned
+screen, not on the header. `activePaneId` is cleared when the activated workspace has no
+layout. The backend applies the same rule in `workspace_set_active`, so the guard here is
+belt. `headerChain()` = `ancestorsOf` of the active screen (folder, then machine): the
+main-area `.ws-header` title reads `machine › folder › screen` and its dot takes the
+nearest ancestor colour; `allPaneAgentRows` labels every Queue row `header › screen`.
+`rootIdOf` is the `file()`-bound wrapper of `wsTree.rootIdOf`. `newScreen(w)` is the
+header `+` (§ Sessions as rows).
+
 **The event subscriptions are the map of the backend↔frontend contract.** Around
 lines 2778–3200, `App.tsx` registers `listen()` for: `pty:data`, `pty:exit`,
 `ssh-disconnected`, CLI alignment, the feed (`FeedItem` + resolved), notifications,
@@ -147,12 +161,16 @@ notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 
 **Headers + cards (Phase 91.E — the cmux look).** Every row is still one
 `.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
-is shared), but there are two bodies. `isHeaderRow(w)` — a pinned folder, anything with
-children, or a remote root without children (the machine itself, so its look never flips
-with the sessions setting) — renders the pre-91.E row verbatim as a slim `.ws-header`
-(chevron, glyph, dim small-caps-weight name, worktree chip, `+` worktree / rescan / `+`
-session, the `.ws-meta` cluster). Every other row — a session row, a worktree workspace, a
-local root without children — is a `.ws-card` from `renderCardBody(w)`: line 1 = the
+is shared), but there are two bodies. **Phase 92 made the split structural:** `isHeaderRow(w)`
+is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder, full stop; it
+holds rows and never panes, and it is never the active workspace. A header renders the
+pre-91.E row as a slim `.ws-header`: a chevron on EVERY header (it may hold zero screens
+right after a create), glyph, dim small-caps-weight name, worktree chip, the `+`, and a
+`.ws-meta` cluster whose waiting / brief / activity dot and live dot **aggregate over the
+subtree** (`anyInSubtree`, depth-capped like `isLiveTree`) so a collapsed machine still
+shows that a screen under it needs you — and no kind badge (a paneless row has no kind).
+Clicking a header calls `onSetCollapsed`, not `onActivate`. Every other row — a session
+row, a worktree workspace, a plain `shell` screen — is a `.ws-card` from `renderCardBody(w)`: line 1 = the
 `.ws-dot` / terminal glyph (hidden in `full`; it IS the card in icons mode), ✳ when
 `cardInfo.agent`, the display name as `.ws-name.ws-card-title` (so per-string bidi and
 `.ws-gone` dimming still apply), the `.ws-card-count` attention pill, the pane-count badge
@@ -173,8 +191,13 @@ active rules on `.ws-header` only). Icons mode collapses a card to its glyph, wi
 warning ring when `has-attn`; `[data-narrow]` drops the branch, not the cwd.
 
 **Session rows (Phase 90.B / 91.C)** are cards; the ones in `goneIds` are `.ws-gone` and
-their status line reads "gone — Connect resumes"; server and folder rows (headers) carry a
-terminal-glyph `+` (`onNewSession`) while `sessionsAsRows` is on. See § Sessions as rows.
+their status line reads "gone — Connect resumes"; every header carries a terminal-glyph
+`+` (`onNewScreen`, Phase 92) — its tooltip says "session" when `sessionsAsRows &&
+wsCaps(w).sessionPersistence` and "screen" otherwise; App picks the path. The context
+menu's host-level items (sessions, add-ons, pin folder, check git, move to group) render
+for headers only; a screen's menu is rename / edit / disconnect / delete. In icons mode a
+header is its glyph dimmed over a hairline (`.sidebar.icons .ws-item.ws-header`), so it is
+not the same centred dot as the screens under it. See § Sessions as rows.
 
 **"Only rows with live sessions" (Phase 91.A)** — a toggle under the wordmark
 (`.sidebar-live-toggle`, `aria-pressed`, localStorage `ymux.sidebar.liveOnly`). The rule
@@ -301,8 +324,10 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   `worktreesVersion` bumps on `ProjectFolderModal`'s `onDone` so an open Diff strip re-lists;
   `onDiffOpenWorktree` → `openWorktree(projectRootOf(wsId), wt)`, `onDiffNewWorktree` opens the
   worktree modal for that project root. All threaded through `LayoutView` to `DiffPane`.
-- **`+` on a server / folder row** (`sessionsAsRows && !tmux_session &&
-  wsCaps(w).sessionPersistence`, `IconTerminal`, `sidebar.newSession.tooltip`) →
+- **`+` on a header** (Phase 92: every header, `IconTerminal`) → `newScreen(w)`, which is
+  `newSessionRow(w)` when `sessionsAsRows() && wsCaps(w).sessionPersistence` and otherwise
+  `workspace_new_screen({parentWorkspaceId, name: null})` → `updateFile` → `handleSetActive`
+  (a plain `shell-N` screen that lands on its disconnected overlay). The session path,
   `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory
   and every `tmux_session` in the file → `openSessionRow(w.id, {name, display, cwd: w.cwd},
   false)` — `workspace_open_session` (placed under the folder by cwd) → `handleSetActive` →
@@ -396,6 +421,15 @@ the tab strip, the Queue panel and the Briefing card call one function.
 line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an
 ssh root login, `/Users/<u>`, `<X>:\Users\<u>` → `~`; still too long → `…/<parent>/<leaf>`.
 Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
+
+**`wsTree.ts`** (Phase 92) — the header / screen rule and the tree walks, shared by the
+Sidebar and App and mirrored by `is_header` in lib.rs: `isHeader(w)` (`!parent_id ||
+is_project_root`), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
+(`sort_order` asc, null last, insertion order — the same sort as the Sidebar's `childrenOf`
+and lib.rs's `children_in_order`), `firstScreenOf` (skips a root's folder children — they
+are headers too), `screenOrSelf` (a screen is itself, a header hands over, an empty header
+is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` builds
+fixtures without the 20 other fields and runs under plain `node --test`.
 
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
 → `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose

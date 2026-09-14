@@ -17,6 +17,7 @@ import {
   IconSparkles,
 } from "./icons";
 import type { SidebarMode } from "./settings";
+import { isHeader } from "./wsTree";
 
 // cmux-A A2: eight-color palette for workspace group swatches. Kept
 // intentionally small so a group's dot in the sidebar is easy to
@@ -72,10 +73,12 @@ interface Props {
   // memo builds it for the whole tree; a row missing here falls back to the
   // Workspace's own name / cwd and "idle".
   cardInfo: Record<string, WorkspaceCardInfo>;
-  // Phase 91.C: Settings → "Show every session as a sidebar row". Gates the
-  // per-row "new session" button; the mirroring itself is App's.
+  // Phase 91.C: Settings → "Show every session as a sidebar row". Picks the
+  // header `+`'s tooltip (session row vs plain screen); the mirroring
+  // itself is App's.
   sessionsAsRows: boolean;
-  onNewSession: (w: Workspace) => void;
+  /** Phase 92: the header `+` — a new screen (or 91.C session row) under `w`. */
+  onNewScreen: (w: Workspace) => void;
   // Phase 26: workspaces that contain at least one pane with a
   // pending blocking permission request. Renders a pulsing dot on
   // the workspace row so the user can spot waiting work across
@@ -521,17 +524,22 @@ export function Sidebar(p: Props) {
     return out;
   });
 
-  // Phase 91.E: two row kinds. A row that can HOLD rows — a pinned folder,
-  // anything with children, a remote root (the machine itself, even before
-  // the sessions setting has given it children — so its look never flips
-  // with the setting) — is a slim one-line HEADER; every leaf (a session
-  // row, a worktree workspace, a local root without children) is a
-  // three-line cmux-style CARD. `const`s, above the `return`, like
-  // `childrenOf` — the TDZ note on it applies here too.
-  const isHeaderRow = (w: Workspace): boolean =>
-    w.is_project_root
-    || (childrenOf().get(w.id) ?? []).length > 0
-    || (!w.parent_id && !w.tmux_session && isRemoteConn(w.connection));
+  // Phase 91.E: two row kinds — a slim one-line HEADER above a run of
+  // three-line cmux-style CARDs. Phase 92 made the split structural: a
+  // header is a root (the machine) or a pinned folder, full stop — it holds
+  // rows and never panes; every other row is a screen. The rule lives in
+  // wsTree.ts (shared with App, node-tested). `const`s, above the `return`,
+  // like `childrenOf` — the TDZ note on it applies here too.
+  const isHeaderRow = (w: Workspace): boolean => isHeader(w);
+  // Phase 92: a header's status markers speak for its SUBTREE — it has no
+  // panes of its own, and a collapsed machine must still show that a
+  // screen under it needs you. Depth-capped like `isLiveTree`.
+  const anyInSubtree = (set: Set<string> | undefined, w: Workspace, depth = 0): boolean => {
+    if (!set) return false;
+    if (set.has(w.id)) return true;
+    if (depth > 8) return false;
+    return (childrenOf().get(w.id) ?? []).some((k) => anyInSubtree(set, k, depth + 1));
+  };
   const cardInfoOf = (w: Workspace): WorkspaceCardInfo =>
     p.cardInfo[w.id] ?? {
       title: w.name,
@@ -923,7 +931,10 @@ export function Sidebar(p: Props) {
         onPointerDown={(e) => startPointerDrag("ws", w.id, e)}
         onClick={() => {
           if (didDrag) return;
-          p.onActivate(w.id);
+          // Phase 92: a header is not a screen — clicking it opens or
+          // closes its rows; the active screen does not change.
+          if (isHeaderRow(w)) p.onSetCollapsed(w.id, !w.is_collapsed);
+          else p.onActivate(w.id);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -943,7 +954,9 @@ export function Sidebar(p: Props) {
             row verbatim (left at its indentation on purpose: the diff is
             the wrapper, not the row); the card body is renderCardBody. */}
         <Show when={isHeaderRow(w)} fallback={renderCardBody(w)}>
-        <Show when={w.is_project_root || (childrenOf().get(w.id) ?? []).length > 0}>
+        {/* Phase 92: every header has a chevron — it may hold zero screens
+            right after a create, and the chevron is the collapse control. */}
+        <Show when={isHeaderRow(w)}>
           {/* A <button> so `startPointerDrag`'s interactive-child
               exclusion already skips it; stopPropagation keeps the click
               from also activating the workspace. */}
@@ -995,15 +1008,20 @@ export function Sidebar(p: Props) {
         </Show>
         {/* Phase 91.F: the + new-worktree and ⟳ rescan buttons moved to the
             Diff pane's worktree strip. */}
-        {/* Phase 91.C: a new session as a new row — on any server or folder
-            row (never on a session row), only while the setting is on. The
-            terminal glyph keeps it apart from the worktree + above. */}
-        <Show when={p.sessionsAsRows && !w.tmux_session && wsCaps(w).sessionPersistence}>
+        {/* Phase 92: `+` = a new screen under this header, always. With the
+            sessions setting on and a multiplexer on the host it is the 91.C
+            session row; otherwise a plain screen (`workspace_new_screen`).
+            App decides which — the tooltip just says so. */}
+        <Show when={isHeaderRow(w)}>
           <button
             class="pf-btn"
-            title={t("sidebar.newSession.tooltip")}
+            title={
+              p.sessionsAsRows && wsCaps(w).sessionPersistence
+                ? t("sidebar.newSession.tooltip")
+                : t("sidebar.newScreen.tooltip")
+            }
             onPointerDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); p.onNewSession(w); }}
+            onClick={(e) => { e.stopPropagation(); p.onNewScreen(w); }}
           >
             <IconTerminal size={12} />
           </button>
@@ -1041,34 +1059,37 @@ export function Sidebar(p: Props) {
               pseudo-element was absolutely positioned at inset-inline-end
               and painted ON TOP of the badges. The class stays on the row —
               themes-redesign.css and the pulse both key off it. */}
+          {/* Phase 92: a header has no panes of its own, so its markers
+              aggregate over its SUBTREE — a collapsed machine still shows
+              that a screen under it needs you, and that one is live. The
+              kind badge is gone: a paneless row has no kind to show. */}
           <Show
             when={
-              p.waitingWorkspaceIds.has(w.id)
-              || p.briefAttentionWorkspaceIds?.has(w.id)
-              || p.notifiedWorkspaceIds.has(w.id)
+              anyInSubtree(p.waitingWorkspaceIds, w)
+              || anyInSubtree(p.briefAttentionWorkspaceIds, w)
+              || anyInSubtree(p.notifiedWorkspaceIds, w)
             }
           >
             <span
               class={`ws-waiting-dot ${
-                p.waitingWorkspaceIds.has(w.id)
+                anyInSubtree(p.waitingWorkspaceIds, w)
                   ? ""
-                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                  : anyInSubtree(p.briefAttentionWorkspaceIds, w)
                     ? "brief-attn"
                     : "activity"
               }`}
               title={t(
-                p.waitingWorkspaceIds.has(w.id)
+                anyInSubtree(p.waitingWorkspaceIds, w)
                   ? "sidebar.workspaceWaitingTitle"
-                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                  : anyInSubtree(p.briefAttentionWorkspaceIds, w)
                     ? "sidebar.workspaceBriefTitle"
                     : "sidebar.workspaceActivityTitle",
               )}
             />
           </Show>
-          <Show when={p.connectedIds.has(w.id)}>
+          <Show when={anyInSubtree(p.connectedIds, w)}>
             <span class="ws-live" title={t("sidebar.workspaceConnectedTitle")} />
           </Show>
-          <WorkspaceBadge w={w} />
         </span>
         </Show>
         <Show when={menuFor() === w.id}>
@@ -1095,6 +1116,9 @@ export function Sidebar(p: Props) {
             <button onClick={() => p.onAction(w.id, "edit")}>
               {t("ws.context.edit")}
             </button>
+            {/* Phase 92: the host-level items live on headers only — a
+                screen's menu is rename / edit / disconnect / delete. */}
+            <Show when={isHeaderRow(w)}>
             {/* Phase 90: every multiplexer session on this workspace's
                 machine, with an agent summary per row. Above Add-ons on
                 purpose — it is the thing you open several times a day. */}
@@ -1198,6 +1222,7 @@ export function Sidebar(p: Props) {
                   </button>
                 </Show>
               </div>
+            </Show>
             </Show>
             <Show when={p.connectedIds.has(w.id)}>
               <button onClick={() => p.onAction(w.id, "disconnect")}>

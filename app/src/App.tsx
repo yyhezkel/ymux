@@ -1,5 +1,6 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
+import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -1001,6 +1002,12 @@ function App() {
 
   const activeWs = (): Workspace | null =>
     file().workspaces.find((w) => w.id === file().active_workspace_id) ?? null;
+  // Phase 92: the headers above the active screen, nearest first — the
+  // folder (if any) then the machine. Empty when nothing is active.
+  const headerChain = (): Workspace[] => {
+    const ws = activeWs();
+    return ws ? ancestorsOf(file().workspaces, ws.id) : [];
+  };
 
   // Phase 84.A: tabs mode. No signal — the flag is persisted on the
   // workspace and `file()` is already reactive, so this reads through.
@@ -1195,14 +1202,18 @@ function App() {
     const now = agentClockMs();
     const briefMap = briefs();
     const out: QueueRow[] = [];
-    for (const w of file().workspaces) {
+    const all = file().workspaces;
+    for (const w of all) {
       if (!w.layout) continue;
+      // Phase 92: every pane is on a screen, so the queue's label keeps
+      // the machine / project it belongs to: `runner › shell`.
+      const header = ancestorsOf(all, w.id)[0];
       for (const pane of collectPaneNodes(w.layout)) {
         const pid = pane.pane_id;
         const run = runs[pid];
         out.push({
           wsId: w.id,
-          wsName: w.name,
+          wsName: header ? `${header.name} › ${w.name}` : w.name,
           paneId: pid,
           title: paneLabel(pane, {
             workspaceName: w.name,
@@ -1658,7 +1669,19 @@ function App() {
     if (touchedSessions && sessionsAsRows() && rootId !== id) void refreshSessionRows(rootId, { ensure: false });
   };
 
-  const handleSetActive = async (id: string) => {
+  /**
+   * Activate a workspace. Phase 92: only a SCREEN can be active — a
+   * header (machine / pinned folder) hands over to its first screen, and a
+   * header with no screens yet is a no-op. Returns the id that was
+   * actually activated (`null` when nothing was), so callers that go on to
+   * pick a pane look at the right workspace.
+   */
+  const handleSetActive = async (requestedId: string): Promise<string | null> => {
+    const id = screenOrSelf(file().workspaces, requestedId);
+    if (!id) {
+      log.info(`activate ws=${requestedId}: a header with no screens — nothing to show`);
+      return null;
+    }
     // BRIEF: the return-after-absence trigger MUST read last_active_at off
     // the pre-switch file() — workspace_set_active stamps it to "now"
     // (seconds) before returning, so reading afterwards always measures
@@ -1682,6 +1705,8 @@ function App() {
         const pick =
           remembered && panes.includes(remembered) ? remembered : panes[0];
         if (pick) setActivePaneId(pick);
+      } else {
+        setActivePaneId(null);
       }
       const b = settings()?.brief;
       if (
@@ -1697,7 +1722,9 @@ function App() {
       }
     } catch (e) {
       log.error("workspace_set_active failed", e);
+      return null;
     }
+    return id;
   };
 
   // Phase 40: flip auto_port_forward from the Ports window. The command
@@ -2546,18 +2573,9 @@ function App() {
 
   const sessionsAsRows = (): boolean => settings()?.sessions_as_rows === true;
 
-  const rootIdOf = (wsId: string): string => {
-    const all = file().workspaces;
-    let cur = all.find((w) => w.id === wsId);
-    let hops = 0;
-    while (cur?.parent_id && hops < all.length) {
-      const parent = all.find((w) => w.id === cur?.parent_id);
-      if (!parent) break;
-      cur = parent;
-      hops++;
-    }
-    return cur?.id ?? wsId;
-  };
+  // Phase 92: the walk lives in wsTree.ts (node-tested); this is the
+  // file()-bound convenience.
+  const rootIdOf = (wsId: string): string => rootIdOfTree(file().workspaces, wsId);
 
   const activeRootId = createMemo((): string | null => {
     const id = file().active_workspace_id;
@@ -2881,6 +2899,25 @@ function App() {
       await openSessionRow(w.id, { name, display: name, cwd: w.cwd ?? null }, false);
     } catch (e) {
       log.error("new session row failed", e);
+      flashSummaryToast("err", String(e));
+    }
+  };
+
+  // Phase 92: the header's `+`. A session row when the sessions setting is
+  // on and the host has a multiplexer (91.C, unchanged); otherwise a plain
+  // screen under the header, which lands on its disconnected overlay like
+  // any fresh pane.
+  const newScreen = async (w: Workspace) => {
+    if (sessionsAsRows() && wsCaps(w).sessionPersistence) return newSessionRow(w);
+    try {
+      const f = await invoke<WorkspacesFile>("workspace_new_screen", {
+        parentWorkspaceId: w.id,
+        name: null,
+      });
+      updateFile(f);
+      if (f.active_workspace_id) await handleSetActive(f.active_workspace_id);
+    } catch (e) {
+      log.error("new screen failed", e);
       flashSummaryToast("err", String(e));
     }
   };
@@ -4436,7 +4473,7 @@ function App() {
           goneIds={goneWorkspaceIds()}
           cardInfo={workspaceCardInfo()}
           sessionsAsRows={sessionsAsRows()}
-          onNewSession={(w) => void newSessionRow(w)}
+          onNewScreen={(w) => void newScreen(w)}
           groups={file().groups ?? []}
           onGroupCreate={async (name, color) => {
             try {
@@ -4613,11 +4650,16 @@ function App() {
             classList={{ compact: wsHeaderNarrow.narrow() }}
             ref={wsHeaderNarrow.ref}
           >
+            {/* Phase 92: the active workspace is a SCREEN; the title is its
+                place in the tree — machine › folder › screen — and the dot
+                takes the root's colour, which is where the colour lives. */}
             <span
               class="ws-dot"
-              style={{ background: activeWs()!.color || "#6b7682" }}
+              style={{ background: headerChain().reduce<string | null>((c, w) => w.color ?? c, null) || activeWs()!.color || "#6b7682" }}
             />
-            <span class="ws-title">{activeWs()!.name}</span>
+            <span class="ws-title">
+              {[...headerChain().map((w) => w.name).reverse(), activeWs()!.name].join(" › ")}
+            </span>
             <Show when={activeWs()!.layout?.kind === "pane"}>
               <span class="ws-conn-info">
                 {(() => {
@@ -5124,8 +5166,11 @@ function App() {
               // the first pane.
               void (async () => {
                 try {
-                  await handleSetActive(wsId);
-                  const ws = file().workspaces.find((w) => w.id === wsId);
+                  // Phase 92: the wizard hands back the ROOT it created;
+                  // the panes are on its first screen, which is what
+                  // handleSetActive resolves to.
+                  const activated = await handleSetActive(wsId);
+                  const ws = file().workspaces.find((w) => w.id === activated);
                   const firstPane =
                     ws?.layout ? collectPanes(ws.layout)[0] : null;
                   if (firstPane) {

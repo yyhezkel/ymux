@@ -148,6 +148,7 @@
   "connect.resume": "המשך",
   "ws.gone.tooltip": "הסשן {name} כבר לא קיים בשרת. התחבר יפעיל אותו מחדש וימשיך את שיחת ה‑Claude שרצה בו; מחיקה משחררת את השורה.",
   "sidebar.newSession.tooltip": "סשן חדש כשורה חדשה",
+  "sidebar.newScreen.tooltip": "מסך חדש תחת שורה זו",
   "sidebar.card.status.waiting": "ממתין לאישור",
   "sidebar.card.status.running": "רץ",
   "sidebar.card.status.done": "הסוכן סיים את התור",

@@ -148,6 +148,7 @@
   "connect.resume": "Продолжить",
   "ws.gone.tooltip": "Сессии {name} больше нет на хосте. Подключение запустит её снова и продолжит разговор с Claude, который в ней шёл; удаление отпустит строку.",
   "sidebar.newSession.tooltip": "Новая сессия новой строкой",
+  "sidebar.newScreen.tooltip": "Новый экран под этой строкой",
   "sidebar.card.status.waiting": "ждёт подтверждения",
   "sidebar.card.status.running": "выполняется",
   "sidebar.card.status.done": "агент завершил ход",

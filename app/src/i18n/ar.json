@@ -148,6 +148,7 @@
   "connect.resume": "استئناف",
   "ws.gone.tooltip": "الجلسة {name} لم تعد على المضيف. الاتصال يبدؤها من جديد ويستأنف محادثة Claude التي كانت فيها؛ الحذف يحرّر الصف.",
   "sidebar.newSession.tooltip": "جلسة جديدة كصف جديد",
+  "sidebar.newScreen.tooltip": "شاشة جديدة تحت هذا الصف",
   "sidebar.card.status.waiting": "بانتظار الموافقة",
   "sidebar.card.status.running": "قيد التشغيل",
   "sidebar.card.status.done": "أنهى الوكيل دوره",
