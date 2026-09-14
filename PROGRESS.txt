@@ -7597,3 +7597,11 @@ returns the activated id; headerChain breadcrumb title; Queue label `machine ›
 sidebar.css, i18n ×4 (sidebar.newScreen.tooltip). Docs: vault backend-core / frontend-shell /
 frontend-flows, CONFIG.md migration, DECISIONS, FOLLOWUPS P1 smoke (11 checks).
 Result: compiles-untested (Rule #17) — CI on the stacked PR; live smoke is Yossi's.
+
+2026-09-14 — Phase 92 CI green on PR #46 (stacked on #44, base yos/sessions-row-tmux-display-f97645).
+A PR whose base is not `main` triggers NO workflow (both ci-windows and build-macos-intel
+are `pull_request: branches: [main]`), so both were dispatched by hand on the branch:
+ci-windows run 34836653746 (rust / frontend / go all success — header_screen_tests, wsTree
+node test, tsc, vault gate), build-macos run 34836658195 (x64 + arm64 success — the only
+job that compiles the cfg(not(windows)) arms). Compiles-untested (Rule #17); the live
+smoke is FOLLOWUPS P1 2026-09-14. Merge order: #44 first, then retarget #46 to main.
