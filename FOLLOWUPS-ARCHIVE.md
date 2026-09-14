@@ -14,6 +14,10 @@ Entries keep their `[x]` marker and their original priority, so a closed P0 stil
 reads as a P0. Ordering is the order they held in `FOLLOWUPS.md`, not the order
 they were fixed.
 
+## Archived 2026-09-14
+
+- [x] P3 | 2026-09-09 | app/src-tauri/src/diff_pane.rs | The untracked-file diff uses `/dev/null` as the left side; confirm live that this works on Windows-local git (msys git accepts /dev/null; if not, fall back to `NUL`). **Closed 2026-09-14 (Phase 91.H investigation):** verified on git 2.49.0.windows.1 — `git diff --no-color --no-ext-diff --no-index -- /dev/null CLAUDE.md` exits 1 and prints a correct `new file mode` / `--- /dev/null` / `+++ b/CLAUDE.md` diff. Core git special-cases the `/dev/null` string in `diff-no-index.c` (`get_mode`), so it never reaches the filesystem; no `NUL` fallback needed. `NUL` works too, for the record.
+
 ## Archived 2026-09-09
 
 - [x] P2 | 2026-08-12 | app/src-tauri/src/diff_pane.rs:39 | The Diff pane is silently broken for every non-Local workspace. `fetch_diff` runs `git -C <cwd>` with `tokio::process::Command` on the WINDOWS host and `lookup_pane_context` (:74) never reads `ws.connection`. For an SSH or WSL workspace `cwd` is a Linux path, so `cwd.join(".git").exists()` at :40 is false and the pane shows "not a git repository" — it looks like the repo is broken rather than like the feature is local-only. Found while building the tickets transport layer, which now does resolve this correctly (see tickets.rs `resolve`). Fix: dispatch on connection the way tickets.rs does — `git -C … rev-parse` over the existing SSH exec channel, or the \\wsl.localhost share for WSL. **Closed 2026-09-09 by Phase 91.F:** `diff_pane.rs` now dispatches through `worktrees::run_git_raw` (Local) / `exec_script_over` (WSL/SSH); the `.git` pre-check is gone, `lookup_pane_context` reads `ws.connection`, and git's own message reaches the pane (`error` in the event, `is_git_repo` retired).

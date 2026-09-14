@@ -274,10 +274,18 @@ top lists the repo's worktrees (`diff_pane_worktrees`); clicking one switches th
 `diff_pane_set_cwd` (None = back to the workspace's own cwd), an ⧉ button opens it as a
 workspace (App's `openWorktree` under the project root), and `+` opens the new-worktree
 modal. A **changed-file list** jumps to a file's hunk via the parser's anchors. Parsing is
-`diffModel.ts` (`parseDiff`, `fileFromGitHeader` — which fixes the old label extraction on
-paths with spaces and renames — `statusLetter`, `pathKey`), pure and node-tested
-(`diffModel.test.ts`). Scroll position is preserved across the wholesale re-render; the
-worktree list is fed back to App (`onWorktreesListed`) so sidebar cards can show a branch.
+`diffModel.ts` (`parseDiff` — which also drops the trailing CR a CRLF working tree puts on
+every content line — `fileFromGitHeader`, which fixes the old label extraction on paths
+with spaces and renames, `statusLetter`, and `pathKey`, which folds a drive-letter path to
+lowercase whole so git's `C:/Users/…` and the picker's `C:\users\…` are one key; it is the
+twin of `norm_path` in lib.rs), pure and node-tested (`diffModel.test.ts`). Scroll position
+is preserved across the wholesale re-render; the worktree list is fed back to App
+(`onWorktreesListed`) so sidebar cards can show a branch. Two CSS facts matter (Phase
+91.H, App.css): the diff body's `overflow: auto` is on the compound `.pane-body.diff-pane-body`
+because the plain `.pane-body { overflow: hidden }` declared later used to win and the body
+never scrolled; and `.diff-pane-pre` pins `direction: ltr` the way `.terminal-container`
+does — a unified diff is a fixed-column grid and must not inherit the Hebrew UI's
+`dir="rtl"`, which flipped every line's gutter and alignment on Yossi's Windows install.
 
 **`HelpPane.tsx` (96)** — renders bundled markdown (currently ssh-key-setup) keyed by
 topic and UI language, with a Copy button on every fenced block.

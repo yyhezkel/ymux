@@ -7627,3 +7627,28 @@ App.tsx routes the header's onClose through closeTab in tabs mode so it lands on
 neighbour like the strip's X does. Kill session stays in the session picker / sidebar rows.
 Vault: frontend-shell.md § Tabs, lock re-stamped. Compiles-untested (Rule #17), CI on the
 branch yos/pane-tabs-buttons-851b2f; live smoke is Yossi's.
+
+2026-09-14 — Phase 91.H: the Diff pane on Windows (branch yos/jovial-nobel-1b81e8)
+Yossi: the changed-files screen (91.F) breaks on Windows, works on macOS. Investigated 91.F
+(ca2bd84 / f5f736d / de688c3) against the tree + live git 2.49.0.windows.1 probes. Four real
+Windows-vs-Mac divergences, all verified in code:
+(1) RTL — i18n sets dir="rtl" on <html> for Hebrew; .diff-pane-pre pinned no direction, so every
+.dl flex row flipped (gutter right, lines right-aligned, punctuation reordered). The terminal
+already guards exactly this (App.css .terminal-container). The Windows install runs Hebrew, the
+Mac English — this alone reproduces the report. Fix: direction:ltr + text-align:left +
+unicode-bidi:isolate on .diff-pane-pre, LTR on .diff-pane-error.
+(2) Path equality — git emits C:/Users/… (worktree list, rev-parse), the picker stored C:\…;
+workspace_open_worktree compared bytes, so "open as workspace" duplicated a row per click and
+never activated the folder's shell. Fix: norm_path (\→/, trim, drive-letter paths lowercased
+whole) shared by paths_equal + path_is_within; open_worktree uses paths_equal; pathKey in
+diffModel.ts folds the same way. Tests extended (lib.rs scope/folder tests, diffModel.test.ts).
+(3) Cascade — .pane-body{overflow:hidden} (later in App.css) beat .diff-pane-body{overflow:auto};
+the body never scrolled, scrollTop/scrollIntoView were no-ops. Fix: .pane-body.diff-pane-body.
+(4) CRLF — parseDiff kept the trailing CR of a CRLF working tree; now stripped per line.
+Ruled out: console flash (CREATE_NO_WINDOW already set in run_git_local_raw); /dev/null on
+Windows git — works (exit 1, correct header) → the 2026-09-09 P3 archived.
+Files: App.css, diffModel.ts, diffModel.test.ts (6 pass, node --test), lib.rs, vault
+backend-core / frontend-panes + lock re-stamped, FOLLOWUPS (P3 archived; 91.F P1 smoke gains
+11-13), FOLLOWUPS-ARCHIVE. Result: compiles-untested (Rule #17) — CI; live smoke is Yossi's.
+NOTE: github.com unreachable from this box all session (git fetch/push fail) — committed
+locally; push + PR pending network.

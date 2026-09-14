@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "7254f8e98a07b5478e94594712cf103a76a907c13c13a7f11133aaa5f4cf3eb3",
+    "app/src-tauri/src/lib.rs": "6963f9c54ffdb0d726dc5ee1e3834ea123d1ca9d5c1322e27b6289d94e96959c",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
@@ -161,7 +161,7 @@
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
     "app/src/components/PopoutTerminal.tsx": "63cf231f238a1af22438638c1ab225f1d78829412d301a808af6a2959b9589a2",
-    "app/src/diffModel.ts": "36aa7b52f6f9a33b8e03d73e74599bc7be1f966e1dd3dbd66322871811d716a7",
+    "app/src/diffModel.ts": "7c06189aaf325fba90aca553ebb2b6d9b0dfc66c905d4776346a2f03b5970516",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
     "app/src/transferStore.ts": "3a6f9a9daba15d335e5d98f257bbad07bf709cd79a102b5a8ae779446ad03e14"
