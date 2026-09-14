@@ -7617,3 +7617,13 @@ BriefingCard.tsx; the prose was already merged, only the hashes matched neither)
 ci-windows 34839594219 + build-macos 34839594094 all success. Windows test build of
 Phase 92 (on #46's head, pre-#42): run 34838500078 — ymux-windows-nsis 16 MB, exe 20 MB.
 Live smoke (FOLLOWUPS P1 2026-09-14) is Yossi's.
+
+2026-09-14 — Phase 93: pane header in tabs mode keeps only pop-out + X (Yossi: the
+bidi toggle is a Settings matter, the power button merges into the X, the rest is split
+chrome). PaneView.tsx `actions()` returns early on `p.tabsMode` with at most `popout`;
+the X's tooltip becomes `pane.tooltip.close_tab` (new key, en/he/ru/ar) saying it detaches
+and a tmux session keeps running — true because workspace_close_pane is already a detach.
+App.tsx routes the header's onClose through closeTab in tabs mode so it lands on a
+neighbour like the strip's X does. Kill session stays in the session picker / sidebar rows.
+Vault: frontend-shell.md § Tabs, lock re-stamped. Compiles-untested (Rule #17), CI on the
+branch yos/pane-tabs-buttons-851b2f; live smoke is Yossi's.

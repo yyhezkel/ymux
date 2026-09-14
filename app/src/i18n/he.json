@@ -129,6 +129,7 @@
   "pane.tooltip.split_right": "פצל ימינה (Ctrl+Shift+D)",
   "pane.tooltip.split_down": "פצל למטה (Ctrl+Shift+E)",
   "pane.tooltip.close": "סגור פאנל (Ctrl+Shift+W)",
+  "pane.tooltip.close_tab": "סגור טאב — מתנתק; session של tmux ממשיך לרוץ (Ctrl+Shift+W)",
   "pane.tooltip.popout": "פתח בחלון נפרד",
   "pane.tooltip.more_actions": "פעולות נוספות",
   "pane.popout.detached": "[נפתח בחלון נפרד — הקלט מגיע לשם; כאן תצוגה בלבד]",
