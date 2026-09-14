@@ -115,6 +115,14 @@ here.
 An `ErrorBoundary` wraps the tree — a thrown render error shows a recovery panel rather
 than a white window.
 
+**Pinning a project folder no longer requires git.** `pinProjectFolder` calls
+`project_folder_probe` (hard error only for a missing directory or a dead SSH host),
+then passes the verdict to `workspace_pin_project_folder` as `isProjectRoot`; a folder
+without a repo lands demoted with an explanatory toast (`pf.pinned.noGit`) instead of
+being refused with git's fatal message. `recheckGit` (the sidebar's "Check for a git
+repository") still uses the always-fatal `git_probe_worktrees` — there, git's own
+message IS the answer.
+
 The Monitor mount passes `local={activeWs()?.connection?.type === "local"}` (Phase
 84.E) — `InsightsWindow` needs it only to print the right file paths in its
 "copy investigation commands" blocks; the fetch routing itself stays in Rust. The F12 /
@@ -135,6 +143,17 @@ through one `onAction(id, action)` prop with a closed string union — rename, e
 addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item means
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
+
+**Worktree scans are lazy, keyed by workspace id, and never polled.** A subtree's
+effect runs `scanFolder` once when it is open and has no result; a scan that fails
+with "no live SSH session" parks as `offline` (not an error row). The retry lives in
+one effect over `liveSshHosts` — a memo that collapses `connectedIds` (a fresh Set on
+every App tick) to the sorted `user@host:port` string of live SSH hosts — and rescans
+only the parked folders whose own host is in that set, inside `untrack` so its own
+`setScans` never re-fires it. Both constraints are load-bearing: the earlier version
+retried on *any* live workspace and tracked `scans()`, so a local workspace up with the
+folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
+Local/WSL folders never park — the backend runs git directly for them.
 
 Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
 terminal icon**, tooltip = the raw session name; else the colour dot. A session row is

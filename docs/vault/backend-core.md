@@ -93,6 +93,16 @@ put logic there.
 - **`workspace_set_tabs_mode`** — flips `Workspace.tabs_mode` and emits
   `workspaces:changed`. The layout tree is not touched; see `crates.md` for why this is
   a flag and not a `LayoutNode` variant.
+- **`workspace_pin_project_folder`** — persist a folder as a child workspace (CLONE of
+  the parent's connection, `single_terminal_layout`). It only persists; validation is
+  the caller's `project_folder_probe` (`backend-panes.md` § Git), and since the no-git
+  fix the command takes **`is_project_root` as a parameter** — the probe's verdict —
+  instead of hardcoding `true`. A directory without a repo therefore pins as a plain
+  demoted folder (the same state `workspace_set_project_root(false)` produces, no
+  worktree scan) rather than being refused; the sidebar's "Check for a git repository"
+  promotes it after a later `git init`. Refusals that remain: empty path, unknown
+  parent, a parent already inside a project folder, and the same path already pinned
+  under the same parent.
 
 ## Persistence — the part to get right
 

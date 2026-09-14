@@ -413,10 +413,87 @@ pub(crate) async fn workspace_list_worktrees(
     Ok(list)
 }
 
-/// Probe a path over a connection before any workspace exists — the pin
-/// flow's validation step, so a path that isn't a repo (or a host nothing
-/// is connected to) fails with git's own message BEFORE a dead row lands
-/// in the sidebar.
+/// Does `path` exist as a directory on the connection's host?
+///
+/// The pin flow's first gate: "the directory is not there" must be
+/// distinguishable from "the directory is not a repo", and telling git's
+/// two fatal messages apart is not a distinction — git localizes them.
+/// This check is transport-truth instead.
+async fn dir_exists_over(
+    state: &AppState,
+    conn: &Option<Connection>,
+    path: &str,
+) -> Result<bool, String> {
+    match conn {
+        None | Some(Connection::Local { .. }) => Ok(tokio::fs::metadata(path)
+            .await
+            .map(|m| m.is_dir())
+            .unwrap_or(false)),
+        Some(Connection::Wsl { distro }) => {
+            let (code, _) = local_setup::wsl_exec(
+                distro.as_deref(),
+                None,
+                &format!("test -d {}", shell_quote(path)),
+            )
+            .await?;
+            Ok(code == 0)
+        }
+        Some(Connection::Ssh { host, user, port, .. }) => {
+            let handle = pick_ssh_handle_for_host(state, host, user, *port).ok_or_else(|| {
+                format!("no live SSH session to {user}@{host} — connect a pane there first")
+            })?;
+            let (code, _) =
+                ssh_exec_capture(&handle, &format!("test -d {}", shell_quote(path)), 20).await?;
+            Ok(code == 0)
+        }
+    }
+}
+
+/// Probe a path before pinning it as a project folder: is it a git repo?
+///
+/// `Ok(true)` — a repo; pin promoted (`is_project_root`, worktrees
+/// listed). `Ok(false)` — the directory exists but git owns nothing
+/// there; pinnable as a plain folder, the same demoted state
+/// `onNotARepo` already produces, with "Check for a git repository" as
+/// the way back. A path that does not exist, or an SSH host nothing is
+/// connected to, is a hard `Err` — persisting those would land a dead
+/// row in the sidebar, which is what the old always-fatal probe was
+/// guarding against.
+///
+/// The repo test is `git worktree list` succeeding AND parsing to at
+/// least one entry — the same two signals `git_probe_worktrees` leans
+/// on, so a lost exit status still cannot promote a non-repo.
+#[tauri::command]
+pub(crate) async fn project_folder_probe(
+    state: tauri::State<'_, AppState>,
+    path: String,
+    connection: Option<Connection>,
+) -> Result<bool, String> {
+    let path = path.trim().to_string();
+    if path.is_empty() {
+        return Err("project path is required".to_string());
+    }
+    if !dir_exists_over(&state, &connection, &path).await? {
+        return Err(format!("directory not found on the host: {path}"));
+    }
+    let is_repo =
+        match run_git_over(&state, &connection, &path, &["worktree", "list", "--porcelain"]).await
+        {
+            Ok(text) => !parse_worktree_porcelain(&text).is_empty(),
+            // The directory exists and the transport is up (the SSH
+            // no-session case errored above), so a failure here means
+            // git rejected the path — or git itself is missing. Either
+            // way: not a repo today, re-checkable later.
+            Err(_) => false,
+        };
+    Ok(is_repo)
+}
+
+/// Probe a path over a connection before any workspace exists — the
+/// re-check flow's validation step, so a path that isn't a repo (or a
+/// host nothing is connected to) fails with git's own message. The pin
+/// flow uses `project_folder_probe` instead, which treats "not a repo"
+/// as an answer rather than an error.
 #[tauri::command]
 pub(crate) async fn git_probe_worktrees(
     state: tauri::State<'_, AppState>,

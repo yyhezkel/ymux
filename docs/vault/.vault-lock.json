@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "f4fb309fa5efadb27c76d1a7c3080650390036d30b70ec42dba0dcee007650e3",
+    "app/src-tauri/src/lib.rs": "3159a2965f5cf35453cae3a7d3e010206cb797baab5218068148c752a9824b36",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
@@ -24,7 +24,7 @@
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
     "app/src-tauri/src/workspace_browser.rs": "cfdf8bb2730919ecff8ef96df415c443a27e0f3a712d8fd0e7c87a5dd6ad4300",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",
-    "app/src-tauri/src/worktrees.rs": "09789c58a1fa0315c517821a17f8d633214a16791035567c358b52302f16def3"
+    "app/src-tauri/src/worktrees.rs": "da33ba4543a21f77574f3f1293e85651a80edbb75e64ad8685b84cef49830cbc"
   },
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
@@ -96,7 +96,7 @@
     "app/src/DirPicker.tsx": "7e21eaff27eb606f446e74d88b2919e5482a9efd74a066285556d04f802acbaa",
     "app/src/LocalSetupFlow.tsx": "2dc1272555007b214dad6d690c3ccb2d13f06368c23e2c19e0315b52dd105d27",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
-    "app/src/ProjectFolderModal.tsx": "f307bbba93f3b7d64ccc3018cfe44aeec93e040e61ec5a67a47b7a4ac08339cd",
+    "app/src/ProjectFolderModal.tsx": "017a431e50b533ba339c627ba130fdc1e17566e4232acc00c35f97664479f36c",
     "app/src/ProvisionNewServerFlow.tsx": "54ec1b424c9eaf05c586840e2a4345eb9f7d696ffc19dab09d72733e4ad98c5f",
     "app/src/QuickLocalCreateFlow.tsx": "c11b1e710adeb92ddbe5ba14c326686117a0265f2cf9a0fc6b30228e96155db3",
     "app/src/QuickSshCreateFlow.tsx": "8e202a7cfdfbefd48bda445ca8e46bf42ad3eb5587cc9cd47f46c6e69fa7c929",
@@ -178,7 +178,7 @@
     "app/src/PanelFloat.tsx": "c73d3b1ec18f5c31f84079445ef786ed51005b9da60bb2435ad17b9316ebbe51",
     "app/src/PanelSurface.tsx": "d7baafe4d0187a3ccbb30d8ddaf6af44e8fe12ad09dbc84ede5aabfaed4ebf00",
     "app/src/SideDrawer.tsx": "baf72d7230d67cd602586b627bf0e6204e9b3e0e788ae7dbca092d0cbd1432a9",
-    "app/src/Sidebar.tsx": "35d05e24f249987cbd1185938a91eb9d41a5fd2564f299ead95a12daf6b579e3",
+    "app/src/Sidebar.tsx": "414924f686a512ac839d9a9acdd10e713ffa601995812cfdfff487f9a8cbfc76",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",

@@ -74,8 +74,10 @@ rather than duplicated:
 - **`SshKeyOfferModal.tsx` (172)** — when the user authenticates by password, the backend
   emits `ssh-key-offer`; this asks whether to generate an ed25519 pair and install the
   public half into the remote's `~/.ssh/authorized_keys`.
-- **`ProjectFolderModal.tsx` (261)** — two dialogs over one chrome: `pin` (type a repo
-  path) and `worktree` (create a worktree inside a pinned folder).
+- **`ProjectFolderModal.tsx` (266)** — two dialogs over one chrome: `pin` (type a folder
+  path — usually a repo, but a directory without git pins too, demoted, via
+  `project_folder_probe`'s verdict) and `worktree` (create a worktree inside a pinned
+  folder).
 - **`ConfirmDeleteWorkspace.tsx` (123)** — deleting a workspace takes its **whole
   subtree**: pinned project folders, the worktree workspaces under them, and any live
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box
