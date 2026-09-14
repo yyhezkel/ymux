@@ -148,6 +148,7 @@
   "connect.resume": "Resume",
   "ws.gone.tooltip": "Session {name} is no longer on the host. Connect starts it again and resumes the Claude conversation it was running; delete lets it go.",
   "sidebar.newSession.tooltip": "New session as a new row",
+  "sidebar.newScreen.tooltip": "New screen under this row",
   "sidebar.card.status.waiting": "waiting for approval",
   "sidebar.card.status.running": "running",
   "sidebar.card.status.done": "agent turn complete",

@@ -91,6 +91,18 @@
 }
 /* Bigger centered colored circle = the workspace's icon. */
 .sidebar.icons .ws-dot { width: 18px; height: 18px; }
+/* Phase 92: a HEADER in the strip — its glyph dimmed over a hairline, so
+   the machine / folder is not the same centred dot as the screens under
+   it. Its + is a hover affordance with nowhere to hover here. */
+.sidebar.icons .ws-item.ws-header {
+  opacity: 0.65;
+  border-top: 1px solid var(--w-border, rgba(128, 128, 128, 0.25));
+  border-radius: 0;
+  margin-top: 4px;
+  padding-top: 9px;
+}
+.sidebar.icons .ws-item.ws-header:hover { opacity: 1; }
+.sidebar.icons .ws-item.ws-header .pf-btn { display: none; }
 /* Active workspace = glow ring around its dot (the inset bar + tint
    from full mode are suppressed in the strip). */
 .sidebar.icons .ws-item.active {

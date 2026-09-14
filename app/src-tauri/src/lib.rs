@@ -1073,8 +1073,17 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
     if normalize_parents(&mut file) > 0 {
         migrated = true;
     }
+    // Phase 92: headers (roots, pinned folders) stop holding panes. After
+    // the parent repair so `is_header` sees the final tree, before the
+    // per-workspace loop so the backfill below sees the moved layouts.
+    if migrate_headers_to_screens(&mut file) > 0 {
+        migrated = true;
+    }
     for ws in file.workspaces.iter_mut() {
-        if ws.layout.is_none() {
+        // Phase 92: a header has NO layout by design — the backfill is for
+        // legacy screens only, or every load would re-grow the panes the
+        // migration just moved.
+        if ws.layout.is_none() && !is_header(ws) {
             // Legacy: workspace existed without a layout. Build a
             // single Terminal pane and seed its connection from the
             // workspace's legacy `connection` field. Keep the same
@@ -4087,31 +4096,22 @@ async fn provision_existing_install_key(
     } else {
         workspace_name.trim().to_string()
     };
+    // Phase 92: the workspace is a header; its `shell` screen carries the
+    // pane and is what becomes active. The wizard still receives the
+    // ROOT id and resolves the screen itself (`handleSetActive`).
     let ws = Workspace {
         id: workspace_id.clone(),
         name: final_name,
         connection: Some(conn.clone()),
-        layout: Some(LayoutNode::Pane {
-            pane_id: new_pane_id(),
-            pane_kind: PaneKind::Terminal,
-            connection: Some(conn),
-            browser: None,
-            title: None,
-            auto_title: None,
-            annotation: None,
-            color: None,
-            emoji: None,
-            help_topic: None,
-            diff_source: None,
-            smart_bidi: None,
-            diff_cwd: None,
-        }),
+        layout: None,
         ..Default::default()
     };
     {
         let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
-        file.active_workspace_id = Some(workspace_id.clone());
-        file.workspaces.push(ws);
+        file.workspaces.push(ws.clone());
+        let screen = screen_under(&file, &ws, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(conn));
+        file.active_workspace_id = Some(screen.id.clone());
+        file.workspaces.push(screen);
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
@@ -5713,46 +5713,24 @@ fn workspaces_load(state: State<'_, AppState>) -> Result<WorkspacesFile, String>
 #[tauri::command]
 fn workspace_create(
     state: State<'_, AppState>,
+    app: AppHandle,
     input: CreateInput,
 ) -> Result<WorkspacesFile, String> {
     // Phase 23.D: workspace.connection is canonical from creation
-    // onward. The first Terminal pane also carries it for
-    // back-compat with older code paths that read pane.connection
-    // directly; future panes added via split / programmatic add
-    // inherit from the workspace level when their own field is None.
-    let conn = input.connection.clone();
-    let ws = Workspace {
-        id: new_workspace_id(),
-        name: input.name,
-        color: input.color,
-        cwd: input.cwd,
-        connection: Some(conn.clone()),
-        layout: Some(LayoutNode::Pane {
-            pane_id: new_pane_id(),
-            pane_kind: PaneKind::Terminal,
-            connection: Some(conn),
-            browser: None,
-            title: None,
-            auto_title: None,
-            annotation: None,
-            color: None,
-            emoji: None,
-            help_topic: None,
-            diff_source: None,
-            smart_bidi: None,
-            diff_cwd: None,
-        }),
-        setup_command: input.setup_command,
-        teardown_command: input.teardown_command,
-        env: input.env.unwrap_or_default(),
-        ..Default::default()
+    // onward; the first Terminal pane also carries it for back-compat
+    // with older code paths that read pane.connection directly.
+    // Phase 92: the workspace is a HEADER (no layout) with its first
+    // screen — `shell` — underneath, and the screen is what is active.
+    let (root_id, screen_id) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        create_root_with_screen(&mut file, input)
     };
-    {
-        let mut file = state.workspaces.lock().unwrap();
-        file.active_workspace_id = Some(ws.id.clone());
-        file.workspaces.push(ws);
-    }
     persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_info("WORKSPACE", &format!("created ws={root_id} with screen ws={screen_id}"));
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
@@ -5855,6 +5833,9 @@ fn workspace_reset_layout(
             .iter_mut()
             .find(|w| w.id == workspace_id)
             .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        if is_header(ws) {
+            return Err(HEADER_HAS_NO_PANES.to_string());
+        }
         // Pick a connection for the fresh pane:
         // 1. The first terminal pane in the (corrupted) layout, if any.
         // 2. The legacy `connection` field on the workspace.
@@ -6055,17 +6036,22 @@ fn workspace_pin_project_folder(
             }
         };
         let effective = conn.clone().unwrap_or(Connection::Local { shell: None });
-        file.workspaces.push(Workspace {
+        // Phase 92: the folder is a HEADER — no panes of its own — with a
+        // first `shell` screen in that directory, which is what opens.
+        let folder = Workspace {
             id: new_id.clone(),
             name: label,
             cwd: Some(path.clone()),
             connection: Some(effective.clone()),
-            layout: Some(single_terminal_layout(effective)),
+            layout: None,
             parent_id: Some(parent_workspace_id.clone()),
             is_project_root,
             ..Default::default()
-        });
-        file.active_workspace_id = Some(new_id.clone());
+        };
+        file.workspaces.push(folder.clone());
+        let screen = screen_under(&file, &folder, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(effective));
+        file.active_workspace_id = Some(screen.id.clone());
+        file.workspaces.push(screen);
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
@@ -6112,14 +6098,10 @@ fn workspace_open_worktree(
             .unwrap_or(Connection::Local { shell: None });
 
         // The repo root's own entry in `git worktree list` IS this
-        // workspace. Opening it would create a child sharing its
-        // parent's directory.
-        if root.cwd.as_deref() == Some(worktree_path.as_str()) {
-            file.active_workspace_id = Some(root_workspace_id.clone());
-            drop(file);
-            persist(&state)?;
-            return Ok(state.workspaces.lock().unwrap().clone());
-        }
+        // folder. Phase 92: the folder is a header, so the row for its
+        // directory is its `shell` screen — same `(parent, cwd)` as any
+        // worktree, so the idempotency below finds it (or, for a folder
+        // pinned before 92 whose shell was renamed, creates one).
         if let Some(existing) = file
             .workspaces
             .iter()
@@ -6180,6 +6162,275 @@ fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
         .last()
         .cloned()
         .unwrap_or_else(|| id.to_string())
+}
+
+// ─── Phase 92: headers vs screens ────────────────────────────────────
+//
+// A ROOT (the machine) or a pinned project folder is a HEADER: a row that
+// holds rows and never holds panes (`layout: None`). Every other workspace
+// is a SCREEN — the only kind with a layout, the only kind that can be
+// active. Before this, the machine row was itself a screen, so a terminal
+// could be opened "on the server" directly OR as a row under it — two
+// ways to do one thing (Yossi, 2026-09-14). Derived, not stored:
+// `parent_id` and `is_project_root` already say everything.
+
+/// The one rule. Keep it in sync with `isHeader` in `app/src/wsTree.ts`.
+pub(crate) fn is_header(w: &Workspace) -> bool {
+    w.parent_id.is_none() || w.is_project_root
+}
+
+const HEADER_HAS_NO_PANES: &str = "a header has no panes — open a screen under it";
+
+/// Name of the screen every new header starts with, and of the one the
+/// migration moves a header's old panes onto. Persisted, so not localised.
+const DEFAULT_SCREEN_NAME: &str = "shell";
+
+/// `new_workspace_id` is nanoseconds only, and Windows' clock ticks in
+/// 100 ns — two ids minted back to back (the migration loop, root + first
+/// screen) can collide. Retry with a suffix until the id is free.
+fn unique_workspace_id(file: &WorkspacesFile) -> String {
+    let base = new_workspace_id();
+    if !file.workspaces.iter().any(|w| w.id == base) {
+        return base;
+    }
+    let mut n = 1u32;
+    loop {
+        let id = format!("{base}_{n:x}");
+        if !file.workspaces.iter().any(|w| w.id == id) {
+            return id;
+        }
+        n += 1;
+    }
+}
+
+/// `shell`, then `shell-2`, `shell-3`… past every name a sibling under
+/// `parent_id` already uses.
+fn unique_sibling_name(file: &WorkspacesFile, parent_id: &str, base: &str) -> String {
+    let taken: Vec<&str> = file
+        .workspaces
+        .iter()
+        .filter(|w| w.parent_id.as_deref() == Some(parent_id))
+        .map(|w| w.name.as_str())
+        .collect();
+    if !taken.contains(&base) {
+        return base.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !taken.iter().any(|t| *t == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Children of `parent_id` in sidebar order: `sort_order` ascending, `None`
+/// last, insertion order as the tie-break (`childrenOf` in Sidebar.tsx).
+fn children_in_order<'a>(file: &'a WorkspacesFile, parent_id: &str) -> Vec<&'a Workspace> {
+    let mut kids: Vec<(usize, &Workspace)> = file
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.parent_id.as_deref() == Some(parent_id))
+        .collect();
+    kids.sort_by_key(|(ins, w)| (w.sort_order.unwrap_or(i32::MAX), *ins));
+    kids.into_iter().map(|(_, w)| w).collect()
+}
+
+/// The first SCREEN under a header (a root's folder children are headers
+/// themselves and are skipped). None when the header has no screens yet.
+fn first_screen_of(file: &WorkspacesFile, header_id: &str) -> Option<String> {
+    children_in_order(file, header_id)
+        .into_iter()
+        .find(|w| !is_header(w))
+        .map(|w| w.id.clone())
+}
+
+/// The id to activate for any id: a screen is itself; a header hands over
+/// to its first screen. `Err` for an unknown id or a header with no screens
+/// — the frontend guards this too, but the RPC server (`select-workspace`,
+/// `action.connect`) reaches `active_workspace_id` without it.
+pub(crate) fn screen_or_self(file: &WorkspacesFile, id: &str) -> Result<String, String> {
+    let w = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == id)
+        .ok_or_else(|| format!("no workspace {id}"))?;
+    if !is_header(w) {
+        return Ok(id.to_string());
+    }
+    first_screen_of(file, id).ok_or_else(|| format!("{} has no screens yet — add one with +", w.name))
+}
+
+/// A screen built under `header`: the header's connection, cwd and
+/// automation fields cloned — the runtime resolves a workspace BY PANE
+/// (`find_workspace_for_pane`, `pane_disconnect`'s teardown lookup), so
+/// setup/teardown/env must live on the row that has the panes; the header
+/// keeps its copy as the template for the next screen. `layout` is the
+/// caller's: a fresh single pane, or the header's old one (migration).
+/// Not pushed and not activated — the caller decides both.
+fn screen_under(file: &WorkspacesFile, header: &Workspace, name: String, layout: LayoutNode) -> Workspace {
+    Workspace {
+        id: unique_workspace_id(file),
+        name,
+        cwd: header.cwd.clone(),
+        connection: header.connection.clone(),
+        layout: Some(layout),
+        setup_command: header.setup_command.clone(),
+        teardown_command: header.teardown_command.clone(),
+        env: header.env.clone(),
+        auto_port_forward: header.auto_port_forward,
+        claude_separate_account: header.claude_separate_account,
+        parent_id: Some(header.id.clone()),
+        ..Default::default()
+    }
+}
+
+/// The wizard's create: a ROOT header plus its first screen, the screen
+/// active. Shared by `workspace_create` and the RPC `new-workspace`, which
+/// used to carry a byte-for-byte copy of the old single-workspace body.
+/// Returns `(root_id, screen_id)`.
+pub(crate) fn create_root_with_screen(file: &mut WorkspacesFile, input: CreateInput) -> (String, String) {
+    let conn = input.connection.clone();
+    let root = Workspace {
+        id: unique_workspace_id(file),
+        name: input.name,
+        color: input.color,
+        cwd: input.cwd,
+        connection: Some(conn.clone()),
+        layout: None,
+        setup_command: input.setup_command,
+        teardown_command: input.teardown_command,
+        env: input.env.unwrap_or_default(),
+        ..Default::default()
+    };
+    // Push the root BEFORE minting the screen's id, so the uniqueness
+    // check sees it.
+    file.workspaces.push(root.clone());
+    let screen = screen_under(file, &root, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(conn));
+    let screen_id = screen.id.clone();
+    file.workspaces.push(screen);
+    file.active_workspace_id = Some(screen_id.clone());
+    (root.id, screen_id)
+}
+
+/// One shot, at load: every header that still carries a layout hands it
+/// to a new `shell` screen directly under it. Pane ids are untouched, so
+/// the frontend's restore hints (`ymux.paneSessions.v1`) still bind; the
+/// screen is inserted right after the header in the file and given a
+/// `sort_order` below every sibling's, so it renders first; `tabs_mode`
+/// travels with the panes it describes. A header that was active hands
+/// activation to its shell. Idempotent: a header with `None` is skipped,
+/// and the legacy "no layout → single pane" backfill no longer runs on
+/// headers, or it would re-grow the layout on the very next load.
+fn migrate_headers_to_screens(file: &mut WorkspacesFile) -> usize {
+    let mut moved = 0;
+    let mut i = 0;
+    while i < file.workspaces.len() {
+        if !is_header(&file.workspaces[i]) || file.workspaces[i].layout.is_none() {
+            i += 1;
+            continue;
+        }
+        let Some(layout) = file.workspaces[i].layout.take() else {
+            i += 1;
+            continue;
+        };
+        let tabs_mode = std::mem::take(&mut file.workspaces[i].tabs_mode);
+        let header = file.workspaces[i].clone();
+        let name = unique_sibling_name(file, &header.id, DEFAULT_SCREEN_NAME);
+        let first = file
+            .workspaces
+            .iter()
+            .filter(|w| w.parent_id.as_deref() == Some(header.id.as_str()))
+            .filter_map(|w| w.sort_order)
+            .min()
+            .map(|m| m - 1);
+        let mut screen = screen_under(file, &header, name, layout);
+        screen.tabs_mode = tabs_mode;
+        screen.sort_order = first;
+        let screen_id = screen.id.clone();
+        file.workspaces.insert(i + 1, screen);
+        if file.active_workspace_id.as_deref() == Some(header.id.as_str()) {
+            file.active_workspace_id = Some(screen_id.clone());
+        }
+        log_info(
+            "WORKSPACE",
+            &format!("migrate: header ws={} → its panes now live on screen ws={screen_id}", header.id),
+        );
+        moved += 1;
+        i += 2;
+    }
+    moved
+}
+
+/// After a delete, the workspace to land on: a screen next to the deleted
+/// subtree (same parent), else any screen under the same root, else any
+/// screen at all, else nothing. Never a header — the previous rule
+/// ("prefer a root") would now land on a paneless row.
+fn active_after_delete(file: &WorkspacesFile, deleted_parent: Option<&str>) -> Option<String> {
+    if let Some(parent) = deleted_parent {
+        if let Some(id) = first_screen_of(file, parent) {
+            return Some(id);
+        }
+        let root = root_workspace_of(file, parent);
+        if let Some(w) = collect_subtree_ids(file, &root)
+            .into_iter()
+            .filter_map(|id| file.workspaces.iter().find(|w| w.id == id))
+            .find(|w| !is_header(w))
+        {
+            return Some(w.id.clone());
+        }
+    }
+    file.workspaces.iter().find(|w| !is_header(w)).map(|w| w.id.clone())
+}
+
+/// Phase 92: a plain screen under a header — the `+` when the sessions
+/// setting is off or the host has no multiplexer (the session-row `+` of
+/// 91.C stays on the frontend, `newSessionRow`). Name defaults to
+/// `shell`, made unique among the siblings.
+#[tauri::command]
+fn workspace_new_screen(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    parent_workspace_id: String,
+    name: Option<String>,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let header = file
+            .workspaces
+            .iter()
+            .find(|w| w.id == parent_workspace_id)
+            .cloned()
+            .ok_or_else(|| "workspace not found".to_string())?;
+        if !is_header(&header) {
+            return Err("a screen cannot hold screens — use its header".to_string());
+        }
+        let base = name
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| DEFAULT_SCREEN_NAME.to_string());
+        let label = unique_sibling_name(&file, &header.id, &base);
+        let conn = header
+            .connection
+            .clone()
+            .unwrap_or(Connection::Local { shell: None });
+        let screen = screen_under(&file, &header, label, single_terminal_layout(conn));
+        let id = screen.id.clone();
+        file.workspaces.push(screen);
+        file.active_workspace_id = Some(id.clone());
+        log_info(
+            "WORKSPACE",
+            &format!("new screen ws={id} under header ws={parent_workspace_id}"),
+        );
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    Ok(state.workspaces.lock().unwrap().clone())
 }
 
 /// Phase 91.C: does ANY row on the same host already stand for `name`?
@@ -7686,9 +7937,14 @@ fn workspace_delete(
     // Collect ids and pane lists under ONE short lock, then drop it: the
     // teardown below is I/O (PTY kill, webview close, filesystem) and
     // must never run under the workspaces mutex.
-    let (ids, panes_by_ws) = {
+    let (ids, panes_by_ws, deleted_parent) = {
         let file = state.workspaces.lock().unwrap();
         let ids = collect_subtree_ids(&file, &workspace_id);
+        let deleted_parent = file
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .and_then(|w| w.parent_id.clone());
         let panes: Vec<(String, Vec<String>)> = ids
             .iter()
             .map(|id| {
@@ -7706,7 +7962,7 @@ fn workspace_delete(
                 (id.clone(), panes)
             })
             .collect();
-        (ids, panes)
+        (ids, panes, deleted_parent)
     };
     if ids.len() > 1 {
         log_info(
@@ -7733,14 +7989,10 @@ fn workspace_delete(
             .map(|a| ids.iter().any(|i| i == a))
             .unwrap_or(false)
         {
-            // Prefer a root: falling back to `first()` could land the
-            // user inside some unrelated repo's worktree.
-            file.active_workspace_id = file
-                .workspaces
-                .iter()
-                .find(|w| w.parent_id.is_none())
-                .or_else(|| file.workspaces.first())
-                .map(|w| w.id.clone());
+            // Phase 92: land on a SCREEN — a sibling of what was deleted
+            // first, then anything under the same root, then anything at
+            // all. A header can never be active.
+            file.active_workspace_id = active_after_delete(&file, deleted_parent.as_deref());
         }
     }
     persist(&state)?;
@@ -7839,6 +8091,12 @@ fn workspace_set_active(
 ) -> Result<WorkspacesFile, String> {
     {
         let mut file = state.workspaces.lock().unwrap();
+        // Phase 92: a header hands activation to its first screen; a header
+        // with none is refused rather than shown as an empty area.
+        let workspace_id = match workspace_id {
+            Some(id) => Some(screen_or_self(&file, &id)?),
+            None => None,
+        };
         file.active_workspace_id = workspace_id.clone();
         // Phase 49-C: stamp the activation timestamp on the workspace
         // being activated so the auto-destroy sweep can age it correctly.
@@ -7960,6 +8218,19 @@ fn workspace_split(
     help_topic: Option<String>,
 ) -> Result<WorkspacesFile, String> {
     let kind = pane_kind.unwrap_or(PaneKind::Terminal);
+    // Phase 92: a header has nothing to split.
+    {
+        let file = state.workspaces.lock().unwrap();
+        if file
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .map(is_header)
+            .unwrap_or(false)
+        {
+            return Err(HEADER_HAS_NO_PANES.to_string());
+        }
+    }
     // Phase 23.C: when the new pane will be a Terminal, derive a
     // fallback connection BEFORE we mutate the layout. Three-tier
     // lookup:
@@ -12054,7 +12325,9 @@ pub fn run() {
                                 f.workspaces.retain(|w| {
                                     let stale = w.last_active_at > 0
                                         && now.saturating_sub(w.last_active_at) > ttl_secs;
-                                    let empty = w.layout.is_none();
+                                    // Phase 92: a header is paneless by design, not
+                                    // empty — sweeping it would orphan its screens.
+                                    let empty = w.layout.is_none() && !is_header(w);
                                     if stale && empty {
                                         log_info("WORKSPACE", &format!(
                                             "auto-destroy: removing workspace {} ({}) — empty + last_active {} days ago",
@@ -12191,6 +12464,7 @@ pub fn run() {
             workspace_pin_project_folder,
             workspace_open_worktree,
             workspace_open_session,
+            workspace_new_screen,
             workspace_mirror_sessions,
             workspace_set_collapsed,
             workspace_set_project_root,
@@ -12806,6 +13080,217 @@ mod claude_session_scope_tests {
         assert!(!paths_equal("/srv/p", "/srv/p2"));
         // A worktree is NOT its repo: sessions must not leak between them.
         assert!(!paths_equal("/srv/p", "/srv/p-feature"));
+    }
+}
+
+#[cfg(test)]
+mod header_screen_tests {
+    // Phase 92: headers (roots, pinned folders) hold rows, screens hold
+    // panes. The migration, the activation rule and the create shape.
+    use super::{
+        active_after_delete, create_root_with_screen, first_screen_of, is_header,
+        migrate_headers_to_screens, screen_or_self, unique_sibling_name, Connection,
+        CreateInput, LayoutNode, WorkspacesFile,
+    };
+
+    /// A pre-92 file: a root with panes (active), a pinned folder with a
+    /// pane and one worktree child, a session row under the root, and a
+    /// root that never had a layout.
+    fn pre_92() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 4,
+              "active_workspace_id": "srv",
+              "workspaces": [
+                { "id": "srv", "name": "runner", "tabs_mode": true,
+                  "setup_command": "source ~/.env",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_srv",
+                              "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_app" } },
+                { "id": "wt", "name": "feature-x", "parent_id": "app", "cwd": "/srv/app-feature-x", "sort_order": 0,
+                  "layout": { "kind": "pane", "pane_id": "p_wt" } },
+                { "id": "row-dev", "name": "dev", "parent_id": "srv", "tmux_session": "dev",
+                  "layout": { "kind": "pane", "pane_id": "p_dev" } },
+                { "id": "bare", "name": "never-had-a-layout",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn by_id<'a>(f: &'a WorkspacesFile, id: &str) -> &'a super::Workspace {
+        f.workspaces.iter().find(|w| w.id == id).expect("workspace present")
+    }
+
+    fn pane_id_of(layout: &LayoutNode) -> String {
+        let mut v = Vec::new();
+        super::collect_panes(layout, &mut v);
+        v.into_iter().next().expect("one pane")
+    }
+
+    #[test]
+    fn is_header_on_the_four_shapes() {
+        let f = pre_92();
+        assert!(is_header(by_id(&f, "srv")), "a root is a header");
+        assert!(is_header(by_id(&f, "app")), "a pinned folder is a header");
+        assert!(!is_header(by_id(&f, "wt")), "a worktree child is a screen");
+        assert!(!is_header(by_id(&f, "row-dev")), "a session row is a screen");
+    }
+
+    #[test]
+    fn a_root_with_panes_moves_them_to_a_shell_screen_and_keeps_pane_ids() {
+        let mut f = pre_92();
+        assert_eq!(migrate_headers_to_screens(&mut f), 2, "the root and the folder");
+
+        let srv = by_id(&f, "srv");
+        assert!(srv.layout.is_none(), "the header no longer holds panes");
+        assert!(!srv.tabs_mode, "tabs_mode travelled with the panes");
+        assert_eq!(srv.setup_command.as_deref(), Some("source ~/.env"), "the header keeps its template");
+
+        let shell_id = first_screen_of(&f, "srv").expect("the root has a first screen");
+        let shell = by_id(&f, &shell_id);
+        assert_eq!(shell.name, "shell");
+        assert_eq!(shell.parent_id.as_deref(), Some("srv"));
+        assert!(shell.tabs_mode);
+        assert_eq!(shell.setup_command.as_deref(), Some("source ~/.env"), "the screen got a copy");
+        assert!(matches!(shell.connection, Some(Connection::Ssh { .. })));
+        assert_eq!(pane_id_of(shell.layout.as_ref().expect("screen has a layout")), "p_srv");
+        // Inserted right after its header, not appended.
+        let idx = |id: &str| f.workspaces.iter().position(|w| w.id == id).unwrap();
+        assert_eq!(idx(&shell_id), idx("srv") + 1);
+    }
+
+    #[test]
+    fn a_pinned_folder_is_split_the_same_way_and_its_worktree_children_sort_after_shell() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let app = by_id(&f, "app");
+        assert!(app.layout.is_none());
+        assert!(app.is_project_root, "still a folder");
+        let shell_id = first_screen_of(&f, "app").expect("the folder has a first screen");
+        let shell = by_id(&f, &shell_id);
+        assert_eq!(shell.cwd.as_deref(), Some("/srv/app"), "the shell opens in the folder");
+        assert_eq!(pane_id_of(shell.layout.as_ref().unwrap()), "p_app");
+        // The worktree child carried sort_order 0, so the shell sorts below it.
+        assert_eq!(shell.sort_order, Some(-1));
+    }
+
+    #[test]
+    fn the_active_header_hands_activation_to_its_shell() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let shell_id = first_screen_of(&f, "srv").unwrap();
+        assert_eq!(f.active_workspace_id.as_deref(), Some(shell_id.as_str()));
+    }
+
+    #[test]
+    fn a_header_without_a_layout_is_left_alone() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert!(by_id(&f, "bare").layout.is_none());
+        assert!(first_screen_of(&f, "bare").is_none(), "no screen was invented for it");
+    }
+
+    #[test]
+    fn screens_are_never_touched() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(pane_id_of(by_id(&f, "wt").layout.as_ref().unwrap()), "p_wt");
+        assert_eq!(pane_id_of(by_id(&f, "row-dev").layout.as_ref().unwrap()), "p_dev");
+        assert_eq!(by_id(&f, "row-dev").tmux_session.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let after_first = serde_json::to_string(&f.workspaces).unwrap();
+        assert_eq!(migrate_headers_to_screens(&mut f), 0);
+        assert_eq!(serde_json::to_string(&f.workspaces).unwrap(), after_first);
+    }
+
+    #[test]
+    fn screen_or_self_resolves_a_header_and_refuses_an_empty_one() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(screen_or_self(&f, "wt").unwrap(), "wt", "a screen is itself");
+        let shell = first_screen_of(&f, "srv").unwrap();
+        assert_eq!(screen_or_self(&f, "srv").unwrap(), shell, "a header → its first screen");
+        assert!(screen_or_self(&f, "bare").is_err(), "a header with no screens is refused");
+        assert!(screen_or_self(&f, "nope").is_err());
+    }
+
+    #[test]
+    fn a_roots_folder_child_is_not_its_first_screen() {
+        // A root whose only child is a pinned folder has no screen of its
+        // own — the folder is a header too.
+        let f: WorkspacesFile = serde_json::from_str(
+            r#"{ "workspaces": [
+              { "id": "srv", "name": "runner" },
+              { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app" },
+              { "id": "sh", "name": "shell", "parent_id": "app", "layout": { "kind": "pane", "pane_id": "p" } }
+            ] }"#,
+        )
+        .unwrap();
+        assert!(first_screen_of(&f, "srv").is_none());
+        assert_eq!(first_screen_of(&f, "app").as_deref(), Some("sh"));
+    }
+
+    #[test]
+    fn delete_never_leaves_a_header_active() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        // Deleting a screen under `app`: its sibling (the folder's shell) wins.
+        let app_shell = first_screen_of(&f, "app").unwrap();
+        f.workspaces.retain(|w| w.id != "wt");
+        assert_eq!(active_after_delete(&f, Some("app")).as_deref(), Some(app_shell.as_str()));
+        // Deleting the folder's last screen: fall back to a screen under the root.
+        f.workspaces.retain(|w| w.id != app_shell);
+        let pick = active_after_delete(&f, Some("app")).expect("something under srv");
+        assert!(!is_header(by_id(&f, &pick)));
+        assert_eq!(by_id(&f, &pick).parent_id.as_deref(), Some("srv"));
+        // Nothing but headers left: nothing is active.
+        f.workspaces.retain(|w| is_header(w));
+        assert_eq!(active_after_delete(&f, None), None);
+    }
+
+    #[test]
+    fn sibling_names_are_made_unique() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(unique_sibling_name(&f, "srv", "shell"), "shell-2", "srv already has a shell");
+        assert_eq!(unique_sibling_name(&f, "bare", "shell"), "shell");
+        assert_eq!(unique_sibling_name(&f, "srv", "dev"), "dev-2", "the session row's name counts too");
+    }
+
+    #[test]
+    fn create_root_with_screen_builds_a_header_and_an_active_shell() {
+        let mut f = WorkspacesFile::default();
+        let input = CreateInput {
+            name: "box".into(),
+            connection: Connection::Local { shell: None },
+            color: Some("#abc".into()),
+            cwd: Some("/home/me".into()),
+            setup_command: Some("true".into()),
+            teardown_command: None,
+            env: None,
+        };
+        let (root_id, screen_id) = create_root_with_screen(&mut f, input);
+        assert_ne!(root_id, screen_id);
+        let root = by_id(&f, &root_id);
+        assert!(root.layout.is_none() && root.parent_id.is_none());
+        assert_eq!(root.color.as_deref(), Some("#abc"));
+        let screen = by_id(&f, &screen_id);
+        assert_eq!(screen.parent_id.as_deref(), Some(root_id.as_str()));
+        assert_eq!(screen.name, "shell");
+        assert_eq!(screen.cwd.as_deref(), Some("/home/me"));
+        assert_eq!(screen.setup_command.as_deref(), Some("true"));
+        assert!(screen.layout.is_some());
+        assert_eq!(f.active_workspace_id.as_deref(), Some(screen_id.as_str()));
     }
 }
 
