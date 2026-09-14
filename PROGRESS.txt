@@ -7662,3 +7662,9 @@ ci-windows 34853333610 rust/go/frontend success; build-macos 34853333672 x64 + a
 (Rule #14) — the live smoke is FOLLOWUPS P1 2026-09-09 checks 11-13 (Hebrew UI gutter/scroll,
 Windows strip no-duplicate, CRLF), Yossi's. Network note: github.com was unreachable from this
 box for ~20 min mid-session; a 1-min retry loop pushed on the second attempt.
+
+2026-09-14 — Phase 91.H full build on GitHub (Yossi: "תבנה מלא ב-GitHub"). build-windows
+34853748494 (8b8ebc5): ymux_0.5.1_x64-setup.exe 17 MB + app.exe 57 MB, installer handed to
+Yossi. build-macos-intel dispatched by hand on 7dc69bc (run 34855560873, green — a PR run does
+gates only; dispatch is what builds the bundle): ymux-macos-x64-dmg 24.1 MB / -app 21.9 MB,
+ymux-macos-arm64-dmg 23.3 MB / -app 21.3 MB. MSI not built — that needs a v* tag (release).
