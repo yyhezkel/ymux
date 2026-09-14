@@ -5882,6 +5882,10 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
 }
 .briefing-ws { font-size: 16px; font-weight: 600; color: var(--w-text, #e6edf3); }
 .briefing-intent { display: flex; flex-direction: column; gap: 4px; }
+.briefing-intent-row { display: flex; gap: 8px; align-items: center; }
+.briefing-intent-row input { flex: 1 1 auto; }
+.briefing-intent-save { flex: 0 0 auto; white-space: nowrap; }
+.briefing-intent-save:disabled { opacity: 0.55; cursor: default; }
 .briefing-intent-label { font-size: 12px; color: var(--w-text-dim, #9aa5ce); }
 .briefing-intent input {
   width: 100%;
