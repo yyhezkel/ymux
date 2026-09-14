@@ -13107,8 +13107,8 @@ mod claude_session_scope_tests {
         // one NTFS directory; POSIX case still matters.
         assert!(paths_equal(r"c:\Users\Y\Repo\", "C:/users/y/repo"));
         assert!(!paths_equal("/srv/App", "/srv/app"));
-        assert_eq!(norm_path("C:"), "c:");
-        assert_eq!(norm_path("Cx:/a"), "Cx:/a"); // not a drive letter
+        assert_eq!(crate::norm_path("C:"), "c:");
+        assert_eq!(crate::norm_path("Cx:/a"), "Cx:/a"); // not a drive letter
         assert!(!paths_equal("/srv/p", "/srv/p2"));
         // A worktree is NOT its repo: sessions must not leak between them.
         assert!(!paths_equal("/srv/p", "/srv/p-feature"));

@@ -7,7 +7,7 @@
     "app/src-tauri/src/insights_local.rs": "11517f8b0a2e4ee6298bf251ce5c8eb1aa4e5dd1d2a41c19592ec1c2f27896f0"
   },
   "backend-core": {
-    "app/src-tauri/src/lib.rs": "6963f9c54ffdb0d726dc5ee1e3834ea123d1ca9d5c1322e27b6289d94e96959c",
+    "app/src-tauri/src/lib.rs": "20dedfa27a44b246f46160a07fa6459bfbe078b128a4a7bb6aa69d38eb1493e9",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
