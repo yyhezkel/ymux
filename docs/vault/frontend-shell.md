@@ -384,6 +384,17 @@ carries `data-pane-id`, which is what `paneDrag` already resolves drop targets a
 so the existing drag store, ghost and `workspace_swap_panes` apply unchanged. The mode is
 a flag on `Workspace`, not a `LayoutNode` variant; `crates.md` has the reasoning.
 
+**Phase 93 — the pane header in tabs mode is two buttons.** `PaneView`'s `actions()` memo
+returns early on `p.tabsMode` with at most `popout` (connected only); everything else
+(annotation, edit-meta, the power/detach split-button, the smart-bidi toggle, maximize,
+both splits) exists only in split mode. The strip already owns close / new / switch, bidi
+is a Settings matter (`terminal.rtl.*`), and the power button folds into the X because
+`workspace_close_pane` is a detach, not a kill — so in tabs mode the X *is* disconnect +
+remove, and its tooltip (`pane.tooltip.close_tab`) says so. Kill session stays reachable
+from the tmux session picker (with its confirm) and the sidebar's session rows. App wires
+the header's `onClose` to `closeTab` when `tabsMode()` (else `closePane`), so the header X
+and the tab's X land on the same neighbour.
+
 **`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
 disagree about what colour a pane is. Unit-tested in `paneAgentState.test.ts`. It only

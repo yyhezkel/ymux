@@ -129,6 +129,7 @@
   "pane.tooltip.split_right": "Split right (Ctrl+Shift+D)",
   "pane.tooltip.split_down": "Split down (Ctrl+Shift+E)",
   "pane.tooltip.close": "Close pane (Ctrl+Shift+W)",
+  "pane.tooltip.close_tab": "Close tab — detaches; a tmux session keeps running (Ctrl+Shift+W)",
   "pane.tooltip.popout": "Pop out to window",
   "pane.tooltip.more_actions": "More actions",
   "pane.popout.detached": "[popped out — input goes to the detached window; mirror only here]",

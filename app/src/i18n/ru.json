@@ -129,6 +129,7 @@
   "pane.tooltip.split_right": "Разделить вправо (Ctrl+Shift+D)",
   "pane.tooltip.split_down": "Разделить вниз (Ctrl+Shift+E)",
   "pane.tooltip.close": "Закрыть панель (Ctrl+Shift+W)",
+  "pane.tooltip.close_tab": "Закрыть вкладку — отсоединяет; tmux-сессия продолжает работать (Ctrl+Shift+W)",
   "pane.tooltip.popout": "Открепить в окно",
   "pane.tooltip.more_actions": "Другие действия",
   "pane.popout.detached": "[откреплено — ввод идёт в отдельное окно; здесь только отображение]",

@@ -1057,8 +1057,33 @@ export function PaneView(p: Props) {
   const [showOverflow, setShowOverflow] = createSignal(false);
   let headerRef: HTMLDivElement | undefined;
 
+  // Shared by both branches of `actions()` — pop-out is the one action
+  // that survives tabs mode (Phase 93).
+  const popoutAction = (): HeaderAction => ({
+    id: "popout",
+    title: t("pane.tooltip.popout"),
+    label: t("pane.tooltip.popout"),
+    icon: () => <IconExternalLink size={14} />,
+    run: () => void p.onPopOut(p.pane.pane_id),
+  });
+
   const actions = createMemo<HeaderAction[]>(() => {
     const list: HeaderAction[] = [];
+    // Phase 93: in tabs mode the header keeps ONLY pop-out and the X.
+    // The tab strip already owns close / new / switch, the bidi toggle
+    // is a Settings matter (terminal.rtl.*), maximize is a no-op when
+    // the pane already fills the workspace (Phase 84.A), and a split
+    // would just make a second tab — which `+` on the strip does. The
+    // power button folds into the X: `workspace_close_pane` is a
+    // DETACH, not a kill, so closing the tab is exactly what the power
+    // button did plus removing the leaf. Kill session stays reachable
+    // from the tmux session picker (with its confirm) and the sidebar's
+    // session rows. Dropping the buttons also means the overflow fitter
+    // never engages in tabs mode.
+    if (p.tabsMode) {
+      if (p.isConnected) list.push(popoutAction());
+      return list;
+    }
     if (p.pane.annotation) {
       list.push({
         id: "annot",
@@ -1119,25 +1144,22 @@ export function PaneView(p: Props) {
         }).catch((err) => log.error("pane_set_smart_bidi failed", err));
       },
     });
-    // Phase 84.A: in tabs mode this pane already fills the workspace, so
-    // the button is a no-op. Dropping it also gives the overflow fitter
-    // one less button to place.
-    if (!p.tabsMode) {
-      list.push({
-        id: "maximize",
-        title: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
-        label: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
-        icon: () => (p.isMaximized ? <IconMinimize size={14} /> : <IconMaximize size={14} />),
-        active: p.isMaximized,
-        run: () => {
-          window.dispatchEvent(
-            new CustomEvent("ymux:pane-maximize", {
-              detail: { paneId: p.pane.pane_id },
-            }),
-          );
-        },
-      });
-    }
+    // Phase 84.A: maximize exists only in split mode (tabs mode returned
+    // above — the pane already fills the workspace there).
+    list.push({
+      id: "maximize",
+      title: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
+      label: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
+      icon: () => (p.isMaximized ? <IconMinimize size={14} /> : <IconMaximize size={14} />),
+      active: p.isMaximized,
+      run: () => {
+        window.dispatchEvent(
+          new CustomEvent("ymux:pane-maximize", {
+            detail: { paneId: p.pane.pane_id },
+          }),
+        );
+      },
+    });
     list.push({
       id: "split-h",
       title: t("pane.tooltip.split_right"),
@@ -1152,15 +1174,7 @@ export function PaneView(p: Props) {
       icon: () => <IconRows size={14} />,
       run: () => p.onSplit(p.pane.pane_id, "vertical"),
     });
-    if (p.isConnected) {
-      list.push({
-        id: "popout",
-        title: t("pane.tooltip.popout"),
-        label: t("pane.tooltip.popout"),
-        icon: () => <IconExternalLink size={14} />,
-        run: () => void p.onPopOut(p.pane.pane_id),
-      });
-    }
+    if (p.isConnected) list.push(popoutAction());
     return list;
   });
 
@@ -1512,7 +1526,13 @@ export function PaneView(p: Props) {
             </Show>
           </div>
         </Show>
-        <button class="pane-btn pane-close" title={t("pane.tooltip.close")} onClick={() => p.onClose(p.pane.pane_id)}><IconClose size={14} /></button>
+        <button
+          class="pane-btn pane-close"
+          title={p.tabsMode ? t("pane.tooltip.close_tab") : t("pane.tooltip.close")}
+          onClick={() => p.onClose(p.pane.pane_id)}
+        >
+          <IconClose size={14} />
+        </button>
       </div>
       <Show when={editingMeta()}>
         <div class="pane-meta-editor" onMouseDown={(e) => e.stopPropagation()}>

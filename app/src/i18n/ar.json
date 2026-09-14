@@ -129,6 +129,7 @@
   "pane.tooltip.split_right": "تقسيم لليمين (Ctrl+Shift+D)",
   "pane.tooltip.split_down": "تقسيم لأسفل (Ctrl+Shift+E)",
   "pane.tooltip.close": "إغلاق اللوحة (Ctrl+Shift+W)",
+  "pane.tooltip.close_tab": "إغلاق التبويب — يفصل الاتصال؛ جلسة tmux تستمر (Ctrl+Shift+W)",
   "pane.tooltip.popout": "فتح في نافذة",
   "pane.tooltip.more_actions": "إجراءات أخرى",
   "pane.popout.detached": "[تم الفصل في نافذة — الإدخال يذهب إلى النافذة المنفصلة؛ هنا عرض فقط]",

@@ -5001,7 +5001,10 @@ function App() {
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}
                     onSplit={splitPane}
-                    onClose={closePane}
+                    // Phase 93: in tabs mode the header X is the tab's X —
+                    // closeTab lands on a neighbour instead of leaving
+                    // activePaneId on a retired pane.
+                    onClose={(pid) => void (tabsMode() ? closeTab(pid) : closePane(pid))}
                     onPopOut={popOutPane}
                     onDisconnect={disconnectPane}
                     onKillSession={killSession}
