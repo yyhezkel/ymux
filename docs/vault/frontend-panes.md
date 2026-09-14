@@ -20,9 +20,11 @@ covers:
   - app/src/PortsWindow.tsx
   - app/src/TicketsPanel.tsx
   - app/src/TicketModal.tsx
+  - app/src/QueuePanel.tsx
   - app/src/FeedPanel.tsx
   - app/src/NotificationCenter.tsx
   - app/src/AddonsWindow.tsx
+  - app/src/SessionsOverviewWindow.tsx
   - app/src/AddonsTab.tsx
   - app/src/YmuxToolsTab.tsx
   - app/src/ClaudeUsageIndicator.tsx
@@ -215,6 +217,17 @@ list, and the dialog that finalizes a captured element into a ticket on disk. **
 capture came from an untrusted page**, so the element HTML is rendered as **text, never
 as markup**, and the preview is collapsed by default.
 
+**`QueuePanel.tsx` (BRIEF)** — the cross-workspace agent Queue: every agent pane
+grouped by workspace with a count and a "needs you" badge, rows sorted by
+`queueModel.ts`'s buckets (blocked/stuck → waiting-for-you → done/closed →
+running), each row = status emoji (🔄 ⏸️ ⚠️ 💤 ✅) + pane title + the
+"what's happening" line (`got from you: <last prompt>` while running; `ask · rec`
+after a stop) + age. **Owns no verdicts** — App hands it the same
+`allPaneAgentRows()` the sidebar derives from; this file only paints (all brief
+text renders as plain text with `dir="auto"`, never markup — it is agent
+output). Row click = `handleSetActive` + `focusPane`; a drawer closes itself on
+jump. Rides the shared PanelSurface lifecycle like Tickets.
+
 **`ClaudeUsageIndicator.tsx` (181)** + **`claudeUsageFmt.ts` (120)** — the always-visible
 subscription-usage chip. With room it shows session · week · top model; narrow, it
 collapses to the single most-critical metric with the rest in the tooltip, one per line,
@@ -226,6 +239,29 @@ reset times converted to the viewer's **local** timezone.
 so they are managed per workspace, opened from the workspace's right-click menu and from
 the Insights monitor's install prompt. **`YmuxToolsTab.tsx` (126)** is the same shape for
 skills. Both are self-contained specifically so they do not bloat `SettingsModal`.
+
+**`SessionsOverviewWindow.tsx` (462)** — Phase 90, the workspace right-click
+**Active sessions…** dialog. A plain `.modal` stretched to the viewport (not a
+`PanelSurface`: it has no drawer/float life, it is a full-screen table you open, act in,
+and close), header pattern from `PortsWindow`, table class from the Monitor
+(`.ins-an-table`). **Summaries are pulled, never pushed** (90.C, Yossi via PR #41): every
+chunk is a real `claude -p` on the machine and a host holds many sessions the user does not
+care about, so selection is the cost control. `pane_list_tmux_sessions` with
+`projectPath: null` renders the table at once and nothing else happens until the user ticks
+rows — per row, or a whole directory group from its heading — and presses **Summarize
+selected (N)**; `sessions_overview_summarize` then runs in chunks of 10 and fills the status
+pill + summary column as it lands (10-30 s per chunk), with a spinner only on the rows in
+flight. The selection is per open (v1; per-host persistence is a BACKLOG item). A request
+counter drops a late answer after a refresh, so a stale summary never lands on a fresh row;
+exited (zellij) rows cannot be ticked — there is no running server to capture from. Rows group by `cwd ?? owner_cwd`, the unplaceable ones last under one "unknown
+folder" heading; the name column shows `label ?? auto_name ?? claude_title ?? name` with
+the raw name beneath. Row actions are props the window does not implement: **Open**
+(90.B: hands App the whole row — name, display name, `cwd ?? owner_cwd` — and App opens the
+session on a screen of its own, a child workspace row in the tree; nothing here splits),
+**Rename** (inline input, `^[A-Za-z0-9_-]{1,64}$` checked here AND in the backend,
+disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the button
+re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to
+`log.*` (Rule #1).
 
 **`DiffPane.tsx` (341)** — on mount it tells the backend the persisted source (or
 `Working`), which restarts the per-pane watcher task; the watcher emits

@@ -445,10 +445,15 @@ fn humanize_notification(subkind: &str, payload: &Value, ws_name: &str, lang: &s
         .unwrap_or("");
     let msg = payload.get("message").and_then(|v| v.as_str()).unwrap_or("");
     // v0.4.4: Stop carries `response_summary`; SessionEnd carries
-    // `session_duration_seconds` + `end_reason`.
+    // `session_duration_seconds` + `end_reason`. Current Claude Code sends
+    // `last_assistant_message` instead of `response_summary` on Stop — read
+    // it as the fallback so the card/toast shows how the turn ended rather
+    // than the generic "Finished in <cwd>".
     let summary = payload
         .get("response_summary")
         .and_then(|v| v.as_str())
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| payload.get("last_assistant_message").and_then(|v| v.as_str()))
         .unwrap_or("");
     let dur_secs = payload
         .get("session_duration_seconds")
@@ -1404,6 +1409,11 @@ async fn dispatch(
                 .get("payload")
                 .and_then(|p| p.get("notification_type"))
                 .and_then(|v| v.as_str());
+            // BRIEF: the brief parsed (or synthesized) out of this stop, if
+            // any — set in the `stop` arm below, consumed by the feed-card
+            // humanize block further down so the card can show `ask · rec`
+            // instead of a clipped message tail.
+            let mut stop_brief: Option<crate::brief::PaneBrief> = None;
             if let Some(pane) = resolved_pane.as_deref() {
                 // Phase 84.B: fold the hook into the effective agent state
                 // and emit, for the subkinds that carry no turn timing.
@@ -1428,6 +1438,35 @@ async fn dispatch(
                             (e.started_at_ms(), e.avg_ms(), e.state, e.state_since_ms(), e.seq)
                         };
                         crate::emit_agent_run_event(app, pane, started, avg, st, since, seq);
+                        // BRIEF: remember the user's last prompt (clipped) so
+                        // the Queue can show "got from you: …" while the turn
+                        // runs. Rule #1: the content goes to memory + UI only
+                        // — never into debug.log.
+                        if let Some(prompt) = params
+                            .get("payload")
+                            .and_then(|p| p.get("prompt"))
+                            .and_then(|v| v.as_str())
+                            .map(str::trim)
+                            .filter(|s| !s.is_empty())
+                        {
+                            let now_ms = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            let entry = {
+                                let mut briefs = state.briefs.lock().unwrap();
+                                let e = briefs.entry(pane.to_string()).or_default();
+                                e.last_prompt =
+                                    Some(crate::brief::clip_chars(prompt, crate::brief::PROMPT_MAX_CHARS));
+                                e.prompt_ms = Some(now_ms);
+                                // A prompt in an "ended" pane means a new
+                                // conversation started there.
+                                e.session_ended = false;
+                                e.seq = e.seq.saturating_add(1);
+                                e.clone()
+                            };
+                            crate::emit_brief_event(app, pane, &entry);
+                        }
                         // Session auto-name: the CLI derives it from the
                         // first prompt and sends it under the existing
                         // `claude_title` param, so the header carries it
@@ -1460,6 +1499,42 @@ async fn dispatch(
                         };
                         // started_at = None clears the live timer; avg persists.
                         crate::emit_agent_run_event(app, pane, None, avg, st, since, seq);
+                        // BRIEF: build + store this turn's brief. The whole
+                        // payload already arrived verbatim, so the agent's
+                        // `[ymux-brief]` block (or its absence → degraded)
+                        // costs no extra IO. Rule #1: log metadata only.
+                        {
+                            let now_ms = SystemTime::now()
+                                .duration_since(UNIX_EPOCH)
+                                .map(|d| d.as_millis())
+                                .unwrap_or(0);
+                            let last_msg = params
+                                .get("payload")
+                                .and_then(|p| p.get("last_assistant_message"))
+                                .and_then(|v| v.as_str());
+                            let auto_title =
+                                params.get("claude_title").and_then(|v| v.as_str());
+                            let b = crate::brief::brief_from_stop(last_msg, auto_title, now_ms);
+                            crate::log_debug(
+                                "BRIEF",
+                                &format!(
+                                    "stop brief pane={} degraded={} has_ask={}",
+                                    pane,
+                                    b.degraded,
+                                    b.ask.is_some()
+                                ),
+                            );
+                            let entry = {
+                                let mut briefs = state.briefs.lock().unwrap();
+                                let e = briefs.entry(pane.to_string()).or_default();
+                                e.brief = Some(b.clone());
+                                e.session_ended = false;
+                                e.seq = e.seq.saturating_add(1);
+                                e.clone()
+                            };
+                            crate::emit_brief_event(app, pane, &entry);
+                            stop_brief = Some(b);
+                        }
                     }
                     "session-end" => {
                         // The session is gone, so the pane has no agent
@@ -1487,6 +1562,19 @@ async fn dispatch(
                             None,
                             seq,
                         );
+                        // BRIEF: keep the brief — it summarizes finished
+                        // work, which is exactly what the queue's ✅ bucket
+                        // shows — but flag the session as ended.
+                        if let Some(entry) = {
+                            let mut briefs = state.briefs.lock().unwrap();
+                            briefs.get_mut(pane).map(|e| {
+                                e.session_ended = true;
+                                e.seq = e.seq.saturating_add(1);
+                                e.clone()
+                            })
+                        } {
+                            crate::emit_brief_event(app, pane, &entry);
+                        }
                     }
                     _ => {}
                 }
@@ -1602,6 +1690,48 @@ async fn dispatch(
                 .duration_since(UNIX_EPOCH)
                 .map(|d| d.as_millis())
                 .unwrap_or(0);
+
+            // Passive lifecycle hooks used to land with the CLI's fallback
+            // title ("agent: stop") and, worse, `derive_hook_summary`'s raw
+            // payload dump as the body — `last_assistant_message` JSON in the
+            // feed, or SessionEnd's bare `reason` ("other"). Humanize them
+            // HERE, desktop-side, so stale remote CLIs get clean cards too
+            // and the text follows the desktop's language. ws_name is empty
+            // on purpose: the card's meta row already shows the workspace
+            // chip, so the toast-style "[ws]" prefix would duplicate it.
+            // pre-tool-use is deliberately excluded — its Gate card title
+            // ("Run `cmd`?") is the approval prompt itself.
+            let (title, summary) = if matches!(
+                subkind.as_str(),
+                "stop" | "session-end" | "session-start" | "post-tool-use"
+                    | "subagent-stop" | "pre-compact"
+            ) {
+                if let Some(b) = stop_brief.as_ref().filter(|b| !b.degraded) {
+                    // BRIEF: the agent wrote a structured block. Never show
+                    // the raw block on the card — humanize sees the message
+                    // with it stripped — and prefer the decision line
+                    // (`ask · rec`) over a clipped prose tail.
+                    let mut p = payload.clone();
+                    if let Some(msg) = payload
+                        .get("last_assistant_message")
+                        .and_then(|v| v.as_str())
+                    {
+                        p["last_assistant_message"] =
+                            serde_json::json!(crate::brief::pre_brief_text(msg));
+                    }
+                    let (t, s) = humanize_notification(&subkind, &p, "", &cfg.i18n.language);
+                    let decision = match (&b.ask, &b.rec) {
+                        (Some(ask), Some(rec)) => Some(format!("{ask} · {rec}")),
+                        (Some(ask), None) => Some(ask.clone()),
+                        _ => b.delta.clone(),
+                    };
+                    (t, decision.map(|d| clip(&d, 160)).unwrap_or(s))
+                } else {
+                    humanize_notification(&subkind, &payload, "", &cfg.i18n.language)
+                }
+            } else {
+                (title, summary)
+            };
 
             let item = FeedItem {
                 request_id: req_id.clone(),

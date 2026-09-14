@@ -74,8 +74,10 @@ rather than duplicated:
 - **`SshKeyOfferModal.tsx` (172)** — when the user authenticates by password, the backend
   emits `ssh-key-offer`; this asks whether to generate an ed25519 pair and install the
   public half into the remote's `~/.ssh/authorized_keys`.
-- **`ProjectFolderModal.tsx` (261)** — two dialogs over one chrome: `pin` (type a repo
-  path) and `worktree` (create a worktree inside a pinned folder).
+- **`ProjectFolderModal.tsx` (266)** — two dialogs over one chrome: `pin` (type a folder
+  path — usually a repo, but a directory without git pins too, demoted, via
+  `project_folder_probe`'s verdict) and `worktree` (create a worktree inside a pinned
+  folder).
 - **`ConfirmDeleteWorkspace.tsx` (123)** — deleting a workspace takes its **whole
   subtree**: pinned project folders, the worktree workspaces under them, and any live
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box
@@ -92,7 +94,10 @@ The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hoo
 notifications, logs, Claude, updates, shortcuts. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
-modal.
+modal. The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
+toggles + two minute thresholds); its writes always spread the COMPLETE `brief`
+group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
+group.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the

@@ -7321,3 +7321,117 @@ on mac via version compare + notes_url; self-install stays Windows-only.
 RELEASING.md: new step 4¼ so the next cut attaches the dmgs.
 
 [2026-09-01 14:30] Vault-first session hook: added .claude/settings.json with a SessionStart hook that cats docs/vault/INDEX.md into context at session start, so agents read the vault map before grepping source (Yossi flagged code-first behavior). Files: .claude/settings.json (new). Result: JSON validated with node, command pipe-tested in bash + PowerShell 5.1; fires from next session.
+2026-09-02 — Phase 90: "סשנים פעילים" — active-sessions overview per workspace
+Branch tmux_sessions (worktree wt-tmux_sessions). Sidebar right-click → new
+"Active sessions…" entry above Add-ons → full-screen modal listing every
+tmux/zellij session on the workspace's machine, grouped by directory, with an
+agent summary + status per row and Open / Rename / Kill actions.
+Backend: NEW app/src-tauri/src/sessions_overview.rs (sessions_overview_summarize:
+capture-pane / dump-screen + ONE `claude -p --output-format json` on the host —
+over SSH as a single remote pipeline so screen bytes never reach the desktop;
+sessions_kill_by_name). lib.rs: TmuxSessionInfo.owner_cwd (grouping key for
+zellij rows), KillTarget + kill_target lifted out of kill_pane_session_inner
+(pure move), tmux_rename_session extended (ASCII whitelist, local-tmux + WSL
+arms, `=` exact targets, migration of owners / labels / live Session fields /
+session-meta label; zellij refused), rename_session_owner, rename_tmux_label,
+zellij_args_dump_screen. local_setup::resolve_claude_binary: claude.cmd fallback
+on Windows. claude_summary: resolve_claude_path / wrap_login / bash_squote now
+pub(crate). Frontend: NEW app/src/SessionsOverviewWindow.tsx; Sidebar action
+union + button; App.tsx sessionsWin + openSessionInTab / killSessionByName /
+renameSessionByName (newTab returns the pane id, killSession returns the
+outcome); types.ts owner_cwd + SessionSummary; i18n ×4 (35 keys); App.css.
+Docs: vault backend-core / frontend-shell / frontend-panes, ZELLIJ.md,
+DECISIONS (Decided: real rename back, ASCII-only). 11 unit tests in the new
+module. Result: compiles-untested (Rule #17) — CI decides; FOLLOWUPS P1 smoke.
+
+2026-09-02 — Phase 90.A: capture-pane target fix (=name → =name:)
+Live run on the runner (tmux 3.4): `capture-pane -t =name` answers "can't find
+pane" — a bare =name is a PANE target there; =name: (session:window) resolves.
+rename-session -t =name is fine (session target). Fixed in
+build_ssh_summary_script + capture_local_tmux, the test asserts the colon, vault
+Gotcha added. Found by running the feature's pipeline by hand on this machine
+before the CI builds were downloaded; without it every summary came back
+unknown. Builds re-dispatched (Windows NSIS + macOS dmg x64/arm64).
+
+2026-09-02 — Phase 90.B: "פתח" = the session on a screen of its own (a row in the tree)
+Yossi: Open must not split the current screen; add a row under the machine
+(under the project folder when the cwd is known) and open the session there.
+Backend: Workspace.tmux_session (ymux-types, elided when absent; binding
+hand-mirrored per fc816a8 precedent), workspace_open_session (idempotent on
+tmux_session; parent = pick_session_parent = deepest is_project_root whose cwd
+contains the session cwd, else root; clone of root connection +
+single_terminal_layout), tmux_rename_session migrates tmux_session on same-host
+rows (+ app: AppHandle). 5 unit tests (session_workspace_tests) + round-trip
+key list. Frontend: openSessionAsWorkspace replaces openSessionInTab
+(activate row, connect first pane only if not live); connectPane defaults
+tmuxSessionName/persistent to ws.tmux_session for the FIRST pane; restoreSessions
+same fallback; Sidebar terminal glyph for session rows; window onOpen(s).
+Docs: vault crates / backend-core / frontend-shell / frontend-panes, DECISIONS
+addendum, FOLLOWUPS smoke amended. compiles-untested — CI.
+
+[2026-09-01] fix(feed): humanized stop/session-end feed cards (branch yos/context-switching-impl-b86b68, 705c706)
+  - Bug (user screenshot): feed cards titled 'agent: stop' with raw payload JSON as body (incl. last_assistant_message), SessionEnd cards showing bare reason 'other'.
+  - Root cause: CLI derive_hook_title has no 'stop' arm; derive_hook_summary falls back to dumping payload JSON. Cards bypassed humanize_notification (toasts-only until now).
+  - Fix: desktop-side in rpc_server.rs feed.push — passive lifecycle subkinds routed through humanize_notification (ws_name empty; pre-tool-use excluded); humanize reads last_assistant_message as Stop summary fallback.
+  - Files: app/src-tauri/src/rpc_server.rs, docs/vault/backend-rpc.md (+lock). Compiles-untested until CI (Rule #17).
+  - Context: step 0 of the context-switching/Briefing design (agent-written brief on Stop hook + queue view) — discussion in session, not yet logged as Decided.
+
+[2026-09-01] BRIEF commit 1/5: backend pipeline (branch yos/context-switching-impl-b86b68)
+  - Plan approved (.claude/plans/precious-finding-dragon.md): agent-written [ymux-brief] block in last_assistant_message; Queue panel; Briefing card; intent per workspace; all opt-in. Logged as Decided in docs/DECISIONS.md.
+  - New app/src-tauri/src/brief.rs: parser (last-marker-wins, RTL-safe, markdown-tolerant, 11 unit tests), PaneBrief/PaneBriefEntry/BriefStatus (ts-rs).
+  - lib.rs: AppState.briefs store, emit_brief_event (pane:brief), pane_briefs hydration command.
+  - rpc_server.rs feed.push: user-prompt-submit stores clipped last_prompt; stop parses/stores brief + rewrites card summary to ask-dot-rec with block stripped; session-end flags session_ended (keeps brief).
+  - Bindings: BriefStatus.ts, PaneBrief.ts, PaneBriefEntry.ts (hand-authored ts-rs shape; CI regenerates/verifies).
+  - Vault: backend-rpc.md (+brief.rs coverage + Briefs section), backend-core.md. FOLLOWUPS +P3 (claude_summary doc-comment lie). BACKLOG +2 (LLM refresh v2, skill seeding v2).
+  - Compiles-untested until CI (Rule #17).
+
+[2026-09-01] BRIEF commit 2/5: Queue panel (frontend)
+  - queueModel.ts (pure: queueStatus/QUEUE_BUCKET/whatsHappening/groupQueueRows, 10 node tests), paneTitle.ts (label precedence lifted from PaneTabs), QueuePanel.tsx (Shape B panel, grouped by workspace, statuses emoji per the reference table).
+  - App.tsx: briefs signal + pane:brief listener + pane_briefs hydration; allPaneAgentRows() generalizes paneAgentLights to all workspaces; queueAttentionWorkspaceIds -> new Sidebar prop (shared dot, .brief-attn); QueuePanel mount; toggle_queue keybinding (Ctrl+Shift+Q) + palette cmd.
+  - shortcuts.ts + settings.rs Shortcuts + bindings/Shortcuts.ts + SHORTCUT_GROUPS; i18n x4 (queue.*); CSS queue-* + brief-attn dot.
+  - Vault: frontend-shell/panes/lib + backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 3/5: Workspace.intent
+  - ymux-types: intent field (elided when unset) + elision-test key; app lib.rs: WORKSPACES_SCHEMA_VERSION 2->3 (+doc), workspace_set_intent command (returns Workspace, logs length only); bindings/Workspace.ts.
+  - Vault: crates.md, backend-core.md. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 4/5: Briefing card + BriefOptions
+  - settings.rs BriefOptions (+Settings.brief, Default impl) + bindings (BriefOptions.ts, Settings.ts) + settings.ts mirror (BriefSettings, DEFAULT) + SettingsModal General section (whole-group writes, setRtlField lesson).
+  - BriefingCard.tsx (intent inline edit -> workspace_set_intent; queue-row markup shared); App.tsx: briefingWs in anyModalOpen, absence trigger INSIDE handleSetActive (reads last_active_at pre-stamp, seconds), idle-return via capture-phase input stamps + pulseTick arming, show_briefing shortcut (Ctrl+Alt+Q) + palette.
+  - i18n x4, CSS. Vault: frontend-shell/flows/lib, backend-wizards. Compiles-untested until CI.
+
+[2026-09-01] BRIEF commit 5/5: adoption
+  - Queue empty-state: BRIEF_SNIPPET (verbatim CLAUDE.md block matching brief.rs parser) + copy button; i18n x4; docs/BRIEF.md (wire format + surfaces + privacy); CLAUDE.md docs pointer.
+  - Next: open PR, watch ci-windows. All five phases compiles-untested until CI + live run (Rule #14/17).
+
+[2026-09-02] BRIEF merged: PR #40 -> main (1094893), all 5 checks green (ci-windows x3 + build-macos x2).
+  - Parallel session's PR #41 (tmux_sessions, active-sessions overview) overlaps on 17 files and now needs a merge of main + vault re-sweep before landing; also flagged there: its 'Phase 87' collides with the existing Phase 87 (shortcuts).
+  - BACKLOG: two BRIEF<->overview unification entries added (status-vocab mapping; brief-first rows / shared LLM summarize engine), superseding the old 'refresh button' entry.
+  - Still open (Rule #14): live smoke on Yossi's machine — Queue (Ctrl+Shift+Q), snippet adoption, Briefing card (Ctrl+Alt+Q), Hebrew briefs.
+
+[2026-09-02] Requirement routed to PR #41 (active-sessions overview): per-session choice of which sessions get an LLM summary (Yossi). Spec posted as PR comment issuecomment-5510542414 + BACKLOG P1 anchor on main. Also re-flagged there: Phase 87 number collision + the pending merge of main (17-file overlap with the merged #40).
+
+2026-09-02 — Phase 90.C: summaries are pulled, not pushed + merge of main + renumber 87→90
+Merged origin/main (BRIEF, PR #40: Workspace.intent, Queue panel; 17-file overlap,
+conflicts only in DECISIONS.md and the vault lock). Yossi's requirement from the PR #41
+comment: no auto-summarize; per-row + per-folder tick, "Summarize selected (N)", spinner
+only on rows in flight, selection per open (per-host persistence → BACKLOG P3). Phase
+renumbered 87→90 on every line this branch added (87 = recordable shortcuts, 89 = highest
+on main); commit messages keep 87. BACKLOG P1 anchor ticked. compiles-untested — CI.
+
+[2026-09-02] Cutting v0.5.1-beta.1 from main (BRIEF #40 + active-sessions overview #41).
+  - chore bump 0.5.0 -> 0.5.1 (6 files, same shape as f2f1b27); files stay plain semver, only the tag carries -beta.1 (house convention, verified against v0.5.0-beta.1/2).
+  - Plan: push bump -> ci-windows green -> tag v0.5.1-beta.1 -> build-windows (MSI+NSIS+asserts) -> gh release --prerelease. NO manifest.json flip (stable channel untouched - that is what makes it a beta).
+
+[2026-09-02] v0.5.1-beta.1 PUBLISHED: https://github.com/yyhezkel/ymux/releases/tag/v0.5.1-beta.1 (prerelease; MSI 23.5MB + NSIS 16.9MB from tag run 33653328842, both asserts green). manifest.json NOT flipped - stable stays 0.5.0. Rule #14 still open: the beta exists to gather the live soak of BRIEF + sessions overview.
+
+[2026-09-02] Pin project folder without git — user-reported bug ("קבע תיקיית פרויקט" refused any folder that is not a git repo).
+  Fix: new `project_folder_probe` command (worktrees.rs) — Err only for a missing directory (dir_exists_over: tokio::fs local, `test -d` over WSL/SSH) or a dead SSH host; "no repo" is Ok(false), not an error. `workspace_pin_project_folder` (lib.rs) takes `is_project_root` as a param (the probe's verdict) instead of hardcoding true, so a non-git folder pins in the existing demoted state ("Check for a git repository" promotes it after git init). Both pin call sites updated (App.tsx pinProjectFolder + ProjectFolderModal submitPin) + `pf.pinned.noGit` toast and a softened pathHint in en/he/ar/ru. recheckGit deliberately still uses the always-fatal git_probe_worktrees.
+  Files: app/src-tauri/src/worktrees.rs, app/src-tauri/src/lib.rs, app/src/App.tsx, app/src/ProjectFolderModal.tsx, app/src/i18n/{en,he,ar,ru}.json, vault (backend-core, backend-panes, frontend-shell, frontend-flows) + .vault-lock.json, FOLLOWUPS.md smoke step (7).
+  Result: compiles untested locally per Rule #17 — pushed for CI; needs a live smoke (pin a non-git folder on Local + WSL + SSH).
+
+[2026-09-08] Worktree scan retry loop — user-reported (log: eight "worktree scan start … deferred — host not connected yet" lines in 30ms, forever, with a project folder open on a disconnected SSH host).
+  Root cause (Sidebar.tsx): the "resume parked scans" effect tracked `scans()` — which `scanFolder` writes to — and retried on ANY live workspace. Local workspace up + folder's SSH host down → scan fails → parked as offline → effect re-runs → scan again. Also `connectedIds` is a fresh Set on every App `tick()`, so even without the self-trigger it re-ran every bump.
+  Fix: `liveSshHosts` createMemo collapses connectedIds to a sorted `user@host:port` string (effect fires only when the live-host set changes); retry only parked folders whose own host is live (matches the backend's `pick_ssh_handle_for_host` resolution); body wrapped in `untrack`. No new deps, no polling.
+  Files: app/src/Sidebar.tsx, docs/vault/frontend-shell.md + .vault-lock.json.
+  Result: compiles untested locally per Rule #17 — pushed for CI; live check = open a folder pinned to a disconnected SSH host, confirm ONE deferred line, then connect the host and confirm one "scan ok".

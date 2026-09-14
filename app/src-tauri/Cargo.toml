@@ -12,7 +12,7 @@ strip = "symbols"
 
 [package]
 name = "app"
-version = "0.5.0"
+version = "0.5.1"
 description = "ymux"
 authors = ["yossi"]
 edition = "2021"

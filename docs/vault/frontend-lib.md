@@ -143,7 +143,7 @@ Selection and click positioning both land on the wrong side without this.
 
 ## Typed mirrors
 
-**`types.ts` (542)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (582)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -156,6 +156,10 @@ are what components use to reason about a pane.
 **hand-written mirrors** of structs that live in `lib.rs` rather than `ymux-types`, so
 ts-rs never sees them and nothing regenerates them for you. A field added on the Rust
 side is silently missing here until someone types it — update both in the same commit.
+Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cwd from
+`session-owners.json`, a grouping key only) and `SessionSummary`, the row shape of
+`sessions_overview_summarize` (`status` is a closed union ending in `unknown`, which is
+what the backend emits for anything the model did not say cleanly).
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it. Also
@@ -185,7 +189,8 @@ past installs), `fontInstall`, and `fontUninstall`.
   atomic-write surface small.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
-  `SHORTCUT_GROUPS` (the Settings tab's row order), parses
+  `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
+  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q, both in the general group), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,

@@ -5,7 +5,7 @@
 // to fill the workspace like a maximized pane. This module owns only the
 // small state vocabulary — a per-panel "surface" — that App.tsx drives.
 
-export type PanelId = "notifications" | "monitor" | "files" | "diff" | "tickets";
+export type PanelId = "notifications" | "monitor" | "files" | "diff" | "tickets" | "queue";
 
 /** Where a panel currently lives. `closed` ⇒ not shown. */
 export type Surface = "closed" | "drawer" | "float" | "fullscreen";

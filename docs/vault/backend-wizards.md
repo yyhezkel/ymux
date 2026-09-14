@@ -39,9 +39,19 @@ consult per hook. `list_system_fonts` reads the HKCU font hive — the same hive
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.
 
+**`BriefOptions`** (BRIEF) — the Briefing-card trigger group
+(`entry_card_on_return` / `entry_card_on_idle`, both default-false opt-ins, plus
+`absence_minutes`=30 / `idle_minutes`=15), container-level `#[serde(default)]`,
+hung off `Settings.brief`. Mirrored in `app/src/settings.ts` (`BriefSettings`)
+and round-tripped by SettingsModal's General tab — the settings_save
+whole-document replace makes that mirror mandatory, per the `terminal.rtl`
+incident.
+
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
-28 accelerator fields as of Phase 87 (it was 8 — the rest were hardcoded in the
-frontend), and per-field `#[serde(default = "...")]` would have meant twenty
+30 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
+frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
+Ctrl+Alt+Q), and per-field
+`#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
 the single source of truth instead, so a `settings.json` written by an older build
 simply lacks the new keys and picks them up. Add a field there and to the `Default`
@@ -154,6 +164,12 @@ back) surfaced as the user-facing error message.
   drops the `output()` future, and an orphaned `install.ps1` kept
   `~\.claude\downloads\claude-<ver>.exe` locked, so every retry of InstallClaudeCode
   failed with "being used by another process". Same reasoning as `claude_usage.rs`.
+- `resolve_claude_binary` (Phase 90) also tries `claude.cmd` on Windows: `which` only
+  appends PATHEXT to the name it is handed, so `which("claude.exe")` cannot see an
+  npm-global install, which is a `.cmd` shim. `probe_tool` had always known both
+  spellings; the one-shot `claude -p` callers (`claude_usage`, `sessions_overview`)
+  resolve through here and did not. A `.cmd` is spawned via `cmd.exe /c` by std with
+  its own escaping, which is why those callers keep their prompt free of `"` and `%`.
 - InstallClaudeCode (both arms) succeeds even when the installer exits non-zero, **if**
   a working `claude` binary is already on disk — the downloads dir is shared with
   claude's own auto-updater, so a locked file can fail the installer on a machine

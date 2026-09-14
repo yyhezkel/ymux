@@ -9,6 +9,9 @@ covers:
   - app/src/PaneTabs.tsx
   - app/src/AgentLight.tsx
   - app/src/paneAgentState.ts
+  - app/src/queueModel.ts
+  - app/src/paneTitle.ts
+  - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -44,7 +47,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (4,793) — one component, ~50 signals
+## `App.tsx` (4,954) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -110,6 +113,14 @@ here.
 An `ErrorBoundary` wraps the tree — a thrown render error shows a recovery panel rather
 than a white window.
 
+**Pinning a project folder no longer requires git.** `pinProjectFolder` calls
+`project_folder_probe` (hard error only for a missing directory or a dead SSH host),
+then passes the verdict to `workspace_pin_project_folder` as `isProjectRoot`; a folder
+without a repo lands demoted with an explanatory toast (`pf.pinned.noGit`) instead of
+being refused with git's fatal message. `recheckGit` (the sidebar's "Check for a git
+repository") still uses the always-fatal `git_probe_worktrees` — there, git's own
+message IS the answer.
+
 The Monitor mount passes `local={activeWs()?.connection?.type === "local"}` (Phase
 84.E) — `InsightsWindow` needs it only to print the right file paths in its
 "copy investigation commands" blocks; the fetch routing itself stays in Rust. The F12 /
@@ -117,12 +128,55 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,265)
+## `Sidebar.tsx` (1,286)
 
 Workspace tree with groups, nesting, pinned project folders, and worktree children.
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 `WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
+
+The workspace right-click menu is a fixed-position `.ws-menu` whose items all funnel
+through one `onAction(id, action)` prop with a closed string union — rename, edit,
+**sessions** (Phase 90, above add-ons on purpose: it is opened several times a day),
+addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item means
+adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
+state beyond which row it is open for.
+
+**Worktree scans are lazy, keyed by workspace id, and never polled.** A subtree's
+effect runs `scanFolder` once when it is open and has no result; a scan that fails
+with "no live SSH session" parks as `offline` (not an error row). The retry lives in
+one effect over `liveSshHosts` — a memo that collapses `connectedIds` (a fresh Set on
+every App tick) to the sorted `user@host:port` string of live SSH hosts — and rescans
+only the parked folders whose own host is in that set, inside `untrack` so its own
+`setScans` never re-fires it. Both constraints are load-bearing: the earlier version
+retried on *any* live workspace and tracked `scans()`, so a local workspace up with the
+folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
+Local/WSL folders never park — the backend runs git directly for them.
+
+Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
+terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
+otherwise a plain child — click, collapse, drag, delete all take the same path.
+
+**Phase 90 — the active-sessions overview's three row actions live in App, not in the
+window**, because each needs App-level state. `openSessionAsWorkspace` (90.B) closes the
+dialog and calls `workspace_open_session` — the session gets a **persisted child workspace
+row of its own** under the machine or its project folder; the current screen is never
+split or tabbed — then activates the row, and only if its single pane is not already live
+(`paneToSession.has`, because `pane_connect` on a live pane kills and respawns) waits for
+the mount and calls `connectPane(pid, { persistent, tmuxSession })`, the picker's shape, so
+the attach-only guard guarantees nothing is typed. **Two fallbacks make the row honest after
+a restart:** `connectPane` defaults `tmuxSessionName` / `persistent` to `ws.tmux_session`
+for the workspace's FIRST pane (activation never auto-connects, so a plain [Connect] on the
+row must attach, not spawn a pane-derived session; a split-off pane stays a plain shell),
+and `restoreSessions` uses the same field when localStorage has no hint for that pane.
+`newTab` still returns the new pane id from 87; nothing depends on it now.
+`killSessionByName` routes through the existing `killSession(paneId)` when
+`panePersistence()` shows one of our panes holding the name (PTY, maps and restore hint go
+the tested way; `killSession` now returns the outcome for that), else
+`sessions_kill_by_name`. `renameSessionByName` calls `tmux_rename_session` and then moves
+the holding pane's restore hint (`rememberPaneSession`) — the backend migrates its own
+maps, but the hint is frontend-owned and would otherwise name a session that no longer
+exists on the next boot.
 
 ## `LayoutView.tsx` (372) + `Divider.tsx` (72)
 
@@ -180,6 +234,39 @@ it is your move, red = it is blocked on you, **nothing at all = unknown**, which
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
 untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
 greyscale, 8px, and red-green deficiency.
+
+**`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
+(needs-input / stuck / waiting / working / done / ended — live hook state always
+outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
+`whatsHappening` (running rows show the user's last prompt, ended rows show
+`ask · rec` → delta → next), and `groupQueueRows` (group by workspace, the
+reference-table "CRM — 5" shape). Solid-free and unit-tested in
+`queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
+input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
+every workspace; the active-workspace lights, the Queue panel and the sidebar
+attention set (`queueAttentionWorkspaceIds`, a fifth Sidebar prop that shares the
+row's one dot as `.brief-attn`, precedence blocking > brief > activity) all derive
+from those rows, so they cannot disagree. Per-pane brief entries live in the
+`briefs` signal, mirrored off `pane:brief` (seq-guarded like `pane:agent-run`)
+and hydrated by `pane_briefs`.
+
+**`paneTitle.ts`** — the pane display-label precedence
+(`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
+the tab strip, the Queue panel and the Briefing card call one function.
+
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
+→ `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's
+brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+`anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
+triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
+lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
+`file()` — `workspace_set_active` stamps it to "now" (in SECONDS) before
+returning, so an effect running after the switch would always measure zero
+absence; **idle-return** stamps `lastInputMs` from capture-phase passive
+pointer/key/wheel listeners and arms on the existing 250ms `pulseTick` (no
+second timer), firing on the first input after the gap; **manual** =
+`show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
+toggles.
 
 ## Panel chrome — "one body, three surfaces"
 

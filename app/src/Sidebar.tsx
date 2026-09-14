@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount } from "solid-js";
+import { For, Show, createEffect, createSignal, createMemo, onCleanup, onMount, untrack } from "solid-js";
 import { collectPanes, findPane, isRemoteConn, type Workspace, type WorkspaceGroup, type WorktreeEntry, type ForwardRow } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
@@ -11,6 +11,7 @@ import {
   IconChevronDown,
   IconChevronRight,
   IconFolder,
+  IconTerminal,
   IconRefresh,
   IconWarning,
 } from "./icons";
@@ -73,6 +74,10 @@ interface Props {
   // Renders a soft amber breathing pulse on the row — attention-grabbing
   // but not blocking (`waitingWorkspaceIds` is the blocking red dot).
   hookPulseWorkspaceIds?: Set<string>;
+  // BRIEF: workspaces holding a pane whose brief says "needs you" (stuck /
+  // waiting-for-you) without a live blocking card. Shares the row's ONE
+  // attention dot at a middle intensity: blocking > brief > activity.
+  briefAttentionWorkspaceIds?: Set<string>;
   onActivate: (id: string) => void;
   /** Phase 80 — opens the unified SetupWizard (server new/existing +
    *  local existing/smart-install all live behind this one button; the
@@ -89,6 +94,7 @@ interface Props {
       | "edit"
       | "delete"
       | "disconnect"
+      | "sessions"
       | "addons"
       | "add_project_folder"
       | "check_git",
@@ -558,20 +564,40 @@ export function Sidebar(p: Props) {
    */
   const pathKey = (path: string) => path.replace(/\\/g, "/").replace(/\/+$/, "");
 
-  // A parked scan resumes the moment any workspace reports a live
-  // session — the folder's host is almost always the one that just came
-  // up, and a redundant `git worktree list` is cheaper than a stale red
-  // row the user has to notice and clear by hand.
-  createEffect(() => {
-    const live = p.connectedIds;
-    if (live.size === 0) return;
-    const parked = Object.entries(scans())
-      .filter(([, st]) => st.status === "offline")
-      .map(([id]) => id);
-    for (const id of parked) {
-      const ws = p.workspaces.find((w) => w.id === id);
-      if (ws) void scanFolder(ws);
+  // A parked scan resumes when ITS host comes up — the backend resolves
+  // the SSH handle by `user@host:port` (`pick_ssh_handle_for_host`), so
+  // that is the only event that can turn "no live SSH session" into an
+  // answer. The first version of this effect retried on *any* live
+  // workspace and also tracked `scans()`, which it writes to itself:
+  // with a local workspace up and the folder's SSH host down, every
+  // failed retry re-parked the scan, re-ran the effect, and retried
+  // again — eight `worktree scan start` lines in 30ms, forever
+  // (2026-09-08). The memo collapses `connectedIds` (a fresh Set on
+  // every tick) to the sorted host-key string, so the effect fires only
+  // when the set of live SSH hosts actually changes, and `untrack`
+  // keeps its own writes from re-triggering it.
+  const liveSshHosts = createMemo(() => {
+    const keys = new Set<string>();
+    for (const id of p.connectedIds) {
+      const c = p.workspaces.find((w) => w.id === id)?.connection;
+      if (isRemoteConn(c)) keys.add(`${c.user}@${c.host}:${c.port}`);
     }
+    return [...keys].sort().join("\n");
+  });
+  createEffect(() => {
+    const live = liveSshHosts();
+    if (live.length === 0) return;
+    const hosts = new Set(live.split("\n"));
+    untrack(() => {
+      for (const [id, st] of Object.entries(scans())) {
+        if (st.status !== "offline") continue;
+        const ws = p.workspaces.find((w) => w.id === id);
+        const c = ws?.connection;
+        if (ws && isRemoteConn(c) && hosts.has(`${c.user}@${c.host}:${c.port}`)) {
+          void scanFolder(ws);
+        }
+      }
+    });
   });
 
   /**
@@ -1033,10 +1059,23 @@ export function Sidebar(p: Props) {
             </span>
           }
         >
-          <span
-            class="ws-dot"
-            style={{ background: w.color || "#6b7682" }}
-          />
+          {/* Phase 90.B: a row opened FOR a multiplexer session wears a
+              terminal glyph instead of the colour dot; the raw session
+              name is the tooltip. Everything else about the row — click,
+              collapse, drag, delete — is the plain child-workspace path. */}
+          <Show
+            when={!w.tmux_session}
+            fallback={
+              <span class="ws-session-icon" title={w.tmux_session ?? undefined}>
+                <IconTerminal size={13} />
+              </span>
+            }
+          >
+            <span
+              class="ws-dot"
+              style={{ background: w.color || "#6b7682" }}
+            />
+          </Show>
         </Show>
         <span class="ws-name">
           <Show when={w.emoji}>{w.emoji} </Show>
@@ -1096,13 +1135,27 @@ export function Sidebar(p: Props) {
               pseudo-element was absolutely positioned at inset-inline-end
               and painted ON TOP of the badges. The class stays on the row —
               themes-redesign.css and the pulse both key off it. */}
-          <Show when={p.waitingWorkspaceIds.has(w.id) || p.notifiedWorkspaceIds.has(w.id)}>
+          <Show
+            when={
+              p.waitingWorkspaceIds.has(w.id)
+              || p.briefAttentionWorkspaceIds?.has(w.id)
+              || p.notifiedWorkspaceIds.has(w.id)
+            }
+          >
             <span
-              class={`ws-waiting-dot ${p.waitingWorkspaceIds.has(w.id) ? "" : "activity"}`}
+              class={`ws-waiting-dot ${
+                p.waitingWorkspaceIds.has(w.id)
+                  ? ""
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "brief-attn"
+                    : "activity"
+              }`}
               title={t(
                 p.waitingWorkspaceIds.has(w.id)
                   ? "sidebar.workspaceWaitingTitle"
-                  : "sidebar.workspaceActivityTitle",
+                  : p.briefAttentionWorkspaceIds?.has(w.id)
+                    ? "sidebar.workspaceBriefTitle"
+                    : "sidebar.workspaceActivityTitle",
               )}
             />
           </Show>
@@ -1134,6 +1187,12 @@ export function Sidebar(p: Props) {
             </button>
             <button onClick={() => p.onAction(w.id, "edit")}>
               {t("ws.context.edit")}
+            </button>
+            {/* Phase 90: every multiplexer session on this workspace's
+                machine, with an agent summary per row. Above Add-ons on
+                purpose — it is the thing you open several times a day. */}
+            <button onClick={() => p.onAction(w.id, "sessions")}>
+              {t("ws.context.sessions")}
             </button>
             <button onClick={() => p.onAction(w.id, "addons")}>
               {t("ws.context.addons")}
