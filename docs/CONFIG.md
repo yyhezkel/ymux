@@ -107,8 +107,22 @@ key is gone on the first write.
 Workspaces written before Phase 4 had a top-level `connection` field and no
 `layout`. On load, `lib.rs::load_from_disk` wraps each such workspace's
 connection into a single `pane` node with a freshly-generated `pane_id` and
-saves the migrated file back. The legacy `connection` field is then `None`
-(skipped on serialization).
+saves the migrated file back. **Since Phase 92 this applies to screens only**:
+a header — a root workspace (`parent_id` absent) or a pinned project folder
+(`is_project_root`) — has no `layout` by design and is left alone.
+
+### Migration: headers → screens (Phase 92)
+
+Before Phase 92 the machine row and a pinned folder each carried their own
+`layout`. On the first load after the upgrade, `migrate_headers_to_screens`
+moves every such layout onto a new child workspace named `shell`, inserted
+right after its header in the file, with the header's `connection`, `cwd`,
+`setup_command` / `teardown_command` / `env` / `auto_port_forward` /
+`claude_separate_account` copied and `tabs_mode` moved. Pane ids are
+unchanged, so per-pane restore hints keep binding. If `active_workspace_id`
+pointed at the header it now points at the shell. Idempotent: a header
+without a layout is skipped, and the pre-Phase-4 backfill above no longer
+touches headers.
 
 ### Example
 

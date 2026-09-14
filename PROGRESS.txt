@@ -7580,3 +7580,20 @@ script text, a JSX comment in the Sidebar props position (TS1005), and an unused
 All 5 PR checks green on 17ceb0e (ci-windows + build-macos x64/arm64). build-windows dispatched
 on 17ceb0e (run 34368955989, green): ymux-windows-nsis 17.0 MB, ymux-windows-exe 21.9 MB.
 Live smoke (FOLLOWUPS P1 2026-09-09) is Yossi's.
+
+2026-09-14 — Phase 92: headers are not screens (branch yos/sidebar-headers-organization-450dbf,
+stacked on PR #44's yos/sessions-row-tmux-display-f97645). Yossi: the machine / project
+folder should be the "header"; today a pane can be opened on the server row directly OR as a
+row under it. Model agreed in words first (DECISIONS 2026-09-14): header = root or pinned
+folder, `layout: None`, click = collapse, `+` = new screen; screen = everything else, the
+only kind with panes / the only kind that can be active. Zero schema change.
+Files: lib.rs (is_header, migrate_headers_to_screens + the two `!is_header` gates in
+load_from_disk's backfill and the auto-destroy sweep, create_root_with_screen shared with the
+RPC new-workspace, screen_or_self in workspace_set_active + RPC select/action.connect,
+workspace_new_screen, pin/provision create header + shell, open_worktree early return dropped,
+active_after_delete, split/reset refuse a header, header_screen_tests), rpc_server.rs,
+app/src/wsTree.ts (+ node test, 6 pass locally), Sidebar.tsx, App.tsx (handleSetActive
+returns the activated id; headerChain breadcrumb title; Queue label `machine › screen`),
+sidebar.css, i18n ×4 (sidebar.newScreen.tooltip). Docs: vault backend-core / frontend-shell /
+frontend-flows, CONFIG.md migration, DECISIONS, FOLLOWUPS P1 smoke (11 checks).
+Result: compiles-untested (Rule #17) — CI on the stacked PR; live smoke is Yossi's.

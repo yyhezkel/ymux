@@ -151,9 +151,13 @@ put logic there.
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
 
-`load_from_disk` repairs on the way in and each repair is logged: WSL→Local connection
-rewrite (`migrate_wsl_workspaces`), `backfill_sort_orders`, `normalize_parents`,
-`migrate_legacy_project_folders`. Other files in the same dir, each with the same
+`load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
+connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
+`normalize_parents`, **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
+backfills, `backfill_sort_orders`. Since Phase 92 the legacy "no layout → single pane"
+backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
+header is paneless by design, and either one would have re-grown or deleted it on the next
+load. Other files in the same dir, each with the same
 tmp+rename discipline: `machine-id` (stable per-install id, deliberately **not** in
 settings.json so "Reset all settings" can't change this machine's identity),
 tmux labels, session owners.
@@ -330,6 +334,32 @@ list command. The module owns what the picker never needed:
   straight to `kill_target` and releases the ownership claim on `killed | already_gone`.
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
+- **Headers vs screens (Phase 92).** `is_header(w)` = `parent_id.is_none() ||
+  is_project_root`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
+  never panes (`layout: None`); every other workspace is a SCREEN, the only kind with a
+  layout and the only kind that can be active. Derived, never stored (mirror:
+  `isHeader` in `app/src/wsTree.ts`). What follows from it, all in lib.rs next to
+  `root_workspace_of`: `screen_or_self` (a header hands activation to `first_screen_of` —
+  its first non-header child in sidebar order — or errs when it has none) is applied by
+  `workspace_set_active` AND the RPC `select-workspace` / `action.connect`;
+  `create_root_with_screen(file, CreateInput)` builds the root header plus its `shell`
+  screen (active) and is shared by `workspace_create` (which now also emits
+  `workspaces:changed`) and the RPC `new-workspace`; `provision_existing_install_key` and
+  `workspace_pin_project_folder` do the same by hand (folder header + `shell` in that
+  directory); **`workspace_new_screen(parent, name?)`** is the header `+` when the sessions
+  path does not apply — a plain screen from `screen_under` (connection, cwd,
+  setup/teardown/env/auto_port_forward/claude_separate_account cloned off the header,
+  because the runtime resolves those BY PANE), name made unique with
+  `unique_sibling_name`; `workspace_open_worktree` lost its "repo root → activate the root"
+  early return (the folder's shell has that cwd, so the `(parent, cwd)` idempotency finds
+  it); `workspace_delete` re-points through `active_after_delete` (a sibling screen, then
+  any screen under the root, then any screen, then `None` — never a header);
+  `workspace_split` / `workspace_reset_layout` refuse a header. `migrate_headers_to_screens`
+  runs once at load: a header with a layout gets a `shell` screen inserted right after it
+  in the file (pane ids kept, `tabs_mode` travels, `sort_order` one below the lowest
+  sibling so it renders first) and an active header hands over. `unique_workspace_id`
+  exists because `new_workspace_id` is nanoseconds only and Windows ticks in 100 ns —
+  root + screen minted back to back collided. Tests: `header_screen_tests`.
 - **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
   command beside `workspace_pin_project_folder` / `workspace_open_worktree`. Since Phase 91.C
   the construction lives in **`push_session_row`** (a CLONE of the root's connection,
