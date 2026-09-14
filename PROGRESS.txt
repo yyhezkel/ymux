@@ -7610,3 +7610,10 @@ ci-windows run 34836653746 (rust / frontend / go all success — header_screen_t
 node test, tsc, vault gate), build-macos run 34836658195 (x64 + arm64 success — the only
 job that compiles the cfg(not(windows)) arms). Compiles-untested (Rule #17); the live
 smoke is FOLLOWUPS P1 2026-09-14. Merge order: #44 first, then retarget #46 to main.
+
+2026-09-14 — PR #44 (now carrying #46 / Phase 92 and main's #39 + #42) green and CLEAN on
+1beac5e after re-stamping .vault-lock.json (the merge combined both sides' App.tsx /
+BriefingCard.tsx; the prose was already merged, only the hashes matched neither).
+ci-windows 34839594219 + build-macos 34839594094 all success. Windows test build of
+Phase 92 (on #46's head, pre-#42): run 34838500078 — ymux-windows-nsis 16 MB, exe 20 MB.
+Live smoke (FOLLOWUPS P1 2026-09-14) is Yossi's.
