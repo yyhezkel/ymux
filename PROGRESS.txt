@@ -7652,3 +7652,13 @@ backend-core / frontend-panes + lock re-stamped, FOLLOWUPS (P3 archived; 91.F P1
 11-13), FOLLOWUPS-ARCHIVE. Result: compiles-untested (Rule #17) — CI; live smoke is Yossi's.
 NOTE: github.com unreachable from this box all session (git fetch/push fail) — committed
 locally; push + PR pending network.
+
+2026-09-14 — Phase 91.H on PR #48: green. First ci-windows run (34852896826) failed on rust only —
+norm_path not in scope of the explicit-import test module (E0425; frontend + go green, so tsc /
+npm test / vault gate passed first time). Fixed in 8b8ebc5 (crate::norm_path). On 8b8ebc5:
+ci-windows 34853333610 rust/go/frontend success; build-macos 34853333672 x64 + arm64 success
+(the only job compiling the non-Windows arms). build-windows dispatched on 8b8ebc5 (run
+34853748494, green): ymux-windows-nsis 16.2 MB, ymux-windows-exe 20.8 MB. Compiles-untested
+(Rule #14) — the live smoke is FOLLOWUPS P1 2026-09-09 checks 11-13 (Hebrew UI gutter/scroll,
+Windows strip no-duplicate, CRLF), Yossi's. Network note: github.com was unreachable from this
+box for ~20 min mid-session; a 1-min retry loop pushed on the second attempt.
