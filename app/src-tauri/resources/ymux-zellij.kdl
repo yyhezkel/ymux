@@ -96,9 +96,11 @@ default_mode "locked"
 // (no scroll mode) and the mouse withheld, a zellij pane had no way to scroll
 // back at all. That is not a trade, it is a missing feature.
 //
-// `true` is also what the tmux side already does: ymux appends
-// `set -g mouse on` to the tmux attach for exactly this, decision O-3 in
-// docs/MOUSE-DEBUG.md. Same bet, already taken, already surviving in the field.
+// The tmux side took the same bet (`set -g mouse on` on attach, decision O-3
+// in docs/MOUSE-DEBUG.md) and reversed it on 2026-09-08 (Phase 91.B): tmux's
+// left-click capture was landing on Claude Code's redraws, and tmux has a
+// keyboard scrollback to fall back on. zellij does not — with keybinds
+// cleared there is no scroll mode — so `true` stays here on its own merits.
 //
 // What it costs, and why each cost is covered:
 //   - zellij captures drag-select, so a plain drag copies through

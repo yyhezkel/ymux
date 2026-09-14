@@ -66,6 +66,17 @@ auto_connect_on_workspace_select: boolean,
  */
 restore_sessions_on_start: boolean, 
 /**
+ * Phase 91.C. When true, every tmux/zellij session on a host is
+ * mirrored into the sidebar tree as a session row under that server (or
+ * under the pinned project folder whose cwd contains it), `+` on a
+ * server / folder row makes a new session as a new row, and a session
+ * that vanished from the host keeps its row greyed until deleted. OFF
+ * by default: turning it on fills the tree with a row per session on
+ * every server you activate, which is the point, but not something an
+ * update should do unasked. `#[serde(default)]` → missing field is false.
+ */
+sessions_as_rows: boolean, 
+/**
  * Phase 80.1. When true, the file manager reopens at the last directory
  * each column was showing (per workspace) instead of `$HOME`. OFF by
  * default so the pre-80.1 behavior is what an untouched install gets.

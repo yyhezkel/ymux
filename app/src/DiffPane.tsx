@@ -1,27 +1,41 @@
-// Phase 50 (#2.4): live unified-diff pane.
+// Phase 50 / 91.F: the live diff pane.
 //
-// On mount, we tell the backend the persisted source (or default
-// Working) — that (re)starts the per-pane watcher task. The watcher
-// emits `diff-pane-updated` events; we filter by pane_id and rerender.
-// Source dropdown calls diff_pane_set_source again; Refresh button
-// calls diff_pane_refresh for an immediate one-shot.
-//
-// Diff parsing is in-house — no extra deps. We slice the unified-diff
-// text into file-headers and hunks so ↑/↓ can scroll to the next hunk
-// and we can render `+`/`-`/` ` lines with separate gutter colours.
+// On mount we subscribe to `diff-pane-updated` FIRST, then call
+// `diff_pane_start` (order matters — the first emit is hash-gated and
+// never repeats, so a late listener would miss it). The backend bundle
+// carries the branch, the changed-file list (incl. untracked), the diff
+// text and any error verbatim. A worktree strip along the top switches
+// which worktree the pane looks at (`diff_pane_set_cwd`); a file list
+// jumps to a file's hunk. Parsing is in `diffModel.ts` (pure, tested).
 
-import { createSignal, createMemo, For, onCleanup, onMount, Show } from "solid-js";
+import { createSignal, createMemo, createEffect, on, For, onCleanup, onMount, Show } from "solid-js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { DiffSource } from "./bindings/DiffSource";
+import type { WorktreeEntry } from "./bindings/WorktreeEntry";
 import type { LayoutNode } from "./types";
 import { t } from "./i18n";
 import { keyEq } from "./shortcuts";
 import { TechText } from "./TechText";
-import { IconGitCompare, IconChevronDown, IconClose } from "./icons";
+import { parseDiff, statusLetter, pathKey } from "./diffModel";
+import {
+  IconGitCompare,
+  IconGitBranch,
+  IconChevronDown,
+  IconClose,
+  IconPlus,
+  IconRefresh,
+  IconExternalLink,
+} from "./icons";
 import { createLogger } from "./logger";
 
 const log = createLogger("DIFF");
+
+interface StatusEntry {
+  xy: string;
+  path: string;
+  orig_path: string | null;
+}
 
 interface Props {
   workspaceId: string;
@@ -29,97 +43,13 @@ interface Props {
   isActive: boolean;
   onFocus: (paneId: string) => void;
   onClose: (paneId: string) => void;
-}
-
-type DiffLine =
-  | { kind: "context"; text: string }
-  | { kind: "add"; text: string }
-  | { kind: "del"; text: string }
-  | { kind: "hunk"; text: string }       // @@ header
-  | { kind: "file"; text: string };      // "diff --git ..." / "+++ ..." / "--- ..."
-
-interface Hunk {
-  fileLabel: string;
-  headerIdx: number;                      // index into `lines` of the @@ header
-  lineSpan: [number, number];             // [start, endExclusive) in `lines`
-}
-
-interface ParsedDiff {
-  lines: DiffLine[];
-  hunks: Hunk[];
-}
-
-// Parse a unified-diff blob into renderable lines + hunk index. The
-// grammar we honour:
-//   - file header runs start with "diff --git " and continue until the
-//     first "@@" or another "diff --git"
-//   - hunk header lines start with "@@"
-//   - everything else inside a hunk is " " context, "+" add, "-" del
-function parseDiff(text: string): ParsedDiff {
-  const out: DiffLine[] = [];
-  const hunks: Hunk[] = [];
-  if (!text) return { lines: out, hunks };
-  const src = text.split("\n");
-  let currentFile = "";
-  let inHunk = false;
-  let hunkStart = -1;
-  const closeHunk = (endExclusive: number) => {
-    if (hunkStart >= 0) {
-      hunks.push({
-        fileLabel: currentFile,
-        headerIdx: hunkStart,
-        lineSpan: [hunkStart, endExclusive],
-      });
-    }
-    inHunk = false;
-    hunkStart = -1;
-  };
-  for (let i = 0; i < src.length; i++) {
-    const raw = src[i];
-    if (raw.startsWith("diff --git ")) {
-      closeHunk(out.length);
-      // Pull the destination path ("b/<path>") out of the header.
-      const m = raw.match(/ b\/(\S+)/);
-      currentFile = m ? m[1] : raw.slice("diff --git ".length);
-      out.push({ kind: "file", text: raw });
-      continue;
-    }
-    if (raw.startsWith("--- ") || raw.startsWith("+++ ") ||
-        raw.startsWith("index ") || raw.startsWith("new file mode") ||
-        raw.startsWith("deleted file mode") || raw.startsWith("similarity index") ||
-        raw.startsWith("rename from ") || raw.startsWith("rename to ")) {
-      out.push({ kind: "file", text: raw });
-      continue;
-    }
-    if (raw.startsWith("@@")) {
-      closeHunk(out.length);
-      hunkStart = out.length;
-      inHunk = true;
-      out.push({ kind: "hunk", text: raw });
-      continue;
-    }
-    if (!inHunk) {
-      // Trailing blank line between files — ignore.
-      if (raw.length === 0) continue;
-      out.push({ kind: "file", text: raw });
-      continue;
-    }
-    if (raw.startsWith("+")) {
-      out.push({ kind: "add", text: raw.slice(1) });
-    } else if (raw.startsWith("-")) {
-      out.push({ kind: "del", text: raw.slice(1) });
-    } else if (raw.startsWith(" ") || raw.length === 0) {
-      out.push({ kind: "context", text: raw.length === 0 ? "" : raw.slice(1) });
-    } else if (raw === "\\ No newline at end of file") {
-      out.push({ kind: "context", text: raw });
-    } else {
-      // Unknown leading byte (shouldn't happen with --no-color) —
-      // render verbatim as context so nothing is silently dropped.
-      out.push({ kind: "context", text: raw });
-    }
-  }
-  closeHunk(out.length);
-  return { lines: out, hunks };
+  workspaceCwd?: string;
+  /** Bumped by App after a worktree is created, so the strip re-lists. */
+  worktreesVersion: number;
+  onOpenWorktree: (workspaceId: string, wt: WorktreeEntry) => void;
+  onNewWorktree: (workspaceId: string) => void;
+  /** Feed the listing back to App so sidebar cards can show a branch. */
+  onWorktreesListed: (workspaceId: string, entries: WorktreeEntry[]) => void;
 }
 
 function describeSource(s: DiffSource): string {
@@ -133,10 +63,14 @@ function describeSource(s: DiffSource): string {
 export function DiffPane(p: Props) {
   let bodyRef!: HTMLDivElement;
   const initialSource: DiffSource =
-    (p.pane.diff_source as DiffSource | null) ?? { kind: "working" };
+    (p.pane.diff_source as DiffSource | null) ?? { kind: "head" };
   const [source, setSource] = createSignal<DiffSource>(initialSource);
   const [diffText, setDiffText] = createSignal<string>("");
-  const [isGitRepo, setIsGitRepo] = createSignal<boolean>(true);
+  const [files, setFiles] = createSignal<StatusEntry[]>([]);
+  const [error, setError] = createSignal<string | null>(null);
+  const [cwd, setCwd] = createSignal<string>("");
+  const [branch, setBranch] = createSignal<string | null>(null);
+  const [truncated, setTruncated] = createSignal<boolean>(false);
   const [busy, setBusy] = createSignal<boolean>(false);
   const [hunkIdx, setHunkIdx] = createSignal<number>(0);
   const [refDraft, setRefDraft] = createSignal<string>(
@@ -144,18 +78,17 @@ export function DiffPane(p: Props) {
   );
   const [refEditing, setRefEditing] = createSignal<boolean>(false);
   const [menuOpen, setMenuOpen] = createSignal<boolean>(false);
+  const [worktrees, setWorktrees] = createSignal<WorktreeEntry[]>([]);
+  const [wtError, setWtError] = createSignal<string | null>(null);
 
   const parsed = createMemo(() => parseDiff(diffText()));
-  const isEmpty = () => isGitRepo() && diffText().trim().length === 0;
+  const isEmpty = () => !error() && diffText().trim().length === 0 && files().length === 0;
 
   const apply = async (next: DiffSource) => {
     setSource(next);
     setBusy(true);
     try {
-      await invoke("diff_pane_set_source", {
-        paneId: p.pane.pane_id,
-        source: next,
-      });
+      await invoke("diff_pane_set_source", { paneId: p.pane.pane_id, source: next });
     } catch (e) {
       log.error("diff_pane_set_source failed", e);
     } finally {
@@ -168,63 +101,120 @@ export function DiffPane(p: Props) {
     try {
       await invoke("diff_pane_refresh", { paneId: p.pane.pane_id });
     } catch {
-      // diff_pane_refresh already emits an error event with
-      // is_git_repo: false; ignore the rejected promise.
+      // diff_pane_refresh emits an error event too; ignore the rejection.
     } finally {
       setBusy(false);
     }
   };
 
-  // ↑/↓ jump between hunks. j/k aliases match the muscle memory of
-  // less / git's pager.
+  const listWorktrees = async () => {
+    try {
+      const list = await invoke<WorktreeEntry[]>("diff_pane_worktrees", {
+        paneId: p.pane.pane_id,
+      });
+      setWorktrees(list);
+      setWtError(null);
+      p.onWorktreesListed(p.workspaceId, list);
+    } catch (e) {
+      setWtError(String(e));
+    }
+  };
+
+  const selectWorktree = async (wt: WorktreeEntry) => {
+    const back = pathKey(wt.path) === pathKey(p.workspaceCwd ?? "");
+    try {
+      await invoke("diff_pane_set_cwd", {
+        paneId: p.pane.pane_id,
+        cwd: back ? null : wt.path,
+      });
+    } catch (e) {
+      log.error("diff_pane_set_cwd failed", e);
+    }
+  };
+
+  const isCurrentWorktree = (wt: WorktreeEntry) =>
+    !!cwd() && pathKey(wt.path) === pathKey(cwd());
+
+  // ↑/↓ (and j/k, Hebrew-layout-safe) jump between hunks.
   const onBodyKey = (e: KeyboardEvent) => {
     const total = parsed().hunks.length;
     if (total === 0) return;
     let delta = 0;
-    // Phase 62.B (item G): keyEq for the vim-style j/k so they work on a
-    // Hebrew layout; arrows are layout-independent already.
     if (e.key === "ArrowDown" || keyEq(e, "j")) delta = 1;
     else if (e.key === "ArrowUp" || keyEq(e, "k")) delta = -1;
     else return;
     e.preventDefault();
     const next = Math.max(0, Math.min(total - 1, hunkIdx() + delta));
     setHunkIdx(next);
-    // Scroll the hunk's header line into view.
-    const headerLine = parsed().hunks[next].headerIdx;
-    const el = bodyRef.querySelector(
-      `[data-line-idx="${headerLine}"]`,
-    ) as HTMLElement | null;
+    scrollToLine(parsed().hunks[next]?.headerIdx);
+  };
+
+  const scrollToLine = (idx: number | undefined) => {
+    if (idx == null) return;
+    const el = bodyRef?.querySelector(`[data-line-idx="${idx}"]`) as HTMLElement | null;
     if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
   };
 
+  const jumpToFile = (path: string) => {
+    const idx = parsed().anchors[path];
+    if (idx != null) scrollToLine(idx);
+  };
+
   onMount(() => {
-    // Tell the backend to (re)start the watcher with whatever source
-    // we believe is current. This also covers the cold-start case for
-    // a Diff pane loaded from workspaces.json.
-    void apply(source());
+    let disposed = false;
     let unlisten: UnlistenFn | undefined;
     void (async () => {
       try {
         unlisten = await listen<{
           pane_id: string;
           diff_text: string;
-          is_git_repo: boolean;
+          files: StatusEntry[];
+          error: string | null;
+          cwd: string;
+          branch: string | null;
+          truncated: boolean;
         }>("diff-pane-updated", (event) => {
           if (event.payload.pane_id !== p.pane.pane_id) return;
+          const hadError = !!wtError();
+          // Preserve scroll across the wholesale re-render.
+          const top = bodyRef?.scrollTop ?? 0;
+          setError(event.payload.error);
           setDiffText(event.payload.diff_text);
-          setIsGitRepo(event.payload.is_git_repo);
-          // Clamp hunk index if the diff shrank.
+          setFiles(event.payload.files ?? []);
+          setCwd(event.payload.cwd ?? "");
+          setBranch(event.payload.branch ?? null);
+          setTruncated(!!event.payload.truncated);
           const total = parseDiff(event.payload.diff_text).hunks.length;
           if (hunkIdx() >= total) setHunkIdx(0);
+          queueMicrotask(() => {
+            if (bodyRef) bodyRef.scrollTop = top;
+          });
+          // An SSH host that was down when we first listed worktrees is now
+          // reachable (a real diff arrived) — retry the strip.
+          if (!event.payload.error && hadError) void listWorktrees();
         });
       } catch (e) {
         log.warn("listen failed", e);
       }
+      if (disposed) {
+        try { unlisten?.(); } catch {}
+        return;
+      }
+      // Start the watcher only after the listener is armed (the first emit
+      // is hash-gated and never repeats).
+      try { await invoke("diff_pane_start", { paneId: p.pane.pane_id }); }
+      catch (e) { log.error("diff_pane_start failed", e); }
+      void listWorktrees();
     })();
     onCleanup(() => {
+      disposed = true;
       try { unlisten?.(); } catch {}
+      void invoke("diff_pane_stop", { paneId: p.pane.pane_id }).catch(() => {});
     });
   });
+
+  // Re-list when App signals a worktree was created.
+  createEffect(on(() => p.worktreesVersion, () => void listWorktrees(), { defer: true }));
 
   return (
     <div
@@ -232,13 +222,14 @@ export function DiffPane(p: Props) {
       onMouseDown={() => p.onFocus(p.pane.pane_id)}
     >
       <div class="pane-header">
-        <span class="pane-conn"><IconGitCompare size={14} /> diff</span>
+        <span class="pane-conn">
+          <IconGitCompare size={14} />{" "}
+          <Show when={branch()} fallback={<>diff</>}>
+            <span class="diff-pane-branch"><IconGitBranch size={12} /> <TechText text={branch()!} /></span>
+          </Show>
+        </span>
         <div class="diff-pane-source">
-          <button
-            class="ws-header-btn"
-            disabled={busy()}
-            onClick={() => setMenuOpen(!menuOpen())}
-          >
+          <button class="ws-header-btn" disabled={busy()} onClick={() => setMenuOpen(!menuOpen())}>
             {describeSource(source())}
             <Show when={source().kind === "ref"}>
               {" "}<TechText text={(source() as { kind: "ref"; git_ref: string }).git_ref} />
@@ -247,11 +238,11 @@ export function DiffPane(p: Props) {
           </button>
           <Show when={menuOpen()}>
             <div class="diff-pane-menu">
-              <button onClick={() => { setMenuOpen(false); void apply({ kind: "working" }); }}>
-                {t("diff.pane.source.working")}
-              </button>
               <button onClick={() => { setMenuOpen(false); void apply({ kind: "head" }); }}>
                 {t("diff.pane.source.head")}
+              </button>
+              <button onClick={() => { setMenuOpen(false); void apply({ kind: "working" }); }}>
+                {t("diff.pane.source.working")}
               </button>
               <button onClick={() => { setMenuOpen(false); setRefEditing(true); }}>
                 {t("diff.pane.source.ref")}…
@@ -259,11 +250,7 @@ export function DiffPane(p: Props) {
             </div>
           </Show>
         </div>
-        <button
-          class="ws-header-btn"
-          disabled={busy()}
-          onClick={() => void refresh()}
-        >
+        <button class="ws-header-btn" disabled={busy()} onClick={() => void refresh()}>
           {t("diff.pane.refresh")}
         </button>
         <button
@@ -273,6 +260,44 @@ export function DiffPane(p: Props) {
         >
           <IconClose size={14} />
         </button>
+      </div>
+
+      {/* Worktree strip */}
+      <div class="diff-wt-strip">
+        <span class="diff-wt-title" title={t("diff.wt.title")}><IconGitBranch size={12} /></span>
+        <For each={worktrees()}>
+          {(wt) => (
+            <span
+              class={`diff-wt ${isCurrentWorktree(wt) ? "current" : ""}`}
+              title={wt.path}
+            >
+              <button class="diff-wt-name" onClick={() => void selectWorktree(wt)}>
+                <TechText text={wt.branch ?? (wt.is_detached ? wt.head.slice(0, 7) : "—")} />
+                <Show when={wt.is_main}><span class="diff-wt-main">{t("diff.wt.main")}</span></Show>
+                <Show when={wt.is_locked}><span class="diff-wt-flag" title={t("pf.locked")}>🔒</span></Show>
+                <Show when={wt.is_prunable}><span class="diff-wt-flag" title={t("pf.prunable")}>⚠</span></Show>
+              </button>
+              <button
+                class="diff-wt-open"
+                title={t("diff.wt.open")}
+                onClick={() => p.onOpenWorktree(p.workspaceId, wt)}
+              >
+                <IconExternalLink size={11} />
+              </button>
+            </span>
+          )}
+        </For>
+        <Show when={wtError()}>
+          <span class="diff-wt-err">{wtError()}</span>
+        </Show>
+        <span class="diff-wt-actions">
+          <button class="diff-wt-add" title={t("pf.newWorktree")} onClick={() => p.onNewWorktree(p.workspaceId)}>
+            <IconPlus size={12} />
+          </button>
+          <button class="diff-wt-add" title={t("diff.wt.reload")} onClick={() => void listWorktrees()}>
+            <IconRefresh size={12} />
+          </button>
+        </span>
       </div>
 
       <Show when={refEditing()}>
@@ -285,10 +310,7 @@ export function DiffPane(p: Props) {
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 const v = refDraft().trim();
-                if (v) {
-                  setRefEditing(false);
-                  void apply({ kind: "ref", git_ref: v });
-                }
+                if (v) { setRefEditing(false); void apply({ kind: "ref", git_ref: v }); }
               } else if (e.key === "Escape") {
                 setRefEditing(false);
               }
@@ -297,12 +319,22 @@ export function DiffPane(p: Props) {
           <button onClick={() => {
             const v = refDraft().trim();
             if (v) { setRefEditing(false); void apply({ kind: "ref", git_ref: v }); }
-          }}>
-            {t("common.save")}
-          </button>
-          <button onClick={() => setRefEditing(false)}>
-            {t("common.cancel")}
-          </button>
+          }}>{t("common.save")}</button>
+          <button onClick={() => setRefEditing(false)}>{t("common.cancel")}</button>
+        </div>
+      </Show>
+
+      {/* Changed-file list */}
+      <Show when={files().length > 0}>
+        <div class="diff-files" title={t("diff.files.title")}>
+          <For each={files()}>
+            {(f) => (
+              <button class="diff-file" onClick={() => jumpToFile(f.path)} title={f.orig_path ? `${f.orig_path} → ${f.path}` : f.path}>
+                <span class="diff-file-letter" data-k={statusLetter(f.xy)}>{statusLetter(f.xy)}</span>
+                <span class="diff-file-path"><TechText text={f.path} /></span>
+              </button>
+            )}
+          </For>
         </div>
       </Show>
 
@@ -312,13 +344,13 @@ export function DiffPane(p: Props) {
         tabIndex={0}
         onKeyDown={onBodyKey}
       >
-        <Show when={!isGitRepo()}>
-          <p class="diff-pane-msg">{t("diff.pane.notGitRepo")}</p>
+        <Show when={error()}>
+          <p class="diff-pane-msg diff-pane-error">{error()}</p>
         </Show>
-        <Show when={isGitRepo() && isEmpty()}>
+        <Show when={!error() && isEmpty()}>
           <p class="diff-pane-msg">{t("diff.pane.empty")}</p>
         </Show>
-        <Show when={isGitRepo() && !isEmpty()}>
+        <Show when={!error() && !isEmpty()}>
           <pre class="diff-pane-pre">
             <For each={parsed().lines}>
               {(line, idx) => (
@@ -334,6 +366,9 @@ export function DiffPane(p: Props) {
               )}
             </For>
           </pre>
+          <Show when={truncated()}>
+            <p class="diff-pane-msg">{t("diff.pane.truncated")}</p>
+          </Show>
         </Show>
       </div>
     </div>

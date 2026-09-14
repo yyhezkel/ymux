@@ -1,5 +1,5 @@
 import { Match, Show, Switch, onCleanup, onMount } from "solid-js";
-import type { RtlProfileKind } from "./types";
+import type { BoundSession, RtlProfileKind } from "./types";
 import { Divider } from "./Divider";
 import { paneDragStore, installPaneDragEscape } from "./paneDrag";
 // Phase 53 (rebased): BrowserPane no longer imported — the Browser
@@ -27,6 +27,7 @@ import {
   type Connection,
   type LayoutNode,
   type SplitDirection,
+  type WorktreeEntry,
 } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { trafficLight, type PaneAgentState } from "./paneAgentState";
@@ -77,6 +78,10 @@ interface Props {
   onDisconnect: (paneId: string) => void;
   // Phase 11.A: tmux session map keyed by pane_id; presence = persistent.
   panePersistence: Record<string, string>;
+  // Phase 91: pane_id → the session its [Connect] must attach to (the
+  // workspace's first pane bound to `tmux_session`). Only panes that are
+  // NOT live carry one; `gone` + a Claude id make it a Resume.
+  boundSessions: Record<string, BoundSession>;
   onKillSession: (paneId: string) => void;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
@@ -117,6 +122,11 @@ interface Props {
   // maximize button. SplitView spreads `{...s.all}` so it propagates
   // through nested splits for free.
   tabsMode: boolean;
+  // Phase 91.F: threaded to DiffPane's worktree strip.
+  worktreesVersion: number;
+  onDiffOpenWorktree: (workspaceId: string, wt: WorktreeEntry) => void;
+  onDiffNewWorktree: (workspaceId: string) => void;
+  onWorktreesListed: (workspaceId: string, entries: WorktreeEntry[]) => void;
   // Phase 24.D: onWorkspacesFileUpdate removed — its only consumers
   // were the (now-gone) ChatPane / ClaudeLogPane Match arms.
 }
@@ -230,6 +240,7 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           onPopOut={props.all.onPopOut}
           onDisconnect={props.all.onDisconnect}
           tmuxSession={props.all.panePersistence[props.pane.pane_id] ?? null}
+          boundSession={props.all.boundSessions[props.pane.pane_id] ?? null}
           onKillSession={props.all.onKillSession}
           onSetTitle={props.all.onSetTitle}
           onSetAnnotation={props.all.onSetAnnotation}
@@ -303,6 +314,11 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           isActive={isActive()}
           onFocus={props.all.onFocus}
           onClose={props.all.onClose}
+          workspaceCwd={props.all.workspaceCwd}
+          worktreesVersion={props.all.worktreesVersion}
+          onOpenWorktree={props.all.onDiffOpenWorktree}
+          onNewWorktree={props.all.onDiffNewWorktree}
+          onWorktreesListed={props.all.onWorktreesListed}
         />
       </Match>
       <Match when={kind() === "help"}>

@@ -61,7 +61,13 @@ restricted networks.
 
 `Connection` (`local | ssh`, plus the retired `wsl` variant that still deserializes),
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
-`BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`.
+`BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`, `KnownSession`.
+
+**`LayoutNode::Pane`** carries `diff_source` and (Phase 91.F) **`diff_cwd: Option<String>`**
+— which worktree a Diff pane is looking at, `None` = the workspace's own cwd. Both elide
+when unset; `diff_cwd` is view state and deliberately did **not** bump the schema version.
+`ymux-core`'s `backfill_terminal_connections` and every `LayoutNode::Pane { … }` literal in
+the tree carry the field (a struct-literal add is exhaustive, so all of them do).
 
 **`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
 overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
@@ -86,6 +92,15 @@ shown/edited on the Briefing card. Elided when unset (byte-identical round-trip 
 untouched files; it is in the elision test's key list), but a SET intent is a field a
 0.5.0 build would drop on save — which is why its addition bumped
 `WORKSPACES_SCHEMA_VERSION` to 3 (see the constant's doc in `app/src/lib.rs`).
+
+**`Workspace.known_sessions: Vec<KnownSession>`** (Phase 91.C) — a ROOT workspace's memory
+of the sessions seen on its host, in first-seen order. `KnownSession { name, display?,
+claude_session_id?, cwd?, last_seen }`: everything but `name` elided, so a plain shell
+session costs two keys. Merged by `workspace_remember_sessions` (backend-core.md); it is
+what lets a sidebar row for a session that vanished from the host be shown greyed and
+resumed with `claude --resume`. In the elision test's key list (seven keys), and adding
+it bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop it. (Round 1's
+`sessions_mode` flag was removed the same day, before any release.)
 
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding
@@ -153,7 +168,11 @@ uniformly. Pure data — no IO. The SSH side and the `Builtin` routine dispatch 
 
 Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
-succeeds and before the user's shell channel opens.
+succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
+`ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the
+manifest's `tmux-conf` entry) and does nothing else: applying it to a running tmux
+server is the attach script's `source-file -q` (backend-core.md § Multiplexer
+wrappers), not the bootstrap's job.
 
 **No `tauri` dependency, by explicit decision.** The caller resolves resource paths and
 passes in the manifest plus a resource-loader closure; `bootstrap()` does all the russh +

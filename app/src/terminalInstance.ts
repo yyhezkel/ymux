@@ -211,9 +211,6 @@ const g_rtl: Record<RtlProfileKind, RtlProfileSettings> = {
     directionPolicy: "any_rtl",
   },
 };
-/** Phase 65.O (round 6): one-time guard so the "no wheel proxy" note is
- *  logged once, not once per pane. */
-let g_loggedNoWheelProxy = false;
 const g_terminals: Set<TerminalInstance> = new Set();
 
 // v0.4.4-beta.2: mouse-tracking leak recovery. When a full-screen app
@@ -636,6 +633,19 @@ export class TerminalInstance {
    *  `foldTuiOwnsBidi` for why this outranks the title. */
   private tuiExplicit: boolean | null = null;
 
+  /** Phase 91.D: is this pane on a multiplexer session (tmux/zellij)? Set by
+   *  App.tsx from `pane_persistence_list` — the backend's answer, never a
+   *  guess from the title or the prompt. Gates the wheel proxy below: Phase
+   *  65.O's proxy fired in a PLAIN shell and walked bash history, which is
+   *  exactly the failure this flag exists to prevent. */
+  private tmuxScroll = false;
+
+  setTmuxScroll(on: boolean): void {
+    if (this.tmuxScroll === on) return;
+    this.tmuxScroll = on;
+    if (on) termLog.info(`wheel proxy armed pane=${this.paneId}`);
+  }
+
   /** Called by App.tsx: `true` on connect-with-Claude and on a session-start
    *  hook for this pane, `null` when Claude ends or the pane connects to
    *  something else. */
@@ -1006,25 +1016,38 @@ export class TerminalInstance {
       showTerminalContextMenu(this, e.clientX, e.clientY);
     });
 
-    // Phase 65.O (round 6 — final): NO custom wheel handler. Earlier
-    // rounds intercepted the wheel and injected Alt+arrows to drive tmux
-    // copy-mode, but that fought xterm.js's native behaviour and broke
-    // the common case — Yossi's `TMUX=`(empty) / `#{mouse}`=0 diag showed
-    // the proxy was firing in a PLAIN bash shell (not even tmux), sending
-    // Alt+Up that bash read as history navigation. xterm.js's built-in
-    // wheel handling already does the right thing everywhere:
-    //   - plain shell (no tmux)      → scrolls xterm.js's own scrollback
-    //   - tmux + `mouse on`          → emits SGR mouse events; tmux scrolls
-    //   - tmux + `mouse off`         → scrolls xterm.js's scrollback
-    // So we simply let it be. `scrollback` is set in the Terminal options
-    // above; the bundled tmux.conf ships `mouse on` for native tmux
-    // scroll. (One-time note in the console for future debugging.)
-    if (!g_loggedNoWheelProxy) {
-      g_loggedNoWheelProxy = true;
-      console.log(
-        "[ymux] terminal: native wheel scrollback enabled, no wheel proxy",
-      );
-    }
+    // Phase 91.D: the wheel proxy, back — but only for MULTIPLEXER panes.
+    // tmux's mouse is off since Phase 91.B (left-clicks were landing on
+    // whatever Claude Code was redrawing), and with it off xterm.js 6.0
+    // turns every wheel event on the ALT buffer into one \e[A / \e[B
+    // (`CoreBrowserTerminal.ts`, keyed on `!buffer.hasScrollback`) — so at
+    // a shell prompt inside tmux the wheel walked bash HISTORY. This hook
+    // runs BEFORE that conversion and replaces it with Shift+Up/Down,
+    // which the ymux tmux conf binds to copy-mode scrolling on the main
+    // screen and passes through as plain Up/Down under an alt-screen app
+    // (vim / less / htop keep paging themselves).
+    //
+    // Every `return true` hands the event back to xterm.js untouched:
+    //   - not armed (plain shell, no session)    → xterm scrolls its own buffer
+    //   - Shift/Ctrl held                        → the user's own business
+    //   - NORMAL buffer (tmux not attached yet)  → xterm scrolls its own buffer
+    //   - the app tracks the mouse (zellij, vim mouse=a, Claude fullscreen)
+    //     → xterm reports SGR events and never even consults this hook;
+    //       the `modes` check is belt-and-braces for the same case.
+    // Rule #1: nothing per event is logged; `setTmuxScroll` logs the arm.
+    this.term.attachCustomWheelEventHandler((ev) => {
+      if (!this.tmuxScroll) return true;
+      if (ev.deltaY === 0 || ev.shiftKey || ev.ctrlKey) return true;
+      if (this.term.buffer.active.type !== "alternate") return true;
+      if (this.term.modes.mouseTrackingMode !== "none") return true;
+      ev.preventDefault();
+      // deltaMode 1 = lines (Firefox); 0 = pixels, where one notch is ~100px
+      // on Windows and a trackpad streams many small events — 3 lines per
+      // event is the rate xterm.js itself uses for a notch.
+      const n = ev.deltaMode === 1 ? Math.min(Math.abs(ev.deltaY), 10) : 3;
+      this.term.input((ev.deltaY < 0 ? "\x1b[1;2A" : "\x1b[1;2B").repeat(n), true);
+      return false;
+    });
 
     // Phase 15.A: only load the WebGL addon for the non-auto modes.
     // The row-dir modes need the DOM renderer so we can attach

@@ -13,6 +13,7 @@ covers:
   - app/src/MarkdownViewer.tsx
   - app/src/mdViewerStore.ts
   - app/src/DiffPane.tsx
+  - app/src/diffModel.ts
   - app/src/InsightsWindow.tsx
   - app/src/InsightsAnalytics.tsx
   - app/src/InsightsClaudeCost.tsx
@@ -240,7 +241,8 @@ so they are managed per workspace, opened from the workspace's right-click menu 
 the Insights monitor's install prompt. **`YmuxToolsTab.tsx` (126)** is the same shape for
 skills. Both are self-contained specifically so they do not bloat `SettingsModal`.
 
-**`SessionsOverviewWindow.tsx` (462)** — Phase 90, the workspace right-click
+**`SessionsOverviewWindow.tsx` (462)** — row display names come from `sessionDisplay`
+in `paneTitle.ts` since Phase 91 (shared with the sessions strip and "Open"). Phase 90, the workspace right-click
 **Active sessions…** dialog. A plain `.modal` stretched to the viewport (not a
 `PanelSurface`: it has no drawer/float life, it is a full-screen table you open, act in,
 and close), header pattern from `PortsWindow`, table class from the Monitor
@@ -263,9 +265,19 @@ disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the
 re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to
 `log.*` (Rule #1).
 
-**`DiffPane.tsx` (341)** — on mount it tells the backend the persisted source (or
-`Working`), which restarts the per-pane watcher task; the watcher emits
-`diff-pane-updated` and this filters by `pane_id` and re-renders.
+**`DiffPane.tsx`** — on mount it subscribes to `diff-pane-updated` **before** calling
+`diff_pane_start` (the first emit is hash-gated and never repeats, so a late listener would
+miss it; a `disposed` guard covers unmount-before-listen) and `diff_pane_stop` on cleanup.
+The event carries the branch, the changed-file list, the diff text and any `error` (shown
+verbatim — the "not a git repository" special case is gone). A **worktree strip** along the
+top lists the repo's worktrees (`diff_pane_worktrees`); clicking one switches the pane via
+`diff_pane_set_cwd` (None = back to the workspace's own cwd), an ⧉ button opens it as a
+workspace (App's `openWorktree` under the project root), and `+` opens the new-worktree
+modal. A **changed-file list** jumps to a file's hunk via the parser's anchors. Parsing is
+`diffModel.ts` (`parseDiff`, `fileFromGitHeader` — which fixes the old label extraction on
+paths with spaces and renames — `statusLetter`, `pathKey`), pure and node-tested
+(`diffModel.test.ts`). Scroll position is preserved across the wholesale re-render; the
+worktree list is fed back to App (`onWorktreesListed`) so sidebar cards can show a branch.
 
 **`HelpPane.tsx` (96)** — renders bundled markdown (currently ssh-key-setup) keyed by
 topic and UI language, with a Copy button on every fenced block.

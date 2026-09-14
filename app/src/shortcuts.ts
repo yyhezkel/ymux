@@ -50,6 +50,7 @@ export interface ShortcutsSettings {
   toggle_queue: string;
   // BRIEF: show the Briefing card for the active workspace.
   show_briefing: string;
+  open_diff: string;
   copy_on_select_with_ctrl_c: boolean;
 }
 
@@ -84,6 +85,7 @@ export const DEFAULT_SHORTCUTS: ShortcutsSettings = {
   tab_prev: "Ctrl+Shift+Tab",
   toggle_queue: "Ctrl+Shift+Q",
   show_briefing: "Ctrl+Alt+Q",
+  open_diff: "Ctrl+Shift+G",
   copy_on_select_with_ctrl_c: true,
 };
 
@@ -97,7 +99,7 @@ export type ShortcutActionId = Exclude<keyof ShortcutsSettings, "copy_on_select_
 export const SHORTCUT_ACTION_IDS = (Object.keys(DEFAULT_SHORTCUTS) as (keyof ShortcutsSettings)[])
   .filter((k) => typeof DEFAULT_SHORTCUTS[k] === "string") as ShortcutActionId[];
 
-/** How the Settings tab groups the 28 rows. Labels come from
+/** How the Settings tab groups the 29 rows. Labels come from
  *  `settings.shortcuts.group.<key>`; each row's own label is
  *  `settings.shortcuts.<id>`, derived mechanically so a new binding needs
  *  no pair list. A unit test asserts this covers SHORTCUT_ACTION_IDS
@@ -129,6 +131,7 @@ export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
       "toggle_maximize",
       "focus_zoom",
       "reset_terminal",
+      "open_diff",
     ],
   },
   {

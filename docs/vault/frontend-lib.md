@@ -28,7 +28,26 @@ covers:
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
 
-## `terminalInstance.ts` (1,935) — the xterm.js wrapper
+## `terminalInstance.ts` (1,958) — the xterm.js wrapper
+
+**The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
+xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
+the one thing proxied, and only on a **multiplexer pane**: `setTmuxScroll(on)` is set by
+App from `pane_persistence_list` (the backend's answer, never a title guess — Phase
+65.O's proxy fired in a plain shell and walked bash history), and the constructor's
+`attachCustomWheelEventHandler` turns a wheel event into Shift+Up/Down ×3 via
+`term.input` (through `onData` → `pty_write`) **only when** armed, no Shift/Ctrl held,
+the ALT buffer is active (tmux attached) and `term.modes.mouseTrackingMode === "none"`;
+every other case returns `true` and xterm keeps its own behaviour. Why it exists: with
+mouse off, xterm.js 6.0 converts a wheel event on the alt buffer into one `\e[A`/`\e[B`,
+which at a shell prompt inside tmux is HISTORY. xterm consults the hook before that
+conversion and never when the app requested wheel reports (zellij, vim `mouse=a`), so
+those step aside by themselves. The conf side (`ymux-tmux.conf`) binds `S-Up`/`S-Down`
+to copy-mode scrolling on the main screen and passes them through as plain Up/Down under
+`#{alternate_on}`. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
+always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is
+leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
+the proxy.
 
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
@@ -143,7 +162,7 @@ Selection and click positioning both land on the wrong side without this.
 
 ## Typed mirrors
 
-**`types.ts` (582)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -152,7 +171,12 @@ nullable key, not `T?` — so helpers such as `effectiveIdentity` widen their pa
 `describeConnection`, `isLocalConn`, `isRemoteEffective`, `collectPanes`, `findPane`)
 are what components use to reason about a pane.
 
-**Not everything here is generated.** `TmuxSessionInfo` and `ForeignScope` are
+**Not everything here is generated.** `BoundSession` (Phase 91.C — what a pane's
+[Connect] attaches to, or resumes) and `WorkspaceCardInfo` / `CardStatusKind` (Phase 91.E,
++ `branch` in 91.F —
+what a sidebar card prints, built by App's `workspaceCardInfo` memo, see frontend-shell) are
+hand-written in `types.ts`, as are
+`TmuxSessionInfo` and `ForeignScope`, which are
 **hand-written mirrors** of structs that live in `lib.rs` rather than `ymux-types`, so
 ts-rs never sees them and nothing regenerates them for you. A field added on the Rust
 side is silently missing here until someone types it — update both in the same commit.
@@ -190,7 +214,8 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
-  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q, both in the general group), parses
+  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 91.F added
+  `open_diff` Ctrl+Shift+G in the panes group), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,

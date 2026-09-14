@@ -19,12 +19,20 @@ import type { Workspace } from "./types";
 // What it deliberately does NOT claim: that anything on the host is
 // removed. ymux never created those directories and never deletes
 // them, and saying so is the line that makes the rest readable.
+//
+// Phase 91 is the one exception, and it is named: a session ROW (a
+// workspace opened FOR a tmux/zellij session) takes its session with it —
+// killed on the host, not detached. The dialog lists those by name.
 
 interface Props {
   /** The workspace the user clicked, first; then its descendants. */
   subtree: Workspace[];
   /** Ids with a live session — rendered as a per-row badge. */
   liveIds: Set<string>;
+  /** Phase 91: the tmux/zellij sessions behind the subtree's session rows.
+   *  These are KILLED on the host, not merely detached — the one thing in
+   *  this dialog that does reach the host, so it is spelled out. */
+  sessionNames: string[];
   /** Notes across the whole subtree; 0 hides the line. */
   noteCount: number;
   onConfirm: () => void;
@@ -96,6 +104,16 @@ export function ConfirmDeleteWorkspace(p: Props) {
           <Show when={liveCount() > 0}>
             <p class="confirm-delete-warn">
               <IconWarning size={13} /> {t("workspace.delete.liveWarning", { count: liveCount() })}
+            </p>
+          </Show>
+
+          <Show when={p.sessionNames.length > 0}>
+            <p class="confirm-delete-warn">
+              <IconWarning size={13} />{" "}
+              {t("workspace.delete.sessionWarning", {
+                count: p.sessionNames.length,
+                names: p.sessionNames.join(", "),
+              })}
             </p>
           </Show>
 
