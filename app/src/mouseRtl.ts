@@ -30,6 +30,11 @@ export interface RowRect {
   readonly top: number;
   readonly bottom: number;
   readonly dir: "ltr" | "rtl";
+  /** Phase 94: an `ltr-end` row (`data-ymux-align="end"`, see
+   *  `applyRowDirections`) is painted LTR but packed against the right edge,
+   *  so every cell sits `shift` px to the right of where xterm's column math
+   *  expects it. 0 / absent for an ordinary row. */
+  readonly shift?: number;
 }
 
 /**
@@ -52,12 +57,20 @@ export function findRow(
     const r = el.getBoundingClientRect();
     if (clientY >= r.top && clientY < r.bottom) {
       const dir = el.getAttribute("dir") === "rtl" ? "rtl" : "ltr";
+      // Phase 94: a right-packed LTR row — the gap between the row's right
+      // edge and its last painted span is how far every cell moved.
+      let shift = 0;
+      if (dir === "ltr" && el.getAttribute("data-ymux-align") === "end") {
+        const last = el.lastElementChild;
+        if (last) shift = Math.max(0, r.right - last.getBoundingClientRect().right);
+      }
       return {
         left: r.left,
         right: r.right,
         top: r.top,
         bottom: r.bottom,
         dir,
+        shift,
       };
     }
   }
@@ -77,6 +90,10 @@ export function transformMouseX(
   clientX: number,
   row: RowRect | null,
 ): number {
-  if (!row || row.dir !== "rtl") return clientX;
-  return row.left + (row.right - clientX);
+  if (!row) return clientX;
+  if (row.dir === "rtl") return row.left + (row.right - clientX);
+  // Phase 94: an `ltr-end` row is in reading order, just moved right by
+  // `shift`; undo the move so xterm's `(x - left) / cellWidth` finds the
+  // column the user actually clicked.
+  return clientX - (row.shift ?? 0);
 }

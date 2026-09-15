@@ -361,7 +361,12 @@ test("Test 3: mixed table (Hebrew in one cell) -> all rows RTL", () => {
   assert.deepEqual(detectRowDirections(rows), ["rtl", "rtl", "rtl"]);
 });
 
-test("Test 4: Hebrew paragraph -> ASCII box -> Hebrew paragraph, all RTL (box inherits)", () => {
+test("Test 4: Hebrew paragraph -> ASCII box -> Hebrew paragraph: the box stays LTR (Phase 94)", () => {
+  // Until 2026-09-15 the pure-ASCII box inherited the rtl of the paragraph
+  // above it. That inheritance is what mirrored Claude Code's split-screen
+  // diff view under a Hebrew prompt (xterm paints style runs as inline-block
+  // spans; in an rtl paragraph those neutrals lay out right-to-left). A box
+  // with no RTL text is LTR no matter what surrounds it.
   const rows = [
     "שלום זה טקסט",
     "┌──────┐",
@@ -369,7 +374,7 @@ test("Test 4: Hebrew paragraph -> ASCII box -> Hebrew paragraph, all RTL (box in
     "└──────┘",
     "שלום עולם",
   ];
-  assert.deepEqual(detectRowDirections(rows), ["rtl", "rtl", "rtl", "rtl", "rtl"]);
+  assert.deepEqual(detectRowDirections(rows), ["rtl", "ltr", "ltr", "ltr", "rtl"]);
 });
 
 test("Test 5: pure ASCII code fence -> all rows LTR", () => {
@@ -505,34 +510,58 @@ test("tuiOwnsBidi: full lifecycle start -> topic -> exit", () => {
 //
 // `force_rtl` (2026-08-23) exists because Yossi wanted the per-line decision
 // GONE on remote panes: "RTL מלא, ולא שורה שורה". The contract these tests pin
-// is not "Hebrew comes out RTL" — auto_per_line already does that — it is that
-// NOTHING about the text or the settings can produce an "ltr" row. Every
-// heuristic in this file is deliberately unreachable in that mode, so a future
-// change to detectRowDirections cannot leak into it.
+// is that none of the auto_per_line heuristics (the dominance vote, block
+// grouping, stripPaneFrame, the auto/suppress knobs) can reach this mode.
+//
+// Phase 94 (2026-09-15) narrowed what "full RTL" paints: a row with ANY
+// Hebrew/Arabic is rtl, a row with none is LTR — `ltr-end` (reading order,
+// packed right) in a shell, plain `ltr` while Claude Code holds the pane. The
+// reason is mechanical: xterm's DOM renderer paints style runs as
+// inline-block spans, atomic inlines are neutrals to UAX #9, and a
+// multi-run Latin row under dir="rtl" is laid out with its runs REVERSED —
+// which is how Claude's split-screen diff view came out scrambled on every
+// Windows install running this mode.
 
 const ALL_KNOBS = { auto: true, suppress: false, dominance: false };
+const END = "ltr-end" as const;
 
-test("force_rtl: every row is rtl, whatever the text", () => {
+test("force_rtl: Hebrew/Arabic rows are rtl, everything else is ltr-end", () => {
   const rows = [
     "ls -la /opt/wa",             // pure Latin
     "שלום עולם",                  // pure Hebrew
-    "2. /opt/wa/.shared.env - הערה", // mixed, Latin-first
+    "2. /opt/wa/.shared.env - הערה", // mixed, Latin-first — still rtl
     "|-------|-------|",          // ASCII table border
     "─────────────",              // box drawing
     "```ts",                      // code fence
     "   ",                        // whitespace only
     "",                           // empty
     "12345 !!! ???",              // digits + neutrals
+    "مرحبا",                      // Arabic
   ];
   assert.deepEqual(
     rowDirections("force_rtl", rows, ALL_KNOBS),
-    rows.map(() => RTL),
+    [END, RTL, RTL, END, END, END, END, END, END, RTL],
+  );
+});
+
+test("force_rtl: while a TUI holds the pane a Latin row is plain ltr", () => {
+  // Claude Code's split-screen diff: the left half's Latin must stay in the
+  // left half, so nothing may pack it right. Hebrew rows are unchanged.
+  const rows = ["95 +**How to apply:** unit test   │ 1 file changed +10", "שאלה בעברית", ""];
+  assert.deepEqual(
+    rowDirections("force_rtl", rows, { ...ALL_KNOBS, tui: true }),
+    [LTR, RTL, LTR],
+  );
+  assert.deepEqual(
+    rowDirections("force_rtl", rows, { ...ALL_KNOBS, tui: false }),
+    [END, RTL, END],
   );
 });
 
 test("force_rtl: ignores auto_direction, suppress and dominance", () => {
-  // A row that auto_per_line resolves to LTR under every one of these knobs,
-  // so if any of them were still consulted the assertion would catch it.
+  // A row that auto_per_line resolves to LTR under every one of these knobs
+  // (dominance: 1 Hebrew word vs a wall of Latin), so if any of them were
+  // still consulted the assertion would catch it.
   const rows = ["Update available! Run winget upgrade to get 0.5.0 — צבר"];
   for (const auto of [true, false]) {
     for (const suppress of [true, false]) {
@@ -544,6 +573,25 @@ test("force_rtl: ignores auto_direction, suppress and dominance", () => {
         );
       }
     }
+  }
+});
+
+test("auto_per_line: a pure-Latin block under a Hebrew row stays ltr (Phase 94)", () => {
+  // Claude's bordered diff view right below the user's Hebrew prompt. Before
+  // Phase 94 the block inherited the prompt's rtl and rendered mirrored.
+  const rows = [
+    "מה השתנה בקובץ?",
+    "┌──────────────────────────────┬──────────────┐",
+    "│ 94 +one                      │ 1 file       │",
+    "│ 95 +two                      │ schema.md    │",
+    "└──────────────────────────────┴──────────────┘",
+  ];
+  for (const dominance of [true, false]) {
+    assert.deepEqual(
+      detectRowDirections(rows, dominance),
+      [RTL, LTR, LTR, LTR, LTR],
+      `dominance=${dominance}`,
+    );
   }
 });
 

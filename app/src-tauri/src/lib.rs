@@ -6102,12 +6102,15 @@ fn workspace_open_worktree(
         // directory is its `shell` screen — same `(parent, cwd)` as any
         // worktree, so the idempotency below finds it (or, for a folder
         // pinned before 92 whose shell was renamed, creates one).
+        // Phase 91.H: `paths_equal`, not `==` — on Windows git spells the
+        // path `C:/…` and the picker stored `C:\…`, so a byte compare
+        // created a duplicate row on every click.
         if let Some(existing) = file
             .workspaces
             .iter()
             .find(|w| {
                 w.parent_id.as_deref() == Some(root_workspace_id.as_str())
-                    && w.cwd.as_deref() == Some(worktree_path.as_str())
+                    && w.cwd.as_deref().is_some_and(|c| paths_equal(c, &worktree_path))
             })
             .map(|w| w.id.clone())
         {
@@ -10498,8 +10501,10 @@ fn rename_session_owner(host_key: &str, old_name: &str, new_name: &str) {
 /// `/srv/app` are one directory, and both separators are accepted because the
 /// same comparison runs against Windows paths from zellij-era ownership rows.
 fn path_is_within(path: &str, root: &str) -> bool {
-    let trim = |s: &str| s.trim().trim_end_matches(['/', '\\']).to_string();
-    let (path, root) = (trim(path), trim(root));
+    // Phase 91.H: normalize the separators INSIDE the strings too — git
+    // reports `C:/src/app` for a folder the picker stored as `C:\src\app`,
+    // and a bare strip_prefix never matched the two on Windows.
+    let (path, root) = (norm_path(path), norm_path(root));
     if root.is_empty() || path.is_empty() {
         return false;
     }
@@ -10507,7 +10512,7 @@ fn path_is_within(path: &str, root: &str) -> bool {
         return true;
     }
     path.strip_prefix(&root)
-        .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The last segment of a path, accepting BOTH separators.
@@ -11000,11 +11005,32 @@ fn claude_project_dir_prefix(path: &str) -> String {
         .collect()
 }
 
-/// Compare two directory paths for the session scope: separators and a
-/// trailing slash must not decide whether a session belongs to a folder.
+/// One comparable spelling for a directory path: `\` → `/`, whitespace and
+/// trailing separators trimmed, and — for a drive-letter path — the whole
+/// thing lowercased, because NTFS is case-insensitive and git reports the
+/// on-disk casing (`C:/Users/…`) while the folder picker recorded the
+/// user's (`C:\users\…`). POSIX paths stay case-sensitive. Mirror of
+/// `pathKey` in `diffModel.ts` (Phase 91.H) — keep the two in step.
+fn norm_path(p: &str) -> String {
+    let s = p.trim().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    let is_drive = {
+        let b = s.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
+    };
+    if is_drive {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Compare two directory paths for the session scope: separators, case
+/// on Windows and a trailing slash must not decide whether a session
+/// belongs to a folder — nor whether a worktree row already exists
+/// (`workspace_open_worktree`).
 fn paths_equal(a: &str, b: &str) -> bool {
-    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_string();
-    norm(a) == norm(b)
+    norm_path(a) == norm_path(b)
 }
 
 /// Read the `"cwd"` field out of a session transcript. That field is the
@@ -13077,6 +13103,12 @@ mod claude_session_scope_tests {
     fn scope_comparison_ignores_separators_and_trailing_slash() {
         assert!(paths_equal("/srv/p", "/srv/p/"));
         assert!(paths_equal(r"C:\src\p", "C:/src/p"));
+        // Phase 91.H: git's `C:/Users/…` vs the picker's `c:\users\…` is
+        // one NTFS directory; POSIX case still matters.
+        assert!(paths_equal(r"c:\Users\Y\Repo\", "C:/users/y/repo"));
+        assert!(!paths_equal("/srv/App", "/srv/app"));
+        assert_eq!(crate::norm_path("C:"), "c:");
+        assert_eq!(crate::norm_path("Cx:/a"), "Cx:/a"); // not a drive letter
         assert!(!paths_equal("/srv/p", "/srv/p2"));
         // A worktree is NOT its repo: sessions must not leak between them.
         assert!(!paths_equal("/srv/p", "/srv/p-feature"));
@@ -14226,6 +14258,11 @@ mod tmux_list_parse_tests {
         // Windows paths reach this via zellij-era ownership rows.
         assert!(path_is_within(r"C:\src\app\sub", r"C:\src\app"));
         assert!(!path_is_within(r"C:\src\app2", r"C:\src\app"));
+        // Phase 91.H: mixed spellings of one Windows directory (git emits
+        // `/`, the picker stored `\`, NTFS ignores case).
+        assert!(path_is_within("C:/src/app/sub", r"c:\Src\App"));
+        assert!(path_is_within(r"C:\src\app", "C:/src/app/"));
+        assert!(!path_is_within("C:/src/app2", r"C:\src\app"));
         // An empty root would otherwise match everything.
         assert!(!path_is_within("/srv/app", ""));
         assert!(!path_is_within("", "/srv/app"));

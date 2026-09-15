@@ -53,8 +53,20 @@ test("statusLetter maps porcelain codes", () => {
   assert.equal(statusLetter("MM"), "M");
 });
 
-test("pathKey normalizes separators, trailing slash and drive case", () => {
-  assert.equal(pathKey("C:\\Users\\y\\repo\\"), "c:/Users/y/repo");
+test("pathKey normalizes separators, trailing slash and Windows case", () => {
+  assert.equal(pathKey("C:\\Users\\y\\repo\\"), "c:/users/y/repo");
+  // git's `C:/…` spelling and the picker's `C:\…` spelling are one key.
+  assert.equal(pathKey("C:/Users/Y/Repo"), pathKey("c:\\users\\y\\repo\\"));
+  // POSIX stays case-sensitive.
   assert.equal(pathKey("/home/y/repo/"), "/home/y/repo");
+  assert.notEqual(pathKey("/srv/App"), pathKey("/srv/app"));
   assert.equal(pathKey("a/b"), "a/b");
+});
+
+test("parseDiff drops a trailing CR from CRLF content lines", () => {
+  const p = parseDiff("diff --git a/w.txt b/w.txt\r\n@@ -1 +1 @@\r\n-old\r\n+new");
+  assert.deepEqual(p.lines.map((l) => l.text), ["diff --git a/w.txt b/w.txt", "@@ -1 +1 @@", "old", "new"]);
+  assert.ok(p.lines.every((l) => !l.text.includes("\r")));
+  assert.equal(p.hunks.length, 1);
+  assert.equal(p.hunks[0].fileLabel, "w.txt");
 });
