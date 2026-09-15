@@ -7696,3 +7696,10 @@ the screenshot's scramble; B (new force_rtl, tui) and C (new auto_per_line) rend
 correctly; D (new force_rtl, shell) packs Latin right in reading order with Hebrew rtl. Screenshot
 captured in the Browser pane. Docs: vault frontend-lib (force_rtl narrowed, rowDirections/RowDir,
 mouseRtl shift), DECISIONS 2026-09-15, FOLLOWUPS P1 smoke (7 checks). Lands on PR #48 with 91.H.
+
+2026-09-15 — Phase 94 on PR #48: green. ci-windows 34943978892 rust/go/frontend success (vault
+gate, tsc, npm test incl. textDirection 77 + mouseRtl 13); build-macos 34943979054 x64 + arm64
+success. build-windows dispatched on e33261e (run 34944453300, green, ~15 min — branch cache
+miss): ymux_0.5.1_x64-setup.exe 17.0 MB, handed to Yossi. Harness files deleted, vite stopped.
+github.com dropped twice more mid-watch (LAN-side timeouts); 1-min retry loops covered it.
+Compiles-untested (Rule #14): the live smoke is FOLLOWUPS P1 2026-09-15 (7 checks), Yossi's.
