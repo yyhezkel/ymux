@@ -7668,3 +7668,31 @@ box for ~20 min mid-session; a 1-min retry loop pushed on the second attempt.
 Yossi. build-macos-intel dispatched by hand on 7dc69bc (run 34855560873, green — a PR run does
 gates only; dispatch is what builds the bundle): ymux-macos-x64-dmg 24.1 MB / -app 21.9 MB,
 ymux-macos-arm64-dmg 23.3 MB / -app 21.3 MB. MSI not built — that needs a v* tag (release).
+
+2026-09-15 — Phase 94: Claude Code's split-screen diff view scrambled under force_rtl / auto_per_line
+Yossi's screenshot: NOT ymux's Diff pane (91.H fixed the wrong screen; its four bugs are real and
+stay) — Claude Code's own two-column changed-files TUI inside a REMOTE pane, broken on Windows in
+BOTH DOM row-dir modes, fine on the Mac. Same code on both; the difference is the remote profile
+(this box's settings.json: remote.rtl_mode=force_rtl; the Mac is not). Mechanism, verified from
+the published xterm 6.0.0 lib: the DOM renderer injects `.xterm-rows span {display:inline-block}`;
+an atomic inline is a neutral to UAX #9, so under dir="rtl" a multi-run Latin row is laid out with
+its runs REVERSED — gutter, line number, two columns mirrored. force_rtl painted every row rtl;
+auto_per_line reached the same rows via detectRowDirections step 4 (a zero-RTL block inherited the
+Hebrew prompt's rtl). Ruled out: windowsPty:conpty without buildNumber (inert in xterm 6), the
+raster "Courier 10,12,15" font in the stale settings.json, any cfg(windows)/isWindows branch on the
+SSH/PTY path (none touch rendering).
+Fix (Yossi's spec, two answers folded: "לטינית נשארת בימין, בלי היפוך" + "בתוך המסגרת של החצי מסך"):
+textDirection.ts — RowDir gains `ltr-end`; force_rtl per row: RTL text → rtl, else Claude-detected
+(o.tui = foldTuiOwnsBidi state, not the profile switch) → ltr, else ltr-end; step 4 → pure-ASCII
+block is always ltr. terminalInstance.ts — applyRowDirections paints ltr-end as dir=ltr +
+text-align:right + data-ymux-align=end; passes tui; capture handler gates on "transform moved it";
+rtl-dirs log gains end=N. mouseRtl.ts — RowRect.shift (gap after the last span of a packed row),
+transformMouseX subtracts it. Tests: textDirection 77 pass (Test 4 rewritten: the ASCII box no
+longer inherits; new force_rtl contract + tui + block tests), mouseRtl 13 pass. A filtered local
+`tsc --noEmit` on the three files came back clean — a Rule #17 bend, logged; CI is the gate.
+Proof: vite harness (app/rtl-harness.html + src/rtlHarness.tsx, UNTRACKED, deleted after) mounting
+xterm's DOM renderer with a fake Claude frame under a Hebrew prompt: A (old force_rtl) reproduces
+the screenshot's scramble; B (new force_rtl, tui) and C (new auto_per_line) render both columns
+correctly; D (new force_rtl, shell) packs Latin right in reading order with Hebrew rtl. Screenshot
+captured in the Browser pane. Docs: vault frontend-lib (force_rtl narrowed, rowDirections/RowDir,
+mouseRtl shift), DECISIONS 2026-09-15, FOLLOWUPS P1 smoke (7 checks). Lands on PR #48 with 91.H.

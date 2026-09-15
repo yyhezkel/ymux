@@ -21,6 +21,17 @@ test("transformMouseX: null row passes clientX through", () => {
   assert.equal(transformMouseX(0, null), 0);
 });
 
+test("transformMouseX: an ltr-end row subtracts its right-pack shift (Phase 94)", () => {
+  // A 40-col row holding 10 cells packed right: every cell sits 300px to the
+  // right of xterm's column math; a click on the first visible cell (x=400)
+  // must resolve to column 0 (x=100).
+  const packed: RowRect = { left: 100, right: 500, top: 0, bottom: 20, dir: "ltr", shift: 300 };
+  assert.equal(transformMouseX(400, packed), 100);
+  assert.equal(transformMouseX(499, packed), 199);
+  // shift 0 / absent = an ordinary LTR row.
+  assert.equal(transformMouseX(250, { ...packed, shift: 0 }), 250);
+});
+
 test("transformMouseX: RTL row mirrors clientX around row midpoint", () => {
   // Row spans [100, 500]. Midpoint is 300. Mirror maps x -> 600 - x.
   assert.equal(transformMouseX(100, rtlRow), 500); // left edge -> right edge
@@ -51,6 +62,9 @@ test("transformMouseX: RTL mirror handles fractional coords", () => {
 interface FakeRow {
   rect: { top: number; bottom: number; left: number; right: number };
   dir: string | null;
+  /** Phase 94: `data-ymux-align="end"` plus the right edge of the last span. */
+  alignEnd?: boolean;
+  lastSpanRight?: number;
 }
 
 function makeHost(rows: FakeRow[]): Element {
@@ -68,8 +82,14 @@ function makeHost(rows: FakeRow[]): Element {
       toJSON() {},
     }),
     getAttribute(name: string): string | null {
-      return name === "dir" ? r.dir : null;
+      if (name === "dir") return r.dir;
+      if (name === "data-ymux-align") return r.alignEnd ? "end" : null;
+      return null;
     },
+    lastElementChild:
+      r.lastSpanRight == null
+        ? null
+        : { getBoundingClientRect: () => ({ right: r.lastSpanRight }) },
   }));
   // findRow does `rowsHost.children[i]` and reads `.length`, so a plain
   // array-like object is enough.
@@ -90,6 +110,25 @@ test("findRow: returns the row whose rect contains clientY", () => {
   assert.equal(r.dir, "rtl");
   assert.equal(r.top, 20);
   assert.equal(r.bottom, 40);
+});
+
+test("findRow: an ltr-end row reports the gap after its last span as shift (Phase 94)", () => {
+  const host = makeHost([
+    { rect: { top: 0, bottom: 20, left: 0, right: 400 }, dir: "ltr", alignEnd: true, lastSpanRight: 400 },
+    { rect: { top: 20, bottom: 40, left: 0, right: 400 }, dir: "ltr", alignEnd: true, lastSpanRight: 250 },
+    { rect: { top: 40, bottom: 60, left: 0, right: 400 }, dir: "ltr", lastSpanRight: 250 },
+    { rect: { top: 60, bottom: 80, left: 0, right: 400 }, dir: "rtl", alignEnd: true, lastSpanRight: 250 },
+  ]);
+  // Full-width packed row: nothing moved.
+  assert.equal(findRow(host, 10)?.shift, 0);
+  // Packed row whose content ends 150px short of the edge. (A real packed
+  // row's last span touches the right edge; the fixture models the row
+  // BEFORE text-align lands, which is also what a stale frame looks like.)
+  assert.equal(findRow(host, 30)?.shift, 150);
+  // Ordinary LTR row: no shift even with a short last span.
+  assert.equal(findRow(host, 50)?.shift, 0);
+  // An rtl row never carries a shift, whatever the attribute says.
+  assert.equal(findRow(host, 70)?.shift, 0);
 });
 
 test("findRow: returns null when clientY is outside every row", () => {
