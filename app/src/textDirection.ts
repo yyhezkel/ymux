@@ -308,17 +308,20 @@ export function detectRowDirections(
     }
   }
 
-  // 4. Pure-ASCII blocks: inherit from the nearest already-resolved row that
-  //    precedes the block. Default LTR if none.
+  // 4. Blocks with zero Hebrew/Arabic are LTR, full stop.
+  //
+  //    Phase 94 (2026-09-15): this used to inherit the direction of the
+  //    nearest resolved row ABOVE the block, so Claude Code's split-screen
+  //    diff view — a bordered, pure-Latin block sitting under the user's
+  //    Hebrew prompt — came out dir="rtl" without a single RTL character in
+  //    it. xterm's DOM renderer paints every style run as an inline-block
+  //    span, an atomic inline is a neutral to UAX #9, and a row of neutrals
+  //    in an RTL paragraph is laid out right-to-left: the diff's columns,
+  //    gutters and line numbers landed in mirrored order. A block that holds
+  //    no RTL text has nothing to gain from an RTL paragraph and everything
+  //    to lose, so it no longer asks its neighbours.
   for (const b of unresolved) {
-    let dir: "ltr" | "rtl" = "ltr";
-    for (let k = b.start - 1; k >= 0; k--) {
-      if (result[k] !== null) {
-        dir = result[k] as "ltr" | "rtl";
-        break;
-      }
-    }
-    for (let k = b.start; k <= b.end; k++) result[k] = dir;
+    for (let k = b.start; k <= b.end; k++) result[k] = "ltr";
   }
 
   return result as ("ltr" | "rtl")[];
@@ -339,6 +342,14 @@ export function detectRowDirections(
 export type RowDirMode = "auto_per_line" | "force_rtl";
 
 /**
+ * What a row-dir pass wants painted on one row. `ltr` / `rtl` become the
+ * row's `dir` attribute. `ltr-end` (Phase 94) is `dir="ltr"` PLUS
+ * `text-align: right`: the run order is left-to-right, the whole run sits
+ * against the right edge — "לטינית נשארת בימין, בלי היפוך".
+ */
+export type RowDir = "ltr" | "rtl" | "ltr-end";
+
+/**
  * Decide the `dir` of every visible row.
  *
  * Extracted from `TerminalInstance.applyRowDirections` on 2026-08-23 so the
@@ -346,26 +357,42 @@ export type RowDirMode = "auto_per_line" | "force_rtl";
  * under `node --test`, and in these modules the tests are the specification
  * (see `docs/vault/INDEX.md`).
  *
- * `force_rtl` is deliberately the FIRST branch and reads none of `o`. The mode
- * exists precisely because Yossi wanted the per-line decision gone on remote
- * panes — "RTL מלא, ולא שורה שורה" — so the dominance vote, the block-aware
- * table grouping, `stripPaneFrame` and the `auto_direction` escape hatch are
- * all bypassed rather than tuned. That every knob in `o` is inert here is a
- * contract, and textDirection.test.ts pins it.
+ * `force_rtl` is deliberately the FIRST branch and reads none of the
+ * auto_per_line knobs (`auto`, `suppress`, `dominance`). The mode exists
+ * because Yossi wanted the per-line decision gone on remote panes — "RTL
+ * מלא, ולא שורה שורה" — so the dominance vote, the block-aware table
+ * grouping, `stripPaneFrame` and the `auto_direction` escape hatch are all
+ * bypassed rather than tuned. textDirection.test.ts pins that.
  *
- * KNOWN CONSEQUENCE, and it is the point rather than a bug: a POSITIONAL row —
- * a tmux status line, a zellij frame, vim, htop — is full-width, so UAX #9
- * rule L2 reverses the sequence of runs inside it and the layout renders
- * mirrored. `RTL_DOMINANCE` and `stripPaneFrame` exist to avoid exactly that
- * in `auto_per_line`; `force_rtl` accepts it in exchange for a shell that is
- * unconditionally right-to-left. It is opt-in and reverts with one click.
+ * Phase 94 (2026-09-15) narrowed WHAT "full RTL" paints, after Claude Code's
+ * split-screen diff view came out scrambled on every Windows install running
+ * this mode. A row with Hebrew/Arabic is `rtl`, exactly as before. A row
+ * with NO RTL text gets nothing from an RTL paragraph — xterm's DOM renderer
+ * paints each style run as an inline-block, a neutral to UAX #9, so under
+ * `dir="rtl"` a multi-run Latin row is laid out with its runs in REVERSE
+ * order (the diff's columns, gutters and line numbers mirrored). So:
+ *
+ *   - `o.tui` (Claude Code holds the pane — the OSC-title / hook signal that
+ *     `foldTuiOwnsBidi` already folds): a Latin row is plain `ltr`, painted
+ *     exactly where the TUI put it, so a two-column layout keeps both halves.
+ *   - otherwise (a shell): `ltr-end` — Latin in reading order, packed against
+ *     the right edge, which is what the unconditional-RTL shell looked like
+ *     for a single-run row and never for a coloured one.
+ *
+ * `o.tui` is a DETECTED state and is deliberately not the profile's
+ * `tui_owns_bidi` switch — that switch means "the TUI emits visual order",
+ * a different question, and it is off for remote panes on purpose.
  */
 export function rowDirections(
   mode: RowDirMode,
   texts: string[],
-  o: { auto: boolean; suppress: boolean; dominance: boolean },
-): ("ltr" | "rtl")[] {
-  if (mode === "force_rtl") return texts.map(() => "rtl");
+  o: { auto: boolean; suppress: boolean; dominance: boolean; tui?: boolean },
+): RowDir[] {
+  if (mode === "force_rtl") {
+    return texts.map((t) =>
+      HEBREW.test(t) || ARABIC.test(t) ? "rtl" : o.tui ? "ltr" : "ltr-end",
+    );
+  }
   // `suppress` = a self-bidi TUI already emitted visual order; `auto` off is
   // the classic-terminal escape hatch. Both mean "no bidi from us".
   if (!o.auto || o.suppress) return texts.map(() => "ltr");

@@ -26,7 +26,7 @@ import {
   strongCounts,
   nextTuiOwnsBidi,
 } from "./textDirection";
-import type { RowDirMode } from "./textDirection";
+import type { RowDir, RowDirMode } from "./textDirection";
 import { transformMouseX, findRow } from "./mouseRtl";
 import type { RtlProfileKind } from "./types";
 import { t } from "./i18n";
@@ -1252,7 +1252,10 @@ export class TerminalInstance {
       const rowsHost = el.querySelector(".xterm-rows") as HTMLElement | null;
       if (!rowsHost) return;
       const row = findRow(rowsHost, e.clientY);
-      if (!row || row.dir !== "rtl") return;
+      // Phase 94: an `ltr-end` row (dir="ltr", packed right) needs the
+      // transform too, so the gate is "does the transform move it", not
+      // "is the row rtl".
+      if (!row) return;
       const newX = transformMouseX(e.clientX, row);
       if (newX === e.clientX) return;
 
@@ -1453,6 +1456,10 @@ export class TerminalInstance {
       auto,
       suppress,
       dominance: this.rtl.directionPolicy === "tui_dominance",
+      // Phase 94: the DETECTED "Claude holds this pane" state (hook or
+      // title), not the profile switch — `force_rtl` uses it to leave a
+      // TUI's Latin rows exactly where the TUI drew them.
+      tui: foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi),
     });
 
     // 2026-08-19: `dir` alone cannot do what bidiOwnedByTui promises.
@@ -1480,10 +1487,24 @@ export class TerminalInstance {
     for (let i = 0; i < children.length; i++) {
       const el = children[i];
       this.dirCache.set(el, texts[i]);
-      const dir = dirs[i];
+      const d = dirs[i];
+      const dir = d === "rtl" ? "rtl" : "ltr";
       if (el.getAttribute("dir") !== dir) el.setAttribute("dir", dir);
       const want = override ? "bidi-override" : "";
       if (el.style.unicodeBidi !== want) el.style.unicodeBidi = want;
+      // Phase 94: `ltr-end` = reading order, packed against the right edge.
+      // The DOM renderer trims trailing no-background cells off a row, so
+      // `text-align` has room to work on a shell row and is a no-op on a
+      // full-width TUI row. The data attribute is what `findRow` reads to
+      // undo the shift for the mouse.
+      const end = d === "ltr-end";
+      const wantAlign = end ? "right" : "";
+      if (el.style.textAlign !== wantAlign) el.style.textAlign = wantAlign;
+      if (end) {
+        if (el.getAttribute("data-ymux-align") !== "end") el.setAttribute("data-ymux-align", "end");
+      } else if (el.hasAttribute("data-ymux-align")) {
+        el.removeAttribute("data-ymux-align");
+      }
     }
     this.logDirections(dirs, texts);
   }
@@ -1504,17 +1525,21 @@ export class TerminalInstance {
    * output, so it logs only when the resolved direction VECTOR changes, which
    * is the only time it says anything new.
    */
-  private logDirections(dirs: ("ltr" | "rtl")[], texts: string[]): void {
-    const sig = dirs.join("");
+  private logDirections(dirs: RowDir[], texts: string[]): void {
+    const sig = dirs.join(",");
     if (sig === this.lastDirSignature) return;
     this.lastDirSignature = sig;
     let rtlRows = 0;
-    for (const d of dirs) if (d === "rtl") rtlRows++;
+    let endRows = 0;
+    for (const d of dirs) {
+      if (d === "rtl") rtlRows++;
+      else if (d === "ltr-end") endRows++;
+    }
     // One worked example per direction makes the counts actionable: it shows
     // WHICH ratio produced the answer, not just the tally.
     const sample = (want: "ltr" | "rtl"): string => {
       for (let i = 0; i < dirs.length; i++) {
-        if (dirs[i] !== want) continue;
+        if ((dirs[i] === "rtl" ? "rtl" : "ltr") !== want) continue;
         const { rtl, ltr } = strongCounts(texts[i]);
         if (rtl === 0 && ltr === 0) continue; // blank row, tells us nothing
         return `#${i}(r${rtl}/l${ltr})`;
@@ -1533,7 +1558,7 @@ export class TerminalInstance {
         `policy=${this.rtl.directionPolicy} tui=${this.bidiOwnedByTui ? 1 : 0} ` +
         `(explicit=${this.tuiExplicit === null ? "-" : this.tuiExplicit ? 1 : 0} ` +
         `title=${this.tuiOwnsBidi ? 1 : 0} setting=${this.rtl.tuiOwnsBidi ? 1 : 0}) ` +
-        `rows=${dirs.length} rtl=${rtlRows} ltr=${dirs.length - rtlRows} ` +
+        `rows=${dirs.length} rtl=${rtlRows} ltr=${dirs.length - rtlRows} end=${endRows} ` +
         `firstRtl=${sample("rtl")} firstLtr=${sample("ltr")}`,
     );
   }

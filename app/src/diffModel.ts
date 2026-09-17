@@ -61,7 +61,10 @@ export function parseDiff(text: string): ParsedDiff {
     hunkStart = -1;
   };
   for (let i = 0; i < src.length; i++) {
-    const raw = src[i];
+    // Phase 91.H: a CRLF working tree (Windows, core.autocrlf) puts a
+    // literal CR at the end of every content line; it must not reach the
+    // DOM under `white-space: pre`.
+    const raw = src[i].endsWith("\r") ? src[i].slice(0, -1) : src[i];
     if (raw.startsWith("diff --git ")) {
       closeHunk(out.length);
       currentFile = fileFromGitHeader(raw);
@@ -119,9 +122,11 @@ export function statusLetter(xy: string): string {
 
 /** Normalize a path for prefix/equality comparison across git (which
  *  emits `/`) and a workspace cwd (which may be a Windows `\` path):
- *  `\`→`/`, drop a trailing slash, lowercase a drive letter. */
+ *  `\`→`/`, drop a trailing slash, and — for a drive-letter path — fold
+ *  the WHOLE key to lowercase, because NTFS is case-insensitive and git
+ *  reports the on-disk casing while the picker recorded the user's.
+ *  POSIX paths stay case-sensitive. Mirror of `norm_path` in lib.rs. */
 export function pathKey(path: string): string {
-  let p = path.replace(/\\/g, "/").replace(/\/+$/, "");
-  if (/^[a-zA-Z]:/.test(p)) p = p[0].toLowerCase() + p.slice(1);
-  return p;
+  const p = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-zA-Z]:(\/|$)/.test(p) ? p.toLowerCase() : p;
 }

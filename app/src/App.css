@@ -723,7 +723,11 @@ body {
   cursor: default;
 }
 /* Phase 50 (#2.4): live unified-diff pane. */
-.diff-pane-body {
+/* Phase 91.H: the compound selector is deliberate — `.pane-body`
+   (overflow: hidden, declared later in this file) used to win on source
+   order, so the diff body never scrolled and scrollTop / scrollIntoView
+   were no-ops. */
+.pane-body.diff-pane-body {
   overflow: auto;
   padding: 0;
   outline: none;
@@ -746,6 +750,15 @@ body {
   font-size: var(--w-fs-sm);
   line-height: 1.4;
   white-space: pre;
+  /* Phase 91.H: a unified diff is a fixed-column text grid, same as the
+     terminal (see .terminal-container below): it must NEVER inherit the
+     UI's dir="rtl" from a Hebrew/Arabic interface, or every `.dl` flex row
+     flips (gutter on the right), lines right-align and trailing punctuation
+     reorders. That was the "broken on Windows, fine on macOS" report — the
+     Windows install runs the Hebrew UI. */
+  direction: ltr;
+  text-align: left;
+  unicode-bidi: isolate;
 }
 .dl {
   display: flex;
@@ -841,7 +854,8 @@ body {
   align-items: center;
   gap: 3px;
 }
-.diff-pane-error { color: var(--w-error); white-space: pre-wrap; }
+/* git's message verbatim — always LTR, whatever the UI language. */
+.diff-pane-error { color: var(--w-error); white-space: pre-wrap; direction: ltr; text-align: start; }
 
 .diff-wt-strip {
   display: flex;

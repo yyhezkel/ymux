@@ -88,19 +88,37 @@ letting them disagree: the pane lands in a combination that is none of the modes
 and does **no bidi at all**. Yossi reported Hebrew broken "in all 3 options"; two
 of the three were that hole, so only one mode was ever really under test.
 
-**`force_rtl` (2026-08-23)** is the mode with no heuristics. Every row gets
-`dir="rtl"`, full stop: no dominance vote, no block grouping, no `stripPaneFrame`,
-and `autoDirection` / `directionPolicy` / the `suppress` signal are all inert.
-That inertness is a **contract**, not an oversight, and `textDirection.test.ts`
-pins it across every combination of the three knobs. It was added for remote
-panes on Yossi's ask — "RTL מלא, ולא שורה שורה" — where the stream is logical and
-a shell reads best unconditionally right-to-left. Latin runs inside a row still
-come out correct, because the browser resolves them as LTR runs inside an RTL
-paragraph. The **known cost**: a POSITIONAL row — tmux's status line, a zellij
-frame, vim, htop — is full-width, so UAX #9 rule L2 reverses the order of its runs
-and the layout renders mirrored. `RTL_DOMINANCE` and `stripPaneFrame` exist to
-prevent exactly that in `auto_per_line`; `force_rtl` trades it away deliberately.
-It is opt-in, neither profile default moved, and switching back is one click.
+**`force_rtl` (2026-08-23, narrowed 2026-09-15 / Phase 94)** is the mode with no
+auto_per_line heuristics: no dominance vote, no block grouping, no
+`stripPaneFrame`, and `autoDirection` / `directionPolicy` / the `suppress` signal
+are all inert — `textDirection.test.ts` pins that across every combination of the
+three knobs. It was added for remote panes on Yossi's ask — "RTL מלא, ולא שורה
+שורה". What it PAINTS changed in Phase 94, after Claude Code's split-screen diff
+view came out scrambled on every Windows install running it. The mechanism is
+xterm's DOM renderer: every style run is an inline-block `<span>`, an atomic
+inline is a neutral to UAX #9, and a row of neutrals inside an RTL paragraph is
+laid out **right-to-left** — so a multi-run Latin row (a diff's gutter, line
+number, two columns) came out with its fragments mirrored, while a single-run
+shell row merely sat at the right edge, which is why it went unnoticed for three
+weeks. The rule now, per row: Hebrew/Arabic present → `rtl` exactly as before; no
+RTL text and **Claude Code holds the pane** (the detected `foldTuiOwnsBidi` state
+— hook or OSC title — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
+two-column TUI keeps both halves where it drew them; no RTL text in a shell →
+**`ltr-end`**, a third `RowDir` value meaning `dir="ltr"` plus
+`text-align: right` and `data-ymux-align="end"`: reading order kept, the run
+packed against the right edge ("לטינית נשארת בימין, בלי היפוך"). The DOM renderer
+trims trailing no-background cells, which is what gives `text-align` room on a
+shell row and makes it a no-op on a full-width TUI row. `mouseRtl.findRow` reads
+the data attribute and reports the gap after the last span as `shift`, and
+`transformMouseX` subtracts it, so clicks on a packed row still land on the right
+column. The `rtl-dirs` log line gained `end=N`. Opt-in, neither profile default
+moved, one click back.
+
+The same Phase 94 closed the matching hole in `auto_per_line`: step 4 of
+`detectRowDirections` used to let a block with **zero** RTL text inherit the
+direction of the row above it, so Claude's bordered diff under a Hebrew prompt
+became an RTL block and mirrored the same way. A pure-ASCII block is now LTR no
+matter what surrounds it.
 
 Two traps around `force_rtl`, both of which produce reversed letters if missed:
 
@@ -140,11 +158,12 @@ first strong char is Latin, though the line is mostly Hebrew. Yossi's rule inste
 line containing **any** Hebrew/Arabic is RTL. `RTL_DOMINANCE` is the `tui_dominance`
 refinement on top.
 
-`rowDirections(mode, texts, {auto, suppress, dominance})` is the whole-pane
-decision, and the one place `force_rtl` and `auto_per_line` diverge. It was
-lifted out of `TerminalInstance.applyRowDirections` so it could be tested at
-all — the method is bound to the DOM and never ran under `node --test`, and in
-these modules the tests *are* the specification.
+`rowDirections(mode, texts, {auto, suppress, dominance, tui})` is the whole-pane
+decision, and the one place `force_rtl` and `auto_per_line` diverge; it returns
+`RowDir[]` (`ltr` | `rtl` | `ltr-end`, see the profiles section). It was lifted
+out of `TerminalInstance.applyRowDirections` so it could be tested at all — the
+method is bound to the DOM and never ran under `node --test`, and in these
+modules the tests *are* the specification.
 
 **`bidi.ts` (71)** — the `bidi_reorder` path (bidi-js, no type defs). Exports the escape
 matcher so the visual→logical pass protects escapes **exactly** the way this file does —
@@ -155,10 +174,14 @@ Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on sc
 pastes correctly, while Claude Code renders correctly and pastes reversed — exactly
 inverted, because the two panes hold opposite orders in the buffer.
 
-**`mouseRtl.ts` (82)** — coordinate transform for RTL rows. xterm's `SelectionService`
+**`mouseRtl.ts`** — coordinate transform for RTL rows. xterm's `SelectionService`
 maps `clientX` → buffer column assuming LTR. With `dir="rtl"` on a row the browser paints
 it mirrored, so a click on what the user sees as cell 5 lands on cell `cols - 5 - 1`.
-Selection and click positioning both land on the wrong side without this.
+Selection and click positioning both land on the wrong side without this. Phase 94 added
+the second transform: an `ltr-end` row is in reading order but moved right by the gap
+after its last span (`RowRect.shift`, measured in `findRow` from `data-ymux-align`), and
+`transformMouseX` subtracts it. The capture handler in `terminalInstance` therefore gates
+on "did the transform move the point", not on the row being rtl.
 
 ## Typed mirrors
 

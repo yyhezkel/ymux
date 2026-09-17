@@ -271,7 +271,11 @@ Two independent signals feed it, and it needs both:
 
 - **`#{session_path}`** — the sixth field of `TMUX_LIST_FORMAT`, giving `in_cwd` via
   `path_is_within`, which insists on a separator boundary so `/srv/app2` is not "inside"
-  `/srv/app`.
+  `/srv/app`. Both it and `paths_equal` go through **`norm_path`** (Phase 91.H): `\`→`/`,
+  trailing separators trimmed, and a drive-letter path lowercased whole — git spells a
+  Windows folder `C:/Users/…` while the picker stored `C:\users\…`, and NTFS treats them
+  as one directory. POSIX paths keep their case. `pathKey` in `diffModel.ts` is the
+  frontend twin; change one, change both.
 - **`session-owners.json`** (`%APPDATA%\ymux`, host → session name → `SessionOwner`),
   giving `owned`. This half exists because `zellij list-sessions` reports **no directory
   at all**, so on Windows ownership is the only workspace signal there is. A claim is
@@ -352,7 +356,9 @@ list command. The module owns what the picker never needed:
   because the runtime resolves those BY PANE), name made unique with
   `unique_sibling_name`; `workspace_open_worktree` lost its "repo root → activate the root"
   early return (the folder's shell has that cwd, so the `(parent, cwd)` idempotency finds
-  it); `workspace_delete` re-points through `active_after_delete` (a sibling screen, then
+  it — that match is `paths_equal`, not `==`, since 91.H: a byte compare of git's `C:/…`
+  against the stored `C:\…` created a duplicate row on every click on Windows);
+  `workspace_delete` re-points through `active_after_delete` (a sibling screen, then
   any screen under the root, then any screen, then `None` — never a header);
   `workspace_split` / `workspace_reset_layout` refuse a header. `migrate_headers_to_screens`
   runs once at load: a header with a layout gets a `shell` screen inserted right after it
