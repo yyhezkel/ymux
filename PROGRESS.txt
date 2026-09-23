@@ -7733,3 +7733,5 @@ New ipc_meter.rs wraps invoke_handler: per-command + emit counts, one `[IPC]` li
 Vault: backend-core (+ipc_meter.rs), backend-sessions, frontend-lib, frontend-shell re-stamped.
 Compiles-untested: no local build (Rule #17) — CI is the gate; the live acceptance on the Mac is
 FOLLOWUPS P0 2026-09-23. The 63/s attribution is inferred, not proven.
+
+2026-09-23 — PR #49 green: ci-windows 35913330618 (rust/frontend/go), build-macos 35913330601 arm64 + x64 (x64 first attempt died on a lost hosted runner at the toolchain step; rerun green). Compiles-untested — live acceptance is FOLLOWUPS P0 2026-09-23.
