@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
 import { invoke } from "@tauri-apps/api/core";
@@ -261,9 +261,13 @@ function App() {
     setNotifications([]);
   };
   const unreadNotifs = () => notifications().filter((n) => !notifRead().has(n.id)).length;
-  // #2: mirror the unread count to the Windows taskbar badge.
+  // #2: mirror the unread count to the Windows taskbar badge. Through a memo
+  // so the invoke fires when the COUNT changes, not on every list change —
+  // once the list is at its 300 cap every new notification left the count
+  // unchanged and still cost an IPC call (and a dock redraw on macOS).
+  const unreadCount = createMemo(unreadNotifs);
   createEffect(() => {
-    const c = unreadNotifs();
+    const c = unreadCount();
     void invoke("set_tray_badge", { count: c }).catch(() => {});
   });
   // #1 fix: map a FeedItem (hooks/permissions/passive) to a NotifItem so the
@@ -652,12 +656,17 @@ function App() {
     // different monitor — no modal here is covering it, so hiding it
     // would blank that window every time the user opened Settings, and
     // nothing over there would ever show it again.
-    for (const w of file().workspaces) {
-      if (poppedOutBrowsers().has(w.id)) continue;
-      void invoke("workspace_browser_hide", {
-        workspaceId: w.id,
-      }).catch(() => {});
-    }
+    // Untracked: this is a once-per-modal-open broadcast. Tracking file()
+    // re-sent one hide per workspace on every workspaces:changed while any
+    // modal stayed open.
+    untrack(() => {
+      for (const w of file().workspaces) {
+        if (poppedOutBrowsers().has(w.id)) continue;
+        void invoke("workspace_browser_hide", {
+          workspaceId: w.id,
+        }).catch(() => {});
+      }
+    });
   });
 
   // Phase 17: ephemeral toast for "Summary saved as note" + the
@@ -1199,7 +1208,7 @@ function App() {
     const runs = agentRuns();
     const waiting = waitingPaneIds();
     const connected = connectedPanes();
-    const now = agentClockMs();
+    const now = staleClockMs();
     const briefMap = briefs();
     const out: QueueRow[] = [];
     const all = file().workspaces;
@@ -1329,8 +1338,23 @@ function App() {
   // when no new feed items arrive. Piggybacks a signal `pulseTick` that
   // `activeHookWorkspaceIds` reads through (see below).
   const [pulseTick, setPulseTick] = createSignal(0);
-  const pulseTimer = setInterval(() => setPulseTick((n) => n + 1), 250);
+  // 2026-09-23: no ticks while the window is hidden — nothing reads them
+  // there, and every tick re-runs every computation downstream of it.
+  const pulseTimer = setInterval(() => {
+    if (document.hidden) return;
+    setPulseTick((n) => n + 1);
+  }, 250);
   onCleanup(() => clearInterval(pulseTimer));
+  // The traffic light's only clock input is the 6 h staleness cutoff
+  // (paneAgentState.ts STALE_AFTER_MS), so it reads a MINUTE clock. It used
+  // to read agentClockMs, which rebuilt every row of every workspace — and
+  // with them the sidebar cards and the Queue — four times a second, idle
+  // or not.
+  const [staleClockMs, setStaleClockMs] = createSignal(Date.now());
+  const staleTimer = setInterval(() => {
+    if (!document.hidden) setStaleClockMs(Date.now());
+  }, 60_000);
+  onCleanup(() => clearInterval(staleTimer));
   // BRIEF: idle-return trigger. `lastInputMs` is stamped by cheap
   // capture-phase listeners (registered in onMount); the existing 250ms
   // pulse — no second timer — arms the flag once the gap exceeds the

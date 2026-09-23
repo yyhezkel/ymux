@@ -2,6 +2,7 @@
 vault: backend-core
 covers:
   - app/src-tauri/src/lib.rs
+  - app/src-tauri/src/ipc_meter.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
 ---
@@ -408,6 +409,15 @@ list command. The module owns what the picker never needed:
   — see Gotchas.
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
+- **Every invoke is counted** — `invoke_handler(ipc_meter::metered(generate_handler![…]))`.
+  `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
+  `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
+  `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and
+  counts only (Rule #1). It exists because WebKit's own log records a custom-scheme load
+  per invoke but never which command — the 2026-09-23 macOS GPU-hang report had 250k of
+  them and no way to name one. Read that line first when "the app is busy while idle".
+- **`ui_log_batch`** is the frontend logger's sink (a queue flushed ≤1/s, ≤100 lines);
+  `ui_log` stays for single lines. Both go through `write_ui_log`.
 
 ## Gotchas
 
