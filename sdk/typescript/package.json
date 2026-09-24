@@ -1,6 +1,6 @@
 {
   "name": "@ymux/sdk",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "TypeScript client SDK for ymux-server (REST + WebSocket frames). Types are generated from the server's OpenAPI + frame schema; the client + WS wrapper are hand-written. Version tracks the server.",
   "type": "module",
   "main": "dist/index.js",

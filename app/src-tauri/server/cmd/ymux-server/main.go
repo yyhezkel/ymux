@@ -25,6 +25,7 @@ import (
 	"ymux-server/internal/insights"
 	"ymux-server/internal/logging"
 	"ymux-server/internal/logs"
+	"ymux-server/internal/term"
 	"ymux-server/internal/workspace"
 )
 
@@ -267,8 +268,28 @@ func main() {
 		logger.Info("workspace API enabled")
 	}
 
+	// Terminal API (Phase 95) — tmux session management plus the attach WS that
+	// gives a browser a real terminal. No store and no state: tmux is the
+	// truth, a session's identity is its tmux name, and each attach is one
+	// `tmux attach` process (internal/term).
+	//
+	// Access needs auth.ScopeShellAttach, which "all" deliberately does NOT
+	// imply — so every phone paired before this release keeps working and none
+	// of them gains a shell. The owner/shared token always passes.
+	//
+	// An unresolvable home only costs the session-meta labels (LoadMeta
+	// degrades to an empty map); tmux itself still lists.
+	termSvc := term.NewService(token, home)
+	if chatAPI != nil {
+		termSvc.SetScopeResolver(chatAPI.DeviceScopes)
+	} else {
+		logger.Warn("terminal API: chat disabled, only the shared token is accepted")
+	}
+	logger.Info("terminal API enabled", "device_scopes", chatAPI != nil)
+
 	srv := api.NewServer(token, *port, api.Deps{
-		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc, Workspace: wsSvc, Push: pushSrv,
+		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,
+		Workspace: wsSvc, Push: pushSrv, Term: termSvc,
 	})
 
 	go func() {

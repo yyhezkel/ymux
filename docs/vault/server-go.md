@@ -13,15 +13,17 @@ covers:
   - app/src-tauri/server/internal/logging/*.go
   - app/src-tauri/server/internal/logs/*.go
   - app/src-tauri/server/internal/push/*.go
+  - app/src-tauri/server/internal/term/*.go
   - app/src-tauri/server/internal/workspace/*.go
   - app/src-tauri/server/go.mod
 ---
 
 # `ymux-server` — the Go control-plane daemon
 
-Runs **on the user's remote Linux box**, not on the desktop. ~11,300 lines across 12
+Runs **on the user's remote Linux box**, not on the desktop. ~12,100 lines across 13
 `internal/` packages. Formerly `ymux-insights`; Phase 77 restructured it into subsystems
-behind interfaces.
+behind interfaces, and Phase 95 added the first piece of "ymux in the browser"
+(`docs/WEB-DESIGN.md`): a real terminal, in `internal/term`.
 
 ## Read this first: the two blobs
 
@@ -36,7 +38,7 @@ Manual build commands: `docs/ymux-server/README.md` § Build.
 ## Architecture: `core` is a leaf
 
 ```
-main.go  →  wires config, auth, api, chat, hooks, insights, logs, files, push, workspace
+main.go  →  wires config, auth, api, chat, hooks, insights, logs, files, push, term, workspace
 core     ←  every subsystem imports it; it imports no sibling
 api      →  imports subsystems; subsystems NEVER import api
 ```
@@ -52,7 +54,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | Package | Lines | What |
 |---|---|---|
 | `api` | 838 | HTTP front door: the mux, unauthenticated liveness + version negotiation, and each subsystem mounted behind auth middleware. `huma.go` holds the typed client-SDK surface |
-| `auth` | 168 | `Bearer` middleware plus per-device scope grants (`scopes.go`) |
+| `auth` | 195 | `Bearer` middleware plus per-device scope grants (`scopes.go`) — a leaf, imports no sibling |
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
 | `config` | 469 | API token, filesystem paths, the log janitor (size cap + age prune), and the one-time data-dir migration |
 | `core` | 110 | the leaf interface package |
@@ -62,6 +64,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
+| `term` | 870 | tmux session management + a binary WebSocket carrying a real PTY (Phase 95) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## Things worth knowing before you edit
@@ -82,6 +85,60 @@ hooks, status) into the substrate.
 **`chat/chat_hookrpc.go`** — holds `challengeTag`, the Go half of the tunnel handshake.
 It still speaks the legacy `WINMUX-CHALLENGE` dialect on purpose; the Rust half is
 `CHALLENGE_TAG` in `ymux-tunnel`. **Flip both together.**
+
+**`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
+package that lets a browser have a shell, and the two rules that shape it are worth
+reading before you touch any of it:
+
+- **Attach, never spawn a bare shell.** Every terminal handed out is `tmux attach`
+  against a named session, so the session outlives every client and a dropped
+  connection loses nothing. Same "attach means attach" rule the desktop follows
+  (`docs/DECISIONS.md`, 2026-08-23).
+- **tmux is the truth.** There is no session table here. A session exists because
+  tmux says so, and its identity is its tmux name, not an id the daemon mints. That
+  is what lets a desktop and a browser see one reality (`docs/DECISIONS.md` Q1).
+
+The consequence people expect to find and do not: **no fan-out, no ring buffer, no
+shared state.** Several clients on one session is tmux's own multi-client case, so each
+WebSocket simply owns one `tmux attach` process and tmux does the mirroring. The
+`workspace` package's `KindTerminal` constant is reserved and deliberately unimplemented
+— PTY bytes must never enter that package's append-only SQLite event log.
+
+`/api/v2/term/*` mounts **raw**, not behind `auth.Bearer`, for the same reason `push`
+does: that middleware only knows the shared token, and a paired device's token has to
+work too. `service.go`'s `gate` does both checks and **fails closed** — a Service with
+neither a shared token nor a scope resolver rejects everything, which is the opposite of
+the workspace subsystem's "no auth configured ⇒ open" convenience and deliberately so.
+
+**`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
+oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
+malformed, so every scope in that list is reachable by a device nobody ever restricted.
+A leaked device token must not become a shell over the internet, so this one grant is
+only ever held by a device whose stored scopes name it explicitly — which also means
+every phone paired before Phase 95 keeps working and none of them gained a terminal.
+`GrantableScopes` (what `ValidScope` reads) is the union; `AllScopes` (what the
+fail-open default reads) is not. Keeping those two lists apart is the whole mechanism,
+and `NormalizeScopes` will not collapse a list containing an opt-in scope to `"all"`.
+
+`pty_linux.go` opens `/dev/ptmx` directly through `golang.org/x/sys/unix` rather than
+pulling in `creack/pty`. Not style: a new dependency means new `go.sum` lines, and this
+repo has no Go toolchain on the dev box (Rule #17) — `x/sys` was already in the module
+graph via gopsutil. The ioctl numbers are asm-generic, identical on the only two targets
+that ship. `pty_other.go` is a stub so the package still builds on a mac or Windows dev
+box. Every tmux call is an argv array (Rule #3) and targets use tmux's `=name` exact-match
+prefix, so killing `api` can never hit `api-staging`. The tests inject a fake runner —
+the CI `go` job's ubuntu image has no tmux, and a test that shelled out to a real
+multiplexer would be a flake generator anyway.
+
+**Rule #1 is absolute here**: a PTY carries the user's shell content. Nothing in this
+package logs bytes — the attach/detach lines carry the session name, two byte COUNTS and
+a duration. `meta.go` reads `~/.ymux/session-meta.json` (the CLI owns writing it; the
+daemon never writes, so there is no second writer racing the CLI's atomic tmp+rename) and
+joins labels on with the `label > auto_name > claude_title > raw name` precedence.
+
+Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma ops, so
+they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
+Phase B moves them.
 
 **`hooks/hooks.go`** (42 lines) is deliberately tiny: bind a localhost port, report the
 bound address through `core.AddrSink` so spawned claude children can be pointed at it,
@@ -156,7 +213,15 @@ out of the server and fails CI if the committed SDKs moved.
 ## Invariants
 
 - **`core` imports no sibling. `api` is imported by nobody.** Both directions are the
-  cycle fix; breaking either re-creates the flat-package problem.
+  cycle fix; breaking either re-creates the flat-package problem. `auth` and `logging`
+  are leaves too (neither imports a sibling), which is why `term` may import them
+  without putting a cycle back.
+- **`auth.ScopeShellAttach` stays out of `AllScopes`.** Adding it there would hand a
+  shell to every device that was never explicitly restricted — including ones paired
+  years earlier. `term/service_test.go` asserts it.
+- **`core.Version` and `ymux-addons`' `INSIGHTS_VERSION` are bumped together.** They had
+  already drifted once (2.2.1 vs 2.2.0), and the effect was that the desktop stopped
+  offering the update at all. See `crates.md`.
 - **Rebake the two Linux blobs in the same commit as any shipping Go change.** Test files
   are excluded from the gate; they do not reach the binary.
 - The wire contract lives in `frames.go` + the committed schemas. Change the Go type and

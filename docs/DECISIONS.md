@@ -90,8 +90,14 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
   **Accept for v1, documented.**
 - **Debt logged with it:** layout tree ops get a TS port for the web build while the
   desktop keeps the Rust one — two implementations until the desktop moves to the TS ops.
-- **Status:** design written, no code. Q1 decided, Q3 deferred, Q5 recommended; Q2
-  awaiting Yossi's pick. Phase A does not depend on Q2 and can start.
+- **Status (2026-09-24):** **Phase A is implemented** as Phase 95 — `internal/term`
+  in the Go daemon: tmux list/create/rename/kill, a binary attach WebSocket over a
+  real PTY, session-meta labels, and the `shell:attach` scope. Server version
+  2.2.1 → 2.3.0 (and `INSIGHTS_VERSION` with it, which had drifted). Not verified
+  live — Rule #14, smoke list in FOLLOWUPS. One design change vs the doc: no
+  fan-out layer, because several clients on one tmux session is tmux's own
+  multi-client case. Q1 decided, Q3 deferred, Q5 recommended (Phase B); **Q2 still
+  awaiting Yossi's pick** — it does not block Phase B either.
 
 ### 2026-08-23 - macOS: the site's JS is dead in the in-app Browser (diagnostic build)
 - **Symptom.** On macOS the workspace Browser loads a page and renders HTML/CSS,

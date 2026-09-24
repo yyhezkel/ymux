@@ -62,8 +62,9 @@ New in `internal/workspace` (or a sibling `internal/term` package that imports
   attach" rule (DECISIONS 2026-08-23) and means every browser pane is
   persistent by construction. Create = `tmux new-session -d -s <name> -c <cwd>`
   then attach.
-- **`WS /api/v2/term/{session_id}`** — a **separate binary WebSocket**, not the
-  JSON workspace stream. Raw bytes both ways; a single text frame
+- **`GET /api/v2/term/sessions/{name}/attach`** — a **separate binary WebSocket**,
+  not the JSON workspace stream. (Keyed by tmux NAME, not by a minted session id:
+  tmux is the truth, Q1.) Raw bytes both ways; a single text frame
   `{"type":"resize","cols":N,"rows":N}` for resize. Reason: base64-in-JSON
   doubles PTY traffic and puts a hot path through the typed-frame codec that was
   designed for chat events. One WS per pane, so per-pane backpressure is free.
@@ -285,9 +286,19 @@ Non-negotiable for v1:
 
 ## 8. Phasing
 
+**Phase A landed 2026-09-24 (Phase 95)** — `internal/term`, ~870 lines plus tests.
+What shipped differs from the sketch below in one way worth reading: there is **no
+per-session object and no ring buffer**. Several clients on one tmux session is
+tmux's own multi-client case, so each WebSocket owns one `tmux attach` process and
+tmux does the mirroring. That removed the fan-out this document originally
+assumed. `workspace.KindTerminal` stays reserved and unimplemented: PTY bytes must
+never enter that package's SQLite event log. Live verification is open (Rule #14)
+— the smoke list is in FOLLOWUPS.
+
+
 | Phase | Scope | Size | Verifiable how |
 |---|---|---|---|
-| A | Go: `terminal` kind, `/term` WS, tmux list/rename/kill, session-meta annotation, `shell:attach` scope | ~800 Go | `go test` + `websocat` into a real box |
+| A | Go: `terminal` kind, `/term` WS, tmux list/rename/kill, session-meta annotation, `shell:attach` scope | ~870 Go | `go test` + `websocat` into a real box |
 | B | Go: workspaces/layout/settings/notes/tickets/feed stores, `humanize` + brief port, hook-bridge method subset, `setup-hooks` env target, session history (§4.2: `ended_at` in `session_meta.rs`, transcript endpoint, resume) | ~1.7k Go + ~100 Rust (CLI) | `go test`; a `claude` run inside an attached tmux fires a gate visible on the events WS |
 | C | TS: `Backend` interface, `TauriBackend`, codemod, `WebBackend`, `layoutOps.ts`, capability gating, `TerminalInstance` on `TermStream` | ~2–3k TS | desktop unchanged in behaviour (the regression risk); web build renders against a Phase A/B daemon over plain HTTP on localhost |
 | D | `ymux-web` add-on, nginx `location /`, pairing page, Mobile tab → "Web & devices" | ~500 Rust + Go | full path over HTTPS from a phone |

@@ -27,7 +27,18 @@ import (
 // pick up the daemon that knows about the new paths.
 // 2.2.1 (Phase 86): server load — docker stats one-shot + 30s cadence, top
 // every 10s, hygiene reaper also kills orphaned (ppid 1) port-watchers.
-const Version = "2.2.1"
+// 2.3.0 (Phase 95): the terminal API — /api/v2/term/* lists, creates, renames
+// and kills tmux sessions, and a binary WebSocket attaches a real PTY to one
+// (internal/term). Gated on the new opt-in auth.ScopeShellAttach. This is the
+// first slice of "ymux in the browser" (docs/WEB-DESIGN.md) and a remote needs
+// it before any browser client can reach a terminal, so it is a minor bump the
+// add-on offers to every existing install.
+//
+// Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
+// had already drifted apart, which made the desktop read a 2.2.1 remote as
+// NEWER than the version it ships and silently stop offering updates; both
+// are set to 2.3.0 here.
+const Version = "2.3.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value
