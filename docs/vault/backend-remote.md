@@ -28,6 +28,10 @@ The payloads are **embedded with `include_bytes!`, not resolved via
 copying just `app.exe` into a folder — there the read failed with "os error 3" as a
 silent WARN. Same reason `resources/ymux-server-linux-*` are committed blobs.
 
+<!-- Phase 91.F: the pane literal `provisioning.rs` builds also sets
+`diff_cwd: None` (a new `LayoutNode::Pane` field — see crates.md); mechanical,
+no behavioural change here. -->
+
 ## `bootstrap_guard.rs` (237) — why connects stopped storming
 
 `spawn_ssh` calls `bootstrap` **once per pane**, and panes reconnect together — a

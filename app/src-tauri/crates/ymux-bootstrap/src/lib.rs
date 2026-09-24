@@ -560,12 +560,12 @@ async fn ensure_tmux_conf(
         return;
     }
     let _ = ssh_exec(handle, &format!("chmod 0644 {remote_conf}")).await;
-    // Phase 65 (bug EE): the round-4 `tmux source-file` auto-apply was
-    // removed. The conf now ships `mouse off`, and mouse-on is set
-    // per-session via the new-session command chain (`\; set -g mouse on`,
-    // see pane connect). Re-sourcing the conf into a running server would
-    // reset `mouse` back to off globally and fight that injection on
-    // every new pane. New sessions still pick up the conf via `-f`.
+    // The round-4 `tmux source-file` auto-apply was removed in Phase 65 EE
+    // because it fought the per-attach `\; set -g mouse on`. That injection
+    // is gone (Phase 91.B, 2026-09-08) and the attach script itself now
+    // chains `source-file -q` on every attach, so a running server adopts a
+    // re-uploaded conf on the next pane connect. Nothing to do here beyond
+    // the upload.
     log_info("BOOT", &format!(
         "bootstrap: tmux-conf uploaded ({} bytes)",
         bytes.len()

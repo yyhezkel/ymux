@@ -7,8 +7,8 @@
                      },
     "tmux-conf":  {
                       "path":  "ymux-tmux.conf",
-                      "sha256":  "c38eb4d75c0aa25d18cddeff2786eeee3eba2f58718cb14f89a45cbf03faa9c0",
-                      "size":  5525,
-                      "built_at":  "2026-08-20T14:16:05Z"
+                      "sha256":  "992b1ecd153d4505dca28029ea22e862c5234e945a63067f1d028709e7df2cb5",
+                      "size":  9428,
+                      "built_at":  "2026-09-09T12:00:00Z"
                   }
 }

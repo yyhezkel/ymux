@@ -11,6 +11,8 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/cwdShort.ts
+  - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
@@ -47,7 +49,7 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 
-## `App.tsx` (4,954) — one component, ~50 signals
+## `App.tsx` (5,566) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -55,6 +57,12 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `notes`, `paneStatus`, `agentRuns`, `portForwards`, `detectedPorts`, `sidebarWidth`,
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
+
+**`refreshPersistence()` is the one place the wheel proxy is armed (Phase 91.D).** Every
+refresh of `pane_persistence_list` fans out `ti.setTmuxScroll(!!m[pid])` over `terms`,
+so a pane the backend lists as holding a tmux/zellij session gets the Shift+Up/Down wheel
+proxy and every other pane keeps xterm's native wheel; `pty:exit` disarms synchronously
+before the async refresh confirms it. See `frontend-lib.md` § mouse contract.
 
 **Keyboard dispatch is one ordered table, not a chain of `if`s.** `keyBindings`
 is a `KeyBinding[]` of `{ id, when?, run }` built once; `handleKey` walks it and the
@@ -86,8 +94,10 @@ char count only (never the transcript — Rule #1; chars=0 catches the "pressed 
 nothing happened" case), and every recorder rejection as `log.error` before the 5-second
 toast, so a missed toast is no longer a lost error.
 
-**The workspace header keeps four buttons, not seven.** Browser, Files and the
-notification bell (which carries the unread badge) stay visible; view mode, `+ diff`,
+**The workspace header keeps five buttons, not eight.** Browser, Files, the
+BRIEF Queue (badge = panes needing you across ALL workspaces — beta feedback:
+a shortcut-only feature dies quietly) and the notification bell (unread badge)
+stay visible; view mode, `+ diff`,
 Insights and Tickets live behind a single `⋯` (`.ws-header-more` / `.ws-header-menu`,
 sharing `.diff-pane-menu`'s CSS rather than a second dropdown component). Each item
 calls the **same handler its old standalone button called** — `setTabsMode`,
@@ -102,6 +112,19 @@ presentational; when a child needs to mutate, it calls a handler App passed it. 
 deliberate exceptions are module-scope stores — `paneDrag.ts` and `transferStore.ts` —
 where prop-threading through `LayoutView → SplitView → LeafPane → PaneView` was worse
 than a module signal.
+
+**Only a screen is ever active (Phase 92).** `handleSetActive(requestedId)` first runs
+`screenOrSelf(file().workspaces, requestedId)`: a header (machine / pinned folder) resolves
+to its first screen, a header with no screens is a logged no-op, and the function **returns
+the id it actually activated** (`null` when nothing was) — the wizard's `onOpenWorkspace`
+gets the ROOT id back from the backend and must look up the first pane on the returned
+screen, not on the header. `activePaneId` is cleared when the activated workspace has no
+layout. The backend applies the same rule in `workspace_set_active`, so the guard here is
+belt. `headerChain()` = `ancestorsOf` of the active screen (folder, then machine): the
+main-area `.ws-header` title reads `machine › folder › screen` and its dot takes the
+nearest ancestor colour; `allPaneAgentRows` labels every Queue row `header › screen`.
+`rootIdOf` is the `file()`-bound wrapper of `wsTree.rootIdOf`. `newScreen(w)` is the
+header `+` (§ Sessions as rows).
 
 **The event subscriptions are the map of the backend↔frontend contract.** Around
 lines 2778–3200, `App.tsx` registers `listen()` for: `pty:data`, `pty:exit`,
@@ -128,12 +151,62 @@ Ctrl+Shift+I blocker near line 3184 is deliberate and survives the `devtools` Ca
 feature: the main window opts out of inspection because it renders live PTY output;
 only the workspace Browser webview is inspectable (`frontend-panes.md` § Browser).
 
-## `Sidebar.tsx` (1,286)
+## `Sidebar.tsx` (1,364)
 
-Workspace tree with groups, nesting, pinned project folders, and worktree children.
+Workspace tree with groups, nesting and pinned project folders (Phase 91.F: worktree
+stubs moved to the Diff pane, so a folder shows only its child workspaces).
 Drag-reorder, collapse state, the per-workspace action row (🌐 Browser, 🗂 Files,
 notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
-`WorkspaceGroup`, `WorktreeEntry`, `ForwardRow` from `types.ts`.
+`WorkspaceGroup`, `ForwardRow` from `types.ts`.
+
+**Headers + cards (Phase 91.E — the cmux look).** Every row is still one
+`.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
+is shared), but there are two bodies. **Phase 92 made the split structural:** `isHeaderRow(w)`
+is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder, full stop; it
+holds rows and never panes, and it is never the active workspace. A header renders the
+pre-91.E row as a slim `.ws-header`: a chevron on EVERY header (it may hold zero screens
+right after a create), glyph, dim small-caps-weight name, worktree chip, the `+`, and a
+`.ws-meta` cluster whose waiting / brief / activity dot and live dot **aggregate over the
+subtree** (`anyInSubtree`, depth-capped like `isLiveTree`) so a collapsed machine still
+shows that a screen under it needs you — and no kind badge (a paneless row has no kind).
+Clicking a header calls `onSetCollapsed`, not `onActivate`. Every other row — a session
+row, a worktree workspace, a plain `shell` screen — is a `.ws-card` from `renderCardBody(w)`: line 1 = the
+`.ws-dot` / terminal glyph (hidden in `full`; it IS the card in icons mode), ✳ when
+`cardInfo.agent`, the display name as `.ws-name.ws-card-title` (so per-string bidi and
+`.ws-gone` dimming still apply), the `.ws-card-count` attention pill, the pane-count badge
+only when `split` (the S/L/B/F letter is a header's business); line 2 = ONE indicator slot
+(waiting > brief > activity, else the live dot — Design Pass 01 P3 kept) + the status text;
+line 3 = `info().branch` • `shortenCwd(cwd, sshUser)` forced LTR (a plain span — TechText
+would pill the path); line 4 = `:port` links that keep the `.ws-port-badge` class because
+that is the drag-start exclusion. **Phase 91.F**: the branch comes from `cardInfo.branch`
+(App's `branchForCard`, fed by a Diff pane's worktree listing) — the sidebar no longer scans
+worktrees itself, so a card shows a branch only after a Diff pane has listed that repo; no
+dirty `*` (git status is not known). All of it is fed by App's
+`workspaceCardInfo` memo through the `cardInfo` prop (§ Sessions as rows); `cardInfoOf`
+falls back to the row's own name / cwd and "idle". The workspace colour is a 3px
+`.ws-card-stripe` (a real element — `::before/::after` are the drop lines), hidden on the
+active card, whose look is the solid accent block with `--w-on-accent` text (computed by
+`applyTheme` from the accent's luminance; themes-redesign.css keys its four per-direction
+active rules on `.ws-header` only). Icons mode collapses a card to its glyph, with a
+warning ring when `has-attn`; `[data-narrow]` drops the branch, not the cwd.
+
+**Session rows (Phase 90.B / 91.C)** are cards; the ones in `goneIds` are `.ws-gone` and
+their status line reads "gone — Connect resumes"; every header carries a terminal-glyph
+`+` (`onNewScreen`, Phase 92) — its tooltip says "session" when `sessionsAsRows &&
+wsCaps(w).sessionPersistence` and "screen" otherwise; App picks the path. The context
+menu's host-level items (sessions, add-ons, pin folder, check git, move to group) render
+for headers only; a screen's menu is rename / edit / disconnect / delete. In icons mode a
+header is its glyph dimmed over a hairline (`.sidebar.icons .ws-item.ws-header`), so it is
+not the same centred dot as the screens under it. See § Sessions as rows.
+
+**"Only rows with live sessions" (Phase 91.A)** — a toggle under the wordmark
+(`.sidebar-live-toggle`, `aria-pressed`, localStorage `ymux.sidebar.liveOnly`). The rule
+is `isLiveTree`: a row stays if `connectedIds` has it (App's `liveWorkspaceIds()` — any
+pane in `paneToSession`, no round trip), if it is the active workspace (the filter can
+never hide what you are looking at), or if a descendant qualifies — so a server stays for
+its live folder child. Applied to the ungrouped list, each group's members (a group with
+none left is hidden, the count shows the visible number) and the children inside a
+subtree; `.sidebar-live-empty` says so when nothing at all is live.
 
 The workspace right-click menu is a fixed-position `.ws-menu` whose items all funnel
 through one `onAction(id, action)` prop with a closed string union — rename, edit,
@@ -142,20 +215,17 @@ addons, pin folder, check git, move-to-group, disconnect, delete. Adding an item
 adding a union member here and a branch in `App.tsx`'s handler; the menu itself owns no
 state beyond which row it is open for.
 
-**Worktree scans are lazy, keyed by workspace id, and never polled.** A subtree's
-effect runs `scanFolder` once when it is open and has no result; a scan that fails
-with "no live SSH session" parks as `offline` (not an error row). The retry lives in
-one effect over `liveSshHosts` — a memo that collapses `connectedIds` (a fresh Set on
-every App tick) to the sorted `user@host:port` string of live SSH hosts — and rescans
-only the parked folders whose own host is in that set, inside `untrack` so its own
-`setScans` never re-fires it. Both constraints are load-bearing: the earlier version
-retried on *any* live workspace and tracked `scans()`, so a local workspace up with the
-folder's SSH host down produced a tight retry loop (eight scans in 30ms, 2026-09-08).
-Local/WSL folders never park — the backend runs git directly for them.
+**Worktrees left the sidebar (Phase 91.F).** The scan cache, `scanFolder`, the
+`liveSshHosts` retry effect, the `.pf-unopened` stub rows and the `+`/`⟳` buttons are gone
+— a project folder's worktrees are listed, opened and created from the **Diff pane's**
+worktree strip (`frontend-panes.md` § DiffPane, `backend-panes.md` § diff_pane). The sidebar
+keeps only the pinned-folder header and its child workspaces. A card's branch comes from
+`cardInfo.branch`, which App's `branchForCard` fills from a Diff pane's listing.
 
-Row glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
-terminal icon**, tooltip = the raw session name; else the colour dot. A session row is
-otherwise a plain child — click, collapse, drag, delete all take the same path.
+Header glyphs: `is_project_root` → folder + git badge; **`tmux_session` (Phase 90.B) → a
+terminal icon**, tooltip = the raw session name; else the colour dot. On a card the same
+glyph is the icons-mode face only. A session row is otherwise a plain child — click,
+collapse, drag, delete all take the same path.
 
 **Phase 90 — the active-sessions overview's three row actions live in App, not in the
 window**, because each needs App-level state. `openSessionAsWorkspace` (90.B) closes the
@@ -170,7 +240,11 @@ for the workspace's FIRST pane (activation never auto-connects, so a plain [Conn
 row must attach, not spawn a pane-derived session; a split-off pane stays a plain shell),
 and `restoreSessions` uses the same field when localStorage has no hint for that pane.
 `newTab` still returns the new pane id from 87; nothing depends on it now.
-`killSessionByName` routes through the existing `killSession(paneId)` when
+**Deleting a session row kills its session (Phase 91):** `commitDelete` walks
+`sessionRowsIn(subtree)` (every row with `tmux_session`), best-effort
+`workspace_ensure_connected`, `killSessionByName`, toasts `workspace.delete.sessionKillFailed`
+on anything but `killed | already_gone | no_session | attempted`, and only then calls
+`workspace_delete`. `killSessionByName` routes through the existing `killSession(paneId)` when
 `panePersistence()` shows one of our panes holding the name (PTY, maps and restore hint go
 the tested way; `killSession` now returns the outcome for that), else
 `sessions_kill_by_name`. `renameSessionByName` calls `tmux_rename_session` and then moves
@@ -191,6 +265,85 @@ workspace-level floating windows (sidebar 🌐 / 🗂). `BrowserPane.tsx` stays 
 as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, but
 consumed by `FileManagerWindow.tsx`.
 
+## Sessions as rows (Phase 91.C)
+
+Round 1 of Phase 91 shipped a third view mode (a sessions strip above the terminal).
+Yossi's first live run said the opposite of what it built — sessions belong in the sidebar
+tree as rows, switched on from Settings for every server, and `+` must make a row, not a
+tab — so the strip was removed the same day and this took its place. Everything keys on
+the **root id, a string** — never on the workspace object, which changes identity on every
+persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` memo).
+
+- **`refreshSessionRows(rootId, {ensure})`** (gated on `settings.sessions_as_rows`):
+  `workspace_ensure_connected` when `sessionBound && ensure` → `pane_list_tmux_sessions(root,
+  null)` → **`reachable = rows.length > 0 || !sessionBound`** (a cold password-auth host
+  answers an EMPTY list, not an error — the `restoreSessions` precedent — so it greys
+  nothing) → `sessionLists[rootId]` → `workspace_remember_sessions(root, …)` (the root's
+  memory) → `workspace_mirror_sessions(root, candidates)`. **`mirrorCandidates`** drops
+  `foreign.kind === "workspace"` rows and every name one of our own panes holds —
+  `panePersistence()` (live) ∪ `allPaneSessions()` (restore hints) — because a session a
+  plain pane holds is `owned`, not `foreign`, and a row for it would attach a second client;
+  the backend applies the pane-derived-name rule too. `mirrorInFlight` coalesces overlapping
+  refreshes. Triggers: (a) the active root on activation/boot, once per root
+  (`lastMirrorRoot`), with `ensure` following Phase 41's auto-connect opt-out and an early
+  return while `settings()` is null; (b) the post-connect 100 ms timer (a `+` or a resume
+  CREATED a session); (c) a 30 s visible-only `setInterval` on `activeRootId()` — how a
+  session killed elsewhere goes grey; (d) `commitDelete` after it touched session rows.
+- **`goneWorkspaceIds()`**: session rows whose root's list is reachable and lacks the name
+  (zellij `exited` rows are in the list = live). Sidebar prop `goneIds` → `.ws-gone` (dim,
+  italic) + `ws.gone.tooltip`. Rows are never removed on their own; delete is the way out,
+  and `commitDelete` skips the kill for a gone row (a password-auth host would only toast
+  "kill failed") while always forgetting the name in the root's memory.
+- **`boundSessions()`** — pane_id → `BoundSession { name, gone, claudeSessionId, cwd }` for
+  the first NOT-live pane of a workspace with `tmux_session` (Claude id + cwd from the live
+  row first, else the root's `known_sessions`). LayoutView threads it as `boundSession`;
+  PaneView's `smartConnect` short-circuits: gone with a Claude id → `connectPane` with
+  `mode: "claude"`, `claudeArgs: "--resume <id>"` (a STRING), `cwdOverride`, and the button
+  reads "Resume"; otherwise a plain attach — `new-session -A` recreates a gone session of the
+  same name. If the session reappeared between poll and click, `pane_connect`'s attach-only
+  guard types nothing.
+- **`workspaceCardInfo()`** (Phase 91.E) — one `createMemo` for the whole tree, workspace id →
+  `WorkspaceCardInfo { title, status: {kind, text}, cwd, agent, attention }`, passed to the
+  Sidebar as `cardInfo` and read by the CARD rows (the Sidebar renders inside `<For>` and must
+  not create per-row memos). Title/cwd for a `tmux_session` row follow the live list of its
+  root (`sessionDisplay(row)`, `cwd → owner_cwd`), else the root's `known_sessions`
+  (`display`, `cwd`), else the row itself. Line-2 precedence, most urgent first: a blocking
+  permission card → the text of an UNREAD notification (`notifications()` newest-first, by
+  pane then by workspace; it clears itself on focus) → gone → the agent's most urgent
+  `QueueRow` (`QUEUE_BUCKET` then oldest; needs-input/stuck/waiting = `agent-attn`, text =
+  `whatsHappening`, else the status word) → connected → idle. `attention` counts panes that
+  are waiting or unread plus needs-input/stuck rows not already counted. Re-runs on the
+  250 ms agent clock; O(workspaces × panes + notifications). **Phase 91.F** adds `branch`,
+  from `branchForCard`: the longest scanned-worktree path that is a prefix of the card's cwd,
+  looked up in `worktreeLists` (App's `Record<wsId, WorktreeEntry[]>`, filled by a Diff pane's
+  `onWorktreesListed` or `recheckGit`) against the nearest ancestor that has been listed —
+  null until a Diff pane has run for that repo. The sidebar no longer scans worktrees itself.
+- **`openDiffPane()`** (Phase 91.F) — focuses an existing `diff` pane in the active workspace
+  (`collectPanes` + `findPane` + `paneKindOf`), else splits one off the active pane. Wired to
+  the ⋯ menu item, the palette (`pane.openDiff`) and the `open_diff` shortcut (Ctrl+Shift+G).
+  `worktreesVersion` bumps on `ProjectFolderModal`'s `onDone` so an open Diff strip re-lists;
+  `onDiffOpenWorktree` → `openWorktree(projectRootOf(wsId), wt)`, `onDiffNewWorktree` opens the
+  worktree modal for that project root. All threaded through `LayoutView` to `DiffPane`.
+- **`+` on a header** (Phase 92: every header, `IconTerminal`) → `newScreen(w)`, which is
+  `newSessionRow(w)` when `sessionsAsRows() && wsCaps(w).sessionPersistence` and otherwise
+  `workspace_new_screen({parentWorkspaceId, name: null})` → `updateFile` → `handleSetActive`
+  (a plain `shell-N` screen that lands on its disconnected overlay). The session path,
+  `newSessionRow(w)`: `<slug of w.name>`, `-2`, `-3`… past the live list, the root's memory
+  and every `tmux_session` in the file → `openSessionRow(w.id, {name, display, cwd: w.cwd},
+  false)` — `workspace_open_session` (placed under the folder by cwd) → `handleSetActive` →
+  focus the first pane. **Phase 91.G: `autoConnect` is FALSE for `+`** — the fresh row lands
+  on its disconnected overlay rather than blind-connecting. Blind-connecting spawned a bare
+  shell in `$HOME` and made that creating connect the attach-only case, so the folder `cd`
+  and any command the wizard then offered were both dropped (Yossi's report). Now the pane's
+  own [Connect] (a plain shell in the folder) or connect wizard (a command in the folder) is
+  the CREATE; the attach-only guard's reachability probe sees the name is not live and lets
+  the injection through. `openSessionAsWorkspace` (Open an existing session) still passes
+  `autoConnect` true — that session IS live, so attach-only is correct.
+- Setting OFF: rows stay (ordinary workspaces); refreshes, greying and `+` stop. ON with
+  rows already opened by hand: the host-wide dedupe skips them. Two roots to one host: rows
+  land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
+  until they connect — that is its contract. A row's name is fixed at creation.
+
 ## `PaneView.tsx` (2,194) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
@@ -198,6 +351,15 @@ session picker (tmux/zellij sessions, Claude sessions), pane title and annotatio
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
 based on its effective connection.
+
+**The connect wizard probes for a live session before offering a command.**
+`openNewConnModal` calls `pane_target_session_state` and disables the command controls
+(`attachOnly()`) when the target session is already running — the client half of the
+attach-only guard (`backend-core.md`). **Phase 91.G**: the probe's name is
+`p.tmuxSession ?? p.boundSession?.name` — a session row whose pane is not locally attached
+has no `panePersistence` entry, so without the `boundSession` fallback the probe asked
+about the derived `ymux-<paneid>` name, reported "not live" for a session alive on the
+host, and the wizard would have enabled a command the backend then dropped.
 
 **The tmux picker's scope toggle owns no data.** *This folder* vs *Whole server* is a
 client-side filter over one response — `inWorkspaceScope = s => s.owned || s.in_cwd`,
@@ -221,6 +383,17 @@ no state:** the tab list is the layout tree's leaves in DFS order, the active ta
 carries `data-pane-id`, which is what `paneDrag` already resolves drop targets against,
 so the existing drag store, ghost and `workspace_swap_panes` apply unchanged. The mode is
 a flag on `Workspace`, not a `LayoutNode` variant; `crates.md` has the reasoning.
+
+**Phase 93 — the pane header in tabs mode is two buttons.** `PaneView`'s `actions()` memo
+returns early on `p.tabsMode` with at most `popout` (connected only); everything else
+(annotation, edit-meta, the power/detach split-button, the smart-bidi toggle, maximize,
+both splits) exists only in split mode. The strip already owns close / new / switch, bidi
+is a Settings matter (`terminal.rtl.*`), and the power button folds into the X because
+`workspace_close_pane` is a detach, not a kill — so in tabs mode the X *is* disconnect +
+remove, and its tooltip (`pane.tooltip.close_tab`) says so. Kill session stays reachable
+from the tmux session picker (with its confirm) and the sidebar's session rows. App wires
+the header's `onClose` to `closeTab` when `tabsMode()` (else `closePane`), so the header X
+and the tab's X land on the same neighbour.
 
 **`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
@@ -250,13 +423,30 @@ from those rows, so they cannot disagree. Per-pane brief entries live in the
 `briefs` signal, mirrored off `pane:brief` (seq-guarded like `pane:agent-run`)
 and hydrated by `pane_briefs`.
 
-**`paneTitle.ts`** — the pane display-label precedence
+**`paneTitle.ts`** — `sessionDisplay` (label → auto_name → claude_title → name, Phase 91,
+shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
 
+**`cwdShort.ts`** (Phase 91.E) — `shortenCwd(path, sshUser, maxLen = 34)` for the card's path
+line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an
+ssh root login, `/Users/<u>`, `<X>:\Users\<u>` → `~`; still too long → `…/<parent>/<leaf>`.
+Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
+
+**`wsTree.ts`** (Phase 92) — the header / screen rule and the tree walks, shared by the
+Sidebar and App and mirrored by `is_header` in lib.rs: `isHeader(w)` (`!parent_id ||
+is_project_root`), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
+(`sort_order` asc, null last, insertion order — the same sort as the Sidebar's `childrenOf`
+and lib.rs's `children_in_order`), `firstScreenOf` (skips a root's folder children — they
+are headers too), `screenOrSelf` (a screen is itself, a header hands over, an empty header
+is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` builds
+fixtures without the 20 other fields and runs under plain `node --test`.
+
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
-→ `workspace_set_intent`, Enter/blur saves, empty clears) + this workspace's
-brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+→ `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose
+disabled state doubles as "saved ✓" — beta feedback: a field that saves
+invisibly reads as one that doesn't save at all; empty clears) + this
+workspace's brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
 `anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
 triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
 lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch

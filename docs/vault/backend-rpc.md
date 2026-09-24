@@ -57,6 +57,9 @@ and **is** the canonical list — nothing else enumerates these:
 - **Panes** — `tree`, `ui.tree`, `split`, `action.split`, `action.connect`,
   `pane.scrollback`, `pane.screenshot`, `set-pane-title`, `set-pane-annotation`,
   `set-status`, `pane.persistence.get`, `pane.persistence.list`, `pane.kill-session`
+  <!-- Phase 91.F: the `LayoutNode::Pane` literal `split` builds also sets the new
+  `diff_cwd: None` field (see crates.md) — mechanical, no protocol change. -->
+
 - **Input** — `send`, `send-key` (via `translate_key`: `cr`, `tab`, `escape`, `bs`,
   `arrow-*`, `home`, `end`, and `ctrl-x` forms)
 - **Agent surface** — `notify`, `feed.push`, `feed.decide`, and the hook verbs

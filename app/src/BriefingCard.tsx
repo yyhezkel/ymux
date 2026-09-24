@@ -63,25 +63,38 @@ export function BriefingCard(p: Props) {
           </button>
         </div>
 
-        {/* 🎯 Intent — what you said you wanted here. Inline edit; Enter
-            or blur saves, empty clears. */}
+        {/* 🎯 Intent — what you said you wanted here. Enter/blur save too,
+            but the explicit button is the visible affordance (beta
+            feedback: a field that saves invisibly reads as one that
+            doesn't save at all). Disabled = current draft is saved. */}
         <label class="briefing-intent">
           <span class="briefing-intent-label">🎯 {t("briefing.intent.label")}</span>
-          <input
-            type="text"
-            dir="auto"
-            placeholder={t("briefing.intent.placeholder")}
-            value={draft()}
-            onInput={(e) => setDraft(e.currentTarget.value)}
-            onBlur={saveIfChanged}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                saveIfChanged();
-              }
-              e.stopPropagation();
-            }}
-          />
+          <div class="briefing-intent-row">
+            <input
+              type="text"
+              dir="auto"
+              placeholder={t("briefing.intent.placeholder")}
+              value={draft()}
+              onInput={(e) => setDraft(e.currentTarget.value)}
+              onBlur={saveIfChanged}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  saveIfChanged();
+                }
+                e.stopPropagation();
+              }}
+            />
+            <button
+              class="primary briefing-intent-save"
+              disabled={draft().trim() === (p.ws.intent ?? "")}
+              onClick={saveIfChanged}
+            >
+              {draft().trim() === (p.ws.intent ?? "")
+                ? t("briefing.intent.saved")
+                : t("briefing.intent.save")}
+            </button>
+          </div>
         </label>
 
         {/* Pane briefs — the same row shape the Queue paints. */}

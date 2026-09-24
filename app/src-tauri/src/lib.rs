@@ -536,7 +536,7 @@ struct PtyExitEvent {
 // own derive — `cargo test` still regenerates `app/src/bindings/*.ts`
 // since the export_to path resolves to the same on-disk location.
 pub(crate) use ymux_types::{
-    BrowserState, Connection, DiffSource, EnvVar, LayoutNode, PaneKind,
+    BrowserState, Connection, DiffSource, EnvVar, KnownSession, LayoutNode, PaneKind,
     SplitDirection, Workspace, WorkspaceGroup,
 };
 
@@ -588,7 +588,17 @@ struct WorkspacesFile {
 /// v2 -> v3 (2026-09-01, BRIEF): `Workspace.intent` — the user's one-line
 /// session goal. Elided when unset, but a 0.5.0 build would still drop a
 /// set intent on its next save, which is exactly this constant's trigger.
-pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 3;
+/// v3 -> v4 (2026-09-08, Phase 91): `Workspace.known_sessions` — the root's
+/// memory of sessions seen on its host, so a row for a session that vanished
+/// can be resumed. Elided when empty; a 0.5.1 build would drop it on its
+/// next save. (90.B's `tmux_session` should have bumped too and did not; it
+/// rides this one.)
+/// v4 unchanged (2026-09-09, Phase 91.F): `LayoutNode::Pane.diff_cwd` is view
+/// state — which worktree a Diff pane is looking at, one click to restore — so
+/// it deliberately does NOT bump. A bump makes an older build REFUSE to save
+/// (SchemaGate::Refuse), which is far worse than an older build dropping a
+/// diff_cwd it never had a Diff pane to use.
+pub(crate) const WORKSPACES_SCHEMA_VERSION: u32 = 4;
 
 /// A `version` key that is absent entirely means a pre-versioning file.
 fn default_version() -> u32 {
@@ -1063,8 +1073,17 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
     if normalize_parents(&mut file) > 0 {
         migrated = true;
     }
+    // Phase 92: headers (roots, pinned folders) stop holding panes. After
+    // the parent repair so `is_header` sees the final tree, before the
+    // per-workspace loop so the backfill below sees the moved layouts.
+    if migrate_headers_to_screens(&mut file) > 0 {
+        migrated = true;
+    }
     for ws in file.workspaces.iter_mut() {
-        if ws.layout.is_none() {
+        // Phase 92: a header has NO layout by design — the backfill is for
+        // legacy screens only, or every load would re-grow the panes the
+        // migration just moved.
+        if ws.layout.is_none() && !is_header(ws) {
             // Legacy: workspace existed without a layout. Build a
             // single Terminal pane and seed its connection from the
             // workspace's legacy `connection` field. Keep the same
@@ -1088,6 +1107,7 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
                 help_topic: None,
                 diff_source: None,
                 smart_bidi: None,
+                diff_cwd: None,
             });
             migrated = true;
         }
@@ -1403,6 +1423,7 @@ pub(crate) fn split_pane_in(
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1453,10 +1474,11 @@ pub(crate) fn split_pane_in(
                         (PaneKind::Help, None, None, Some(topic), None)
                     }
                     PaneKind::Diff => {
-                        // Phase 50: new Diff panes default to Working
-                        // (git diff = working tree vs index). The user
-                        // can switch via the source dropdown later.
-                        (PaneKind::Diff, None, None, None, Some(DiffSource::Working))
+                        // Phase 91.F: new Diff panes default to Head — the
+                        // full change vs HEAD (staged + unstaged), which is
+                        // what "show me my diff" means. Working (unstaged
+                        // only) and Ref stay selectable in the dropdown.
+                        (PaneKind::Diff, None, None, None, Some(DiffSource::Head))
                     }
                 };
                 let new_pane = LayoutNode::Pane {
@@ -1475,6 +1497,7 @@ pub(crate) fn split_pane_in(
                     help_topic: new_help_t,
                     diff_source: new_diff_s,
                     smart_bidi: None,
+                    diff_cwd: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1492,6 +1515,7 @@ pub(crate) fn split_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 };
                 (
                     LayoutNode::Split {
@@ -1518,6 +1542,7 @@ pub(crate) fn split_pane_in(
                         help_topic,
                         diff_source,
                         smart_bidi,
+                        diff_cwd,
                     },
                     false,
                 )
@@ -1592,6 +1617,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1609,6 +1635,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }),
                 None,
             )
@@ -1690,6 +1717,7 @@ pub(crate) fn update_pane_in(
             help_topic,
             diff_source,
             smart_bidi,
+            diff_cwd,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1705,6 +1733,7 @@ pub(crate) fn update_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1720,6 +1749,7 @@ pub(crate) fn update_pane_in(
                     help_topic,
                     diff_source,
                     smart_bidi,
+                    diff_cwd,
                 }
             }
         }
@@ -3410,20 +3440,32 @@ fn build_tmux_attach_script(
     // ~/.tmux.conf if the file is absent (tmux logs a warning and uses
     // defaults — non-fatal). When the setting is off, omit -f so the
     // user's conf alone applies.
-    let tmux_flags = if use_ymux_tmux_conf {
-        "-f $HOME/.ymux/tmux.conf "
+    //
+    // Phase 91.B (2026-09-08): the `\; set -g mouse on` injection that
+    // Phase 65 EE chained here is GONE — the conf's Mouse section says why
+    // (left-click landing on Claude Code's redraws, not the wheel). In its
+    // place, when the bundled conf is in use, chain `source-file -q` so a
+    // server that is ALREADY running adopts the conf on this attach: `-f`
+    // is read only when the server starts, and `new-session -A` onto a live
+    // server otherwise keeps every option and binding from whatever conf it
+    // was born with (Phase 65 O round 4 found this the hard way). The conf
+    // is written to be re-sourced (each `-ga` append is preceded by a `-gu`
+    // reset), and `-q` makes a missing file a silent no-op, so the attach
+    // never fails on it. With the setting off NOTHING is chained: the user's
+    // own ~/.tmux.conf governs, mouse included. Rust never touches `mouse`.
+    let (tmux_flags, tmux_tail) = if use_ymux_tmux_conf {
+        (
+            "-f $HOME/.ymux/tmux.conf ",
+            " \\; source-file -q $HOME/.ymux/tmux.conf",
+        )
     } else {
-        ""
+        ("", "")
     };
-    // Phase 65 (bug EE): the bundled conf ships `mouse off` (the
-    // known-good display config — `mouse on` in the conf garbled Claude
-    // Code's live output). We still want tmux-native wheel scrollback,
-    // so turn mouse on via the new-session command chain (`\; set -g
-    // mouse on`) instead of in the conf.
     script.push_str(&format!(
-        "command -v tmux >/dev/null 2>&1 && exec tmux {flags}new-session -A -s {name} \\; set -g mouse on || echo '{msg}'\r\n",
+        "command -v tmux >/dev/null 2>&1 && exec tmux {flags}new-session -A -s {name}{tail} || echo '{msg}'\r\n",
         flags = tmux_flags,
         name = shell_quote(name),
+        tail = tmux_tail,
         msg = fallback_msg
     ));
     script
@@ -4054,30 +4096,22 @@ async fn provision_existing_install_key(
     } else {
         workspace_name.trim().to_string()
     };
+    // Phase 92: the workspace is a header; its `shell` screen carries the
+    // pane and is what becomes active. The wizard still receives the
+    // ROOT id and resolves the screen itself (`handleSetActive`).
     let ws = Workspace {
         id: workspace_id.clone(),
         name: final_name,
         connection: Some(conn.clone()),
-        layout: Some(LayoutNode::Pane {
-            pane_id: new_pane_id(),
-            pane_kind: PaneKind::Terminal,
-            connection: Some(conn),
-            browser: None,
-            title: None,
-            auto_title: None,
-            annotation: None,
-            color: None,
-            emoji: None,
-            help_topic: None,
-            diff_source: None,
-            smart_bidi: None,
-        }),
+        layout: None,
         ..Default::default()
     };
     {
         let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
-        file.active_workspace_id = Some(workspace_id.clone());
-        file.workspaces.push(ws);
+        file.workspaces.push(ws.clone());
+        let screen = screen_under(&file, &ws, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(conn));
+        file.active_workspace_id = Some(screen.id.clone());
+        file.workspaces.push(screen);
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
@@ -4785,7 +4819,7 @@ async fn spawn_ssh(
             ));
             // Phase 80: script construction shared with WSL panes — see
             // build_tmux_attach_script for the env-injection + -f conf +
-            // mouse-on rationale comments.
+            // source-file rationale comments.
             let script = build_tmux_attach_script(
                 &name_clone,
                 &socket_addr,
@@ -5679,45 +5713,24 @@ fn workspaces_load(state: State<'_, AppState>) -> Result<WorkspacesFile, String>
 #[tauri::command]
 fn workspace_create(
     state: State<'_, AppState>,
+    app: AppHandle,
     input: CreateInput,
 ) -> Result<WorkspacesFile, String> {
     // Phase 23.D: workspace.connection is canonical from creation
-    // onward. The first Terminal pane also carries it for
-    // back-compat with older code paths that read pane.connection
-    // directly; future panes added via split / programmatic add
-    // inherit from the workspace level when their own field is None.
-    let conn = input.connection.clone();
-    let ws = Workspace {
-        id: new_workspace_id(),
-        name: input.name,
-        color: input.color,
-        cwd: input.cwd,
-        connection: Some(conn.clone()),
-        layout: Some(LayoutNode::Pane {
-            pane_id: new_pane_id(),
-            pane_kind: PaneKind::Terminal,
-            connection: Some(conn),
-            browser: None,
-            title: None,
-            auto_title: None,
-            annotation: None,
-            color: None,
-            emoji: None,
-            help_topic: None,
-            diff_source: None,
-            smart_bidi: None,
-        }),
-        setup_command: input.setup_command,
-        teardown_command: input.teardown_command,
-        env: input.env.unwrap_or_default(),
-        ..Default::default()
+    // onward; the first Terminal pane also carries it for back-compat
+    // with older code paths that read pane.connection directly.
+    // Phase 92: the workspace is a HEADER (no layout) with its first
+    // screen — `shell` — underneath, and the screen is what is active.
+    let (root_id, screen_id) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        create_root_with_screen(&mut file, input)
     };
-    {
-        let mut file = state.workspaces.lock().unwrap();
-        file.active_workspace_id = Some(ws.id.clone());
-        file.workspaces.push(ws);
-    }
     persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_info("WORKSPACE", &format!("created ws={root_id} with screen ws={screen_id}"));
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
@@ -5820,6 +5833,9 @@ fn workspace_reset_layout(
             .iter_mut()
             .find(|w| w.id == workspace_id)
             .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        if is_header(ws) {
+            return Err(HEADER_HAS_NO_PANES.to_string());
+        }
         // Pick a connection for the fresh pane:
         // 1. The first terminal pane in the (corrupted) layout, if any.
         // 2. The legacy `connection` field on the workspace.
@@ -5843,6 +5859,7 @@ fn workspace_reset_layout(
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         });
     }
     persist(&state)?;
@@ -6019,17 +6036,22 @@ fn workspace_pin_project_folder(
             }
         };
         let effective = conn.clone().unwrap_or(Connection::Local { shell: None });
-        file.workspaces.push(Workspace {
+        // Phase 92: the folder is a HEADER — no panes of its own — with a
+        // first `shell` screen in that directory, which is what opens.
+        let folder = Workspace {
             id: new_id.clone(),
             name: label,
             cwd: Some(path.clone()),
             connection: Some(effective.clone()),
-            layout: Some(single_terminal_layout(effective)),
+            layout: None,
             parent_id: Some(parent_workspace_id.clone()),
             is_project_root,
             ..Default::default()
-        });
-        file.active_workspace_id = Some(new_id.clone());
+        };
+        file.workspaces.push(folder.clone());
+        let screen = screen_under(&file, &folder, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(effective));
+        file.active_workspace_id = Some(screen.id.clone());
+        file.workspaces.push(screen);
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
@@ -6076,20 +6098,19 @@ fn workspace_open_worktree(
             .unwrap_or(Connection::Local { shell: None });
 
         // The repo root's own entry in `git worktree list` IS this
-        // workspace. Opening it would create a child sharing its
-        // parent's directory.
-        if root.cwd.as_deref() == Some(worktree_path.as_str()) {
-            file.active_workspace_id = Some(root_workspace_id.clone());
-            drop(file);
-            persist(&state)?;
-            return Ok(state.workspaces.lock().unwrap().clone());
-        }
+        // folder. Phase 92: the folder is a header, so the row for its
+        // directory is its `shell` screen — same `(parent, cwd)` as any
+        // worktree, so the idempotency below finds it (or, for a folder
+        // pinned before 92 whose shell was renamed, creates one).
+        // Phase 91.H: `paths_equal`, not `==` — on Windows git spells the
+        // path `C:/…` and the picker stored `C:\…`, so a byte compare
+        // created a duplicate row on every click.
         if let Some(existing) = file
             .workspaces
             .iter()
             .find(|w| {
                 w.parent_id.as_deref() == Some(root_workspace_id.as_str())
-                    && w.cwd.as_deref() == Some(worktree_path.as_str())
+                    && w.cwd.as_deref().is_some_and(|c| paths_equal(c, &worktree_path))
             })
             .map(|w| w.id.clone())
         {
@@ -6138,18 +6159,431 @@ fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option
         .unwrap_or_else(|| root_id.to_string())
 }
 
+/// Root of `id` — the last ancestor — or `id` itself.
+fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
+    ancestors_of(file, id)
+        .last()
+        .cloned()
+        .unwrap_or_else(|| id.to_string())
+}
+
+// ─── Phase 92: headers vs screens ────────────────────────────────────
+//
+// A ROOT (the machine) or a pinned project folder is a HEADER: a row that
+// holds rows and never holds panes (`layout: None`). Every other workspace
+// is a SCREEN — the only kind with a layout, the only kind that can be
+// active. Before this, the machine row was itself a screen, so a terminal
+// could be opened "on the server" directly OR as a row under it — two
+// ways to do one thing (Yossi, 2026-09-14). Derived, not stored:
+// `parent_id` and `is_project_root` already say everything.
+
+/// The one rule. Keep it in sync with `isHeader` in `app/src/wsTree.ts`.
+pub(crate) fn is_header(w: &Workspace) -> bool {
+    w.parent_id.is_none() || w.is_project_root
+}
+
+const HEADER_HAS_NO_PANES: &str = "a header has no panes — open a screen under it";
+
+/// Name of the screen every new header starts with, and of the one the
+/// migration moves a header's old panes onto. Persisted, so not localised.
+const DEFAULT_SCREEN_NAME: &str = "shell";
+
+/// `new_workspace_id` is nanoseconds only, and Windows' clock ticks in
+/// 100 ns — two ids minted back to back (the migration loop, root + first
+/// screen) can collide. Retry with a suffix until the id is free.
+fn unique_workspace_id(file: &WorkspacesFile) -> String {
+    let base = new_workspace_id();
+    if !file.workspaces.iter().any(|w| w.id == base) {
+        return base;
+    }
+    let mut n = 1u32;
+    loop {
+        let id = format!("{base}_{n:x}");
+        if !file.workspaces.iter().any(|w| w.id == id) {
+            return id;
+        }
+        n += 1;
+    }
+}
+
+/// `shell`, then `shell-2`, `shell-3`… past every name a sibling under
+/// `parent_id` already uses.
+fn unique_sibling_name(file: &WorkspacesFile, parent_id: &str, base: &str) -> String {
+    let taken: Vec<&str> = file
+        .workspaces
+        .iter()
+        .filter(|w| w.parent_id.as_deref() == Some(parent_id))
+        .map(|w| w.name.as_str())
+        .collect();
+    if !taken.contains(&base) {
+        return base.to_string();
+    }
+    let mut n = 2;
+    loop {
+        let candidate = format!("{base}-{n}");
+        if !taken.iter().any(|t| *t == candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Children of `parent_id` in sidebar order: `sort_order` ascending, `None`
+/// last, insertion order as the tie-break (`childrenOf` in Sidebar.tsx).
+fn children_in_order<'a>(file: &'a WorkspacesFile, parent_id: &str) -> Vec<&'a Workspace> {
+    let mut kids: Vec<(usize, &Workspace)> = file
+        .workspaces
+        .iter()
+        .enumerate()
+        .filter(|(_, w)| w.parent_id.as_deref() == Some(parent_id))
+        .collect();
+    kids.sort_by_key(|(ins, w)| (w.sort_order.unwrap_or(i32::MAX), *ins));
+    kids.into_iter().map(|(_, w)| w).collect()
+}
+
+/// The first SCREEN under a header (a root's folder children are headers
+/// themselves and are skipped). None when the header has no screens yet.
+fn first_screen_of(file: &WorkspacesFile, header_id: &str) -> Option<String> {
+    children_in_order(file, header_id)
+        .into_iter()
+        .find(|w| !is_header(w))
+        .map(|w| w.id.clone())
+}
+
+/// The id to activate for any id: a screen is itself; a header hands over
+/// to its first screen. `Err` for an unknown id or a header with no screens
+/// — the frontend guards this too, but the RPC server (`select-workspace`,
+/// `action.connect`) reaches `active_workspace_id` without it.
+pub(crate) fn screen_or_self(file: &WorkspacesFile, id: &str) -> Result<String, String> {
+    let w = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == id)
+        .ok_or_else(|| format!("no workspace {id}"))?;
+    if !is_header(w) {
+        return Ok(id.to_string());
+    }
+    first_screen_of(file, id).ok_or_else(|| format!("{} has no screens yet — add one with +", w.name))
+}
+
+/// A screen built under `header`: the header's connection, cwd and
+/// automation fields cloned — the runtime resolves a workspace BY PANE
+/// (`find_workspace_for_pane`, `pane_disconnect`'s teardown lookup), so
+/// setup/teardown/env must live on the row that has the panes; the header
+/// keeps its copy as the template for the next screen. `layout` is the
+/// caller's: a fresh single pane, or the header's old one (migration).
+/// Not pushed and not activated — the caller decides both.
+fn screen_under(file: &WorkspacesFile, header: &Workspace, name: String, layout: LayoutNode) -> Workspace {
+    Workspace {
+        id: unique_workspace_id(file),
+        name,
+        cwd: header.cwd.clone(),
+        connection: header.connection.clone(),
+        layout: Some(layout),
+        setup_command: header.setup_command.clone(),
+        teardown_command: header.teardown_command.clone(),
+        env: header.env.clone(),
+        auto_port_forward: header.auto_port_forward,
+        claude_separate_account: header.claude_separate_account,
+        parent_id: Some(header.id.clone()),
+        ..Default::default()
+    }
+}
+
+/// The wizard's create: a ROOT header plus its first screen, the screen
+/// active. Shared by `workspace_create` and the RPC `new-workspace`, which
+/// used to carry a byte-for-byte copy of the old single-workspace body.
+/// Returns `(root_id, screen_id)`.
+pub(crate) fn create_root_with_screen(file: &mut WorkspacesFile, input: CreateInput) -> (String, String) {
+    let conn = input.connection.clone();
+    let root = Workspace {
+        id: unique_workspace_id(file),
+        name: input.name,
+        color: input.color,
+        cwd: input.cwd,
+        connection: Some(conn.clone()),
+        layout: None,
+        setup_command: input.setup_command,
+        teardown_command: input.teardown_command,
+        env: input.env.unwrap_or_default(),
+        ..Default::default()
+    };
+    // Push the root BEFORE minting the screen's id, so the uniqueness
+    // check sees it.
+    file.workspaces.push(root.clone());
+    let screen = screen_under(file, &root, DEFAULT_SCREEN_NAME.to_string(), single_terminal_layout(conn));
+    let screen_id = screen.id.clone();
+    file.workspaces.push(screen);
+    file.active_workspace_id = Some(screen_id.clone());
+    (root.id, screen_id)
+}
+
+/// One shot, at load: every header that still carries a layout hands it
+/// to a new `shell` screen directly under it. Pane ids are untouched, so
+/// the frontend's restore hints (`ymux.paneSessions.v1`) still bind; the
+/// screen is inserted right after the header in the file and given a
+/// `sort_order` below every sibling's, so it renders first; `tabs_mode`
+/// travels with the panes it describes. A header that was active hands
+/// activation to its shell. Idempotent: a header with `None` is skipped,
+/// and the legacy "no layout → single pane" backfill no longer runs on
+/// headers, or it would re-grow the layout on the very next load.
+fn migrate_headers_to_screens(file: &mut WorkspacesFile) -> usize {
+    let mut moved = 0;
+    let mut i = 0;
+    while i < file.workspaces.len() {
+        if !is_header(&file.workspaces[i]) || file.workspaces[i].layout.is_none() {
+            i += 1;
+            continue;
+        }
+        let Some(layout) = file.workspaces[i].layout.take() else {
+            i += 1;
+            continue;
+        };
+        let tabs_mode = std::mem::take(&mut file.workspaces[i].tabs_mode);
+        let header = file.workspaces[i].clone();
+        let name = unique_sibling_name(file, &header.id, DEFAULT_SCREEN_NAME);
+        let first = file
+            .workspaces
+            .iter()
+            .filter(|w| w.parent_id.as_deref() == Some(header.id.as_str()))
+            .filter_map(|w| w.sort_order)
+            .min()
+            .map(|m| m - 1);
+        let mut screen = screen_under(file, &header, name, layout);
+        screen.tabs_mode = tabs_mode;
+        screen.sort_order = first;
+        let screen_id = screen.id.clone();
+        file.workspaces.insert(i + 1, screen);
+        if file.active_workspace_id.as_deref() == Some(header.id.as_str()) {
+            file.active_workspace_id = Some(screen_id.clone());
+        }
+        log_info(
+            "WORKSPACE",
+            &format!("migrate: header ws={} → its panes now live on screen ws={screen_id}", header.id),
+        );
+        moved += 1;
+        i += 2;
+    }
+    moved
+}
+
+/// After a delete, the workspace to land on: a screen next to the deleted
+/// subtree (same parent), else any screen under the same root, else any
+/// screen at all, else nothing. Never a header — the previous rule
+/// ("prefer a root") would now land on a paneless row.
+fn active_after_delete(file: &WorkspacesFile, deleted_parent: Option<&str>) -> Option<String> {
+    if let Some(parent) = deleted_parent {
+        if let Some(id) = first_screen_of(file, parent) {
+            return Some(id);
+        }
+        let root = root_workspace_of(file, parent);
+        if let Some(w) = collect_subtree_ids(file, &root)
+            .into_iter()
+            .filter_map(|id| file.workspaces.iter().find(|w| w.id == id))
+            .find(|w| !is_header(w))
+        {
+            return Some(w.id.clone());
+        }
+    }
+    file.workspaces.iter().find(|w| !is_header(w)).map(|w| w.id.clone())
+}
+
+/// Phase 92: a plain screen under a header — the `+` when the sessions
+/// setting is off or the host has no multiplexer (the session-row `+` of
+/// 91.C stays on the frontend, `newSessionRow`). Name defaults to
+/// `shell`, made unique among the siblings.
+#[tauri::command]
+fn workspace_new_screen(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    parent_workspace_id: String,
+    name: Option<String>,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let header = file
+            .workspaces
+            .iter()
+            .find(|w| w.id == parent_workspace_id)
+            .cloned()
+            .ok_or_else(|| "workspace not found".to_string())?;
+        if !is_header(&header) {
+            return Err("a screen cannot hold screens — use its header".to_string());
+        }
+        let base = name
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| DEFAULT_SCREEN_NAME.to_string());
+        let label = unique_sibling_name(&file, &header.id, &base);
+        let conn = header
+            .connection
+            .clone()
+            .unwrap_or(Connection::Local { shell: None });
+        let screen = screen_under(&file, &header, label, single_terminal_layout(conn));
+        let id = screen.id.clone();
+        file.workspaces.push(screen);
+        file.active_workspace_id = Some(id.clone());
+        log_info(
+            "WORKSPACE",
+            &format!("new screen ws={id} under header ws={parent_workspace_id}"),
+        );
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
+/// Phase 91.C: does ANY row on the same host already stand for `name`?
+/// Host-wide, not subtree-wide: two roots to one server must not both get a
+/// row for the same session (that would attach a second client to it).
+fn session_row_on_host(file: &WorkspacesFile, conn: &Option<Connection>, name: &str) -> Option<String> {
+    file.workspaces
+        .iter()
+        .find(|w| w.tmux_session.as_deref() == Some(name) && conn_same_host(&w.connection, conn))
+        .map(|w| w.id.clone())
+}
+
+/// Phase 90.B / 91.C: THE construction of a session row — a child workspace
+/// under `root_id` (or under the pinned project folder whose cwd contains
+/// `cwd`, per `pick_session_parent`), a CLONE of the root's connection, a
+/// single terminal pane, `tmux_session = name`. Caller holds the lock and
+/// has trimmed `cwd` to None-or-nonempty. Never touches
+/// `active_workspace_id`. Returns the new id.
+fn push_session_row(
+    file: &mut WorkspacesFile,
+    root_id: &str,
+    session_name: &str,
+    display_name: &str,
+    cwd: Option<String>,
+) -> String {
+    let conn = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == root_id)
+        .and_then(|w| w.connection.clone())
+        .unwrap_or(Connection::Local { shell: None });
+    let parent = pick_session_parent(file, root_id, cwd.as_deref());
+    let id = new_workspace_id();
+    file.workspaces.push(Workspace {
+        id: id.clone(),
+        name: display_name.to_string(),
+        cwd,
+        connection: Some(conn.clone()),
+        layout: Some(single_terminal_layout(conn)),
+        parent_id: Some(parent),
+        tmux_session: Some(session_name.to_string()),
+        ..Default::default()
+    });
+    id
+}
+
+/// One live session as the frontend saw it. Deserialize-only.
+#[derive(Deserialize)]
+pub(crate) struct MirrorSessionInput {
+    pub name: String,
+    #[serde(default)]
+    pub display: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// Phase 91.C: the disk-free core of `workspace_mirror_sessions`. Creates a
+/// row under `root_id` for every input that (a) no same-host row already
+/// carries and (b) is not the pane-derived name of a pane in any same-host
+/// workspace — that session belongs to a plain pane that already holds it,
+/// and a row for it would attach a second client. Returns the created ids.
+pub(crate) fn mirror_sessions_into(
+    file: &mut WorkspacesFile,
+    root_id: &str,
+    sessions: &[MirrorSessionInput],
+) -> Vec<String> {
+    let conn = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == root_id)
+        .and_then(|w| w.connection.clone());
+    let mut pane_names: Vec<String> = Vec::new();
+    for w in file.workspaces.iter().filter(|w| conn_same_host(&w.connection, &conn)) {
+        if let Some(layout) = &w.layout {
+            let mut ids = Vec::new();
+            collect_panes(layout, &mut ids);
+            pane_names.extend(ids.iter().map(|p| sanitize_tmux_session_name(p)));
+        }
+    }
+    let mut created = Vec::new();
+    for s in sessions {
+        let name = s.name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        if session_row_on_host(file, &conn, name).is_some() {
+            continue;
+        }
+        if pane_names.iter().any(|p| p == name) {
+            continue;
+        }
+        let display = s
+            .display
+            .as_deref()
+            .map(str::trim)
+            .filter(|d| !d.is_empty())
+            .unwrap_or(name)
+            .to_string();
+        let cwd = s.cwd.as_deref().map(str::trim).filter(|c| !c.is_empty()).map(str::to_string);
+        created.push(push_session_row(file, root_id, name, &display, cwd));
+    }
+    created
+}
+
+/// Phase 91.C: mirror a host's live session list into the sidebar tree as
+/// session rows under the root of `workspace_id` (Settings →
+/// "Show every session as a sidebar row"). Batch: one persist, one emit,
+/// only when something was created; never activates anything.
+#[tauri::command]
+fn workspace_mirror_sessions(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    sessions: Vec<MirrorSessionInput>,
+) -> Result<WorkspacesFile, String> {
+    let (snapshot, created) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        if !file.workspaces.iter().any(|w| w.id == workspace_id) {
+            return Err("workspace not found".to_string());
+        }
+        let root_id = root_workspace_of(&file, &workspace_id);
+        let created = mirror_sessions_into(&mut file, &root_id, &sessions);
+        (file.clone(), created)
+    };
+    if created.is_empty() {
+        return Ok(snapshot);
+    }
+    persist(&state)?;
+    log_info(
+        "WORKSPACE",
+        &format!(
+            "workspace_mirror_sessions: root of ws={workspace_id} gained {} session row(s) (offered {})",
+            created.len(),
+            sessions.len()
+        ),
+    );
+    let _ = app.emit("workspaces:changed", ());
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 /// Phase 90.B: open a multiplexer session on a screen of its own — a
 /// persisted child workspace row under the machine (or under the pinned
-/// project folder whose directory contains the session's), whose single
-/// pane the frontend then attaches to the session.
-///
-/// Idempotent on `session_name`: a row already opened for this session
-/// anywhere under the same root is activated instead of duplicated. The
-/// dialog may have been opened from a project-folder child, so the root is
-/// walked up first — sessions belong to the host, not to the row that
-/// happened to be right-clicked. Same construction as the two sibling
-/// commands: a CLONE of the root's connection, a single terminal layout,
-/// no `sort_order` (the sidebar puts nulls last).
+/// project folder whose cwd contains the session's), then activate it.
+/// Idempotent on `tmux_session` HOST-wide (Phase 91.C: the same rule the
+/// mirror uses — a session has one row per host, wherever it landed): a
+/// second Open activates that row instead of creating another. The
+/// construction itself is `push_session_row`, shared with the mirror.
 #[tauri::command]
 fn workspace_open_session(
     state: State<'_, AppState>,
@@ -6177,40 +6611,16 @@ fn workspace_open_session(
         if !file.workspaces.iter().any(|w| w.id == workspace_id) {
             return Err("workspace not found".to_string());
         }
-        let root_id = ancestors_of(&file, &workspace_id)
-            .last()
-            .cloned()
-            .unwrap_or_else(|| workspace_id.clone());
-        let subtree = collect_subtree_ids(&file, &root_id);
-        if let Some(existing) = file
+        let root_id = root_workspace_of(&file, &workspace_id);
+        let conn = file
             .workspaces
             .iter()
-            .find(|w| {
-                subtree.iter().any(|id| id == &w.id)
-                    && w.tmux_session.as_deref() == Some(session_name.as_str())
-            })
-            .map(|w| w.id.clone())
-        {
+            .find(|w| w.id == root_id)
+            .and_then(|w| w.connection.clone());
+        if let Some(existing) = session_row_on_host(&file, &conn, &session_name) {
             file.active_workspace_id = Some(existing);
         } else {
-            let conn = file
-                .workspaces
-                .iter()
-                .find(|w| w.id == root_id)
-                .and_then(|w| w.connection.clone())
-                .unwrap_or(Connection::Local { shell: None });
-            let parent = pick_session_parent(&file, &root_id, cwd.as_deref());
-            let id = new_workspace_id();
-            file.workspaces.push(Workspace {
-                id: id.clone(),
-                name: display_name,
-                cwd,
-                connection: Some(conn.clone()),
-                layout: Some(single_terminal_layout(conn)),
-                parent_id: Some(parent),
-                tmux_session: Some(session_name.clone()),
-                ..Default::default()
-            });
+            let id = push_session_row(&mut file, &root_id, &session_name, &display_name, cwd);
             file.active_workspace_id = Some(id);
             created = true;
         }
@@ -6327,6 +6737,126 @@ fn workspace_set_tabs_mode(
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
     log_info("WORKSPACE", &format!("ws={workspace_id} tabs_mode={tabs_mode}"));
+    Ok(snapshot)
+}
+
+/// One row of a `workspace_remember_sessions` call — the live list as the
+/// frontend saw it. Deserialize-only: it never leaves the process.
+#[derive(Deserialize)]
+pub(crate) struct KnownSessionInput {
+    pub name: String,
+    #[serde(default)]
+    pub display: Option<String>,
+    #[serde(default)]
+    pub claude_session_id: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// How stale a `last_seen` may be before a refresh that changes nothing
+/// else still counts as a change worth persisting. The sidebar mirror polls
+/// every 30 s; without this every tick would rewrite workspaces.json.
+const KNOWN_SESSION_TOUCH_SECS: u64 = 300;
+
+/// Phase 91: the merge behind `workspace_remember_sessions`, disk-free so
+/// the rules can be tested. Returns whether anything worth persisting
+/// changed.
+///
+/// - Rows are matched by `name`. An incoming `Some` overwrites; an
+///   incoming `None` never erases — a session whose hooks went quiet must
+///   not lose its `claude_session_id`, that is the resume handle.
+/// - Names not yet known are appended, so first-seen order is strip order.
+/// - Names in `forget` are removed (a kill from the strip).
+/// - Rows absent from `entries` are KEPT. That absence is the whole point:
+///   it is the grey list.
+pub(crate) fn merge_known_sessions(
+    existing: &mut Vec<KnownSession>,
+    entries: &[KnownSessionInput],
+    forget: &[String],
+    now: u64,
+) -> bool {
+    let mut changed = false;
+    for e in entries {
+        if let Some(row) = existing.iter_mut().find(|r| r.name == e.name) {
+            if e.display.is_some() && row.display != e.display {
+                row.display = e.display.clone();
+                changed = true;
+            }
+            if e.claude_session_id.is_some() && row.claude_session_id != e.claude_session_id {
+                row.claude_session_id = e.claude_session_id.clone();
+                changed = true;
+            }
+            if e.cwd.is_some() && row.cwd != e.cwd {
+                row.cwd = e.cwd.clone();
+                changed = true;
+            }
+            if now.saturating_sub(row.last_seen) >= KNOWN_SESSION_TOUCH_SECS {
+                changed = true;
+            }
+            row.last_seen = now;
+        } else {
+            existing.push(KnownSession {
+                name: e.name.clone(),
+                display: e.display.clone(),
+                claude_session_id: e.claude_session_id.clone(),
+                cwd: e.cwd.clone(),
+                last_seen: now,
+            });
+            changed = true;
+        }
+    }
+    if !forget.is_empty() {
+        let before = existing.len();
+        existing.retain(|r| !forget.iter().any(|f| f == &r.name));
+        if existing.len() != before {
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// Phase 91: fold a live session list into `Workspace.known_sessions`.
+/// Called by the strip after every successful refresh (and with `forget`
+/// after a kill). Persists only when `merge_known_sessions` says something
+/// changed — the 30 s poll must not churn workspaces.json.
+#[tauri::command]
+fn workspace_remember_sessions(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    entries: Vec<KnownSessionInput>,
+    forget: Vec<String>,
+) -> Result<WorkspacesFile, String> {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (snapshot, changed, total) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| "workspace not found".to_string())?;
+        let changed = merge_known_sessions(&mut ws.known_sessions, &entries, &forget, now);
+        let total = ws.known_sessions.len();
+        (file.clone(), changed, total)
+    };
+    if changed {
+        persist(&state)?;
+        let _ = app.emit("workspaces:changed", ());
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "ws={workspace_id} known_sessions={total} (live={} forget={})",
+                entries.len(),
+                forget.len()
+            ),
+        );
+    }
     Ok(snapshot)
 }
 
@@ -6454,6 +6984,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
     }
 }
 
@@ -6950,6 +7481,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         help_topic: None,
         diff_source: None,
         smart_bidi: None,
+        diff_cwd: None,
     }
 }
 
@@ -7408,9 +7940,14 @@ fn workspace_delete(
     // Collect ids and pane lists under ONE short lock, then drop it: the
     // teardown below is I/O (PTY kill, webview close, filesystem) and
     // must never run under the workspaces mutex.
-    let (ids, panes_by_ws) = {
+    let (ids, panes_by_ws, deleted_parent) = {
         let file = state.workspaces.lock().unwrap();
         let ids = collect_subtree_ids(&file, &workspace_id);
+        let deleted_parent = file
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .and_then(|w| w.parent_id.clone());
         let panes: Vec<(String, Vec<String>)> = ids
             .iter()
             .map(|id| {
@@ -7428,7 +7965,7 @@ fn workspace_delete(
                 (id.clone(), panes)
             })
             .collect();
-        (ids, panes)
+        (ids, panes, deleted_parent)
     };
     if ids.len() > 1 {
         log_info(
@@ -7455,14 +7992,10 @@ fn workspace_delete(
             .map(|a| ids.iter().any(|i| i == a))
             .unwrap_or(false)
         {
-            // Prefer a root: falling back to `first()` could land the
-            // user inside some unrelated repo's worktree.
-            file.active_workspace_id = file
-                .workspaces
-                .iter()
-                .find(|w| w.parent_id.is_none())
-                .or_else(|| file.workspaces.first())
-                .map(|w| w.id.clone());
+            // Phase 92: land on a SCREEN — a sibling of what was deleted
+            // first, then anything under the same root, then anything at
+            // all. A header can never be active.
+            file.active_workspace_id = active_after_delete(&file, deleted_parent.as_deref());
         }
     }
     persist(&state)?;
@@ -7530,6 +8063,16 @@ fn teardown_workspace_runtime(
     // Phase 86: abort its port-watcher (this path never did — the task and
     // the `port_watchers` slot leaked past delete) and leave the host group.
     clear_workspace_detection(state, app, workspace_id);
+    // Phase 91: drop every ownership claim this workspace holds. A claim
+    // says "this session belongs to my workspace"; with the workspace gone
+    // it can only mis-colour other pickers (a `ForeignKind::Workspace` badge
+    // naming a workspace nobody can resolve). Pruned by workspace id across
+    // every host, not by the row's one `tmux_session`: pane_connect claims a
+    // session per pane. The tmux/zellij KILL for a session row is the
+    // frontend's job, before this command runs — the kill helpers are async
+    // and resolve the connection by a workspace id that no longer exists
+    // once we are here.
+    release_session_owners_of_workspace(workspace_id);
     for pane_id in panes_to_kill {
         if let Some(sid) = state.core.pane_sessions.lock().unwrap().remove(pane_id) {
             if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
@@ -7551,6 +8094,12 @@ fn workspace_set_active(
 ) -> Result<WorkspacesFile, String> {
     {
         let mut file = state.workspaces.lock().unwrap();
+        // Phase 92: a header hands activation to its first screen; a header
+        // with none is refused rather than shown as an empty area.
+        let workspace_id = match workspace_id {
+            Some(id) => Some(screen_or_self(&file, &id)?),
+            None => None,
+        };
         file.active_workspace_id = workspace_id.clone();
         // Phase 49-C: stamp the activation timestamp on the workspace
         // being activated so the auto-destroy sweep can age it correctly.
@@ -7672,6 +8221,19 @@ fn workspace_split(
     help_topic: Option<String>,
 ) -> Result<WorkspacesFile, String> {
     let kind = pane_kind.unwrap_or(PaneKind::Terminal);
+    // Phase 92: a header has nothing to split.
+    {
+        let file = state.workspaces.lock().unwrap();
+        if file
+            .workspaces
+            .iter()
+            .find(|w| w.id == workspace_id)
+            .map(is_header)
+            .unwrap_or(false)
+        {
+            return Err(HEADER_HAS_NO_PANES.to_string());
+        }
+    }
     // Phase 23.C: when the new pane will be a Terminal, derive a
     // fallback connection BEFORE we mutate the layout. Three-tier
     // lookup:
@@ -8385,26 +8947,26 @@ async fn pane_connect(
     // shell that gets restarted, or a live `claude` that receives
     // `cd … && claude --resume …` as a chat message. Yossi's report, exactly.
     //
-    // WHEN THE HOST CANNOT BE ASKED the fallback is deliberately asymmetric,
-    // and the asymmetry is the whole design:
-    //   - an EXPLICIT `tmux_session_name` came from the picker, which only
-    //     ever lists sessions that exist → live, no question asked;
-    //   - a DERIVED name (pane title / `ymux-<paneid>`) on an unreachable host
-    //     falls back to "not live", i.e. today's behaviour. Assuming "live"
-    //     instead would silently drop the command on every FIRST connect to an
-    //     SSH workspace, where there is no handle yet by definition — trading
-    //     a real bug for a worse one.
-    // The frontend closes that residual gap: the wizard asks
-    // `pane_target_session_state` (after `workspace_ensure_connected`) and
-    // simply does not send a command when the session already exists.
+    // WHEN THE HOST CANNOT BE ASKED the fallback is "not live" (first-connect
+    // case): an unreachable host has no session yet by definition, so assuming
+    // "live" would silently drop the command on every FIRST connect to an SSH
+    // workspace — a worse bug than the one this guards.
+    //
+    // Phase 91.G (2026-09-09): an EXPLICIT `tmux_session_name` no longer means
+    // "live, no question asked". It used to — the only source was the picker,
+    // which lists sessions that exist. Phase 91.C added two sources that name a
+    // session BEFORE it exists: the `+` new-session row (`newSessionRow` picks
+    // a free name precisely because it is unused) and `sessionForPane` (every
+    // connect from a session row's first pane). Treating those as live dropped
+    // the folder `cd` on the creating connect and any command the wizard chose
+    // — exactly Yossi's report. So an explicit name now runs the SAME
+    // reachability probe as a derived one: it is only "live" when the host can
+    // be reached AND actually lists it.
     let target_name = session_name_for_pane(
         tmux_session_name.as_deref(),
         pane_title.as_deref(),
         &pane_id,
     );
-    let explicit_pick = tmux_session_name
-        .as_deref()
-        .is_some_and(|s| !s.trim().is_empty());
     // Only ask when the answer can change what we do. A plain connect injects
     // nothing either way, and this probe is a `tmux list-sessions` over SSH or
     // a `zellij list-sessions` subprocess — real latency on the critical path
@@ -8413,8 +8975,6 @@ async fn pane_connect(
         || cwd_override.as_deref().is_some_and(|s| !s.trim().is_empty());
     let target_was_live = if !would_inject {
         false
-    } else if explicit_pick {
-        true
     } else if workspace_sessions_reachable(&state, &workspace_id) {
         list_workspace_tmux_sessions(&state, &workspace_id)
             .await
@@ -8673,6 +9233,9 @@ async fn pane_connect(
                 "session_name": target_name,
                 "skipped": "attach-only",
                 "had_command": matches!(smart_mode.as_deref(), Some("cmd") | Some("claude")),
+                // Phase 91.G: a dropped `cd` was invisible before — the toast
+                // only fired for a command. Surface it too.
+                "had_cwd": has_cwd,
             }),
         );
         return Ok(session_id);
@@ -8893,10 +9456,12 @@ pub(crate) enum ForeignKind {
 pub(crate) struct ForeignScope {
     pub kind: ForeignKind,
     /// The owning workspace's name, or the folder's last path segment. Never a
-    /// user-facing sentence. `None` is reachable and real: nothing prunes
-    /// `session-owners.json` when a workspace is deleted, so a stale row can
-    /// name a workspace that no longer exists AND have recorded no cwd. That
-    /// still warrants a warning — the picker just words it generically.
+    /// user-facing sentence. `None` is still reachable (a file written before
+    /// Phase 91 pruned claims on workspace delete, or a hand-edited
+    /// workspaces.json) but no longer the normal outcome of a delete: a stale
+    /// row can name a workspace that no longer exists AND have recorded no
+    /// cwd. That still warrants a warning — the picker just words it
+    /// generically.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     /// Full path for the row tooltip: the live `#{session_path}` when known,
@@ -9743,6 +10308,12 @@ fn tmux_label_set(
 // Keyed by host FIRST because a session name is only unique per tmux/zellij
 // server: two boxes each running a session called `dev` are two sessions, and
 // collapsing them would let one workspace claim the other's.
+//
+// Lifecycle of a claim: CLAIMED by `pane_connect` (persistent panes) and
+// `workspace_open_session`, newest wins; RELEASED by any kill that reports
+// `killed | already_gone` (kept on `failed` — the session is still alive and
+// still ours); RENAMED by `tmux_rename_session`; PRUNED, every claim of the
+// workspace on every host, by workspace delete (Phase 91).
 
 #[derive(Clone, Serialize, Deserialize, Debug, Default)]
 pub(crate) struct SessionOwner {
@@ -9879,6 +10450,31 @@ fn release_session_owner(host_key: &str, session_name: &str) {
     }
 }
 
+/// Phase 91: the disk-free core of `release_session_owners_of_workspace` —
+/// drop every claim `workspace_id` holds on every host, and any host left
+/// with no claims. Returns whether anything was removed.
+pub(crate) fn prune_owners_of_workspace(file: &mut SessionOwnersFile, workspace_id: &str) -> bool {
+    let before: usize = file.owners.values().map(|h| h.len()).sum();
+    for host in file.owners.values_mut() {
+        host.retain(|_, o| o.workspace_id != workspace_id);
+    }
+    file.owners.retain(|_, h| !h.is_empty());
+    let after: usize = file.owners.values().map(|h| h.len()).sum();
+    after != before
+}
+
+/// Phase 91: forget every claim a deleted workspace holds. Best-effort like
+/// its siblings — a failed save is a warning, never a failed delete.
+fn release_session_owners_of_workspace(workspace_id: &str) {
+    let mut file = load_session_owners();
+    if !prune_owners_of_workspace(&mut file, workspace_id) {
+        return;
+    }
+    if let Err(e) = save_session_owners(&file) {
+        log_warn("WORKSPACE", &format!("session-owners: save failed: {e}"));
+    }
+}
+
 /// Phase 90: carry a claim across a real `tmux rename-session`. Without this
 /// the renamed session would read as unowned in every picker and the old name
 /// would keep a claim on a session that no longer exists.
@@ -9905,8 +10501,10 @@ fn rename_session_owner(host_key: &str, old_name: &str, new_name: &str) {
 /// `/srv/app` are one directory, and both separators are accepted because the
 /// same comparison runs against Windows paths from zellij-era ownership rows.
 fn path_is_within(path: &str, root: &str) -> bool {
-    let trim = |s: &str| s.trim().trim_end_matches(['/', '\\']).to_string();
-    let (path, root) = (trim(path), trim(root));
+    // Phase 91.H: normalize the separators INSIDE the strings too — git
+    // reports `C:/src/app` for a folder the picker stored as `C:\src\app`,
+    // and a bare strip_prefix never matched the two on Windows.
+    let (path, root) = (norm_path(path), norm_path(root));
     if root.is_empty() || path.is_empty() {
         return false;
     }
@@ -9914,7 +10512,7 @@ fn path_is_within(path: &str, root: &str) -> bool {
         return true;
     }
     path.strip_prefix(&root)
-        .is_some_and(|rest| rest.starts_with('/') || rest.starts_with('\\'))
+        .is_some_and(|rest| rest.starts_with('/'))
 }
 
 /// The last segment of a path, accepting BOTH separators.
@@ -10407,11 +11005,32 @@ fn claude_project_dir_prefix(path: &str) -> String {
         .collect()
 }
 
-/// Compare two directory paths for the session scope: separators and a
-/// trailing slash must not decide whether a session belongs to a folder.
+/// One comparable spelling for a directory path: `\` → `/`, whitespace and
+/// trailing separators trimmed, and — for a drive-letter path — the whole
+/// thing lowercased, because NTFS is case-insensitive and git reports the
+/// on-disk casing (`C:/Users/…`) while the folder picker recorded the
+/// user's (`C:\users\…`). POSIX paths stay case-sensitive. Mirror of
+/// `pathKey` in `diffModel.ts` (Phase 91.H) — keep the two in step.
+fn norm_path(p: &str) -> String {
+    let s = p.trim().replace('\\', "/");
+    let s = s.trim_end_matches('/');
+    let is_drive = {
+        let b = s.as_bytes();
+        b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':' && (b.len() == 2 || b[2] == b'/')
+    };
+    if is_drive {
+        s.to_lowercase()
+    } else {
+        s.to_string()
+    }
+}
+
+/// Compare two directory paths for the session scope: separators, case
+/// on Windows and a trailing slash must not decide whether a session
+/// belongs to a folder — nor whether a worktree row already exists
+/// (`workspace_open_worktree`).
 fn paths_equal(a: &str, b: &str) -> bool {
-    let norm = |p: &str| p.replace('\\', "/").trim_end_matches('/').to_string();
-    norm(a) == norm(b)
+    norm_path(a) == norm_path(b)
 }
 
 /// Read the `"cwd"` field out of a session transcript. That field is the
@@ -11732,7 +12351,9 @@ pub fn run() {
                                 f.workspaces.retain(|w| {
                                     let stale = w.last_active_at > 0
                                         && now.saturating_sub(w.last_active_at) > ttl_secs;
-                                    let empty = w.layout.is_none();
+                                    // Phase 92: a header is paneless by design, not
+                                    // empty — sweeping it would orphan its screens.
+                                    let empty = w.layout.is_none() && !is_header(w);
                                     if stale && empty {
                                         log_info("WORKSPACE", &format!(
                                             "auto-destroy: removing workspace {} ({}) — empty + last_active {} days ago",
@@ -11869,9 +12490,12 @@ pub fn run() {
             workspace_pin_project_folder,
             workspace_open_worktree,
             workspace_open_session,
+            workspace_new_screen,
+            workspace_mirror_sessions,
             workspace_set_collapsed,
             workspace_set_project_root,
             workspace_set_tabs_mode,
+            workspace_remember_sessions,
             workspace_set_intent,
             pane_agent_states,
             pane_briefs,
@@ -11968,8 +12592,12 @@ pub fn run() {
             file_manager::file_create_remote,
             file_manager::file_upload,
             file_manager::pane_upload_dropped,
+            diff_pane::diff_pane_start,
+            diff_pane::diff_pane_stop,
             diff_pane::diff_pane_set_source,
+            diff_pane::diff_pane_set_cwd,
             diff_pane::diff_pane_refresh,
+            diff_pane::diff_pane_worktrees,
             file_manager::file_download,
             file_manager::fm_transfer_cancel,
             file_manager::download_remote_file_via_osc,
@@ -12138,6 +12766,7 @@ mod pane_swap_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -12346,6 +12975,7 @@ mod migration_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 
@@ -12473,9 +13103,226 @@ mod claude_session_scope_tests {
     fn scope_comparison_ignores_separators_and_trailing_slash() {
         assert!(paths_equal("/srv/p", "/srv/p/"));
         assert!(paths_equal(r"C:\src\p", "C:/src/p"));
+        // Phase 91.H: git's `C:/Users/…` vs the picker's `c:\users\…` is
+        // one NTFS directory; POSIX case still matters.
+        assert!(paths_equal(r"c:\Users\Y\Repo\", "C:/users/y/repo"));
+        assert!(!paths_equal("/srv/App", "/srv/app"));
+        assert_eq!(crate::norm_path("C:"), "c:");
+        assert_eq!(crate::norm_path("Cx:/a"), "Cx:/a"); // not a drive letter
         assert!(!paths_equal("/srv/p", "/srv/p2"));
         // A worktree is NOT its repo: sessions must not leak between them.
         assert!(!paths_equal("/srv/p", "/srv/p-feature"));
+    }
+}
+
+#[cfg(test)]
+mod header_screen_tests {
+    // Phase 92: headers (roots, pinned folders) hold rows, screens hold
+    // panes. The migration, the activation rule and the create shape.
+    use super::{
+        active_after_delete, create_root_with_screen, first_screen_of, is_header,
+        migrate_headers_to_screens, screen_or_self, unique_sibling_name, Connection,
+        CreateInput, LayoutNode, WorkspacesFile,
+    };
+
+    /// A pre-92 file: a root with panes (active), a pinned folder with a
+    /// pane and one worktree child, a session row under the root, and a
+    /// root that never had a layout.
+    fn pre_92() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 4,
+              "active_workspace_id": "srv",
+              "workspaces": [
+                { "id": "srv", "name": "runner", "tabs_mode": true,
+                  "setup_command": "source ~/.env",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_srv",
+                              "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_app" } },
+                { "id": "wt", "name": "feature-x", "parent_id": "app", "cwd": "/srv/app-feature-x", "sort_order": 0,
+                  "layout": { "kind": "pane", "pane_id": "p_wt" } },
+                { "id": "row-dev", "name": "dev", "parent_id": "srv", "tmux_session": "dev",
+                  "layout": { "kind": "pane", "pane_id": "p_dev" } },
+                { "id": "bare", "name": "never-had-a-layout",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn by_id<'a>(f: &'a WorkspacesFile, id: &str) -> &'a super::Workspace {
+        f.workspaces.iter().find(|w| w.id == id).expect("workspace present")
+    }
+
+    fn pane_id_of(layout: &LayoutNode) -> String {
+        let mut v = Vec::new();
+        super::collect_panes(layout, &mut v);
+        v.into_iter().next().expect("one pane")
+    }
+
+    #[test]
+    fn is_header_on_the_four_shapes() {
+        let f = pre_92();
+        assert!(is_header(by_id(&f, "srv")), "a root is a header");
+        assert!(is_header(by_id(&f, "app")), "a pinned folder is a header");
+        assert!(!is_header(by_id(&f, "wt")), "a worktree child is a screen");
+        assert!(!is_header(by_id(&f, "row-dev")), "a session row is a screen");
+    }
+
+    #[test]
+    fn a_root_with_panes_moves_them_to_a_shell_screen_and_keeps_pane_ids() {
+        let mut f = pre_92();
+        assert_eq!(migrate_headers_to_screens(&mut f), 2, "the root and the folder");
+
+        let srv = by_id(&f, "srv");
+        assert!(srv.layout.is_none(), "the header no longer holds panes");
+        assert!(!srv.tabs_mode, "tabs_mode travelled with the panes");
+        assert_eq!(srv.setup_command.as_deref(), Some("source ~/.env"), "the header keeps its template");
+
+        let shell_id = first_screen_of(&f, "srv").expect("the root has a first screen");
+        let shell = by_id(&f, &shell_id);
+        assert_eq!(shell.name, "shell");
+        assert_eq!(shell.parent_id.as_deref(), Some("srv"));
+        assert!(shell.tabs_mode);
+        assert_eq!(shell.setup_command.as_deref(), Some("source ~/.env"), "the screen got a copy");
+        assert!(matches!(shell.connection, Some(Connection::Ssh { .. })));
+        assert_eq!(pane_id_of(shell.layout.as_ref().expect("screen has a layout")), "p_srv");
+        // Inserted right after its header, not appended.
+        let idx = |id: &str| f.workspaces.iter().position(|w| w.id == id).unwrap();
+        assert_eq!(idx(&shell_id), idx("srv") + 1);
+    }
+
+    #[test]
+    fn a_pinned_folder_is_split_the_same_way_and_its_worktree_children_sort_after_shell() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let app = by_id(&f, "app");
+        assert!(app.layout.is_none());
+        assert!(app.is_project_root, "still a folder");
+        let shell_id = first_screen_of(&f, "app").expect("the folder has a first screen");
+        let shell = by_id(&f, &shell_id);
+        assert_eq!(shell.cwd.as_deref(), Some("/srv/app"), "the shell opens in the folder");
+        assert_eq!(pane_id_of(shell.layout.as_ref().unwrap()), "p_app");
+        // The worktree child carried sort_order 0, so the shell sorts below it.
+        assert_eq!(shell.sort_order, Some(-1));
+    }
+
+    #[test]
+    fn the_active_header_hands_activation_to_its_shell() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let shell_id = first_screen_of(&f, "srv").unwrap();
+        assert_eq!(f.active_workspace_id.as_deref(), Some(shell_id.as_str()));
+    }
+
+    #[test]
+    fn a_header_without_a_layout_is_left_alone() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert!(by_id(&f, "bare").layout.is_none());
+        assert!(first_screen_of(&f, "bare").is_none(), "no screen was invented for it");
+    }
+
+    #[test]
+    fn screens_are_never_touched() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(pane_id_of(by_id(&f, "wt").layout.as_ref().unwrap()), "p_wt");
+        assert_eq!(pane_id_of(by_id(&f, "row-dev").layout.as_ref().unwrap()), "p_dev");
+        assert_eq!(by_id(&f, "row-dev").tmux_session.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn migration_is_idempotent() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        let after_first = serde_json::to_string(&f.workspaces).unwrap();
+        assert_eq!(migrate_headers_to_screens(&mut f), 0);
+        assert_eq!(serde_json::to_string(&f.workspaces).unwrap(), after_first);
+    }
+
+    #[test]
+    fn screen_or_self_resolves_a_header_and_refuses_an_empty_one() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(screen_or_self(&f, "wt").unwrap(), "wt", "a screen is itself");
+        let shell = first_screen_of(&f, "srv").unwrap();
+        assert_eq!(screen_or_self(&f, "srv").unwrap(), shell, "a header → its first screen");
+        assert!(screen_or_self(&f, "bare").is_err(), "a header with no screens is refused");
+        assert!(screen_or_self(&f, "nope").is_err());
+    }
+
+    #[test]
+    fn a_roots_folder_child_is_not_its_first_screen() {
+        // A root whose only child is a pinned folder has no screen of its
+        // own — the folder is a header too.
+        let f: WorkspacesFile = serde_json::from_str(
+            r#"{ "workspaces": [
+              { "id": "srv", "name": "runner" },
+              { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app" },
+              { "id": "sh", "name": "shell", "parent_id": "app", "layout": { "kind": "pane", "pane_id": "p" } }
+            ] }"#,
+        )
+        .unwrap();
+        assert!(first_screen_of(&f, "srv").is_none());
+        assert_eq!(first_screen_of(&f, "app").as_deref(), Some("sh"));
+    }
+
+    #[test]
+    fn delete_never_leaves_a_header_active() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        // Deleting a screen under `app`: its sibling (the folder's shell) wins.
+        let app_shell = first_screen_of(&f, "app").unwrap();
+        f.workspaces.retain(|w| w.id != "wt");
+        assert_eq!(active_after_delete(&f, Some("app")).as_deref(), Some(app_shell.as_str()));
+        // Deleting the folder's last screen: fall back to a screen under the root.
+        f.workspaces.retain(|w| w.id != app_shell);
+        let pick = active_after_delete(&f, Some("app")).expect("something under srv");
+        assert!(!is_header(by_id(&f, &pick)));
+        assert_eq!(by_id(&f, &pick).parent_id.as_deref(), Some("srv"));
+        // Nothing but headers left: nothing is active.
+        f.workspaces.retain(|w| is_header(w));
+        assert_eq!(active_after_delete(&f, None), None);
+    }
+
+    #[test]
+    fn sibling_names_are_made_unique() {
+        let mut f = pre_92();
+        migrate_headers_to_screens(&mut f);
+        assert_eq!(unique_sibling_name(&f, "srv", "shell"), "shell-2", "srv already has a shell");
+        assert_eq!(unique_sibling_name(&f, "bare", "shell"), "shell");
+        assert_eq!(unique_sibling_name(&f, "srv", "dev"), "dev-2", "the session row's name counts too");
+    }
+
+    #[test]
+    fn create_root_with_screen_builds_a_header_and_an_active_shell() {
+        let mut f = WorkspacesFile::default();
+        let input = CreateInput {
+            name: "box".into(),
+            connection: Connection::Local { shell: None },
+            color: Some("#abc".into()),
+            cwd: Some("/home/me".into()),
+            setup_command: Some("true".into()),
+            teardown_command: None,
+            env: None,
+        };
+        let (root_id, screen_id) = create_root_with_screen(&mut f, input);
+        assert_ne!(root_id, screen_id);
+        let root = by_id(&f, &root_id);
+        assert!(root.layout.is_none() && root.parent_id.is_none());
+        assert_eq!(root.color.as_deref(), Some("#abc"));
+        let screen = by_id(&f, &screen_id);
+        assert_eq!(screen.parent_id.as_deref(), Some(root_id.as_str()));
+        assert_eq!(screen.name, "shell");
+        assert_eq!(screen.cwd.as_deref(), Some("/home/me"));
+        assert_eq!(screen.setup_command.as_deref(), Some("true"));
+        assert!(screen.layout.is_some());
+        assert_eq!(f.active_workspace_id.as_deref(), Some(screen_id.as_str()));
     }
 }
 
@@ -12765,6 +13612,138 @@ mod project_folder_migration_tests {
 }
 
 #[cfg(test)]
+mod tmux_attach_script_tests {
+    // Phase 91.B: the tmux attach line, and the conf it points at. There
+    // were NO tests here before — Phase 65 CRITICAL (a bad key name in the
+    // conf took every session down for five builds) is why the conf gets
+    // linted from Rust now.
+    use super::build_tmux_attach_script;
+    use ymux_core::shell_quote;
+
+    const CONF: &str = include_str!("../resources/ymux-tmux.conf");
+
+    #[test]
+    fn with_conf_chains_source_file_and_never_mouse_on() {
+        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m");
+        assert_eq!(
+            s,
+            format!(
+                "command -v tmux >/dev/null 2>&1 && exec tmux -f $HOME/.ymux/tmux.conf new-session -A -s {} \\; source-file -q $HOME/.ymux/tmux.conf || echo 'm'\r\n",
+                shell_quote("s")
+            )
+        );
+        assert!(!s.contains("mouse"));
+    }
+
+    #[test]
+    fn without_conf_appends_nothing() {
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m");
+        assert_eq!(
+            s,
+            format!(
+                "command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s {} || echo 'm'\r\n",
+                shell_quote("s")
+            )
+        );
+        assert!(!s.contains("\\;"));
+        assert!(!s.contains("tmux.conf"));
+        assert!(!s.contains("mouse"));
+    }
+
+    #[test]
+    fn env_injection_precedes_exec() {
+        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m");
+        assert_eq!(s.matches("tmux set-environment -g ").count(), 6);
+        for var in ["YMUX_SOCKET_ADDR", "WINMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "WINMUX_TUNNEL_TOKEN", "YMUX_PANE_ID", "WINMUX_PANE_ID"] {
+            assert!(s.contains(var), "missing {var}");
+        }
+        let exec_at = s.find("exec tmux").expect("exec");
+        let last_env = s.rfind("set-environment").expect("env");
+        assert!(last_env < exec_at, "env injection must come before the exec");
+        assert!(s.ends_with("\r\n"));
+    }
+
+    #[test]
+    fn session_name_is_shell_quoted() {
+        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m");
+        assert!(s.contains(&format!("-s {} ", shell_quote("it's"))));
+    }
+
+    /// The conf lint. A single bad key name aborts the whole conf and
+    /// tmux exits before the session starts (Phase 65 CRITICAL). There is
+    /// no tmux on the Windows dev box, so this is the linter.
+    #[test]
+    fn conf_is_locked_and_re_sourceable() {
+        assert!(!CONF.contains('\r'), "conf must be LF-only");
+        // Comments explain the history and name the traps by name, so the
+        // checks below run over CODE lines only.
+        let code: String = CONF
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix", "bind -n S-Up", "bind -T copy-mode-vi S-Down"] {
+            assert!(code.contains(want), "conf lost `{want}`");
+        }
+        for forbidden in ["mouse on", "-t =", "S-PageUp", "S-PPage", "S-NPage", "status on"] {
+            assert!(!code.contains(forbidden), "conf must not contain `{forbidden}`");
+        }
+        // Every key a `bind` names must be one tmux 3.0–3.4 spells this way.
+        // `S-Up` / `S-Down` are the Phase 91.D wheel proxy's keys.
+        let allowed = ["[", "d", "C-b", "PPage", "S-Up", "S-Down"];
+        let mut seen_unset: Vec<String> = Vec::new();
+        for line in CONF.lines() {
+            let mut toks = line.split_whitespace();
+            match toks.next() {
+                Some("bind") => {
+                    let mut key = None;
+                    while let Some(t) = toks.next() {
+                        if t == "-T" {
+                            toks.next();
+                            continue;
+                        }
+                        if t.starts_with('-') {
+                            continue;
+                        }
+                        key = Some(t);
+                        break;
+                    }
+                    let key = key.expect("bind without a key");
+                    assert!(allowed.contains(&key), "bind names key {key:?}, not in the allowlist {allowed:?}");
+                }
+                Some("set") => {
+                    let flags = toks.next().unwrap_or("");
+                    let opt = toks.next().unwrap_or("").to_string();
+                    if flags == "-gu" {
+                        seen_unset.push(opt);
+                    } else if flags == "-ga" {
+                        assert!(seen_unset.contains(&opt), "`set -ga {opt}` has no `set -gu {opt}` above it — re-sourcing would accumulate");
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The manifest pins the conf: the bootstrap's hash gate and the macOS
+    /// byte-compare both read it, and only ci-windows regenerates it — a
+    /// stale committed entry makes the mac build re-upload forever.
+    #[test]
+    fn manifest_pins_the_embedded_conf() {
+        use sha2::{Digest, Sha256};
+        let manifest = crate::remote_bootstrap::embedded_manifest().expect("manifest parses");
+        let entry = manifest.get("tmux-conf").expect("tmux-conf entry");
+        let bytes = crate::remote_bootstrap::embedded_payload("ymux-tmux.conf").expect("payload");
+        assert_eq!(entry.size, bytes.len() as u64, "remote-manifest.json size is stale");
+        assert_eq!(
+            entry.sha256.to_lowercase(),
+            format!("{:x}", Sha256::digest(&bytes)),
+            "remote-manifest.json sha256 is stale — recompute it for the new conf"
+        );
+    }
+}
+
+#[cfg(test)]
 mod smart_connect_tests {
     // Phase 61: Smart Connect injection became shell-aware so local
     // PowerShell / Cmd panes can launch Claude Code too. Phase 65 (bug FF
@@ -12878,6 +13857,213 @@ mod smart_connect_tests {
             build_smart_connect_script(ShellKind::Posix, "default", None, None, None),
             ""
         );
+    }
+}
+
+#[cfg(test)]
+mod session_owner_prune_tests {
+    // Phase 91: workspace delete prunes its claims — the disk-free core.
+    use super::{prune_owners_of_workspace, SessionOwner, SessionOwnersFile};
+    use std::collections::HashMap;
+
+    fn owner(ws: &str) -> SessionOwner {
+        SessionOwner { workspace_id: ws.into(), cwd: None, ts: 0 }
+    }
+
+    fn file() -> SessionOwnersFile {
+        let mut owners: HashMap<String, HashMap<String, SessionOwner>> = HashMap::new();
+        owners.insert(
+            "host-a".into(),
+            HashMap::from([("dev".to_string(), owner("w1")), ("ops".to_string(), owner("w2"))]),
+        );
+        owners.insert("host-b".into(), HashMap::from([("dev".to_string(), owner("w1"))]));
+        SessionOwnersFile { version: 1, owners }
+    }
+
+    #[test]
+    fn prunes_only_that_workspace_on_every_host_and_drops_emptied_hosts() {
+        let mut f = file();
+        assert!(prune_owners_of_workspace(&mut f, "w1"));
+        // host-b held nothing but w1's claim → the host key is gone.
+        assert!(!f.owners.contains_key("host-b"));
+        let a = &f.owners["host-a"];
+        assert_eq!(a.len(), 1);
+        assert_eq!(a["ops"].workspace_id, "w2");
+    }
+
+    #[test]
+    fn an_unknown_workspace_changes_nothing() {
+        let mut f = file();
+        assert!(!prune_owners_of_workspace(&mut f, "nobody"));
+        assert_eq!(f.owners.len(), 2);
+        assert_eq!(f.owners["host-a"].len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod known_sessions_tests {
+    // Phase 91: the merge rules behind workspace_remember_sessions.
+    use super::{merge_known_sessions, KnownSession, KnownSessionInput, KNOWN_SESSION_TOUCH_SECS};
+
+    fn input(name: &str, claude: Option<&str>) -> KnownSessionInput {
+        KnownSessionInput {
+            name: name.into(),
+            display: None,
+            claude_session_id: claude.map(str::to_string),
+            cwd: None,
+        }
+    }
+
+    fn row(name: &str, claude: Option<&str>, seen: u64) -> KnownSession {
+        KnownSession {
+            name: name.into(),
+            display: None,
+            claude_session_id: claude.map(str::to_string),
+            cwd: None,
+            last_seen: seen,
+        }
+    }
+
+    #[test]
+    fn unknown_names_are_appended_in_first_seen_order() {
+        let mut have = vec![row("a", None, 10)];
+        let changed = merge_known_sessions(&mut have, &[input("b", None), input("c", None)], &[], 20);
+        assert!(changed);
+        let names: Vec<&str> = have.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["a", "b", "c"]);
+        assert_eq!(have[1].last_seen, 20);
+    }
+
+    #[test]
+    fn rows_absent_from_the_live_list_are_kept() {
+        // That absence IS the grey list.
+        let mut have = vec![row("gone", Some("uuid-1"), 10), row("live", None, 10)];
+        merge_known_sessions(&mut have, &[input("live", None)], &[], 20);
+        assert_eq!(have.len(), 2);
+        assert_eq!(have[0].name, "gone");
+        assert_eq!(have[0].last_seen, 10, "an absent row keeps its old last_seen");
+        assert_eq!(have[1].last_seen, 20);
+    }
+
+    #[test]
+    fn incoming_some_overwrites_but_none_never_erases() {
+        let mut have = vec![row("s", Some("old"), 10)];
+        assert!(merge_known_sessions(&mut have, &[input("s", Some("new"))], &[], 11));
+        assert_eq!(have[0].claude_session_id.as_deref(), Some("new"));
+        merge_known_sessions(&mut have, &[input("s", None)], &[], 12);
+        assert_eq!(
+            have[0].claude_session_id.as_deref(),
+            Some("new"),
+            "a quiet refresh must not drop the resume handle"
+        );
+    }
+
+    #[test]
+    fn forget_removes_by_name() {
+        let mut have = vec![row("a", None, 10), row("b", None, 10)];
+        assert!(merge_known_sessions(&mut have, &[], &["a".into()], 20));
+        assert_eq!(have.len(), 1);
+        assert_eq!(have[0].name, "b");
+        assert!(!merge_known_sessions(&mut have, &[], &["zzz".into()], 21));
+    }
+
+    #[test]
+    fn a_fresh_refresh_that_changes_nothing_is_not_a_change() {
+        // The 30 s poll must not rewrite workspaces.json every tick ...
+        let mut have = vec![row("s", Some("u"), 100)];
+        assert!(!merge_known_sessions(&mut have, &[input("s", Some("u"))], &[], 130));
+        assert_eq!(have[0].last_seen, 130, "... but the in-memory stamp still moves");
+        // ... while a stale stamp is worth one write.
+        let mut have = vec![row("s", Some("u"), 100)];
+        assert!(merge_known_sessions(
+            &mut have,
+            &[input("s", Some("u"))],
+            &[],
+            100 + KNOWN_SESSION_TOUCH_SECS
+        ));
+    }
+}
+
+#[cfg(test)]
+mod session_mirror_tests {
+    // Phase 91.C: which live sessions become rows, and where.
+    use super::{mirror_sessions_into, session_row_on_host, MirrorSessionInput, WorkspacesFile};
+
+    fn file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{
+              "version": 1,
+              "workspaces": [
+                { "id": "srv", "name": "runner",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 },
+                  "layout": { "kind": "pane", "pane_id": "p_plain",
+                              "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } } },
+                { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true, "cwd": "/srv/app" },
+                { "id": "row-dev", "name": "dev", "parent_id": "srv", "tmux_session": "dev",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "srv-b", "name": "same-host-again",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "row-ops-b", "name": "ops", "parent_id": "srv-b", "tmux_session": "ops",
+                  "connection": { "type": "ssh", "host": "203.0.113.5", "user": "runner", "port": 22 } },
+                { "id": "other", "name": "other-server", "tmux_session": "web",
+                  "connection": { "type": "ssh", "host": "198.51.100.9", "user": "x", "port": 22 } }
+              ]
+            }"#,
+        )
+        .unwrap()
+    }
+
+    fn input(name: &str, display: Option<&str>, cwd: Option<&str>) -> MirrorSessionInput {
+        MirrorSessionInput {
+            name: name.into(),
+            display: display.map(str::to_string),
+            cwd: cwd.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn creates_only_names_no_same_host_row_carries() {
+        let mut f = file();
+        let created = mirror_sessions_into(
+            &mut f,
+            "srv",
+            &[
+                input("dev", None, None),        // this root already has it
+                input("ops", None, None),        // the OTHER root on the same host has it
+                input("web", None, None),        // a row on a different host — does not block
+                input("ymux-p_plain", None, None), // the root's own plain pane holds it
+                input("  ", None, None),
+                input("fresh", Some("Fresh one"), Some("/srv/app/src")),
+            ],
+        );
+        assert_eq!(created.len(), 2, "web and fresh");
+        let web = f.workspaces.iter().find(|w| w.id == created[0]).unwrap();
+        assert_eq!(web.tmux_session.as_deref(), Some("web"));
+        assert_eq!(web.name, "web", "display falls back to the name");
+        assert_eq!(web.parent_id.as_deref(), Some("srv"), "no cwd → under the root");
+        let fresh = f.workspaces.iter().find(|w| w.id == created[1]).unwrap();
+        assert_eq!(fresh.name, "Fresh one");
+        assert_eq!(fresh.parent_id.as_deref(), Some("app"), "cwd inside the pinned folder → under it");
+        assert_eq!(fresh.cwd.as_deref(), Some("/srv/app/src"));
+        assert!(fresh.layout.is_some());
+        assert!(matches!(fresh.connection, Some(super::Connection::Ssh { .. })));
+    }
+
+    #[test]
+    fn a_second_pass_creates_nothing() {
+        let mut f = file();
+        let first = mirror_sessions_into(&mut f, "srv", &[input("fresh", None, None)]);
+        assert_eq!(first.len(), 1);
+        let again = mirror_sessions_into(&mut f, "srv-b", &[input("fresh", None, None)]);
+        assert!(again.is_empty(), "the other root on the same host must not mirror it again");
+    }
+
+    #[test]
+    fn row_lookup_is_host_wide_and_host_bound() {
+        let f = file();
+        let conn = f.workspaces[0].connection.clone();
+        assert_eq!(session_row_on_host(&f, &conn, "ops").as_deref(), Some("row-ops-b"));
+        assert_eq!(session_row_on_host(&f, &conn, "web"), None, "same name, other host");
     }
 }
 
@@ -13072,6 +14258,11 @@ mod tmux_list_parse_tests {
         // Windows paths reach this via zellij-era ownership rows.
         assert!(path_is_within(r"C:\src\app\sub", r"C:\src\app"));
         assert!(!path_is_within(r"C:\src\app2", r"C:\src\app"));
+        // Phase 91.H: mixed spellings of one Windows directory (git emits
+        // `/`, the picker stored `\`, NTFS ignores case).
+        assert!(path_is_within("C:/src/app/sub", r"c:\Src\App"));
+        assert!(path_is_within(r"C:\src\app", "C:/src/app/"));
+        assert!(!path_is_within("C:/src/app2", r"C:\src\app"));
         // An empty root would otherwise match everything.
         assert!(!path_is_within("/srv/app", ""));
         assert!(!path_is_within("", "/srv/app"));
@@ -14128,6 +15319,7 @@ mod wsl_migration_tests {
             help_topic: None,
             diff_source: None,
             smart_bidi: None,
+            diff_cwd: None,
         }
     }
 

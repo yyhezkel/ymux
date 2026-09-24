@@ -11,12 +11,12 @@ use crate::dev;
 use crate::settings;
 use crate::updater;
 use crate::{
-    collect_panes, collect_panes_with_kind, config_dir_pub, decide_feed,
-    find_workspace_for_pane, new_pane_id, new_workspace_id,
-    persist, split_pane_in,
+    collect_panes, collect_panes_with_kind, config_dir_pub, create_root_with_screen, decide_feed,
+    find_workspace_for_pane, new_pane_id,
+    persist, screen_or_self, split_pane_in,
     update_pane_in, workspace_name_by_id, write_to_session, AppState, Connection, CreateInput,
     EnvVar, FeedItem, FeedItemState, LayoutNode, NotificationItem, PaneKind, Session,
-    SplitDirection, Workspace, NOTIF_COUNTER,
+    SplitDirection, NOTIF_COUNTER,
 };
 
 const FEED_MAX_ITEMS_LIMIT: usize = 50;
@@ -671,13 +671,14 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or("missing id")?
                 .to_string();
-            {
+            // Phase 92: a header (machine / folder) hands activation to
+            // its first screen — same rule as `workspace_set_active`.
+            let id = {
                 let mut file = state.workspaces.lock().unwrap();
-                if !file.workspaces.iter().any(|w| w.id == id) {
-                    return Err(format!("no workspace {id}"));
-                }
-                file.active_workspace_id = Some(id.clone());
-            }
+                let target = screen_or_self(&file, &id)?;
+                file.active_workspace_id = Some(target.clone());
+                target
+            };
             persist(state)?;
             let _ = app.emit("workspaces:changed", ());
             Ok(json!({ "ok": true, "active": id }))
@@ -686,36 +687,18 @@ async fn dispatch(
         "new-workspace" => {
             let input: CreateInput =
                 serde_json::from_value(params).map_err(|e| format!("bad params: {e}"))?;
-            let ws = Workspace {
-                id: new_workspace_id(),
-                name: input.name,
-                color: input.color,
-                cwd: input.cwd,
-                layout: Some(LayoutNode::Pane {
-                    pane_id: new_pane_id(),
-                    pane_kind: PaneKind::Terminal,
-                    connection: Some(input.connection),
-                    browser: None,
-                    title: None,
-                    auto_title: None,
-                    annotation: None,
-                    color: None,
-                    emoji: None,
-                    help_topic: None,
-                    diff_source: None,
-                    smart_bidi: None,
-                }),
-                setup_command: input.setup_command,
-                teardown_command: input.teardown_command,
-                env: input.env.unwrap_or_default(),
-                ..Default::default()
-            };
-            let cloned = ws.clone();
-            {
+            // Phase 92: same construction as `workspace_create` — a header
+            // plus its `shell` screen, the screen active. The reply is the
+            // ROOT, as before; its panes are on the active screen.
+            let cloned = {
                 let mut file = state.workspaces.lock().unwrap();
-                file.active_workspace_id = Some(ws.id.clone());
-                file.workspaces.push(ws);
-            }
+                let (root_id, _screen_id) = create_root_with_screen(&mut file, input);
+                file.workspaces
+                    .iter()
+                    .find(|w| w.id == root_id)
+                    .cloned()
+                    .ok_or_else(|| "created workspace vanished".to_string())?
+            };
             persist(state)?;
             let _ = app.emit("workspaces:changed", ());
             serde_json::to_value(&cloned).map_err(|e| e.to_string())
@@ -1013,13 +996,13 @@ async fn dispatch(
                 .and_then(|v| v.as_str())
                 .ok_or("missing workspace_id")?
                 .to_string();
-            {
+            // Phase 92: a header activates its first screen instead.
+            let workspace_id = {
                 let mut file = state.workspaces.lock().unwrap();
-                if !file.workspaces.iter().any(|w| w.id == workspace_id) {
-                    return Err(format!("no workspace {workspace_id}"));
-                }
-                file.active_workspace_id = Some(workspace_id.clone());
-            }
+                let target = screen_or_self(&file, &workspace_id)?;
+                file.active_workspace_id = Some(target.clone());
+                target
+            };
             persist(state)?;
             let _ = app.emit("workspaces:changed", ());
             Ok(json!({ "ok": true, "active": workspace_id }))
@@ -2280,6 +2263,7 @@ async fn dispatch(
                     help_topic: None,
                     diff_source: None,
                     smart_bidi: None,
+                    diff_cwd: None,
                 });
             }
             persist(state)?;

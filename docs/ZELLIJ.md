@@ -359,9 +359,11 @@ That is why the frame survived `pane_frames false` for a day. `layouts/ymux.kdl`
 shipped `false` first, on the theory that xterm.js owns the wheel and the selection. Half
 right — xterm.js does own selection, but its wheel scrolls its NORMAL buffer while zellij
 holds the alt screen. Combined with cleared keybinds (no scroll mode), that left a pane
-with **no way to scroll back at all**. `true` is also what the tmux side already does:
-ymux appends `set -g mouse on` to the tmux attach for exactly this (decision O-3,
-`docs/MOUSE-DEBUG.md`).
+with **no way to scroll back at all**. (Until 2026-09-08 the tmux side did the same —
+`set -g mouse on` on attach, decision O-3. Phase 91.B went the other way there, because
+tmux's left-click capture was the bug Yossi was hitting, and tmux has a keyboard
+scrollback to fall back on. zellij keeps `true` on its own merits: with keybinds cleared
+it has no scroll mode, so the wheel is the only affordance left.)
 
 What `true` costs, and why each cost is covered:
 

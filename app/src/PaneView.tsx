@@ -4,7 +4,7 @@ import { Portal } from "solid-js/web";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openNativeDialog } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
-import type { Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
+import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
@@ -133,6 +133,12 @@ interface Props {
   // Phase 11.A: when this pane is bound to a tmux session, the name. Used
   // to render the "T" badge and to enable "Kill session" in the menu.
   tmuxSession?: string | null;
+  // Phase 91: the session this pane must attach to on [Connect] — set by
+  // App for the first pane of a workspace with `tmux_session`. smartConnect
+  // short-circuits on it: no probe, no picker, attach — or RESUME when the
+  // host no longer lists the session and a Claude id is known. Null for an
+  // ordinary pane.
+  boundSession?: BoundSession | null;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
   ensureTerm: (paneId: string, profile: RtlProfileKind) => TerminalInstance;
@@ -551,7 +557,12 @@ export function PaneView(p: Props) {
         setTargetState(await invoke<TargetSessionState>("pane_target_session_state", {
           workspaceId: p.workspaceId,
           paneId: p.pane.pane_id,
-          tmuxSessionName: p.tmuxSession ?? null,
+          // Phase 91.G: fall back to the row's bound session name when the
+          // pane is not locally attached (panePersistence is empty). Without
+          // it the probe asks about the derived `ymux-<paneid>` name, reports
+          // "not live" for a session that is actually running on the host, and
+          // the wizard would enable a command the backend then drops.
+          tmuxSessionName: p.tmuxSession ?? p.boundSession?.name ?? null,
         }));
       } catch (e) {
         log.warn("pane_target_session_state failed", e);
@@ -631,6 +642,31 @@ export function PaneView(p: Props) {
   // to, no matter what the restore loop did on the next boot.
   const smartConnect = async () => {
     if (!caps().sessionPersistence) { p.onConnect(p.pane.pane_id, { persistent: false }); return; }
+    // Phase 91: a pane that already knows its session attaches to it —
+    // this is what makes a session row / a strip pane honest after a
+    // restart. Before this, the probe below opened the picker on any host
+    // with a session, and App's tmux_session fallback never got a turn.
+    const bound = p.boundSession;
+    if (bound) {
+      // A gone session with a Claude id comes back running `claude --resume`
+      // in the cwd it lived in; `new-session -A` recreates the session under
+      // the same name. Without an id it is just a fresh session of that name.
+      // If the session reappeared between the poll and this click,
+      // pane_connect's attach-only guard types nothing into it.
+      p.onConnect(
+        p.pane.pane_id,
+        bound.gone && bound.claudeSessionId
+          ? {
+              persistent: true,
+              tmuxSession: bound.name,
+              mode: "claude",
+              claudeArgs: `--resume ${bound.claudeSessionId}`,
+              cwdOverride: bound.cwd ?? undefined,
+            }
+          : { persistent: true, tmuxSession: bound.name },
+      );
+      return;
+    }
     setConnectProbing(true);
     try {
       // Idempotent, PTY-free, tmux-free; no-ops on password-auth (can't prompt
@@ -1021,8 +1057,33 @@ export function PaneView(p: Props) {
   const [showOverflow, setShowOverflow] = createSignal(false);
   let headerRef: HTMLDivElement | undefined;
 
+  // Shared by both branches of `actions()` — pop-out is the one action
+  // that survives tabs mode (Phase 93).
+  const popoutAction = (): HeaderAction => ({
+    id: "popout",
+    title: t("pane.tooltip.popout"),
+    label: t("pane.tooltip.popout"),
+    icon: () => <IconExternalLink size={14} />,
+    run: () => void p.onPopOut(p.pane.pane_id),
+  });
+
   const actions = createMemo<HeaderAction[]>(() => {
     const list: HeaderAction[] = [];
+    // Phase 93: in tabs mode the header keeps ONLY pop-out and the X.
+    // The tab strip already owns close / new / switch, the bidi toggle
+    // is a Settings matter (terminal.rtl.*), maximize is a no-op when
+    // the pane already fills the workspace (Phase 84.A), and a split
+    // would just make a second tab — which `+` on the strip does. The
+    // power button folds into the X: `workspace_close_pane` is a
+    // DETACH, not a kill, so closing the tab is exactly what the power
+    // button did plus removing the leaf. Kill session stays reachable
+    // from the tmux session picker (with its confirm) and the sidebar's
+    // session rows. Dropping the buttons also means the overflow fitter
+    // never engages in tabs mode.
+    if (p.tabsMode) {
+      if (p.isConnected) list.push(popoutAction());
+      return list;
+    }
     if (p.pane.annotation) {
       list.push({
         id: "annot",
@@ -1083,25 +1144,22 @@ export function PaneView(p: Props) {
         }).catch((err) => log.error("pane_set_smart_bidi failed", err));
       },
     });
-    // Phase 84.A: in tabs mode this pane already fills the workspace, so
-    // the button is a no-op. Dropping it also gives the overflow fitter
-    // one less button to place.
-    if (!p.tabsMode) {
-      list.push({
-        id: "maximize",
-        title: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
-        label: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
-        icon: () => (p.isMaximized ? <IconMinimize size={14} /> : <IconMaximize size={14} />),
-        active: p.isMaximized,
-        run: () => {
-          window.dispatchEvent(
-            new CustomEvent("ymux:pane-maximize", {
-              detail: { paneId: p.pane.pane_id },
-            }),
-          );
-        },
-      });
-    }
+    // Phase 84.A: maximize exists only in split mode (tabs mode returned
+    // above — the pane already fills the workspace there).
+    list.push({
+      id: "maximize",
+      title: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
+      label: p.isMaximized ? t("pane.tooltip.restore") : t("pane.tooltip.focus"),
+      icon: () => (p.isMaximized ? <IconMinimize size={14} /> : <IconMaximize size={14} />),
+      active: p.isMaximized,
+      run: () => {
+        window.dispatchEvent(
+          new CustomEvent("ymux:pane-maximize", {
+            detail: { paneId: p.pane.pane_id },
+          }),
+        );
+      },
+    });
     list.push({
       id: "split-h",
       title: t("pane.tooltip.split_right"),
@@ -1116,15 +1174,7 @@ export function PaneView(p: Props) {
       icon: () => <IconRows size={14} />,
       run: () => p.onSplit(p.pane.pane_id, "vertical"),
     });
-    if (p.isConnected) {
-      list.push({
-        id: "popout",
-        title: t("pane.tooltip.popout"),
-        label: t("pane.tooltip.popout"),
-        icon: () => <IconExternalLink size={14} />,
-        run: () => void p.onPopOut(p.pane.pane_id),
-      });
-    }
+    if (p.isConnected) list.push(popoutAction());
     return list;
   });
 
@@ -1476,7 +1526,13 @@ export function PaneView(p: Props) {
             </Show>
           </div>
         </Show>
-        <button class="pane-btn pane-close" title={t("pane.tooltip.close")} onClick={() => p.onClose(p.pane.pane_id)}><IconClose size={14} /></button>
+        <button
+          class="pane-btn pane-close"
+          title={p.tabsMode ? t("pane.tooltip.close_tab") : t("pane.tooltip.close")}
+          onClick={() => p.onClose(p.pane.pane_id)}
+        >
+          <IconClose size={14} />
+        </button>
       </div>
       <Show when={editingMeta()}>
         <div class="pane-meta-editor" onMouseDown={(e) => e.stopPropagation()}>
@@ -1713,8 +1769,17 @@ export function PaneView(p: Props) {
                   [Connection wizard] opens the unified wizard (type / directory
                   / command / resume list). */}
               <div class="connect-buttons">
-                <button class="primary big" onClick={() => void smartConnect()} disabled={connectProbing()}>
-                  {connectProbing() ? t("connect.probing") : t("common.connect")}
+                <button
+                  class="primary big"
+                  onClick={() => void smartConnect()}
+                  disabled={connectProbing()}
+                  title={p.boundSession ? t("connect.bound.tooltip", { name: p.boundSession.name }) : undefined}
+                >
+                  {connectProbing()
+                    ? t("connect.probing")
+                    : p.boundSession?.gone && p.boundSession.claudeSessionId
+                      ? t("connect.resume")
+                      : t("common.connect")}
                 </button>
                 <button class="big nc-wizard-btn" onClick={openNewConnModal} disabled={connectProbing()}>
                   {t("connect.openWizard")}

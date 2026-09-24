@@ -11,6 +11,7 @@ Format:
 
 ## Open
 
+- [ ] 2026-09-14 | manual                 | **P3** - Pane header: the smart-bidi toggle (`bidi` in PaneView.tsx `actions()`) is now hidden in tabs mode (Phase 93) on the argument that RTL is a Settings matter (`terminal.rtl.*`) - the same argument applies to split mode, where it still shows. Yossi scoped Phase 93 to tabs only; decide whether the per-pane `smart_bidi` byte-stream filter (`pane_set_smart_bidi`) deserves a header button anywhere, or a Settings toggle instead.
 - [x] 2026-09-02 | manual                 | **P1** - DONE in PR #41 (90.C, ephemeral per-open selection; per-host persistence still open below) — USER REQUIREMENT for the active-sessions overview (PR #41): per-session CHOICE of which sessions get an LLM summary — default no auto-summarize, per-row select + "Summarize selected", optional per-host persistence. Full spec posted as a comment on PR #41 (issuecomment-5510542414). Must land with #41 or immediately after; if #41 merges without it, this entry is the reminder that the requirement is still open.
 - [ ] 2026-09-02 | manual                 | **P3** - Active-sessions overview: persist the summarize-selection per host → session name (the `session-owners.json` keying precedent), so a muted noisy session stays muted across opens. v1 (PR #41, 90.C) is per-open only.
 - [ ] 2026-09-02 | manual                 | **P2** - BRIEF ⇄ sessions-overview unification, half 1: two status vocabularies now ship (PR #41's LLM screen-read `idle|working|waiting_input|error` vs BRIEF's `working|waiting-for-you|stuck|done|ended`, `app/src/queueModel.ts`). Define one mapping so the Queue, the Briefing card and the Active-sessions table never disagree about the same session; the overview's LLM verdict could feed `queueModel` as a fallback source for panes with no hooks.
@@ -101,8 +102,9 @@ add tickets without touching what already works, and this touches a lot
 of working code. `tickets.rs::resolve` is the reference implementation of
 the dispatch if someone wants a starting point.
 
-Payoff is real though — it is what would fix the two FOLLOWUPS above
-(diff_pane on remote workspaces, addons misclassifying WSL) rather than
+Payoff is real though — diff_pane on remote workspaces is now fixed on the
+shared transport (Phase 91.F, `worktrees::run_git_raw`); only addons
+misclassifying WSL remains, which this would fix rather than
 patching each one separately.
 
 ### Single-instance lock on the config dir (2026-08-23)
@@ -151,8 +153,10 @@ behind zellij's alt screen — so a zellij pane could not scroll back at all.
 
 Closed by giving zellij the wheel (`mouse_mode true`) rather than by building the
 `dump-screen --full` viewer this entry proposed. That viewer is not needed: the wheel is
-the affordance, and it is the same bet the tmux side already took (`set -g mouse on`,
-decision O-3 in docs/MOUSE-DEBUG.md).
+the affordance, and it was the same bet the tmux side had taken (`set -g mouse on`,
+decision O-3 in docs/MOUSE-DEBUG.md). 2026-09-08: the tmux side reversed that (Phase
+91.B, mouse off + PageUp scrollback — left-click capture was the bug); zellij keeps
+`true` because cleared keybinds leave it no scroll mode.
 
 (Also: this entry was originally appended below the `## Done` heading by mistake, so it
 read as done on the day it was filed. It is done now, which is a coincidence.)
