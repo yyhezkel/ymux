@@ -7799,3 +7799,4 @@ FOLLOWUPS P0 2026-09-23. The 63/s attribution is inferred, not proven.
   No version bump: Phase 97 rides 2.4.0. That version has not shipped anywhere yet, and the page is what makes the rest of 2.4.0 testable — releasing a feature and its only client separately would be daft.
   Files: internal/term/{page.go,page.html,page_test.go} (new), internal/term/{service,attach}.go, internal/core/core.go, docs/vault/server-go.md + .vault-lock.json.
   Local checks: gofmt clean on every new file; vault-check green incl. --diff-base. NOT built/vetted/tested locally (Rule #17).
+  CI: ci-windows 36026418195 green on all three jobs (go vet + go test incl. the new page tests). Blobs rebaked from it; verified the committed x64 blob contains the Hebrew page text and "diag/log".
