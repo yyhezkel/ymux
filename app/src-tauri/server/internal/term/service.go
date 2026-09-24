@@ -33,12 +33,15 @@ type Service struct {
 	token  string // shared/owner token
 	scopes ScopeResolver
 	home   string // for session-meta.json
+
+	// logBudget bounds the diagnostic page's log sink (page.go).
+	logBudget *logBudget
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
 // is the user's home directory (where ~/.ymux/session-meta.json lives).
 func NewService(token, home string) *Service {
-	return &Service{tmux: NewTmux(), token: token, home: home}
+	return &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}}
 }
 
 // SetScopeResolver wires per-device scope lookups. Without it only the owner
@@ -52,6 +55,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/term/sessions/{name}/rename", s.gate(s.handleRename))
 	mux.HandleFunc("DELETE /api/v2/term/sessions/{name}", s.gate(s.handleKill))
 	mux.HandleFunc("GET /api/v2/term/sessions/{name}/attach", s.gate(s.handleAttach))
+	// Phase 97: the diagnostic page + its log sink, both public (page.go).
+	s.registerPageRoutes(mux)
 }
 
 // bearer pulls the token from the Authorization header, falling back to
@@ -72,33 +77,45 @@ func bearer(r *http.Request) string {
 // door is a shell.
 func (s *Service) gate(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		// Every rejection says WHY in the log. Rule #8: the reason, never the
+		// token — "which token was it" is not a question worth a credential in
+		// a log file, and "why was it refused" is the only one being asked.
+		deny := func(code int, why string) {
+			logger.Warn("terminal request refused", "why", why,
+				"path", r.URL.Path, "ip", clientIP(r))
+			http.Error(w, why, code)
+		}
 		tok := bearer(r)
 		if tok == "" {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			deny(http.StatusUnauthorized, "no bearer token")
 			return
 		}
 		if s.token != "" && tok == s.token {
+			logger.Debug("terminal request authorized", "as", "owner", "path", r.URL.Path)
 			h(w, r) // the owner/desktop token
 			return
 		}
 		if s.scopes == nil {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			deny(http.StatusUnauthorized, "unauthorized")
 			return
 		}
 		scopes, admin, ok := s.scopes(tok)
 		if !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			deny(http.StatusUnauthorized, "unknown token")
 			return
 		}
 		if admin || auth.HasScope(scopes, auth.ScopeShellAttach) {
+			logger.Debug("terminal request authorized", "as", "device", "path", r.URL.Path)
 			h(w, r)
 			return
 		}
 		// 403, not 401: the token is real, it just was not granted a shell.
 		// Retrying with the same credential will not help, and the message is
-		// what a UI should show the user.
-		logger.Warn("terminal access denied: missing shell:attach grant")
-		http.Error(w, "forbidden: shell:attach not granted", http.StatusForbidden)
+		// what a UI should show the user. This is the EXPECTED state for a
+		// freshly approved browser — "all" does not imply shell:attach — so
+		// the line has to be unmistakable in the log rather than look like an
+		// auth failure.
+		deny(http.StatusForbidden, "forbidden: shell:attach not granted")
 	}
 }
 
@@ -124,10 +141,15 @@ func failErr(w http.ResponseWriter, err error) {
 func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
 	sessions, err := s.tmux.List()
 	if err != nil {
+		logger.Error("tmux list failed", "err", err)
 		failErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, Annotate(sessions, LoadMeta(s.home)))
+	meta := LoadMeta(s.home)
+	// Counts only — a session NAME can carry a branch or a client name, and a
+	// meta entry carries user-written labels (Rule #1).
+	logger.Info("terminal sessions listed", "sessions", len(sessions), "labelled", len(meta))
+	writeJSON(w, http.StatusOK, Annotate(sessions, meta))
 }
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {

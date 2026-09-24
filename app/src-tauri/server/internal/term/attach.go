@@ -89,20 +89,27 @@ func childEnv() []string {
 func (s *Service) handleAttach(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !ValidName(name) {
+		logger.Warn("attach refused: invalid session name", "ip", clientIP(r))
 		http.Error(w, "invalid session name", http.StatusBadRequest)
 		return
 	}
 	// Checked BEFORE the upgrade so a missing session is an honest 404 rather
 	// than a socket that opens and immediately dies.
 	if !s.tmux.Has(name) {
+		logger.Warn("attach refused: no such session", "session", name)
 		http.Error(w, "no such session", http.StatusNotFound)
 		return
 	}
 	cols, rows := querySize(r)
+	logger.Debug("attach upgrading", "session", name, "cols", cols, "rows", rows, "ip", clientIP(r))
 
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		return // Upgrade already wrote the error
+		// Upgrade has already written its own error, but it is invisible
+		// otherwise — and a failed upgrade looks identical to a client that
+		// never dialled, which is the wrong thing to be guessing about.
+		logger.Warn("websocket upgrade failed", "session", name, "err", err)
+		return
 	}
 	defer conn.Close()
 	conn.SetReadLimit(wsReadLimit)

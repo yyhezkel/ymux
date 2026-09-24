@@ -39,7 +39,11 @@ import (
 // ymux desktop through the reverse tunnel (internal/desktop, the daemon's
 // first OUTBOUND client), and an approved request then redeems through the
 // unchanged one-shot path. The remote needs this before any browser can be
-// let in, so the add-on offers it.
+// let in, so the add-on offers it. Phase 97 (the embedded diagnostic page at
+// `/` plus its browser log sink) rides the SAME 2.4.0 rather than bumping
+// again: 2.4.0 has not shipped anywhere yet, and the page is what makes the
+// rest of 2.4.0 testable, so releasing them apart would be releasing a
+// feature and its only client separately.
 //
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as

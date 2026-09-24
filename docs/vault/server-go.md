@@ -68,7 +68,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 870 | tmux session management + a binary WebSocket carrying a real PTY (Phase 95) |
+| `term` | 1,090 | tmux sessions + a binary WebSocket carrying a real PTY (95), and the embedded diagnostic page (97) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## Things worth knowing before you edit
@@ -143,6 +143,50 @@ joins labels on with the `label > auto_name > claude_title > raw name` precedenc
 Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma ops, so
 they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
 Phase B moves them.
+
+**`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
+client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
+flow: request access → match the 6-digit code → approve in ymux → list tmux sessions →
+attach a real terminal on xterm.js. It exists because both phases are unverified live
+(Rule #14) and the alternative was answering "does the PTY work" by hand with
+`websocat`.
+
+Three decisions in it worth not undoing:
+
+- **Embedded in the binary**, because a debugging tool with its own delivery mechanism
+  is one you cannot use when delivery is what broke. This is **not** an answer to Q2
+  (how the real web bundle ships) — a few KB of diagnostics and a 3 MB app are different
+  questions, and `docs/DECISIONS.md` Q2 stays open.
+- **xterm.js from cdnjs, not embedded.** The committed server blobs are ~13 MB each and
+  every rebake writes both into git history; +600 KB per rebake to save one CDN fetch is
+  the wrong trade here. The page says so plainly when the CDN is blocked instead of
+  showing an empty box.
+- **`GET /{$}`, not `GET /`.** Exact-match for the root, so an unknown path still 404s.
+  A catch-all that silently returns HTML is how a typo in an API path becomes an hour of
+  confusion. `page_test.go` asserts it.
+
+`POST /diag/log` is the other half of the point: **half the steps in this flow happen in
+a browser**, so without a sink the daemon log shows a pairing request and then, minutes
+later, a WebSocket, with nothing between. Browser lines land under `SRV:WEB` while the
+daemon's own terminal work stays `SRV:TERM`, so the two sides of the story can be
+grepped apart. It cannot require a credential — an unpaired page is exactly when its
+lines matter most — so it is bounded instead: 2 KB body, 300-char detail, 120 lines a
+minute process-wide (per-process rather than per-IP, because the thing being protected
+is one log FILE and rotating source addresses would defeat a per-IP limit). The level is
+chosen from a fixed set rather than passed through, and every string is stripped of
+control characters: a newline from a browser would otherwise forge a line in the log,
+which is how a log stops being evidence.
+
+**The expected first failure is a 403, and the page says so.** A freshly approved
+browser holds `"all"`, which does not include `shell:attach`, so listing sessions is
+refused until an owner grants it — and there is no UI for that yet. The page detects
+exactly that status and prints the `curl` that fixes it. The gate logs every refusal
+with a reason (never the token, Rule #8) for the same purpose.
+
+`page.html` is not counted by the vault gate (it hashes `.go`/`.rs`/`.ts`/`.tsx`/`.mjs`),
+so the guard that it stays in step with the handlers is
+`TestPageReferencesTheRoutesItCalls` — a renamed route would otherwise break the page
+silently, since nothing else links the two.
 
 **`desktop/` (Phase 96) — the direction that did not exist.** Until this package,
 the daemon never dialled the desktop: every desktop→daemon call is a `curl` the
