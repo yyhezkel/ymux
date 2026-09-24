@@ -125,9 +125,17 @@ it back up without reading the WebView2 single-environment constraint in
 
 ## Files
 
-**`FileManagerWindow.tsx` (151)** wraps **`FileManagerPane.tsx` (1,645)** — the dual
-column local + remote SFTP manager — in the same drag/resize chrome as BrowserWindow.
-Pure HTML, no native Webview, so the only persistence concern is geometry.
+**`FileManagerPane.tsx` (1,657)** — the dual column local + remote SFTP manager. It is
+mounted by App's `files` `PanelSurface` (drawer / float / fullscreen, frontend-shell.md),
+**keyed on `active_workspace_id`, never on the workspace object** (Phase 98): the body
+used to read `activeWs()`, so every `setFile` — fresh objects each time, and Phase 91's
+30 s session-rows poll makes one twice a minute — mounted a new pane and reset folder,
+list, scroll and an open `FileEditor` with its unsaved text. The pane's teardown
+(`disposed` flag, drag-drop `unlisten`, the document `mousedown`/`keydown` menu
+dismissers) is registered in the component scope / a sync `onMount`: an `onCleanup`
+after an `await` in the async `onMount` has no owner and never runs.
+**`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
+imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 
 **`fmPaths.ts` (112)** remembers the last directory each column showed, per workspace, in
 localStorage — so re-opening lands where the user left off instead of snapping to

@@ -231,12 +231,15 @@ conf (`-f` is read only when the server starts). The conf (`resources/ymux-tmux.
 states the same invariant as `ymux-zellij.kdl` — *1 ymux pane == 1 session == 1 window
 == 1 pane, zero chrome*: `mouse off`, `status off`, `unbind -a -T prefix` then only `[`,
 `d` and `C-b send-prefix`, root `PPage` → `copy-mode -eu` under `!#{alternate_on}`, root
-`S-Up`/`S-Down` (Phase 91.D — what the frontend's wheel proxy sends) → `copy-mode -e` +
-`scroll-up`/`scroll-down` on the main screen and plain Up/Down under `#{alternate_on}`,
-the same pair in both copy-mode tables, and a `set -gu` before every `set -ga` so
+`S-Up`/`S-Down` (Phase 91.D — what the frontend's wheel proxy sends, one per notch since
+Phase 98) → `copy-mode -e` + `send-keys -X -N 3 scroll-up`/`-down` on the main screen and
+`send-keys -N 3 Up`/`Down` under `#{alternate_on}`, the same 3-line pair in both
+copy-mode tables, `assume-paste-time 0` (Phase 98: tmux's paste detection skipped the
+bindings of keys arriving <1 ms apart — a wheel burst — dropping them in copy-mode and
+typing them into the program outside it), and a `set -gu` before every `set -ga` so
 re-sourcing is idempotent. `tmux_attach_script_tests` lints it (allowed key names `[ d
 C-b PPage S-Up S-Down` — Phase 65 CRITICAL is why —, the `-gu`/`-ga` pairing, no
-`mouse on`, no `-t =`) and pins `remote-manifest.json`'s `tmux-conf` sha/size to the
+`mouse on`, no `-t =`; must contain `assume-paste-time 0` and the `-N 3` scroll) and pins `remote-manifest.json`'s `tmux-conf` sha/size to the
 embedded bytes: only ci-windows regenerates that file, so a stale committed entry makes
 the mac build re-upload the conf on every connect.
 

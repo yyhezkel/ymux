@@ -13701,7 +13701,7 @@ mod tmux_attach_script_tests {
             .filter(|l| !l.trim_start().starts_with('#'))
             .collect::<Vec<_>>()
             .join("\n");
-        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix", "bind -n S-Up", "bind -T copy-mode-vi S-Down"] {
+        for want in ["set -g mouse off", "set -g status off", "unbind -a -T prefix", "bind [ copy-mode", "bind d detach-client", "bind C-b send-prefix", "bind -n S-Up", "bind -T copy-mode-vi S-Down", "set -g assume-paste-time 0", "send-keys -X -N 3 scroll-up"] {
             assert!(code.contains(want), "conf lost `{want}`");
         }
         for forbidden in ["mouse on", "-t =", "S-PageUp", "S-PPage", "S-NPage", "status on"] {
