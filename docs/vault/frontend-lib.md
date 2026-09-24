@@ -13,6 +13,7 @@ covers:
   - app/src/bidi.ts
   - app/src/copyBidi.ts
   - app/src/mouseRtl.ts
+  - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
   - app/src/logger.ts
   - app/src/shortcuts.ts
@@ -28,23 +29,31 @@ covers:
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
 
-## `terminalInstance.ts` (1,958) — the xterm.js wrapper
+## `terminalInstance.ts` (2,018) — the xterm.js wrapper
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
 the one thing proxied, and only on a **multiplexer pane**: `setTmuxScroll(on)` is set by
 App from `pane_persistence_list` (the backend's answer, never a title guess — Phase
 65.O's proxy fired in a plain shell and walked bash history), and the constructor's
-`attachCustomWheelEventHandler` turns a wheel event into Shift+Up/Down ×3 via
+`attachCustomWheelEventHandler` turns a wheel event into Shift+Up/Down via
 `term.input` (through `onData` → `pty_write`) **only when** armed, no Shift/Ctrl held,
 the ALT buffer is active (tmux attached) and `term.modes.mouseTrackingMode === "none"`;
 every other case returns `true` and xterm keeps its own behaviour. Why it exists: with
 mouse off, xterm.js 6.0 converts a wheel event on the alt buffer into one `\e[A`/`\e[B`,
 which at a shell prompt inside tmux is HISTORY. xterm consults the hook before that
 conversion and never when the app requested wheel reports (zellij, vim `mouse=a`), so
-those step aside by themselves. The conf side (`ymux-tmux.conf`) binds `S-Up`/`S-Down`
-to copy-mode scrolling on the main screen and passes them through as plain Up/Down under
-`#{alternate_on}`. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
+those step aside by themselves. **One key per notch (Phase 98)**: `wheelSteps.ts` (pure,
+unit-tested) turns `deltaY`/`deltaMode` into whole steps — a mouse notch (~100px, or 3
+lines) is one step, anything from half a notch counts, a touchpad's small deltas
+accumulate in the instance's `wheelCarry`, a reversal drops the carry, ≤10 per event.
+91.D sent a fixed 3 keys per event; tmux's paste detection then skipped the bindings of
+all but the first (dropped in copy-mode, typed into the program as `^[[1;2B` once `-e`
+had left it). The conf side (`ymux-tmux.conf`) binds `S-Up`/`S-Down` to a 3-line
+`send-keys -X -N 3 scroll-up/-down` on the main screen and in copy-mode (the pre-91
+per-notch rate, as one operation), passes them through as 3× plain Up/Down under
+`#{alternate_on}`, and sets `assume-paste-time 0` so a burst of keys still runs its
+bindings. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
 always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.

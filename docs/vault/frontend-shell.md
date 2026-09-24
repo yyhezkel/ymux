@@ -262,8 +262,9 @@ so only the commit hits the backend.
 When the workspace has `tabs_mode` set, `PaneTabs` renders above `.layout-root` instead
 of the grid. **Browser and File Manager are no longer pane kinds here.** Both moved to
 workspace-level floating windows (sidebar 🌐 / 🗂). `BrowserPane.tsx` stays in the repo
-as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, but
-consumed by `FileManagerWindow.tsx`.
+as reference for its in-pane Webview wiring; `FileManagerPane.tsx` is still live, mounted
+by the `files` `PanelSurface` inside `<Show when={file().active_workspace_id} keyed>` —
+keyed on the ID so a `setFile` does not remount it (Phase 98; frontend-panes.md § Files).
 
 ## Sessions as rows (Phase 91.C)
 
@@ -477,7 +478,9 @@ that re-derived the active workspace would be a second source of truth.
 - **`PanelSurface.tsx` (99)** — given a surface, render the right chrome. `body` and
   `headerActions` are **thunks**, because `Switch` mounts one arm at a time and the body
   must be freshly created per surface. A panel that must keep fetched data across a
-  surface change keeps that data outside the thunk.
+  surface change keeps that data outside the thunk. **The thunk is tracked**: anything it
+  reads re-runs it and remounts the body, so a body must read IDs, not `file()` objects
+  (the Files remount bug, Phase 98).
 - **`PanelChrome.tsx` (81)** — the shared header for the non-drawer surfaces. Which
   buttons appear is driven purely by which callbacks are passed: ⇤ dock, ⛶ fullscreen,
   ⤢ float, ✕ close. The actions cluster carries `.panel-chrome-actions` so the drag

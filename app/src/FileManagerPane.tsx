@@ -290,6 +290,47 @@ export function FileManagerPane(p: Props) {
     saveFmPaths(p.workspaceId, { local, remote });
   });
 
+  // Phase 98: everything that must be torn down is registered HERE, in the
+  // component's own scope. An `onCleanup` called after an `await` inside the
+  // async onMount below has lost Solid's owner and never runs — so every
+  // remount used to leak a drag-drop listener and two document listeners.
+  let disposed = false;
+  let unlistenDragDrop: (() => void) | undefined;
+  onCleanup(() => {
+    disposed = true;
+    try {
+      unlistenDragDrop?.();
+    } catch {}
+  });
+
+  onMount(() => {
+    // Phase 23: dismiss popup context menu on any outside click /
+    // scroll / Escape. Capture phase so we beat the row's click
+    // handler when the user clicks elsewhere.
+    const onDocClick = (e: MouseEvent) => {
+      // If they clicked inside one of our menus, that menu's item
+      // handler closes it after firing the action; otherwise close
+      // immediately. We check all three popup classes in one pass.
+      const target = e.target as HTMLElement;
+      if (!target?.closest?.(".fm-ctx-menu")) closeCtxMenu();
+      if (!target?.closest?.(".fm-bg-menu")) closeBgCtxMenu();
+      if (!target?.closest?.(".fm-add-menu") && !target?.closest?.(".fm-add-btn")) closeAddMenu();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        closeCtxMenu();
+        closeBgCtxMenu();
+        closeAddMenu();
+      }
+    };
+    document.addEventListener("mousedown", onDocClick, true);
+    document.addEventListener("keydown", onKey);
+    onCleanup(() => {
+      document.removeEventListener("mousedown", onDocClick, true);
+      document.removeEventListener("keydown", onKey);
+    });
+  });
+
   onMount(async () => {
     // `{}` when the setting is off → every branch below falls through to the
     // $HOME path, i.e. exactly the pre-80.1 behavior.
@@ -356,9 +397,8 @@ export function FileManagerPane(p: Props) {
     // logical points already. Dividing there halved every coordinate on a
     // Retina display, so the hit-test missed both columns and the drop was
     // swallowed with no upload and no error.
-    let unlisten: (() => void) | undefined;
     try {
-      unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
         const payload = event.payload as
           | { type: "enter" | "over"; position: { x: number; y: number } }
           | { type: "drop"; paths: string[]; position: { x: number; y: number } }
@@ -401,42 +441,14 @@ export function FileManagerPane(p: Props) {
           })();
         }
       });
+      // The pane may have unmounted while the listener was being set up.
+      if (disposed) unlisten();
+      else unlistenDragDrop = unlisten;
     } catch (e) {
       // Drag-drop hookup failure is non-fatal — file manager still
       // works without it.
       log.warn("onDragDropEvent failed", e);
     }
-    onCleanup(() => {
-      try {
-        unlisten?.();
-      } catch {}
-    });
-
-    // Phase 23: dismiss popup context menu on any outside click /
-    // scroll / Escape. Capture phase so we beat the row's click
-    // handler when the user clicks elsewhere.
-    const onDocClick = (e: MouseEvent) => {
-      // If they clicked inside one of our menus, that menu's item
-      // handler closes it after firing the action; otherwise close
-      // immediately. We check all three popup classes in one pass.
-      const target = e.target as HTMLElement;
-      if (!target?.closest?.(".fm-ctx-menu")) closeCtxMenu();
-      if (!target?.closest?.(".fm-bg-menu")) closeBgCtxMenu();
-      if (!target?.closest?.(".fm-add-menu") && !target?.closest?.(".fm-add-btn")) closeAddMenu();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        closeCtxMenu();
-        closeBgCtxMenu();
-        closeAddMenu();
-      }
-    };
-    document.addEventListener("mousedown", onDocClick, true);
-    document.addEventListener("keydown", onKey);
-    onCleanup(() => {
-      document.removeEventListener("mousedown", onDocClick, true);
-      document.removeEventListener("keydown", onKey);
-    });
   });
 
   // Hit-test helper: is the point (x,y) inside a DOMRect? Used by the

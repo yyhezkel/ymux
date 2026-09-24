@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "bd67ff99e0304eea73e8bdfd72e48da9394bdc89a23cd3c2e01c3f1cb24012e3",
+    "app/src-tauri/src/lib.rs": "76395f76c7b34b576833a8d08b47585e4ebb23083d73673a3508d12f3ac1a439",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
@@ -81,7 +81,7 @@
   },
   "crates": {
     "app/src-tauri/crates/ymux-addons/src/lib.rs": "a564d3880cf0237b9e66adbff8cbfc974a9448f8c4e13105527dd59e7ee134dc",
-    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "40a488882d4973fa41152e596ad4e1316a5126f073e9eed1442d815c2a7f104a",
+    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "404e02208ea32cb11ef3e0b6f90ecc29fc41ab480a5e740f3e3842bd7b88b85c",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "76eb09970d1f1e5eb412e17971e87c6a0255f62a6c8a19db88a77a6d1540f9b4",
     "app/src-tauri/crates/ymux-core/src/log_writer.rs": "23760aa4727797ecb1e1cc60dde6ca02fab996f4115a5a920d764d983db4a6bd",
@@ -128,9 +128,10 @@
     "app/src/settings.ts": "8308e6c9479e076329a9693d1e953bc35bc02724273c3d53e3e3ed1d42acf98f",
     "app/src/shortcuts.ts": "40188c8824bbe531df71dbe2bff4cc05e6f81985e98c6b55c4d35e8cc29d0d8c",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
-    "app/src/terminalInstance.ts": "e2bdfd3c63e5891c4958f0088955c4ca821878265b73c1161da0285fcd1a680a",
+    "app/src/terminalInstance.ts": "26a539f84b9c6c2072a1f91c5e67ef4bddd75cebf302d67a0f95de52211c0991",
     "app/src/textDirection.ts": "4302533e2a671da5a9a70279b6aa8e1f8691f4894324dcb3b0bf6da19e102483",
-    "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27"
+    "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
+    "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
   },
   "frontend-panes": {
     "app/src/AddonsTab.tsx": "6eff5e7b1389af86debd3194ff02917788346a7801134b41403c48d9b4578c43",
@@ -142,7 +143,7 @@
     "app/src/DiffPane.tsx": "7ecf417256b36a5ea7ff88ab8f77619f4f8ca50619ceb008c6217d7a7797886e",
     "app/src/FeedPanel.tsx": "afc5c5b1df122ef468b9b4476eee93ee49f88c22bc64a088f6bf738cadb0360f",
     "app/src/FileEditor.tsx": "91f79763e8a79bdd730dc6ac406408da3f09094893168775f4db0d7b18eacb56",
-    "app/src/FileManagerPane.tsx": "d22c5b5ae0a8a6485f6f9f2bc058778538d0e444966c751442dade5e866047fc",
+    "app/src/FileManagerPane.tsx": "a91a9e45512d1cfe50c966108015af8fad32c0d9b73a7af73b37ae7bd0cdfa94",
     "app/src/FileManagerWindow.tsx": "dc988da67aa9e75d38e7d289155f007124ca229fb5ebee3e461e93388dd88e7a",
     "app/src/HelpPane.tsx": "2bb243ef25f974e043ed341de0b9315e1c40309683ae5f641ea9c8bff5c5dd23",
     "app/src/HygienePanel.tsx": "879aab9fc4ce90a038896ccbe84cacb58485f7a612ebabaad164f4a75a083a6e",
@@ -170,7 +171,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "fecfff85c6427d1489caa4f886acec2875c665192210bdc880d844f3aeb5a315",
+    "app/src/App.tsx": "2fb3b02c44158e50a7e8677fc1e7c59a744b731cd10495b9733d16f095dea7a5",
     "app/src/BriefingCard.tsx": "8c27bdeb211056209f9921947a5e479df60e6fcc5c1c57cf00fbdb9c84bb7ba7",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
