@@ -291,27 +291,20 @@
 }
 
 /* The signature "agent waiting for approval" pane ring, recoloured to each
-   direction's signature colour (overrides the app's default amber). Opacity/
-   spread pulse via box-shadow (compositor-friendly). Loaded after App.css so
-   it wins .pane.waiting and .pane.waiting.pane-pulse (≥ specificity + later). */
-[data-theme-family="redesign"] .pane.waiting,
-[data-theme-family="redesign"] .pane.waiting.pane-pulse {
-  animation: wmx-wait-pulse 1.4s ease-in-out infinite;
+   direction's signature colour (overrides the app's default amber). Static
+   ring on the pane; the glow sits on ::after and only its opacity breathes
+   (App.css § ymux-attn-breathe) — box-shadow itself must never animate.
+   Loaded after App.css so it wins .pane.waiting (≥ specificity + later). */
+[data-theme-family="redesign"] .pane.waiting {
+  box-shadow: 0 0 0 2px var(--wmx-wait-ring);
 }
-[data-theme-family="redesign"] .pane.waiting.pane-pulse::after { display: none; }
+[data-theme-family="redesign"] .pane.waiting::after {
+  box-shadow:
+    inset 0 0 0 3px var(--wmx-wait-ring),
+    inset 0 0 18px 6px var(--wmx-wait-glow-hi);
+  animation-duration: 1.4s;
+}
 
-@keyframes wmx-wait-pulse {
-  0%, 100% {
-    box-shadow:
-      0 0 0 2px var(--wmx-wait-ring),
-      0 0 10px 2px var(--wmx-wait-glow-lo);
-  }
-  50% {
-    box-shadow:
-      0 0 0 3px var(--wmx-wait-ring),
-      0 0 18px 6px var(--wmx-wait-glow-hi);
-  }
-}
 
 /* The blocking permission card's approve action inherits the direction's
    accent already (token-driven); nudge the reject to read as a quiet

@@ -7703,3 +7703,39 @@ success. build-windows dispatched on e33261e (run 34944453300, green, ~15 min �
 miss): ymux_0.5.1_x64-setup.exe 17.0 MB, handed to Yossi. Harness files deleted, vite stopped.
 github.com dropped twice more mid-watch (LAN-side timeouts); 1-min retry loops covered it.
 Compiles-untested (Rule #14): the live smoke is FOLLOWUPS P1 2026-09-15 (7 checks), Yossi's.
+
+2026-09-23 — macOS 0.5.0 GPU hang / kernel panic (bug report + ymux-crash-logs.zip from a
+collaborator's MacBookPro14,3, Intel HD 630). Branch fix/macos-ipc-flood (worktree wt-ipc-flood).
+Evidence read: unified-log summary (250,952 ipc:// custom-scheme loads in 66 min ≈ 63/s; 25k
+runJavaScript ≈ 6/s), log samples (every JS eval followed by bursts of 3-9 parallel loads),
+WebContent cpu_resource.diag (30/49 samples = CA layer repaint: RenderBlock/FlexibleBox paint,
+EllipsisBoxPainter, complex (Hebrew) text; fetch reached from event-loop microtasks), gpuRestart
++ WindowServer watchdog + panic. No URL/command names anywhere in the logs.
+Found in code: (1) osc_notify.rs read every OSC 9 as a notification, incl. ConEmu `9;4;st;pct`
+— Claude Code's progress bar, re-emitted constantly — so each → osc-notification event →
+Notification Center row + set_tray_badge invoke + pane marked notified (ring until focus);
+(2) the attention rings (.pane.waiting / .pane.pane-pulse / .ws-item.hook-pulse / redesign
+wmx-wait-pulse) animated box-shadow — a paint property — so an OSC-flagged pane repainted its
+whole layer incl. xterm DOM rows at 60 fps, indefinitely; two @keyframes ymux-attn-pulse also
+collided (the later one won); (3) allPaneAgentRows read the 250 ms agentClockMs → every row of
+every workspace + workspaceCardInfo + sidebar rebuilt 4×/s idle; (4) logger: one ui_log invoke
+per line, and index.tsx forwarded every console.warn/error the same way; title-seen logged every
+title (Claude animates a spinner in it); rtl-dirs could fire per frame; (5) set_tray_badge effect
+re-invoked on every list change (count unchanged at the 300 cap); modal browser-hide effect
+re-broadcast per workspace on every file() change; (6) rAF retry chains (font measure,
+ensureDirObserver) unbounded for a never-mounted pane.
+Fixes: is_conemu_subcommand (+test); opacity-only ymux-attn-breathe on ::after (static ring on the
+pane), reduced-motion static; staleClockMs (60 s) for the light; pulseTick skips when hidden;
+logger queue → ui_log_batch ≤1/s ≤100 lines with a dropped counter; title-seen/rtl-dirs gated;
+unreadCount memo; untrack on the hide broadcast; timers with a ceiling instead of rAF chains.
+New ipc_meter.rs wraps invoke_handler: per-command + emit counts, one `[IPC]` line/min above
+120 calls (WARN ≥10/s) — so the next report names the command instead of us inferring it.
+Vault: backend-core (+ipc_meter.rs), backend-sessions, frontend-lib, frontend-shell re-stamped.
+Compiles-untested: no local build (Rule #17) — CI is the gate; the live acceptance on the Mac is
+FOLLOWUPS P0 2026-09-23. The 63/s attribution is inferred, not proven.
+
+2026-09-23 — PR #49 green: ci-windows 35913330618 (rust/frontend/go), build-macos 35913330601 arm64 + x64 (x64 first attempt died on a lost hosted runner at the toolchain step; rerun green). Compiles-untested — live acceptance is FOLLOWUPS P0 2026-09-23.
+
+2026-09-24 — PR #49 follow-up: tester reports 0.5.1 fixed the IPC flood (~63 -> ~1.5 req/s, ~0 idle); remaining 10-14 evaluate_script/s while active, each ~4 WebKit throttle flips. New pty_emit.rs: one flusher thread coalesces pty:data per session (leading edge immediate, then <=1 emit/33 ms, 1 MB early flush, 0 idle); pty:exit routed through it and flushes the session first. Pending buffer unit test. Vault backend-core. Compiles-untested; test = `yes | head -n 2000000` 60 s, count runJavaScriptInFrameInScriptWorld/s (target <=30 per busy pane).
+
+2026-09-24 — tester on build 13:49 (aece6a2): idle perfect, memory flat 75-85 MB; still ~9 runJavaScript/s during output (~4 throttle flips each), WebContent ~16%. Batching IS in: 9/s = tmux redraw bursts ~110 ms apart, each alone in its 33 ms window (was 10-14/s per read). Going lower needs a window longer than the burst gap = visible choppiness/echo lag; asked Yossi before trading latency. build-macos: dispatch/main builds stamp CFBundleVersion <version>.<run number> via tauri --config bundleVersion (requested: builds were indistinguishable).

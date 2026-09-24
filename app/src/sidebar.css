@@ -733,13 +733,23 @@
 
 /* ─── Attention: hook pulse ─── */
 
-.ws-item.hook-pulse {
-  animation: ymux-attn-pulse 2s ease-in-out infinite;
+/* Opacity-only, like the pane ring (App.css § ymux-attn-breathe): the row
+   itself is never repainted by the pulse. `:not(.drop-below)` leaves ::after
+   to the drop indicator while a drag is over this row. */
+.ws-item.hook-pulse:not(.drop-below)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 2px rgba(224, 175, 104, 0.55);
+  animation: ymux-attn-breathe 2s ease-in-out infinite;
+  will-change: opacity;
 }
 @media (prefers-reduced-motion: reduce) {
-  .ws-item.hook-pulse {
+  .ws-item.hook-pulse:not(.drop-below)::after {
     animation: none;
-    box-shadow: inset 0 0 0 2px rgba(224, 175, 104, 0.55);
+    opacity: 1;
   }
 }
 
