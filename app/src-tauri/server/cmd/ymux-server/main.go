@@ -19,6 +19,7 @@ import (
 	"ymux-server/internal/chat"
 	"ymux-server/internal/config"
 	"ymux-server/internal/core"
+	"ymux-server/internal/desktop"
 	"ymux-server/internal/push"
 	"ymux-server/internal/files"
 	"ymux-server/internal/hooks"
@@ -166,6 +167,19 @@ func main() {
 		defer chatStore.Close()
 		chatMgr = chat.NewSessionManager(chatStore)
 		chatAPI = chat.NewChatAPI(chatMgr, chatStore, token)
+		// Phase 96: browser-initiated pairing needs a human's Allow/Deny, and
+		// the only human here is at the ymux desktop. Wire the outbound tunnel
+		// client as a closure so `chat` never imports `desktop` — same shape as
+		// SetPushLister / SetDeviceAuth. Unresolvable home ⇒ left nil, and a
+		// pairing request then fails closed with "ymux is not connected".
+		if homeErr == nil {
+			chatAPI.SetApprovalAsker(func(reqID, title, summary string, payload map[string]any, wait int) (string, error) {
+				d, err := desktop.AskApproval(home, reqID, title, summary, payload, wait)
+				return string(d), err
+			})
+		} else {
+			logger.Warn("browser pairing disabled: home directory unresolvable")
+		}
 		hooks.Start(chatMgr) // thin listener → SessionManager.HandleHookConn (cycle-safe)
 		go chat.RunSessionSweeper(chatMgr, stop)
 		logger.Info("Claude chat subsystem enabled")

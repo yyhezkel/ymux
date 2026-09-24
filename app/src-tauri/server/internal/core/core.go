@@ -34,11 +34,17 @@ import (
 // it before any browser client can reach a terminal, so it is a minor bump the
 // add-on offers to every existing install.
 //
+// 2.4.0 (Phase 96): browser-initiated pairing — a browser asks for access at
+// /api/pairing/request, the daemon pushes a blocking Allow/Deny card to the
+// ymux desktop through the reverse tunnel (internal/desktop, the daemon's
+// first OUTBOUND client), and an approved request then redeems through the
+// unchanged one-shot path. The remote needs this before any browser can be
+// let in, so the add-on offers it.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
-// NEWER than the version it ships and silently stop offering updates; both
-// are set to 2.3.0 here.
-const Version = "2.3.0"
+// NEWER than the version it ships and silently stop offering updates.
+const Version = "2.4.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

@@ -132,7 +132,7 @@ pub const NGINX_PROXY_VERSION: &str = "1.0.0";
 /// check compares the remote's `ymux-server --version` (falling back to the
 /// legacy `ymux-insights` symlink) against this. Major 2 = the API-stability
 /// guarantee; existing 1.2.x installs are offered the 2.0.0 upgrade.
-pub const INSIGHTS_VERSION: &str = "2.3.0";
+pub const INSIGHTS_VERSION: &str = "2.4.0";
 
 /// The add-ons ymux knows about, in dependency-friendly order
 /// (ymux-cli first — everything else needs the remote CLI present).

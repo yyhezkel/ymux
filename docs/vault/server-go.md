@@ -7,6 +7,7 @@ covers:
   - app/src-tauri/server/internal/chat/*.go
   - app/src-tauri/server/internal/config/*.go
   - app/src-tauri/server/internal/core/*.go
+  - app/src-tauri/server/internal/desktop/*.go
   - app/src-tauri/server/internal/files/*.go
   - app/src-tauri/server/internal/hooks/*.go
   - app/src-tauri/server/internal/insights/*.go
@@ -39,6 +40,8 @@ Manual build commands: `docs/ymux-server/README.md` § Build.
 
 ```
 main.go  →  wires config, auth, api, chat, hooks, insights, logs, files, push, term, workspace
+            (and injects desktop.AskApproval into chat as a closure, so chat
+             never imports desktop — same shape as SetPushLister)
 core     ←  every subsystem imports it; it imports no sibling
 api      →  imports subsystems; subsystems NEVER import api
 ```
@@ -58,6 +61,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
 | `config` | 469 | API token, filesystem paths, the log janitor (size cap + age prune), and the one-time data-dir migration |
 | `core` | 110 | the leaf interface package |
+| `desktop` | 290 | the daemon's only OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96) |
 | `files` | 682 | the Files API (`/api/v2/files/*`) |
 | `hooks` | 42 | a thin TCP listener — owns none of the protocol |
 | `insights` | 2,653 | sampler, store, Docker, the hygiene reaper, and the two Phase-84 rollups |
@@ -139,6 +143,58 @@ joins labels on with the `label > auto_name > claude_title > raw name` precedenc
 Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma ops, so
 they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
 Phase B moves them.
+
+**`desktop/` (Phase 96) — the direction that did not exist.** Until this package,
+the daemon never dialled the desktop: every desktop→daemon call is a `curl` the
+DESKTOP opens on an SSH exec channel (`pairing.rs::daemon_curl`), and the daemon's
+only tunnel-facing code is a LISTENER (`chat/chat_hookrpc.go`) the CLI dials inbound.
+Anyone reasoning about this system will assume the server can push; it cannot, and
+this package is the narrow exception.
+
+It speaks **exactly what the Linux CLI speaks** — same endpoint, same HMAC
+challenge-response, same newline-delimited JSON-RPC — so it inherits an
+already-deployed server side instead of adding a protocol. The Rust counterparts are
+`cli/src/main.rs::perform_handshake` (the client half it mirrors) and
+`crates/ymux-tunnel/src/lib.rs` (the server half it talks to). The desktop still
+OPENS with the legacy `WINMUX` tag on purpose, so the client mirrors whichever tag it
+is addressed in and accepts either in the verdict; the day `CHALLENGE_TAG` flips,
+nothing here changes. The tests run a Go implementation of the server half written
+from the wire spec, so a drift in either direction fails in CI rather than on a box
+where the only symptom is "the approval card never appears".
+
+`Discover` reads `~/.ymux/run/last.env` — and for this caller the FILE is the primary
+source, not the fallback it is for the CLI: the daemon is a service started
+independently of any SSH session, so it never inherits `YMUX_SOCKET_ADDR`. It is
+re-read on **every** call, never cached, because a reconnect moves the tunnel to a
+different port. Rule #8: the token is a password — it is never logged and never put on
+the wire, only an HMAC of the server's nonce.
+
+**`chat/chat_browser_pairing.go` (Phase 96) — a browser asks, the desktop approves.**
+The mobile flow runs desktop-first (ymux issues a one-shot, the QR carries it, the
+phone redeems), which cannot work for a browser on a machine ymux is not running on.
+So: the browser POSTs to a public `/api/pairing/request`, the daemon pushes a
+**blocking `feed.push`** through `desktop/` — an ordinary ymux Allow/Deny card that
+toasts with every panel closed — and on approval the row flips `requested` → `pending`,
+after which the **unchanged** `/api/pairing/redeem` finishes the job. A device that
+arrived this way is indistinguishable from one a QR produced.
+
+Three things about it are load-bearing:
+
+- **`redeemDevice` matches `status='pending'` only**, so a request nobody approved can
+  never be exchanged for a credential. That is the whole security property, and it came
+  free from the existing query. `TestRequestedRowCannotBeRedeemed` is its guard.
+- **The code is a matching device, not a secret.** Six digits shown on both the browser
+  and the card, so a human can tell their own browser from someone else's request
+  arriving at the same moment. Authorisation is the owner token, never knowing a code.
+- **Approval does not grant a shell.** An approved browser gets the ordinary `"all"`
+  grant, which since Phase 95 excludes `auth.ScopeShellAttach`. "Is this browser mine?"
+  and "may it run commands on my machine?" are different questions and do not share a
+  button; the second is a separate act in the device list.
+
+The request endpoint cannot require a credential, so it is rate-limited per IP with a
+global cap on outstanding requests, and it **fails closed with a message** when no
+desktop is reachable — a browser left polling a request no human will ever see is
+worse than a refusal.
 
 **`hooks/hooks.go`** (42 lines) is deliberately tiny: bind a localhost port, report the
 bound address through `core.AddrSink` so spawned claude children can be pointed at it,
