@@ -164,6 +164,14 @@ this gives them **one shape** so the desktop manager can install/update/remove/d
 uniformly. Pure data — no IO. The SSH side and the `Builtin` routine dispatch live in
 `app/src/addons.rs`.
 
+**`INSIGHTS_VERSION` must equal `core.Version` in the Go server, character for
+character.** The desktop compares a remote's `ymux-server --version` against this
+constant to decide whether to offer an update, so a mismatch is not cosmetic: the two
+had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote look
+*newer* than the version the desktop ships and silently stopped the update offer.
+Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`. Bump them together, in the same
+commit, or the daemon you just rebaked never reaches a single server.
+
 ## `ymux-bootstrap` (616) — remote CLI deploy
 
 Detect the remote arch, hash any existing binary, upload via SFTP when it does not match

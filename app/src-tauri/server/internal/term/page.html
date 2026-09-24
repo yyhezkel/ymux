@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ymux · דף בדיקה</title>
+<!--
+  The Phase 97 DIAGNOSTIC page. This is not the ymux web app and is not trying
+  to be: it is the smallest client that exercises the whole Phase 95 + 96 stack
+  end to end, so "does the PTY work" stops being a question you answer by hand
+  with websocat.
+
+  It is embedded in the daemon binary on purpose — a debugging tool that needs
+  its own delivery mechanism is a debugging tool you cannot use when things are
+  broken. That is NOT a decision about how the real web bundle ships (Q2 in
+  docs/DECISIONS.md is still open); a few KB of diagnostics and a 3 MB app are
+  different questions.
+
+  xterm.js comes from a CDN rather than the binary. The committed server blobs
+  are ~13 MB each and every rebake writes both into git history, so +600 KB per
+  rebake to avoid one CDN fetch is the wrong trade for a diagnostic page. The
+  browser reaching this page already has a network; if the CDN is blocked the
+  page says so instead of showing an empty box.
+
+  Every step reports itself to the daemon log (POST /diag/log) so one log file
+  tells the whole story. Rule #1: it reports STEP NAMES and error strings only.
+  Terminal bytes never leave the terminal.
+-->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
+<style>
+  :root {
+    --bg: #12141a; --panel: #1a1d26; --line: #2b3040;
+    --fg: #e6e8ef; --dim: #9aa3b8; --accent: #6ea8fe;
+    --ok: #4ade80; --warn: #fbbf24; --err: #f87171;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.5 system-ui, "Segoe UI", Arial, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+  .pill {
+    font-size: 12px; padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim);
+  }
+  .pill.ok { color: var(--ok); border-color: #2b5f3f; }
+  .pill.err { color: var(--err); border-color: #6b2b2b; }
+  main { padding: 16px; max-width: 1100px; margin: 0 auto; }
+  section {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px 16px; margin-bottom: 14px;
+  }
+  h2 { font-size: 13px; margin: 0 0 10px; color: var(--dim); font-weight: 600; }
+  button {
+    font: inherit; background: #23283a; color: var(--fg);
+    border: 1px solid var(--line); border-radius: 7px;
+    padding: 6px 14px; cursor: pointer;
+  }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .45; cursor: default; }
+  button.primary { background: var(--accent); color: #0b1020; border-color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--err); }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .muted { color: var(--dim); }
+  .code {
+    font: 600 34px/1.2 ui-monospace, "Cascadia Mono", Consolas, monospace;
+    letter-spacing: .12em; color: var(--accent); direction: ltr; unicode-bidi: isolate;
+  }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: start; padding: 7px 8px; border-bottom: 1px solid var(--line); font-size: 13px; }
+  th { color: var(--dim); font-weight: 600; }
+  td.ltr, .ltr { direction: ltr; unicode-bidi: isolate; text-align: start; }
+  pre.note {
+    direction: ltr; unicode-bidi: isolate; white-space: pre-wrap; word-break: break-all;
+    background: #0e1016; border: 1px solid var(--line); border-radius: 7px;
+    padding: 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--dim);
+  }
+  #termWrap { background: #000; border-radius: 8px; padding: 6px; direction: ltr; }
+  #log {
+    direction: ltr; unicode-bidi: isolate; max-height: 220px; overflow-y: auto;
+    font: 12px/1.6 ui-monospace, Consolas, monospace;
+  }
+  #log div { border-bottom: 1px solid #20232e; padding: 1px 0; }
+  .lv-error { color: var(--err); } .lv-warn { color: var(--warn); } .lv-ok { color: var(--ok); }
+  .hidden { display: none !important; }
+  .banner { border-radius: 7px; padding: 10px 12px; margin-bottom: 10px; font-size: 13px; }
+  .banner.warn { background: #2a230f; border: 1px solid #5c4a16; }
+  .banner.err { background: #2a1414; border: 1px solid #5c1f1f; }
+</style>
+</head>
+<body>
+<header>
+  <h1>ymux · דף בדיקה</h1>
+  <span class="pill" id="authPill">לא מחובר</span>
+  <span class="pill" id="wsPill">אין טרמינל</span>
+  <span style="flex:1"></span>
+  <button id="forgetBtn" class="danger">שכח מכשיר</button>
+</header>
+
+<main>
+  <!-- ── 1. pairing ───────────────────────────────────────────────── -->
+  <section id="pairSec">
+    <h2>1 · גישה</h2>
+    <div id="pairIdle">
+      <div class="row">
+        <button class="primary" id="requestBtn">בקש גישה</button>
+        <span class="muted">ymux בדסקטופ חייב להיות פתוח ומחובר ב-SSH לשרת הזה.</span>
+      </div>
+    </div>
+    <div id="pairWaiting" class="hidden">
+      <div class="muted">אשר ב-ymux. ודא שהקוד בכרטיס זהה לזה:</div>
+      <div class="code" id="pairCode">— — —</div>
+      <div class="row" style="margin-top:8px">
+        <span class="muted" id="pairCountdown"></span>
+        <button id="cancelPairBtn">בטל</button>
+      </div>
+    </div>
+    <div id="pairDone" class="hidden">
+      <div class="row"><span class="lv-ok">✓ המכשיר מאושר.</span>
+      <span class="muted ltr" id="deviceId"></span></div>
+    </div>
+  </section>
+
+  <!-- ── 2. sessions ──────────────────────────────────────────────── -->
+  <section id="sessSec" class="hidden">
+    <h2>2 · סשנים</h2>
+    <div id="scopeBanner" class="banner warn hidden">
+      <b>אין הרשאת <span class="ltr">shell:attach</span>.</b>
+      אישור מכשיר לא נותן טרמינל — זו החלטה נפרדת, ואין לה עדיין ממשק.
+      הרץ את זה על השרת כדי להדליק אותה:
+      <pre class="note" id="scopeCmd"></pre>
+    </div>
+    <div class="row" style="margin-bottom:10px">
+      <button id="refreshBtn">רענן</button>
+      <button id="newBtn">סשן חדש</button>
+      <span class="muted" id="sessCount"></span>
+    </div>
+    <table id="sessTable">
+      <thead><tr><th>שם</th><th>חלונות</th><th>מחוברים</th><th>תיקייה</th><th></th></tr></thead>
+      <tbody id="sessBody"></tbody>
+    </table>
+  </section>
+
+  <!-- ── 3. terminal ──────────────────────────────────────────────── -->
+  <section id="termSec" class="hidden">
+    <h2>3 · טרמינל <span class="ltr muted" id="termName"></span></h2>
+    <div class="row" style="margin-bottom:8px">
+      <button id="detachBtn">התנתק</button>
+      <span class="muted" id="termStats"></span>
+    </div>
+    <div id="termWrap"><div id="term"></div></div>
+  </section>
+
+  <!-- ── log ──────────────────────────────────────────────────────── -->
+  <section>
+    <h2>יומן · נשלח גם ללוג של השרת <span class="ltr">(SRV:WEB)</span></h2>
+    <div id="log"></div>
+  </section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<script>
+"use strict";
+
+const TOKEN_KEY = "ymux.diag.token";
+const DEV_KEY   = "ymux.diag.device";
+const $ = (id) => document.getElementById(id);
+
+let token   = localStorage.getItem(TOKEN_KEY) || "";
+let ws      = null;   // live terminal socket
+let term    = null;   // xterm instance
+let fit     = null;
+let pollT   = null;   // pairing poll timer
+let tickT   = null;   // countdown timer
+
+// ── logging ──────────────────────────────────────────────────────────
+// Every line lands BOTH in the panel and in the daemon log, so a failure
+// mid-flow can be read from one file afterwards. Rule #1: step names and
+// error strings only — never terminal bytes, never the token.
+function log(level, step, detail) {
+  const at = new Date().toTimeString().slice(0, 8);
+  const row = document.createElement("div");
+  row.className = "lv-" + level;
+  row.textContent = `${at}  ${step}${detail ? "  " + detail : ""}`;
+  $("log").prepend(row);
+  fetch("/diag/log", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ level, step, detail: String(detail ?? "") }),
+  }).catch(() => { /* the panel still has it; never let logging break a flow */ });
+}
+
+function authHeaders() {
+  return token ? { "Authorization": "Bearer " + token } : {};
+}
+
+// ── pairing ──────────────────────────────────────────────────────────
+async function requestAccess() {
+  $("requestBtn").disabled = true;
+  log("info", "pair.request", "asking the daemon");
+  try {
+    const r = await fetch("/api/pairing/request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ device_name: navigator.userAgent.slice(0, 60) }),
+    });
+    if (r.status === 503) {
+      log("error", "pair.request", "ymux is not connected to this server");
+      showBanner("ymux בדסקטופ לא מחובר לשרת הזה. פתח אותו, ודא שיש חיבור SSH, ונסה שוב.");
+      $("requestBtn").disabled = false;
+      return;
+    }
+    if (r.status === 429) {
+      log("warn", "pair.request", "rate limited");
+      showBanner("יותר מדי בקשות. חכה כמה דקות.");
+      $("requestBtn").disabled = false;
+      return;
+    }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const body = await r.json();
+    log("ok", "pair.request", "request_id=" + body.request_id + " code=" + body.code);
+    $("pairCode").textContent = body.code;
+    $("pairIdle").classList.add("hidden");
+    $("pairWaiting").classList.remove("hidden");
+    pollPairing(body.one_shot_token, body.expires_at);
+  } catch (e) {
+    log("error", "pair.request", e.message);
+    $("requestBtn").disabled = false;
+  }
+}
+
+// The browser polls; the HUMAN is the slow part, so 2s is plenty and keeps
+// the daemon log readable (the poll itself logs at debug there).
+function pollPairing(oneShot, expiresAt) {
+  clearInterval(tickT);
+  tickT = setInterval(() => {
+    const left = Math.max(0, expiresAt - Math.floor(Date.now() / 1000));
+    $("pairCountdown").textContent = left ? `פג בעוד ${left} שניות` : "פג";
+  }, 500);
+
+  clearInterval(pollT);
+  pollT = setInterval(async () => {
+    try {
+      const r = await fetch("/api/pairing/request/status?one_shot_token=" + encodeURIComponent(oneShot));
+      const s = (await r.json()).status;
+      if (s === "requested") return;            // still waiting on a human
+      clearInterval(pollT); clearInterval(tickT);
+      if (s === "pending") { log("ok", "pair.approved", "redeeming"); return redeem(oneShot); }
+      log("warn", "pair.ended", s);             // gone = denied/timed out, expired = nobody looked
+      showBanner(s === "expired" ? "הבקשה פגה." : "הבקשה נדחתה או לא נענתה.");
+      resetPairing();
+    } catch (e) {
+      log("error", "pair.poll", e.message);
+    }
+  }, 2000);
+}
+
+async function redeem(oneShot) {
+  try {
+    const r = await fetch("/api/pairing/redeem", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ one_shot_token: oneShot }),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const body = await r.json();
+    token = body.long_term_token;
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(DEV_KEY, body.device_id || "");
+    log("ok", "pair.redeem", "device=" + body.device_id);
+    showPaired();
+    listSessions();
+  } catch (e) {
+    log("error", "pair.redeem", e.message);
+    resetPairing();
+  }
+}
+
+function resetPairing() {
+  clearInterval(pollT); clearInterval(tickT);
+  $("pairWaiting").classList.add("hidden");
+  $("pairIdle").classList.remove("hidden");
+  $("requestBtn").disabled = false;
+}
+
+function showPaired() {
+  $("pairIdle").classList.add("hidden");
+  $("pairWaiting").classList.add("hidden");
+  $("pairDone").classList.remove("hidden");
+  $("deviceId").textContent = localStorage.getItem(DEV_KEY) || "";
+  $("authPill").textContent = "מחובר";
+  $("authPill").className = "pill ok";
+  $("sessSec").classList.remove("hidden");
+}
+
+function showBanner(text) {
+  let b = $("pairBanner");
+  if (!b) {
+    b = document.createElement("div");
+    b.id = "pairBanner"; b.className = "banner err";
+    $("pairSec").prepend(b);
+  }
+  b.textContent = text;
+}
+
+// ── sessions ─────────────────────────────────────────────────────────
+async function listSessions() {
+  log("info", "term.list", "");
+  try {
+    const r = await fetch("/api/v2/term/sessions", { headers: authHeaders() });
+    if (r.status === 403) {
+      // The expected state right after pairing: the device is approved but
+      // "all" does not include shell:attach. Say exactly that, and hand over
+      // the command that fixes it — there is no UI for scopes yet.
+      log("warn", "term.list", "403 — shell:attach not granted");
+      $("scopeBanner").classList.remove("hidden");
+      $("scopeCmd").textContent =
+        `curl -s -X PUT -H "Authorization: Bearer $(cat ~/.ymux/server/token)" \\\n` +
+        `  -H 'Content-Type: application/json' \\\n` +
+        `  -d '{"scopes":["workspace:read","workspace:write","session:read","session:write",` +
+        `"hook:approve","hook:deny","files:read","files:write","insights:read","shell:attach"]}' \\\n` +
+        `  http://127.0.0.1:7879/api/v2/devices/${localStorage.getItem(DEV_KEY)}/scopes`;
+      $("sessBody").innerHTML = "";
+      return;
+    }
+    if (r.status === 401) { log("error", "term.list", "401 — token rejected"); forget(); return; }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    $("scopeBanner").classList.add("hidden");
+    renderSessions(await r.json());
+  } catch (e) {
+    log("error", "term.list", e.message);
+  }
+}
+
+function renderSessions(rows) {
+  log("ok", "term.list", rows.length + " session(s)");
+  $("sessCount").textContent = rows.length ? "" : "אין סשנים — צור אחד.";
+  const body = $("sessBody");
+  body.innerHTML = "";
+  for (const s of rows) {
+    const tr = document.createElement("tr");
+    const cell = (text, ltr) => {
+      const td = document.createElement("td");
+      td.textContent = text;
+      if (ltr) td.className = "ltr";
+      return td;
+    };
+    tr.append(cell(s.display || s.name, true), cell(s.windows, false),
+              cell(s.attached, false), cell(s.path || "", true));
+    const act = document.createElement("td");
+    const open = document.createElement("button");
+    open.textContent = "חבר";
+    open.onclick = () => attach(s.name);
+    const kill = document.createElement("button");
+    kill.textContent = "הרוג"; kill.className = "danger";
+    kill.onclick = () => killSession(s.name);
+    act.append(open, document.createTextNode(" "), kill);
+    tr.append(act);
+    body.append(tr);
+  }
+}
+
+async function newSession() {
+  log("info", "term.create", "");
+  try {
+    const r = await fetch("/api/v2/term/sessions", {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    const body = await r.json();
+    log("ok", "term.create", body.name);
+    listSessions();
+  } catch (e) {
+    log("error", "term.create", e.message);
+  }
+}
+
+async function killSession(name) {
+  if (!confirm(`להרוג את הסשן ${name}? כל מה שרץ בו ימות.`)) return;
+  log("warn", "term.kill", name);
+  try {
+    const r = await fetch("/api/v2/term/sessions/" + encodeURIComponent(name),
+                          { method: "DELETE", headers: authHeaders() });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    log("ok", "term.kill", name + " gone");
+    listSessions();
+  } catch (e) {
+    log("error", "term.kill", e.message);
+  }
+}
+
+// ── terminal ─────────────────────────────────────────────────────────
+function attach(name) {
+  if (typeof Terminal === "undefined") {
+    log("error", "term.attach", "xterm.js did not load (CDN blocked?)");
+    return;
+  }
+  detach();
+  $("termSec").classList.remove("hidden");
+  $("termName").textContent = name;
+
+  term = new Terminal({ fontSize: 13, cursorBlink: true, convertEol: false,
+                        theme: { background: "#000000" } });
+  fit = new FitAddon.FitAddon();
+  term.loadAddon(fit);
+  term.open($("term"));
+  fit.fit();
+
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/api/v2/term/sessions/${encodeURIComponent(name)}` +
+              `/attach?token=${encodeURIComponent(token)}&cols=${term.cols}&rows=${term.rows}`;
+  log("info", "ws.open", `${name} ${term.cols}x${term.rows}`);
+
+  ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  let inBytes = 0, outBytes = 0;
+
+  ws.onopen = () => {
+    $("wsPill").textContent = "טרמינל מחובר";
+    $("wsPill").className = "pill ok";
+    log("ok", "ws.open", name);
+  };
+  ws.onmessage = (ev) => {
+    if (typeof ev.data === "string") {
+      // The only text frames the server sends are control frames.
+      let f = {}; try { f = JSON.parse(ev.data); } catch { /* ignore */ }
+      if (f.type === "exit") { log("warn", "ws.exit", "the session ended or was killed"); detach(); }
+      return;
+    }
+    const bytes = new Uint8Array(ev.data);
+    outBytes += bytes.length;
+    term.write(bytes);
+    $("termStats").textContent = `נכנס ${inBytes} · יצא ${outBytes} bytes`;
+  };
+  ws.onerror = () => log("error", "ws.error", name);
+  ws.onclose = (e) => {
+    $("wsPill").textContent = "אין טרמינל";
+    $("wsPill").className = "pill";
+    log(e.wasClean ? "info" : "warn", "ws.close", `code=${e.code}`);
+  };
+
+  term.onData((d) => {
+    if (!ws || ws.readyState !== 1) return;
+    const b = new TextEncoder().encode(d);
+    inBytes += b.length;
+    ws.send(b);
+  });
+
+  window.addEventListener("resize", onResize);
+  term.focus();
+}
+
+function onResize() {
+  if (!fit || !term || !ws || ws.readyState !== 1) return;
+  fit.fit();
+  ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+  log("info", "ws.resize", `${term.cols}x${term.rows}`);
+}
+
+function detach() {
+  window.removeEventListener("resize", onResize);
+  if (ws) { ws.close(); ws = null; }
+  if (term) { term.dispose(); term = null; }
+  $("term").innerHTML = "";
+  $("termSec").classList.add("hidden");
+}
+
+function forget() {
+  detach();
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(DEV_KEY);
+  token = "";
+  log("warn", "device.forget", "local credential cleared");
+  location.reload();
+}
+
+// ── boot ─────────────────────────────────────────────────────────────
+$("requestBtn").onclick   = requestAccess;
+$("cancelPairBtn").onclick = () => { log("info", "pair.cancel", ""); resetPairing(); };
+$("refreshBtn").onclick   = listSessions;
+$("newBtn").onclick       = newSession;
+$("detachBtn").onclick    = detach;
+$("forgetBtn").onclick    = forget;
+
+log("info", "page.load", location.host);
+if (typeof Terminal === "undefined") {
+  log("error", "page.load", "xterm.js unavailable — the terminal will not render");
+}
+if (token) { showPaired(); listSessions(); }
+</script>
+</body>
+</html>

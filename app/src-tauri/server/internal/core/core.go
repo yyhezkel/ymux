@@ -27,7 +27,28 @@ import (
 // pick up the daemon that knows about the new paths.
 // 2.2.1 (Phase 86): server load — docker stats one-shot + 30s cadence, top
 // every 10s, hygiene reaper also kills orphaned (ppid 1) port-watchers.
-const Version = "2.2.1"
+// 2.3.0 (Phase 95): the terminal API — /api/v2/term/* lists, creates, renames
+// and kills tmux sessions, and a binary WebSocket attaches a real PTY to one
+// (internal/term). Gated on the new opt-in auth.ScopeShellAttach. This is the
+// first slice of "ymux in the browser" (docs/WEB-DESIGN.md) and a remote needs
+// it before any browser client can reach a terminal, so it is a minor bump the
+// add-on offers to every existing install.
+//
+// 2.4.0 (Phase 96): browser-initiated pairing — a browser asks for access at
+// /api/pairing/request, the daemon pushes a blocking Allow/Deny card to the
+// ymux desktop through the reverse tunnel (internal/desktop, the daemon's
+// first OUTBOUND client), and an approved request then redeems through the
+// unchanged one-shot path. The remote needs this before any browser can be
+// let in, so the add-on offers it. Phase 97 (the embedded diagnostic page at
+// `/` plus its browser log sink) rides the SAME 2.4.0 rather than bumping
+// again: 2.4.0 has not shipped anywhere yet, and the page is what makes the
+// rest of 2.4.0 testable, so releasing them apart would be releasing a
+// feature and its only client separately.
+//
+// Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
+// had already drifted apart, which made the desktop read a 2.2.1 remote as
+// NEWER than the version it ships and silently stop offering updates.
+const Version = "2.4.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value
