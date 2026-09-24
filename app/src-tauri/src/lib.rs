@@ -28,6 +28,7 @@ mod osc_notify;
 mod pairing;
 mod provisioning;
 mod pty_decode;
+mod pty_emit;
 mod remote_bootstrap;
 mod rpc_server;
 mod sessions_overview;
@@ -2489,14 +2490,9 @@ fn emit_data(
     if decoded.text.is_empty() {
         return;
     }
-    ipc_meter::record("emit:pty:data");
-    let _ = app.emit(
-        "pty:data",
-        PtyDataEvent {
-            session_id: session_id.to_string(),
-            data: decoded.text,
-        },
-    );
+    // Batched: one flusher thread emits at most every 33 ms per session,
+    // leading edge first (pty_emit.rs).
+    pty_emit::data(app, session_id, decoded.text);
 }
 
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
@@ -2665,13 +2661,8 @@ fn emit_exit(app: &AppHandle, session_id: &str, reason: Option<String>) {
         "pty:exit session={session_id} reason={}",
         reason.as_deref().unwrap_or("(none)")
     ));
-    let _ = app.emit(
-        "pty:exit",
-        PtyExitEvent {
-            session_id: session_id.to_string(),
-            reason,
-        },
-    );
+    // Through the batcher, which flushes this session's pending text first.
+    pty_emit::exit(app, session_id, reason);
 }
 
 fn cleanup_session_maps(
