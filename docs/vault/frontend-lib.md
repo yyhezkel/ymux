@@ -59,7 +59,13 @@ Things it does that are easy to get wrong:
 - **`applyRowDirections` / `ensureDirObserver`** — a `MutationObserver` coalesces a burst
   of cell mutations into **one** `applyDir()` per animation frame, and a `WeakMap` cache
   skips any row whose text is unchanged. Without both, per-line direction is a
-  per-mutation DOM write.
+  per-mutation DOM write. If `.xterm-rows` is missing it retries on a 250 ms timer, at
+  most 40 times — never an unbounded rAF chain (same for `scheduleInitialFontMeasure`
+  waiting for the container to be attached).
+- **Diagnostic log lines on per-frame paths are rate-gated.** `rtl-dirs` speaks when the
+  direction vector changes, at most once per 2 s per pane; `title-seen` only when the
+  match flag or a coarse length bucket changes — Claude animates a spinner in its title,
+  and "every title" was several lines a second per pane.
 - **`fitAndResize`** is rAF-throttled — the `ResizeObserver` fires per pixel during a
   divider drag, and every call sends a SIGWINCH down the SSH channel. tmux cannot keep up
   and the renderer thrashes.
@@ -216,9 +222,13 @@ past installs), `fontInstall`, and `fontUninstall`.
 
 ## Small modules
 
-- **`logger.ts` (77)** — `createLogger(tag)`. Lines reach both devtools and the single
-  local `debug.log` via the `ui_log` command, tagged `[UI:TAG]`. Level filtering is
-  **double-gated**: skip the IPC below the threshold here (cheap), and the backend filters
+- **`logger.ts` (~115)** — `createLogger(tag)`. Lines reach both devtools and the single
+  local `debug.log`, tagged `[UI:TAG]`. **Batched**: `enqueueLog` queues, and one
+  `ui_log_batch` invoke ships the queue at most once a second, capped at 100 lines (the
+  overflow is counted into a `[UI:LOG] dropped N` line); `pagehide` flushes. One invoke
+  per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
+  console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
+  **double-gated**: skip below the threshold here (cheap), and the backend filters
   again — the backend is authoritative, so a popout window that never loads settings still
   behaves. **Import this before the console monkeypatch.** Rule #9.
 - **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
