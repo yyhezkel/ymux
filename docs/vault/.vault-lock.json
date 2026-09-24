@@ -209,6 +209,8 @@
     "app/src-tauri/server/internal/chat/bridge.go": "e9e97a1ee6eeb761c9e0ebb45221fcaacc97575e6ec66d0c0687e5ce6aa01abf",
     "app/src-tauri/server/internal/chat/bridge_test.go": "e56583b10cc996e44457afe1a7ccc6c26d8fd42475cbe2addc4b63412702b0d1",
     "app/src-tauri/server/internal/chat/chat_api.go": "a4cd1e3b87cc4af38652574d7447dc7c58d8318d4516d1d5ffeec9cc2726ee5b",
+    "app/src-tauri/server/internal/chat/chat_browser_pairing.go": "b1a076b366404179dc2f9a3fb97e22928db9ee40afd97baea2c279a9d291950d",
+    "app/src-tauri/server/internal/chat/chat_browser_pairing_test.go": "ead9d31325d66c8c44fc7bab2599ef7d5f43b5105ceaacf8b6e47d8c0f5e521b",
     "app/src-tauri/server/internal/chat/chat_helpers.go": "ac24ad161bdc7fa9b2598265b342630f13b75b6ce986b617f37fa858ac2aa6ce",
     "app/src-tauri/server/internal/chat/chat_hookrpc.go": "e68e3513ca9e881b5bfd40ff3e2908c5e585904422a230bdc05ae1e50cce0f25",
     "app/src-tauri/server/internal/chat/chat_hookrpc_test.go": "b3fb14d15b594c27bb5107104d225f1841989e5403c0611bfeee5e507d5e6021",
