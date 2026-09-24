@@ -25,6 +25,161 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
+- **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
+  access, in the same place the mobile pairing lives, on the same logic. Checked against
+  the code: **he is right, and more of it already exists than expected.**
+- **What is already there.** `POST /api/pairing/issue` (`chat_pairing.go`) **already
+  accepts a `scopes` array** in its body and stores whatever it is given; the desktop
+  simply never sends one, so every pairing to date landed as `"all"`. The daemon already
+  mints a single-use token (48 hex chars, 5-minute TTL, hashed at rest), exposes a public
+  `/api/pairing/redeem` (the one-shot IS the credential), lists devices with their scopes,
+  renames, revokes, and has owner-only `GET/PUT /api/v2/devices/{id}/scopes`. The desktop
+  Mobile tab already generates the QR and **polls for redemption so the QR auto-closes the
+  moment the device pairs**. None of that needs rebuilding.
+- **What is actually missing — and one item is not optional.** Since Phase 95, `"all"`
+  deliberately does NOT include `shell:attach`, so a browser paired through today's flow
+  would get 403 on every terminal route. **Sending scopes at issue time is therefore
+  required for the browser to work at all**, not a nicety. Beyond that: no desktop UI
+  exists for the scopes endpoints, and the QR is unusable when the browser is on a
+  different machine than ymux.
+- **Options:**
+  - **(A) Desktop-initiated, what exists.** Add a `scopes` parameter to
+    `mobile_pairing_generate_qr`, a checkbox row on the card, and a copy button; the user
+    carries the token to the browser. Nearly free. But the token is 48 characters: fine
+    to paste when ymux is on the same machine, unusable when it is not — which is the
+    case the browser version exists for.
+  - **(B) Browser-initiated, what Yossi described. RECOMMENDED.** The browser asks, ymux
+    approves. `POST /api/pairing/request` (public) returns a short human code; the page
+    shows it and long-polls; ymux shows an approval card carrying **the same code plus the
+    requesting IP and User-Agent**; Yossi matches the two and approves, with a separate
+    `shell:attach` checkbox defaulting OFF. This is the standard device-authorization
+    shape (`gh auth login`, Apple TV, Tailscale) and it works no matter which machine the
+    browser is on. It reuses the whole device/token/scope store and mirrors the
+    `PendingRequest` winner-takes-all pattern the hook gates already use.
+- **Security, non-negotiable for (B):** the request endpoint is unauthenticated by
+  nature, so it needs rate limiting and a cap on pending requests; **the code must be
+  displayed in both places and matched by the human**, or an attacker's request could be
+  approved by mistake for one of Yossi's own; the card must show IP and User-Agent; the
+  existing 5-minute TTL carries over; and `shell:attach` is its own explicit checkbox,
+  never folded into an "approve" button.
+- **Falls out of it:** the "Mobile" tab now covers browsers too and should be renamed
+  (Devices / מכשירים), and the device list should gain a scopes editor — which is also
+  how a shell grant gets revoked without unpairing the device.
+- **DECIDED (Yossi, 2026-09-24): option B**, browser-initiated. He also drew the
+  consequence himself and it is correct: the desktop has to be open and connected for a
+  first pairing. That is not only a cost — the approval is thereby bound to someone who
+  holds SSH access to the box, which is the strongest identity in this system.
+- **Correction to the mechanism, and it changes the UX.** "The server sends the request
+  to the ymux connected over SSH" is not how the two talk today. **The daemon never
+  dials the desktop.** Every desktop→daemon call is a `curl` the DESKTOP opens on an SSH
+  exec channel (`pairing.rs::daemon_curl`); the daemon's only tunnel-facing code is a
+  LISTENER (`chat_hookrpc.go`) that the CLI dials inbound. So the server cannot push. A
+  sub-choice follows, and it decides whether an approval can reach you when no panel is
+  open:
+  - **(B1) The desktop polls** `GET /api/pairing/requests` while the Devices tab is
+    open. Exactly the shape `mobile_pairing_list_devices` already has, and the Mobile tab
+    already runs a poll loop to auto-close its QR. Cheapest. Cost: the approval exists
+    only while you are looking at that tab — open the browser first and nothing tells
+    you, you have to go find the tab.
+  - **(B2) The daemon dials the desktop through the reverse tunnel** and pushes the
+    approval as a **blocking `feed.push`** — i.e. the browser request becomes an ordinary
+    ymux feed card with Allow/Deny, which already toasts, already works with every panel
+    closed, and is the same winner-takes-all machinery the agent hook gates use. The
+    address is already on the remote (`~/.ymux/run/last.env`, `YMUX_SOCKET_ADDR`) and the
+    daemon already implements the other half of that HMAC handshake. Cost: the daemon
+    gains an outbound client it does not have today. **Recommended** — it is the
+    difference between "an approval you must go looking for" and "an approval that finds
+    you", and it reuses a path that is already load-bearing.
+  Either way the tunnel only exists while the desktop holds an SSH session to that host,
+  so Yossi's constraint holds identically for both.
+- **Shape of the flow (common to B1 and B2), reusing the existing store:**
+  `PairedDevice.Status` is already `pending | active | revoked`. Add `requested`. The
+  browser calls a public `POST /api/pairing/request`, which mints the existing one-shot
+  token **plus a short display code**, and returns both; the desktop lists requests with
+  code + IP + User-Agent, and approving flips the row to `pending` with the chosen
+  scopes; the browser, polling, sees the flip and calls the **existing**
+  `/api/pairing/redeem` with the one-shot it already holds. No new credential mechanism
+  — the only additions are the status, a `code` column, and the request/list/approve/deny
+  endpoints. `redeemDevice` must refuse a row still in `requested`.
+- **Status:** option B locked; B1-vs-B2 open (recommendation B2). Lands in Phase D of
+  `docs/WEB-DESIGN.md`, which also still has **Q2 (web bundle delivery) open**. Phase B
+  depends on neither.
+
+### 2026-09-10 — ymux in the browser: the Go daemon becomes the brain
+- **Context:** Yossi asked what a "browser version" would mean — our server as an HTTPS
+  entry point, plus something parallel for local. Two readings were put to him:
+  "a terminal in the browser" (ttyd behind the existing `nginx-proxy`, an hour, no code
+  of ours) vs "ymux in the browser" (the full shell, panes, feed, hook gates, briefs).
+  **Decided: ymux in the browser** — the reason is full control of the presentation,
+  not being limited to the server's terminal. Design: `docs/WEB-DESIGN.md`.
+- **What it really is:** today the desktop Rust backend is the brain and the Go daemon
+  is a remote agent. A browser has no Rust, so in browser mode the daemon must absorb
+  (1) the host-relevant subset of the 184 Tauri commands and (2) the subset of the
+  `rpc_server.rs` dispatch catalog the remote CLI/hooks call back (`feed.push`,
+  `port.opened`, `set-status`, hook verbs). Without (2) there are no gates, feed or
+  traffic lights — it is the part that makes it ymux. Most of the plumbing exists:
+  nginx+LE, device tokens + scopes, the workspace events WS with `PendingRequest`
+  winner-takes-all (that IS the desktop's blocking `feed.push`), the hook listener, the
+  Files API, and `KindTerminal` already declared in `workspace/model.go` and never
+  implemented.
+- **Phases:** A daemon `terminal` kind + binary `/term` WS (tmux attach only) → B daemon
+  stores + hook bridge → C frontend `Backend` interface (`TauriBackend` first, ship the
+  desktop on it, then `WebBackend`) → D `ymux-web` add-on + pairing page → E PWA. E is
+  option **D** for the parked Android port (2026-08-23 fork-scan thread): a PWA on this
+  stack instead of a third platform.
+- **Security line (non-negotiable):** a leaked token with the wrong scope becomes a shell
+  over the internet. New scope `shell:attach`, explicitly NOT part of `AllScopes` /
+  the fail-open `"all"`; `exec` + `hygiene/kill` owner-only; redeem rate-limited; revoke
+  tears down live WS; Cloudflare Access / nginx allowlist recommended by the installer.
+- **Q1 truth model — DECIDED (Yossi, 2026-09-10): server-native workspaces, tmux
+  sessions are the shared reality** (via `session-meta.json`, the Phase-90 "session is a
+  workspace row" bridge — deleting a row kills the tmux session on the server, as it
+  does today). Mirroring the desktop's `workspaces.json` was rejected (two writers).
+- **Q5 session history — NEW (raised by Yossi with Q1): keep an ended session's
+  transcript reachable — open it to read, resume it if needed.** What the code does
+  today: the transcript is Claude's own `~/.claude/projects/<cwd>/<id>.jsonl` and
+  survives the tmux kill; what is lost is the *mapping* — `session_meta.rs::prune`
+  deletes every entry with no live `tmux ls` match on every write. The desktop's
+  resume picker (`pane_list_claude_sessions`) already scans the jsonl files, so half
+  the feature exists, unlinked from the row. **Recommendation: yes, cheap.** `prune`
+  marks `ended_at` instead of deleting (keep 90 days / N latest); an ended row stays
+  in the sidebar with **open** (transcript viewer — the daemon already parses this
+  format in `claudeusage.go`) and **resume** (`tmux new-session -s <name> -c <cwd>
+  claude --resume <id>`). Benefits the desktop too. Rule #1: the viewer renders the
+  transcript, nothing logs it. Lands in Phase B (`docs/WEB-DESIGN.md` §4.2).
+- **Q2 web bundle delivery — OPEN, expanded for Yossi.** Three options in
+  `docs/WEB-DESIGN.md` §7.1: (a) `//go:embed` — simplest to serve, but the daemon is
+  a committed 13 MB blob per arch, so every frontend fix rebakes the server and adds
+  ~26 MB of git history per PR, and the frontend's cadence is chained to the daemon's;
+  (b) **`ymux-web` add-on** — tarball bundled in `app.exe` like the CLI, uploaded over
+  the workspace SSH session to `~/.ymux/server/www/<ver>/`, sha256-gated and
+  idempotent like the CLI bootstrap, served by the daemon at `/`; offline-friendly,
+  version-aligned with the app, uses the add-on detect/update UI that exists; costs a
+  desktop for updates (the desktop is the admin — acceptable); (c) daemon
+  self-downloads from GitHub releases — headless, but adds an outbound network
+  dependency the daemon does not have and REQUIRES signature verification (a fetched
+  bundle served to the user's browser is code execution in their session).
+  **Recommendation: (b), with (c) as a later opt-in.**
+- **Q3 "local parallel" — DEFERRED (Yossi, 2026-09-10): revisit after the remote path
+  is proven end-to-end.** It means the Rust backend re-implementing the same HTTP/WS
+  API (two implementations, two languages — the macOS-branch lesson). When it comes
+  back, the candidate is the same CGO-free Go daemon running locally with the desktop
+  as one more client.
+- **Q4 desktop + browser on the same tmux session** — both see output (tmux), the hook
+  gate goes to whichever endpoint the session's `YMUX_SOCKET_ADDR` names.
+  **Accept for v1, documented.**
+- **Debt logged with it:** layout tree ops get a TS port for the web build while the
+  desktop keeps the Rust one — two implementations until the desktop moves to the TS ops.
+- **Status (2026-09-24):** **Phase A is implemented** as Phase 95 — `internal/term`
+  in the Go daemon: tmux list/create/rename/kill, a binary attach WebSocket over a
+  real PTY, session-meta labels, and the `shell:attach` scope. Server version
+  2.2.1 → 2.3.0 (and `INSIGHTS_VERSION` with it, which had drifted). Not verified
+  live — Rule #14, smoke list in FOLLOWUPS. One design change vs the doc: no
+  fan-out layer, because several clients on one tmux session is tmux's own
+  multi-client case. Q1 decided, Q3 deferred, Q5 recommended (Phase B); **Q2 still
+  awaiting Yossi's pick** — it does not block Phase B either.
+
 ### 2026-08-23 - macOS: the site's JS is dead in the in-app Browser (diagnostic build)
 - **Symptom.** On macOS the workspace Browser loads a page and renders HTML/CSS,
   but the site's own JavaScript never runs. Windows is fine, and

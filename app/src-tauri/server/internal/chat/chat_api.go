@@ -18,10 +18,21 @@ type ChatAPI struct {
 	mgr         *SessionManager
 	store       *ChatStore
 	sharedToken string // insights bearer; 69.D adds per-device tokens
+
+	// Phase 96, browser-initiated pairing. askApproval pushes a blocking
+	// Allow/Deny card to the desktop (injected from cmd so this package stays
+	// clear of the outbound-tunnel client); nil means no desktop is reachable
+	// and a pairing request fails closed. pairLimiter bounds an endpoint that
+	// by its nature cannot require a credential.
+	askApproval ApprovalAsker
+	pairLimiter *ipLimiter
 }
 
 func NewChatAPI(mgr *SessionManager, store *ChatStore, sharedToken string) *ChatAPI {
-	return &ChatAPI{mgr: mgr, store: store, sharedToken: sharedToken}
+	return &ChatAPI{
+		mgr: mgr, store: store, sharedToken: sharedToken,
+		pairLimiter: newIPLimiter(),
+	}
 }
 
 var wsUpgrader = websocket.Upgrader{
@@ -48,6 +59,8 @@ func (c *ChatAPI) RegisterRoutes(mux *http.ServeMux) {
 	// Pairing STAYS — it's desktop-facing (the Monitor issues QR + device
 	// tokens), and Yossi lives on the desktop. Backward compat preserved.
 	c.registerPairingRoutes(mux)
+	// Phase 96: the other direction — a browser asks, the desktop approves.
+	c.registerBrowserPairingRoutes(mux)
 }
 
 // clientIP prefers nginx's forwarded headers (the daemon is behind the proxy,

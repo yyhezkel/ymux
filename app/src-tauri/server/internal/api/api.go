@@ -18,6 +18,7 @@ import (
 	"ymux-server/internal/logging"
 	"ymux-server/internal/logs"
 	"ymux-server/internal/push"
+	"ymux-server/internal/term"
 	"ymux-server/internal/workspace"
 )
 
@@ -33,6 +34,7 @@ type Deps struct {
 	Logs      *logs.Service      // nil if logs disabled
 	Workspace *workspace.Service // nil if workspace disabled
 	Push      *push.Server       // nil if native push disabled
+	Term      *term.Service      // nil if the terminal API is disabled
 }
 
 // Server wires the subsystems into one HTTP listener.
@@ -123,6 +125,13 @@ func (s *Server) Handler() http.Handler {
 	// Bearer/?token=), so it's mounted raw rather than behind authMW.
 	if s.deps.Push != nil {
 		mux.HandleFunc("/api/v2/push/subscribe", s.deps.Push.Handler)
+	}
+	// Terminal API (Phase 95). Mounted raw for the same reason push is: authMW
+	// only knows the shared token, and these routes must also accept a paired
+	// device's token — but ONLY one carrying the opt-in auth.ScopeShellAttach
+	// grant. term.Service.gate does both checks and fails closed.
+	if s.deps.Term != nil {
+		s.deps.Term.RegisterRoutes(mux)
 	}
 	return mux
 }
