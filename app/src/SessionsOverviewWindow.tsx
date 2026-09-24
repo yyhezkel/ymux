@@ -169,10 +169,23 @@ export function SessionsOverviewWindow(p: Props) {
     setInFlight(new Set<string>());
     setSummarizing(false);
     try {
-      const list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
-        workspaceId: wsId,
-        projectPath: null,
-      });
+      const listOnce = () =>
+        invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+          workspaceId: wsId,
+          projectPath: null,
+        });
+      let list = await listOnce();
+      // An SSH machine nobody has connected to yet answers with an EMPTY list
+      // ("could not ask"), not an error — the picker wants that, this dialog
+      // does not: it said "no sessions" on a server with seven. So connect in
+      // the background (the sessions-as-rows mirror does the same) and ask
+      // again. A failed connect is shown as the error it is. Local machines
+      // make `workspace_ensure_connected` a no-op.
+      if (list.length === 0) {
+        await invoke("workspace_ensure_connected", { workspaceId: wsId });
+        if (id !== reqId) return;
+        list = await listOnce();
+      }
       if (id !== reqId) return;
       setRows(list);
       log.info(`listed ${list.length} sessions`);

@@ -88,7 +88,10 @@ manageable through the remote `ymux setup-hooks`; `insights` ships its own
 
 `insights_fetch` lives here and is the **remote-vs-local routing decision** for the
 Insights panel — the frontend does not make it. Shared helpers `exec`, `exec_stdin`,
-`pick_handle`, `remote_home` are used by `pairing.rs` too.
+`pick_handle`, `remote_home` are used by `pairing.rs` too. `pick_handle` resolves by
+MACHINE, not workspace (`crate::ssh_handle_for_machine`): the workspace's own session
+first, else any session to the same user@host:port — so it answers for a header row,
+which never holds a session itself.
 
 `src/addons.rs` is also where `include_bytes!` pulls in
 `resources/ymux-server-linux-{x64,arm64}`. **Those blobs are committed and rebaked by

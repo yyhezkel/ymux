@@ -6154,6 +6154,61 @@ fn pick_session_parent(file: &WorkspacesFile, root_id: &str, session_cwd: Option
 }
 
 /// Root of `id` — the last ancestor — or `id` itself.
+/// 2026-09-24: every workspace that reaches the SAME tmux server as
+/// `workspace_id` — itself, plus any workspace whose SSH connection has the
+/// same user@host:port. Local / WSL workspaces get just themselves.
+///
+/// Why: since Phase 92 a machine or folder row is a HEADER that never holds a
+/// pane, while live SSH sessions are keyed by the SCREEN whose pane opened
+/// them. Everything that looked a handle up by the exact workspace id
+/// therefore found nothing when asked on a header — the Active-sessions dialog
+/// (header-only) said "no sessions" on a server with seven of them.
+pub(crate) fn same_machine_workspace_ids(
+    state: &AppState,
+    workspace_id: &str,
+) -> std::collections::HashSet<String> {
+    let mut ids = std::collections::HashSet::new();
+    ids.insert(workspace_id.to_string());
+    let Ok(file) = state.workspaces.lock() else { return ids };
+    let target = file
+        .workspaces
+        .iter()
+        .find(|w| w.id == workspace_id)
+        .and_then(|w| w.connection.clone());
+    let Some(Connection::Ssh { host, user, port, .. }) = target else { return ids };
+    for w in &file.workspaces {
+        if let Some(Connection::Ssh { host: h, user: u, port: p, .. }) = &w.connection {
+            if *h == host && *u == user && *p == port {
+                ids.insert(w.id.clone());
+            }
+        }
+    }
+    ids
+}
+
+/// A live SSH handle for `workspace_id`'s machine: its own session first,
+/// else any session another workspace holds to the same server (SSH
+/// multiplexes — an exec channel on a sibling's connection is free).
+pub(crate) fn ssh_handle_for_machine(
+    state: &AppState,
+    workspace_id: &str,
+) -> Option<Arc<russh::client::Handle<SshClient>>> {
+    let ids = same_machine_workspace_ids(state, workspace_id);
+    let sessions = state.core.sessions.lock().ok()?;
+    let mut sibling = None;
+    for sess in sessions.values() {
+        if let Session::Ssh(s) = sess {
+            if s.workspace_id == workspace_id {
+                return Some(s.handle.clone());
+            }
+            if sibling.is_none() && ids.contains(&s.workspace_id) {
+                sibling = Some(s.handle.clone());
+            }
+        }
+    }
+    sibling
+}
+
 fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
     ancestors_of(file, id)
         .last()
@@ -9663,15 +9718,8 @@ async fn list_workspace_tmux_sessions(
     // "we could not ask", NOT "no session exists". `pane_target_session_state`
     // reports `reachable: false` in that case and the caller must treat an
     // unreachable host as "might already be live", never as "safe to inject".
-    let handle = {
-        let sessions = state.core.sessions.lock().unwrap();
-        sessions
-            .iter()
-            .find_map(|(_sid, sess)| match sess {
-                Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-                _ => None,
-            })
-    };
+    // Any handle to the same server will do — a header row never holds one.
+    let handle = ssh_handle_for_machine(state, workspace_id);
     let handle = match handle {
         Some(h) => h,
         None => {
@@ -9719,10 +9767,7 @@ fn workspace_sessions_reachable(state: &AppState, workspace_id: &str) -> bool {
     if !needs_handle {
         return true;
     }
-    let sessions = state.core.sessions.lock().unwrap();
-    sessions
-        .iter()
-        .any(|(_sid, sess)| matches!(sess, Session::Ssh(s) if s.workspace_id == workspace_id))
+    ssh_handle_for_machine(state, workspace_id).is_some()
 }
 
 #[tauri::command]
@@ -10717,18 +10762,8 @@ async fn tmux_rename_session(
     let exact_old = format!("={old_name}");
     let ssh_handle = match &conn {
         Some(Connection::Ssh { .. }) => {
-            let handle = {
-                let sessions = state.core.sessions.lock().unwrap();
-                sessions
-                    .iter()
-                    .find_map(|(_sid, sess)| match sess {
-                        Session::Ssh(s) if s.workspace_id == workspace_id => {
-                            Some(s.handle.clone())
-                        }
-                        _ => None,
-                    })
-            }
-            .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
+            let handle = ssh_handle_for_machine(&state, &workspace_id)
+                .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
             tmux_rename_session_via_handle(&handle, &old_name, &new_name).await?;
             Some(handle)
         }
@@ -10778,13 +10813,16 @@ async fn tmux_rename_session(
         }
     };
 
-    // The multiplexer agreed. Now move everything ymux keys by the old name.
+    // The multiplexer agreed. Now move everything ymux keys by the old name —
+    // on every workspace of this machine, since the dialog is opened on a
+    // header and the pane holding the session sits on a screen under it.
+    let machine_ids = same_machine_workspace_ids(&state, &workspace_id);
     {
         let mut sessions = state.core.sessions.lock().unwrap();
         for sess in sessions.values_mut() {
             match sess {
                 Session::Ssh(s)
-                    if s.workspace_id == workspace_id
+                    if machine_ids.contains(&s.workspace_id)
                         && s.tmux_session.as_deref() == Some(old_name.as_str()) =>
                 {
                     s.tmux_session = Some(new_name.clone());
