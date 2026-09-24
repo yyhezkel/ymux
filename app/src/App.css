@@ -4661,20 +4661,20 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
    Color: --w-warning (amber) rather than --w-accent (focus blue),
    so the ring reads as "action required" and is visually distinct
    from a merely-focused pane. */
-@keyframes ymux-attn-pulse {
-  0%, 100% {
-    box-shadow:
-      0 0 0 2px var(--w-warning),
-      0 0 10px 2px rgba(224, 175, 104, 0.45);
-  }
-  50% {
-    box-shadow:
-      0 0 0 2px var(--w-warning),
-      0 0 18px 6px rgba(224, 175, 104, 0.8);
-  }
+/* 2026-09-23 (macOS GPU hang): every attention pulse used to animate
+   `box-shadow`, which is a PAINT property — WebKit repainted the whole pane
+   (xterm's DOM rows included) at 60 fps for as long as the ring was up, and
+   an OSC-flagged pane stays up until it is focused. On a 2017 Intel iGPU
+   that was enough to hang the GPU. Now the glow is painted ONCE onto a
+   pseudo-element and only its `opacity` animates, which the compositor does
+   without touching layout or paint. Keep it that way: never animate
+   box-shadow / border / background on anything that stays up. */
+@keyframes ymux-attn-breathe {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 .pane.waiting {
-  animation: ymux-attn-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 2px var(--w-warning);
   border-radius: var(--w-r-md);
   /* Lift slightly so the glow isn't clipped by sibling pane edges
      or by the split-side flexbox container. */
@@ -4782,14 +4782,6 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
    top of `.has-waiting` (blocking red dot) so both can coexist: dot for
    "someone needs a decision," breath for "something just happened."
    Reduced-motion users see a static amber outline instead of the pulse. */
-@keyframes ymux-attn-pulse {
-  0%, 100% {
-    box-shadow: inset 0 0 0 0 rgba(224, 175, 104, 0.0);
-  }
-  50% {
-    box-shadow: inset 0 0 0 2px rgba(224, 175, 104, 0.55);
-  }
-}
 /* ─── Sidebar → sidebar.css (.ws-item.hook-pulse) ─── */
 
 /* ───────────────────────────────────────────────────────────────
@@ -6554,28 +6546,23 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
 
 /* ─── cmux-A A1: pane activity pulse ───────────────────────────────
    OSC 9/99/777 terminal notifications flag a pane and trigger an amber
-   attention ring until the user focuses the pane. It reuses the proven
-   `ymux-attn-pulse` keyframe (the `.pane.waiting` ring) verbatim — an
-   earlier bespoke `ymux-pane-pulse` keyframe animated the ring colour
-   through `transparent` with only a faint low-alpha blur, so it drew no
-   visible border (occluded by the neighbour pane / clipped by the split
-   container). Sharing the keyframe means "activity" and "waiting" read
-   identically, which is the intended behaviour. `z-index:1` +
-   `position:relative` lift the pane so the outset glow isn't clipped by
-   sibling pane edges. Respects prefers-reduced-motion with a static
-   solid ring so the affordance survives without animation. */
+   attention ring until the user focuses the pane. It looks exactly like
+   the `.pane.waiting` ring — "activity" and "waiting" read identically on
+   purpose. `z-index:1` + `position:relative` lift the pane so the outset
+   ring isn't clipped by sibling pane edges. Reduced motion keeps a static
+   ring. */
 .pane.pane-pulse {
-  animation: ymux-attn-pulse 1.6s ease-in-out infinite;
+  box-shadow: 0 0 0 2px var(--w-warning);
   border-radius: var(--w-r-md);
   z-index: 1;
   position: relative;
 }
-/* Guaranteed-visible inset ring. The outset `ymux-attn-pulse` glow
-   above can be swallowed by a bold workspace-colour border, occluded by
-   an adjacent pane, or clipped by the split container. This overlay is
-   drawn ON TOP of the pane content + border (inset box-shadow, high
-   z-index, non-interactive) so the pulse is always visible regardless of
-   workspace colour or pane packing. */
+/* Guaranteed-visible inset ring. The outset ring above can be swallowed by
+   a bold workspace-colour border, occluded by an adjacent pane, or clipped
+   by the split container. This overlay is drawn ON TOP of the pane content
+   (inset box-shadow, high z-index, non-interactive) and is the only part
+   that breathes — by opacity, see § ymux-attn-breathe. */
+.pane.waiting::after,
 .pane.pane-pulse::after {
   content: "";
   position: absolute;
@@ -6583,39 +6570,18 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
   border-radius: inherit;
   pointer-events: none;
   z-index: 6;
-  animation: ymux-pane-pulse-ring 1.6s ease-in-out infinite;
+  box-shadow:
+    inset 0 0 0 3px var(--w-warning),
+    inset 0 0 18px 5px rgba(224, 175, 104, 0.65);
+  animation: ymux-attn-breathe 1.6s ease-in-out infinite;
+  will-change: opacity;
 }
-@keyframes ymux-pane-pulse-ring {
-  0%,
-  100% {
-    box-shadow:
-      inset 0 0 0 2px var(--w-warning),
-      inset 0 0 10px 2px rgba(224, 175, 104, 0.35);
-  }
-  50% {
-    box-shadow:
-      inset 0 0 0 3px var(--w-warning),
-      inset 0 0 18px 5px rgba(224, 175, 104, 0.65);
-  }
-}
-/* Both activity + waiting share `ymux-attn-pulse`, so a pane that is
-   both notified and waiting still animates once (no double-animation). */
-.pane.waiting.pane-pulse {
-  animation: ymux-attn-pulse 1.6s ease-in-out infinite;
-}
-/* Waiting owns the ring — suppress the activity overlay so we never
-   stack two amber rings on the same pane. */
-.pane.waiting.pane-pulse::after {
-  display: none;
-}
+/* Waiting + notified share the one ::after, so the ring never stacks. */
 @media (prefers-reduced-motion: reduce) {
-  .pane.pane-pulse {
-    animation: none;
-    box-shadow: 0 0 0 2px var(--w-warning);
-  }
+  .pane.waiting::after,
   .pane.pane-pulse::after {
     animation: none;
-    box-shadow: inset 0 0 0 2px var(--w-warning);
+    opacity: 1;
   }
 }
 
@@ -6664,6 +6630,9 @@ body.ymux-dragging .pane-conn {
   position: absolute;
   pointer-events: none;
   z-index: 5;
+  animation: none;
+  opacity: 1;
+  box-shadow: none;
   background: color-mix(in srgb, var(--w-accent, #7aa2f7) 22%, transparent);
   transition: inset 80ms ease, background 80ms ease;
 }

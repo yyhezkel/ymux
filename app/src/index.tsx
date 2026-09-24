@@ -1,9 +1,8 @@
 /* @refresh reload */
 // logger.ts must load BEFORE the console monkeypatch below — it captures the
 // original console fns so logger output is never forwarded twice.
-import "./logger";
+import { enqueueLog } from "./logger";
 import { render } from "solid-js/web";
-import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // Global stylesheets live at the entry point so BOTH the main <App> and the
 // #4 pop-out window (which bypasses <App>) get xterm's CSS + our theme.
@@ -17,9 +16,9 @@ import { PopoutBrowser } from "./components/PopoutBrowser";
 import { initPlatform } from "./platform";
 
 // Phase 8.E → unified logging: capture console.error / console.warn as a
-// safety net for un-swept or third-party output. Forwarded fire-and-forget
-// to `ui_log`, which writes debug.log AND the dev ring buffer (`ymux dev
-// console-tail`). Swept code logs through createLogger() instead — it uses
+// safety net for un-swept or third-party output. Queued through the logger's
+// batch (`ui_log_batch`, capped per second), which writes debug.log AND the
+// dev ring buffer (`ymux dev console-tail`). Swept code logs through createLogger() instead — it uses
 // the original console fns captured in logger.ts, so nothing loops through
 // here twice. Original console output is preserved.
 {
@@ -39,33 +38,17 @@ import { initPlatform } from "./platform";
       .join(" ");
   console.error = (...args: unknown[]) => {
     origErr(...(args as []));
-    invoke("ui_log", {
-      level: "error",
-      tag: "CONSOLE",
-      message: fmt(args),
-    }).catch(() => {});
+    enqueueLog("error", "CONSOLE", fmt(args));
   };
   console.warn = (...args: unknown[]) => {
     origWarn(...(args as []));
-    invoke("ui_log", {
-      level: "warn",
-      tag: "CONSOLE",
-      message: fmt(args),
-    }).catch(() => {});
+    enqueueLog("warn", "CONSOLE", fmt(args));
   };
   window.addEventListener("error", (e) => {
-    invoke("ui_log", {
-      level: "error",
-      tag: "CONSOLE",
-      message: `unhandled: ${e.message} @ ${e.filename}:${e.lineno}`,
-    }).catch(() => {});
+    enqueueLog("error", "CONSOLE", `unhandled: ${e.message} @ ${e.filename}:${e.lineno}`);
   });
   window.addEventListener("unhandledrejection", (e) => {
-    invoke("ui_log", {
-      level: "error",
-      tag: "CONSOLE",
-      message: `unhandled rejection: ${String(e.reason)}`,
-    }).catch(() => {});
+    enqueueLog("error", "CONSOLE", `unhandled rejection: ${String(e.reason)}`);
   });
 }
 

@@ -19,6 +19,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod ipc_meter;
 mod local_setup;
 mod local_wizard;
 mod log_sync;
@@ -27,6 +28,7 @@ mod osc_notify;
 mod pairing;
 mod provisioning;
 mod pty_decode;
+mod pty_emit;
 mod remote_bootstrap;
 mod rpc_server;
 mod sessions_overview;
@@ -2438,6 +2440,7 @@ fn emit_data(
     bidi_filters: &bidi_filter::BidiFilterMap,
 ) {
     for n in osc.feed(bytes) {
+        ipc_meter::record("emit:osc-notification");
         let _ = app.emit(
             "osc-notification",
             serde_json::json!({
@@ -2487,13 +2490,9 @@ fn emit_data(
     if decoded.text.is_empty() {
         return;
     }
-    let _ = app.emit(
-        "pty:data",
-        PtyDataEvent {
-            session_id: session_id.to_string(),
-            data: decoded.text,
-        },
-    );
+    // Batched: one flusher thread emits at most every 33 ms per session,
+    // leading edge first (pty_emit.rs).
+    pty_emit::data(app, session_id, decoded.text);
 }
 
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
@@ -2662,13 +2661,8 @@ fn emit_exit(app: &AppHandle, session_id: &str, reason: Option<String>) {
         "pty:exit session={session_id} reason={}",
         reason.as_deref().unwrap_or("(none)")
     ));
-    let _ = app.emit(
-        "pty:exit",
-        PtyExitEvent {
-            session_id: session_id.to_string(),
-            reason,
-        },
-    );
+    // Through the batcher, which flushes this session's pending text first.
+    pty_emit::exit(app, session_id, reason);
 }
 
 fn cleanup_session_maps(
@@ -8303,8 +8297,13 @@ fn ui_log(
     tag: String,
     message: String,
 ) -> Result<(), String> {
-    let lvl = ymux_core::LogLevel::from_str(&level);
-    ymux_core::log_at(lvl, &format!("UI:{tag}"), &message);
+    write_ui_log(&state, &level, &tag, &message);
+    Ok(())
+}
+
+fn write_ui_log(state: &AppState, level: &str, tag: &str, message: &str) {
+    let lvl = ymux_core::LogLevel::from_str(level);
+    ymux_core::log_at(lvl, &format!("UI:{tag}"), message);
     dev::push_console(
         &state.console_buffer,
         dev::ConsoleEntry {
@@ -8313,6 +8312,24 @@ fn ui_log(
             ts: chrono::Utc::now().timestamp_millis(),
         },
     );
+}
+
+#[derive(serde::Deserialize)]
+struct UiLogEntry {
+    level: String,
+    tag: String,
+    message: String,
+}
+
+/// 2026-09-23: the frontend logger's only sink now. `ui_log` cost one IPC
+/// round-trip per line, and a chatty tag could turn logging itself into a
+/// steady invoke stream; the logger queues lines and flushes them here at most
+/// once a second (app/src/logger.ts). `ui_log` stays for single lines.
+#[tauri::command]
+fn ui_log_batch(state: State<'_, AppState>, entries: Vec<UiLogEntry>) -> Result<(), String> {
+    for e in &entries {
+        write_ui_log(&state, &e.level, &e.tag, &e.message);
+    }
     Ok(())
 }
 
@@ -12402,7 +12419,8 @@ pub fn run() {
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        // 2026-09-23: counted per command — see ipc_meter.rs.
+        .invoke_handler(ipc_meter::metered(tauri::generate_handler![
             clipboard_read_text,
             // Phase 68.B: add-on framework commands.
             addons::addon_list,
@@ -12631,7 +12649,8 @@ pub fn run() {
             tray::set_tray_badge,
             // Unshipped-fivefer (#4): pop a terminal pane into its own window.
             popout_pane,
-        ])
+            ui_log_batch,
+        ]))
         // #2 (feedback): close-to-tray removed — closing the window quits
         // normally (the minimize-to-tray surprise was confusing). The tray
         // icon + badge stay for quick access; quit is either the window close

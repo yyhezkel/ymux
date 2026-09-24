@@ -416,7 +416,10 @@ outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
 reference-table "CRM — 5" shape). Solid-free and unit-tested in
 `queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
 input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
-every workspace; the active-workspace lights, the Queue panel and the sidebar
+every workspace. Its clock is **`staleClockMs` (60 s)**, not `agentClockMs`: the light's
+only time input is the 6 h stale cutoff, and on the 250 ms clock every row of every
+workspace — and with them `workspaceCardInfo` and the whole sidebar — was rebuilt four
+times a second while idle. Only the M:SS tickers read `agentClockMs`; the active-workspace lights, the Queue panel and the sidebar
 attention set (`queueAttentionWorkspaceIds`, a fifth Sidebar prop that shares the
 row's one dot as `.brief-attn`, precedence blocking > brief > activity) all derive
 from those rows, so they cannot disagree. Per-pane brief entries live in the
@@ -454,7 +457,8 @@ lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
 returning, so an effect running after the switch would always measure zero
 absence; **idle-return** stamps `lastInputMs` from capture-phase passive
 pointer/key/wheel listeners and arms on the existing 250ms `pulseTick` (no
-second timer), firing on the first input after the gap; **manual** =
+second timer; it skips ticks while `document.hidden`), firing on the first input
+after the gap; **manual** =
 `show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
 toggles.
 
@@ -515,6 +519,11 @@ four layers.
 - **Rule #5** — no `any`. `unknown` and narrow, or define the type. `invoke` return
   types are always explicit.
 - **Rule #9** — `createLogger(tag)` from `logger.ts`, never raw `console.*`.
+- **Nothing idle may cost IPC or paint.** An effect that invokes must track only what it
+  needs (`set_tray_badge` goes through the `unreadCount` memo; the modal browser-hide
+  broadcast `untrack`s `file()`), and an always-on animation must be opacity/transform
+  on a pseudo-element, never `box-shadow` — see `ymux-attn-breathe` in App.css. The
+  2026-09-23 macOS GPU hang was all of these at once.
 - Per-machine, high-churn UI state (window rects, sidebar width, last directories,
   session-restore hints) goes to **localStorage**, deliberately — it keeps Rule #7's
   atomic-write surface small. `workspaces.json` stays the layout's source of truth.

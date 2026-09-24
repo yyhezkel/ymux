@@ -152,6 +152,15 @@ impl OscNotifyParser {
         let s = String::from_utf8_lossy(&self.buf);
         let (ps, rest) = s.split_once(';')?;
         match ps {
+            // ConEmu / Windows Terminal overload OSC 9 with numbered
+            // sub-commands — `9;4;<state>;<pct>` is the taskbar progress bar,
+            // which Claude Code re-emits many times a second while it works.
+            // Reading those as notifications flooded the frontend with one
+            // event (and one pane-pulse, one Notification Center row, one
+            // dock-badge invoke) per frame; on a 2017 MacBook the resulting
+            // repaint load hung the Intel GPU. A sub-command is a bare number
+            // first field; a real notification body is text.
+            "9" if is_conemu_subcommand(rest) => None,
             "9" => Some(OscNotification {
                 title: String::new(),
                 body: rest.to_string(),
@@ -181,6 +190,13 @@ impl OscNotifyParser {
             _ => None,
         }
     }
+}
+
+/// `rest` is everything after `9;`. ConEmu sub-commands are `1`..`12`
+/// optionally followed by `;args` (`4;1;50`, `9;<cwd>`, `12`).
+fn is_conemu_subcommand(rest: &str) -> bool {
+    let first = rest.split(';').next().unwrap_or("");
+    !first.is_empty() && first.len() <= 2 && first.bytes().all(|b| b.is_ascii_digit())
 }
 
 #[cfg(test)]
@@ -256,5 +272,19 @@ mod tests {
         let n2 = p.feed(b"\x1b]9;ok\x07");
         assert_eq!(n2.len(), 1);
         assert_eq!(n2[0].body, "ok");
+    }
+
+    #[test]
+    fn conemu_subcommands_are_not_notifications() {
+        let mut p = OscNotifyParser::new();
+        // Claude Code's progress bar, set / indeterminate / clear.
+        assert!(p.feed(b"\x1b]9;4;1;50\x07").is_empty());
+        assert!(p.feed(b"\x1b]9;4;3\x1b\\").is_empty());
+        assert!(p.feed(b"\x1b]9;4;0;0\x07").is_empty());
+        assert!(p.feed(b"\x1b]9;12\x07").is_empty());
+        // Text that merely starts with a digit is still a notification.
+        let n = p.feed(b"\x1b]9;3 tests failed\x07");
+        assert_eq!(n.len(), 1);
+        assert_eq!(n[0].body, "3 tests failed");
     }
 }

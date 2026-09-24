@@ -622,6 +622,10 @@ export class TerminalInstance {
   /** Last direction vector reported by `logDirections`, so the per-frame pass
    *  only speaks when its answer actually changed. */
   private lastDirSignature: string | null = null;
+  /** Last `title-seen` report, as `match:len-bucket` — see onTitleChanged. */
+  private lastTitleReport: string | null = null;
+  private lastDirLogMs = 0;
+  private dirObserverRetries = 0;
 
   /** The EFFECT of tuiOwnsBidi, as opposed to the detected state. Detection
    *  and its log line always run — they are what made the 2026-08-18
@@ -1349,10 +1353,16 @@ export class TerminalInstance {
 
     const rowsHost = this.container.querySelector(".xterm-rows") as HTMLElement | null;
     if (!rowsHost) {
-      // Renderer not mounted yet — retry on the next animation frame.
-      requestAnimationFrame(() => this.ensureDirObserver());
+      // Renderer not mounted yet — retry shortly. A timer with a ceiling,
+      // not an unbounded rAF chain: if the rows host never appears (the
+      // pane never mounts, or it got the WebGL renderer) the old chain ran
+      // at 60 fps for the life of the app.
+      if (this.dirObserverRetries++ < 40) {
+        window.setTimeout(() => this.ensureDirObserver(), 250);
+      }
       return;
     }
+    this.dirObserverRetries = 0;
     // The rows host stays LTR so the grid geometry (column origin) is stable;
     // only the per-row paragraph direction flips.
     rowsHost.setAttribute("dir", "ltr");
@@ -1381,10 +1391,18 @@ export class TerminalInstance {
     // conversation content. Whether it matched and how long it was are
     // metadata; the text itself is never logged and a length cannot
     // reconstruct it.
-    termLog.info(
-      `title-seen pane=${this.paneId} match=${/claude/i.test(title) ? 1 : 0} ` +
-        `len=${title.length}`,
-    );
+    //
+    // 2026-09-23: …but only when the report would SAY something new. Claude
+    // Code animates a spinner in its title, so "every title" was several log
+    // lines — and, before the logger batched, several IPC calls — per second
+    // per pane, for as long as Claude worked. Whether it matched is the
+    // signal; the exact length is not, so it is bucketed.
+    const match = /claude/i.test(title) ? 1 : 0;
+    const report = `${match}:${title.length === 0 ? 0 : title.length < 16 ? 1 : 2}`;
+    if (report !== this.lastTitleReport) {
+      this.lastTitleReport = report;
+      termLog.info(`title-seen pane=${this.paneId} match=${match} len=${title.length}`);
+    }
     const next = nextTuiOwnsBidi(this.tuiOwnsBidi, title);
     if (next === this.tuiOwnsBidi) return;
     this.tuiOwnsBidi = next;
@@ -1528,6 +1546,13 @@ export class TerminalInstance {
   private logDirections(dirs: RowDir[], texts: string[]): void {
     const sig = dirs.join(",");
     if (sig === this.lastDirSignature) return;
+    // 2026-09-23: Hebrew output scrolling past changes the vector every
+    // frame, so "only on change" still meant ~60 lines a second. At most one
+    // report per 2 s per pane; a vector that changes inside the window is
+    // reported by the next pass after it.
+    const now = performance.now();
+    if (now - this.lastDirLogMs < 2000) return;
+    this.lastDirLogMs = now;
     this.lastDirSignature = sig;
     let rtlRows = 0;
     let endRows = 0;
@@ -1846,8 +1871,10 @@ export class TerminalInstance {
     const run = () => {
       if (this.fontMeasured || !g_terminals.has(this)) return;
       if (!this.container.isConnected) {
-        // PaneView hasn't appended the container to its slot yet.
-        requestAnimationFrame(run);
+        // PaneView hasn't appended the container to its slot yet. A timer,
+        // not rAF: a terminal built for a pane that never mounts (another
+        // workspace) would otherwise keep a 60 fps frame loop alive forever.
+        window.setTimeout(run, 250);
         return;
       }
       this.fontMeasured = true;

@@ -2,6 +2,8 @@
 vault: backend-core
 covers:
   - app/src-tauri/src/lib.rs
+  - app/src-tauri/src/ipc_meter.rs
+  - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
 ---
@@ -185,7 +187,14 @@ a wide argument list because every connection mode funnels through it: `persiste
   `request_shell`, channel-pump task.
 - `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
-  "simplify" it.
+  "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
+  flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke
+  echo is immediate), then at most every 33 ms per session, early at 1 MB pending, and
+  never while idle. `emit_exit` goes through the same thread and flushes that session's
+  text first, so the last bytes never land after `pty:exit`. Reason (2026-09-24): every
+  emit is an `evaluate_script`, which on macOS flips WebKit's throttle state ~4 times;
+  per-`read()` emits were 10–14/s on one busy pane, while xterm folds a frame's chunks
+  into one write anyway.
 - **The attach-only guard** decides whether to type the `cwd`/command into the session or
   nothing. `new-session -A` attaches-or-creates, so injecting into a name that is *already
   live* could land `cd … && claude …` in a running agent — it therefore skips injection
@@ -408,6 +417,15 @@ list command. The module owns what the picker never needed:
   — see Gotchas.
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
+- **Every invoke is counted** — `invoke_handler(ipc_meter::metered(generate_handler![…]))`.
+  `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
+  `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
+  `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and
+  counts only (Rule #1). It exists because WebKit's own log records a custom-scheme load
+  per invoke but never which command — the 2026-09-23 macOS GPU-hang report had 250k of
+  them and no way to name one. Read that line first when "the app is busy while idle".
+- **`ui_log_batch`** is the frontend logger's sink (a queue flushed ≤1/s, ≤100 lines);
+  `ui_log` stays for single lines. Both go through `write_ui_log`.
 
 ## Gotchas
 

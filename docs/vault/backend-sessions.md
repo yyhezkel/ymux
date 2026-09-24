@@ -55,7 +55,7 @@ that any script can emit with `printf '\e]9;done\a'`:
 
 | Sequence | Shape | Yields |
 |---|---|---|
-| OSC 9 | `ESC ] 9 ; <message>` | body only |
+| OSC 9 | `ESC ] 9 ; <message>` | body only — **except** ConEmu sub-commands, see below |
 | OSC 99 | `ESC ] 99 ; <message>` | body only |
 | OSC 777 | `ESC ] 777 ; notify ; <title> ; <body>` | title + body |
 
@@ -66,6 +66,13 @@ bytes to xterm.js unchanged and treats the notifications as a side channel. That
 makes it the universal complement to agent-specific hooks: any process that can print an
 escape sequence gets a feed item for free. A 4 KB cap on the in-progress message guards
 against a stream that opens an OSC and never closes it.
+
+**`OSC 9;<1-2 digits>[;…]` is not a notification** (`is_conemu_subcommand`). ConEmu and
+Windows Terminal overload OSC 9 with numbered commands, and `9;4;<state>;<pct>` is the
+taskbar progress bar Claude Code re-emits many times a second while it works. Until
+2026-09-23 each one became an `osc-notification` event → a Notification Center row, a
+dock-badge invoke and a pulsing pane ring, and the repaint load hung a 2017 MacBook's
+Intel GPU. A body that merely *starts* with a digit (`3 tests failed`) is still text.
 
 ## `tunnel_registry.rs` (339) — sticky ports and the connect lock
 

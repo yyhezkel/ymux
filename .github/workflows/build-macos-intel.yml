@@ -271,7 +271,15 @@ jobs:
           else
             echo "developer-id: signing with the identity from secrets"
           fi
-          npm run tauri build -- --target ${{ matrix.target }}
+          # Every build carries its own number: CFBundleVersion =
+          # <version>.<run number>, so Finder / Info.plist say WHICH build a
+          # tester is on (two builds of one version were indistinguishable).
+          # CFBundleShortVersionString stays the plain release version.
+          VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          BUILD="$VER.$GITHUB_RUN_NUMBER"
+          echo "bundle version: $BUILD"
+          npm run tauri build -- --target ${{ matrix.target }} \
+            --config "{\"bundle\":{\"macOS\":{\"bundleVersion\":\"$BUILD\"}}}"
 
       # Rule #13's mac half. A binary linked without the Tauri CLI embeds
       # no frontend and loads devUrl at startup — every window is
