@@ -241,7 +241,10 @@ so they are managed per workspace, opened from the workspace's right-click menu 
 the Insights monitor's install prompt. **`YmuxToolsTab.tsx` (126)** is the same shape for
 skills. Both are self-contained specifically so they do not bloat `SettingsModal`.
 
-**`SessionsOverviewWindow.tsx` (462)** — row display names come from `sessionDisplay`
+**`SessionsOverviewWindow.tsx` (~475)** — an EMPTY first list triggers
+`workspace_ensure_connected` and one re-list (a never-connected SSH host answers `[]`,
+meaning "could not ask"); a failed connect shows as the list error, never as "no
+sessions". Row display names come from `sessionDisplay`
 in `paneTitle.ts` since Phase 91 (shared with the sessions strip and "Open"). Phase 90, the workspace right-click
 **Active sessions…** dialog. A plain `.modal` stretched to the viewport (not a
 `PanelSurface`: it has no drawer/float life, it is a full-screen table you open, act in,

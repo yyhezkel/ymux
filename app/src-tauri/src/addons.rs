@@ -25,7 +25,7 @@ use ymux_addons::{
     builtin_registry, ids, manifest_for, routines, AddonAction, AddonManifest, AddonStatus,
 };
 
-use crate::{AppState, Session, SshClient};
+use crate::{AppState, SshClient};
 
 // Phase 68.C / Phase 77: the cross-compiled server daemon (`ymux-server`,
 // formerly `ymux-insights`), embedded so the AddonManager can SFTP-upload the
@@ -36,15 +36,9 @@ const SERVER_ARM64: &[u8] = include_bytes!("../resources/ymux-server-linux-arm64
 
 /// A live SSH handle for the workspace (mirrors file_manager's picker).
 pub(crate) fn pick_handle(state: &AppState, workspace_id: &str) -> Option<Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for sess in sessions.values() {
-        if let Session::Ssh(s) = sess {
-            if s.workspace_id == workspace_id {
-                return Some(s.handle.clone());
-            }
-        }
-    }
-    None
+    // Same machine, not just same workspace: callers include the header-only
+    // Active-sessions dialog, and a header never holds a session itself.
+    crate::ssh_handle_for_machine(state, workspace_id)
 }
 
 /// beta.3-lh-insights: is this workspace a Local one (no SSH)? Looked up

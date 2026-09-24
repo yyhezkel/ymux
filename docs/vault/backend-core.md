@@ -313,7 +313,13 @@ cwd). It is a snapshot that can go stale and it feeds **no** verdict — `owned`
 674 lines. The sidebar's right-click **Active sessions…** dialog: every multiplexer
 session on the workspace's machine, grouped by directory, with a one-line agent summary
 and a status (`idle | working | waiting_input | error | unknown`) per row, and three row
-actions. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
+actions. **Handles resolve by machine (2026-09-24):** the dialog is header-only, and a
+header never holds a pane, so every exact `workspace_id` lookup found nothing and the
+dialog said "no sessions" on a live server. `same_machine_workspace_ids` (same SSH
+user@host:port) + `ssh_handle_for_machine` (own session first, else a sibling's) now back
+`list_workspace_tmux_sessions`, `workspace_sessions_reachable`, `tmux_rename_session`
+(handle and the map migration), `addons::pick_handle` (summaries, kill) and
+`pane_holding_session`. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
 list command. The module owns what the picker never needed:
 
 - **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
