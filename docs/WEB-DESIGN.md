@@ -268,16 +268,31 @@ The device token lands in `localStorage` and rides as `Authorization: Bearer`,
 or as `?token=` on the two WebSocket kinds (a browser cannot set headers on a
 WS handshake). No cookie, so no CSRF surface.
 
-Two shapes, decision pending:
+**Browser-initiated, decided 2026-09-24.** The page requests access and shows a
+short code; ymux shows an approval card carrying **the same code plus the
+requesting IP and User-Agent**; the human matches them and approves. The
+standard device-authorization shape. Needs rate limiting, a cap on pending
+requests, and `shell:attach` as its own checkbox defaulting off.
 
-- **desktop-initiated** — ymux issues, the user carries the token over. Nearly
-  free, but the token is 48 characters and the browser is usually on another
-  machine.
-- **browser-initiated (recommended)** — the page requests access and shows a
-  short code, ymux shows an approval card with **the same code plus the
-  requesting IP and User-Agent**, and the human matches them. The standard
-  device-authorization shape. Needs rate limiting, a cap on pending requests,
-  and `shell:attach` as its own checkbox defaulting off.
+Reusing the existing store rather than inventing a second credential path:
+`PairedDevice.Status` already runs `pending | active | revoked`, so a request
+adds `requested`. The public request endpoint mints the **existing** one-shot
+token plus a display code; approving flips the row to `pending` with the chosen
+scopes; the polling browser then calls the existing `/api/pairing/redeem` with
+the one-shot it already holds. New: the status, a `code` column, and the
+request / list / approve / deny endpoints.
+
+**The desktop must be open and SSH-connected for a first pairing**, because the
+daemon has no way to reach it otherwise — and that is a feature as much as a
+cost: approval is bound to whoever holds SSH access to the box.
+
+**How the request reaches the desktop is still open.** The daemon never dials
+the desktop today (every desktop→daemon call is a `curl` the desktop opens over
+SSH). So either the desktop polls while the Devices tab is open, or the daemon
+gains an outbound client and pushes the request through the reverse tunnel as a
+blocking `feed.push` — which turns it into an ordinary ymux approval card that
+toasts with every panel closed, reusing the agent hook-gate path. The second is
+recommended; the decision thread has the trade.
 
 **Sending scopes at issue time is required, not optional.** Since Phase 95
 `"all"` deliberately excludes `shell:attach`, so a browser paired through

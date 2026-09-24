@@ -66,9 +66,45 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 - **Falls out of it:** the "Mobile" tab now covers browsers too and should be renamed
   (Devices / מכשירים), and the device list should gain a scopes editor — which is also
   how a shell grant gets revoked without unpairing the device.
-- **Status:** assessed against the code, not built. Awaiting Yossi's pick of A or B
-  (recommendation: B). Lands in Phase D of `docs/WEB-DESIGN.md`, which also still has
-  **Q2 (web bundle delivery) open**. Phase B does not depend on either.
+- **DECIDED (Yossi, 2026-09-24): option B**, browser-initiated. He also drew the
+  consequence himself and it is correct: the desktop has to be open and connected for a
+  first pairing. That is not only a cost — the approval is thereby bound to someone who
+  holds SSH access to the box, which is the strongest identity in this system.
+- **Correction to the mechanism, and it changes the UX.** "The server sends the request
+  to the ymux connected over SSH" is not how the two talk today. **The daemon never
+  dials the desktop.** Every desktop→daemon call is a `curl` the DESKTOP opens on an SSH
+  exec channel (`pairing.rs::daemon_curl`); the daemon's only tunnel-facing code is a
+  LISTENER (`chat_hookrpc.go`) that the CLI dials inbound. So the server cannot push. A
+  sub-choice follows, and it decides whether an approval can reach you when no panel is
+  open:
+  - **(B1) The desktop polls** `GET /api/pairing/requests` while the Devices tab is
+    open. Exactly the shape `mobile_pairing_list_devices` already has, and the Mobile tab
+    already runs a poll loop to auto-close its QR. Cheapest. Cost: the approval exists
+    only while you are looking at that tab — open the browser first and nothing tells
+    you, you have to go find the tab.
+  - **(B2) The daemon dials the desktop through the reverse tunnel** and pushes the
+    approval as a **blocking `feed.push`** — i.e. the browser request becomes an ordinary
+    ymux feed card with Allow/Deny, which already toasts, already works with every panel
+    closed, and is the same winner-takes-all machinery the agent hook gates use. The
+    address is already on the remote (`~/.ymux/run/last.env`, `YMUX_SOCKET_ADDR`) and the
+    daemon already implements the other half of that HMAC handshake. Cost: the daemon
+    gains an outbound client it does not have today. **Recommended** — it is the
+    difference between "an approval you must go looking for" and "an approval that finds
+    you", and it reuses a path that is already load-bearing.
+  Either way the tunnel only exists while the desktop holds an SSH session to that host,
+  so Yossi's constraint holds identically for both.
+- **Shape of the flow (common to B1 and B2), reusing the existing store:**
+  `PairedDevice.Status` is already `pending | active | revoked`. Add `requested`. The
+  browser calls a public `POST /api/pairing/request`, which mints the existing one-shot
+  token **plus a short display code**, and returns both; the desktop lists requests with
+  code + IP + User-Agent, and approving flips the row to `pending` with the chosen
+  scopes; the browser, polling, sees the flip and calls the **existing**
+  `/api/pairing/redeem` with the one-shot it already holds. No new credential mechanism
+  — the only additions are the status, a `code` column, and the request/list/approve/deny
+  endpoints. `redeemDevice` must refuse a row still in `requested`.
+- **Status:** option B locked; B1-vs-B2 open (recommendation B2). Lands in Phase D of
+  `docs/WEB-DESIGN.md`, which also still has **Q2 (web bundle delivery) open**. Phase B
+  depends on neither.
 
 ### 2026-09-10 — ymux in the browser: the Go daemon becomes the brain
 - **Context:** Yossi asked what a "browser version" would mean — our server as an HTTPS
