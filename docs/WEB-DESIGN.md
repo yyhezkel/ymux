@@ -258,12 +258,30 @@ routes by window label), so `/` serves `index.html` and the only extra path is
 `?popout=<sid>` for a terminal in its own tab. `GET /api/version` reports the
 served web version so the add-on's detect step can compare.
 
-**Login.** Open `https://<domain>/` → pairing page → paste the code / scan the
-QR the desktop's Mobile tab already generates → `POST /api/pairing/redeem` →
-device token stored in `localStorage`, sent as `Authorization: Bearer` and as
-`Sec-WebSocket-Protocol` on the two WS kinds. Origin-checked WS upgrade. No
-cookie, so no CSRF surface. The device shows up in the existing device list with
-rename / revoke.
+**Login — approved from inside ymux, on the mobile-pairing rails.** Raised by
+Yossi 2026-09-24; the decision thread has the detail. The browser opens
+`https://<domain>/` and gets in only when ymux says so, reusing the pairing
+machinery that already exists: single-use token, 5-minute TTL, public
+`POST /api/pairing/redeem`, device list with rename / revoke, and an `issue`
+endpoint that **already accepts a `scopes` array** the desktop has never sent.
+The device token lands in `localStorage` and rides as `Authorization: Bearer`,
+or as `?token=` on the two WebSocket kinds (a browser cannot set headers on a
+WS handshake). No cookie, so no CSRF surface.
+
+Two shapes, decision pending:
+
+- **desktop-initiated** — ymux issues, the user carries the token over. Nearly
+  free, but the token is 48 characters and the browser is usually on another
+  machine.
+- **browser-initiated (recommended)** — the page requests access and shows a
+  short code, ymux shows an approval card with **the same code plus the
+  requesting IP and User-Agent**, and the human matches them. The standard
+  device-authorization shape. Needs rate limiting, a cap on pending requests,
+  and `shell:attach` as its own checkbox defaulting off.
+
+**Sending scopes at issue time is required, not optional.** Since Phase 95
+`"all"` deliberately excludes `shell:attach`, so a browser paired through
+today's flow would 403 on every terminal route.
 
 **The security line, stated plainly.** Today a leaked device token exposes
 metrics, files under the shared root, and a Claude chat. After this change a

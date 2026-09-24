@@ -25,6 +25,51 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
+- **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
+  access, in the same place the mobile pairing lives, on the same logic. Checked against
+  the code: **he is right, and more of it already exists than expected.**
+- **What is already there.** `POST /api/pairing/issue` (`chat_pairing.go`) **already
+  accepts a `scopes` array** in its body and stores whatever it is given; the desktop
+  simply never sends one, so every pairing to date landed as `"all"`. The daemon already
+  mints a single-use token (48 hex chars, 5-minute TTL, hashed at rest), exposes a public
+  `/api/pairing/redeem` (the one-shot IS the credential), lists devices with their scopes,
+  renames, revokes, and has owner-only `GET/PUT /api/v2/devices/{id}/scopes`. The desktop
+  Mobile tab already generates the QR and **polls for redemption so the QR auto-closes the
+  moment the device pairs**. None of that needs rebuilding.
+- **What is actually missing — and one item is not optional.** Since Phase 95, `"all"`
+  deliberately does NOT include `shell:attach`, so a browser paired through today's flow
+  would get 403 on every terminal route. **Sending scopes at issue time is therefore
+  required for the browser to work at all**, not a nicety. Beyond that: no desktop UI
+  exists for the scopes endpoints, and the QR is unusable when the browser is on a
+  different machine than ymux.
+- **Options:**
+  - **(A) Desktop-initiated, what exists.** Add a `scopes` parameter to
+    `mobile_pairing_generate_qr`, a checkbox row on the card, and a copy button; the user
+    carries the token to the browser. Nearly free. But the token is 48 characters: fine
+    to paste when ymux is on the same machine, unusable when it is not — which is the
+    case the browser version exists for.
+  - **(B) Browser-initiated, what Yossi described. RECOMMENDED.** The browser asks, ymux
+    approves. `POST /api/pairing/request` (public) returns a short human code; the page
+    shows it and long-polls; ymux shows an approval card carrying **the same code plus the
+    requesting IP and User-Agent**; Yossi matches the two and approves, with a separate
+    `shell:attach` checkbox defaulting OFF. This is the standard device-authorization
+    shape (`gh auth login`, Apple TV, Tailscale) and it works no matter which machine the
+    browser is on. It reuses the whole device/token/scope store and mirrors the
+    `PendingRequest` winner-takes-all pattern the hook gates already use.
+- **Security, non-negotiable for (B):** the request endpoint is unauthenticated by
+  nature, so it needs rate limiting and a cap on pending requests; **the code must be
+  displayed in both places and matched by the human**, or an attacker's request could be
+  approved by mistake for one of Yossi's own; the card must show IP and User-Agent; the
+  existing 5-minute TTL carries over; and `shell:attach` is its own explicit checkbox,
+  never folded into an "approve" button.
+- **Falls out of it:** the "Mobile" tab now covers browsers too and should be renamed
+  (Devices / מכשירים), and the device list should gain a scopes editor — which is also
+  how a shell grant gets revoked without unpairing the device.
+- **Status:** assessed against the code, not built. Awaiting Yossi's pick of A or B
+  (recommendation: B). Lands in Phase D of `docs/WEB-DESIGN.md`, which also still has
+  **Q2 (web bundle delivery) open**. Phase B does not depend on either.
+
 ### 2026-09-10 — ymux in the browser: the Go daemon becomes the brain
 - **Context:** Yossi asked what a "browser version" would mean — our server as an HTTPS
   entry point, plus something parallel for local. Two readings were put to him:
