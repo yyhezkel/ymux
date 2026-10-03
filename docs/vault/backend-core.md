@@ -83,7 +83,8 @@ put logic there.
   `notification_type` values that mean "blocked on the user" and "unblocked". A `stop`
   arriving after a notification still wins, an unmapped notification changes nothing,
   and a long turn does not keep resetting its own clock — all of that is pinned by unit
-  tests in the same file. Transitions reach the UI as the **`pane:agent-run`** event via
+  tests in the same file (and ported, with the same test names, to the daemon's
+  `server/internal/agent/state.go` in Phase 99 — change both). Transitions reach the UI as the **`pane:agent-run`** event via
   `emit_agent_run_event`, which carries `(started, avg, state, since, seq)`; `seq` bumps
   only on an applied transition, so a no-op skips the emit. In-memory and
   session-scoped — never persisted. Its sibling store is

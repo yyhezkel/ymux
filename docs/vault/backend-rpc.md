@@ -82,7 +82,9 @@ and **is** the canonical list — nothing else enumerates these:
 An agent hook arrives as one of the hook verbs and turns into a notification:
 
 1. `humanize_notification(subkind, payload, ws_name, lang)` produces `(title, body)` —
-   it is bilingual, driven by the settings language. For a Stop it reads
+   it is bilingual (ported to the daemon with golden tests in Phase 99:
+   `server/internal/agent/humanize.go`, as are `translate_key` → `keys.go` and
+   `brief.rs` → `brief.go` — change both sides), driven by the settings language. For a Stop it reads
    `response_summary` with `last_assistant_message` (what current Claude Code actually
    sends) as the fallback, so the body shows how the turn ended. **Feed cards for the
    passive lifecycle subkinds (`stop`, `session-start/end`, `post-tool-use`,

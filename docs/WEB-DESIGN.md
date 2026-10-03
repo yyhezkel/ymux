@@ -42,7 +42,7 @@ no traffic lights, no briefs.
 |---|---|---|
 | HTTPS front door | `nginx-proxy` add-on: nginx + Let's Encrypt (Cloudflare DNS-01) | unchanged; add a `location /` for the web bundle |
 | Auth | bearer token + per-device tokens with scopes, QR pairing (`internal/auth`, `chat/pairing`) | unchanged; one new scope (§7) |
-| Event streaming | `WS /api/v2/workspace/events`, typed frames in `workspace/frames.go`, `seq` replay | carries every non-PTY event (§5) |
+| Event streaming | typed frames in `workspace/frames.go`, `seq` replay over the **per-session** `GET /api/v2/workspace/{id}/session/{sid}/subscribe` | **Correction 2026-10-04:** there is no workspace-wide `/api/v2/workspace/events` WS yet — it was a PHASE-77 proposal. Phase B3 builds it |
 | Hook allow/deny loop | `PendingRequest` winner-takes-all, `hook_request` / `hook_decision` / `hook_resolved` frames | this **is** the desktop's `feed.push` blocking loop, already server-side |
 | Hook listener | `hooks/hooks.go` + `chat/chat_hookrpc.go` (speaks the `WINMUX-CHALLENGE` dialect) | extend the method set (§6) |
 | Files | `/api/v2/files/*` | replaces `file_*_remote` |
@@ -93,8 +93,9 @@ does not sync: which panes are open where. That is presentation, per client.
 **Layout tree ops move to TypeScript.** `split`, `close`, `swap`, `set_ratio`,
 `distribute_evenly`, `reset_layout` are pure tree operations (~400 lines in
 `lib.rs`, unit-tested there). In browser mode the frontend mutates the tree and
-`PUT`s the document to the daemon (`/api/v2/workspace/state` already exists with
-an optimistic `version`). The daemon stores it opaque. The desktop keeps its Rust
+`PUT`s the document to the daemon (`/api/v2/workspace/state` with an optimistic
+`version` — **correction 2026-10-04: it does not exist yet**, only in PHASE-77-DESIGN;
+Phase B5 builds it). The daemon stores it opaque. The desktop keeps its Rust
 implementation for now — **logged debt**: two implementations of one tree
 algorithm; the follow-up is to make the desktop use the TS ops too and reduce
 Rust to persistence.
@@ -205,11 +206,16 @@ largest and least glamorous phase, and it is where the risk lives.
 ## 6. Server: the CLI / hook bridge
 
 On the box, `ymux claude-hook`, `port-watch`, `session-meta` and the agent verbs
-dial `YMUX_SOCKET_ADDR`. Today that is the reverse-tunnel port. In browser mode
-`setup-hooks` (already run by the daemon's install path) writes the **daemon's
-hook listener** address instead — `hooks/hooks.go` already binds one and reports
-it through `core.AddrSink`. Same challenge dialect, same CLI binary, no CLI
-change beyond reading one more env source.
+dial `YMUX_SOCKET_ADDR`. Today that is the reverse-tunnel port. **Correction
+2026-10-04:** `setup-hooks` writes no address at all — only `<exe> claude-hook <sub>`
+entries in `~/.claude/settings.json`. The CLI finds its listener through the process
+env (`YMUX_SOCKET_ADDR`, `YMUX_TUNNEL_TOKEN`, `YMUX_PANE_ID`), falling back to
+`~/.ymux/run/last.env`. So in browser mode the daemon must **inject that env into each
+tmux session it creates** (`tmux new-session -e …`, session-scoped so it beats the
+desktop's `set-environment -g`), pointing at its own hook listener — `hooks/hooks.go`
+binds one and reports it through `core.AddrSink`. Same challenge dialect, same CLI
+binary. And the hook "verbs" below are not methods: they are `subkind` values of a
+single `feed.push` (`rpc_server.rs` `feed.push` arm).
 
 The daemon's `HookConnHandler` grows the JSON-RPC subset the desktop's
 `dispatch()` answers for remote callers:
@@ -336,6 +342,12 @@ never enter that package's SQLite event log. Live verification is open (Rule #14
 | C | TS: `Backend` interface, `TauriBackend`, codemod, `WebBackend`, `layoutOps.ts`, capability gating, `TerminalInstance` on `TermStream` | ~2–3k TS | desktop unchanged in behaviour (the regression risk); web build renders against a Phase A/B daemon over plain HTTP on localhost |
 | D | `ymux-web` add-on, nginx `location /`, pairing page, Mobile tab → "Web & devices" | ~500 Rust + Go | full path over HTTPS from a phone |
 | E | PWA: manifest, service worker, push subscription over the existing WS channel | ~300 TS | "Add to Home Screen" on Android; a hook gate arrives as a notification |
+
+**Phase B is split into six PRs (decided 2026-10-04, DECISIONS):** B1 pure Go ports of
+the agent logic (`internal/agent`, Phase 99) → B2 hook listener for browser-created
+tmux sessions → B3 `feed.push`/`feed.decide` + the workspace events WS → B4 small verbs
+→ B5 workspace state + layout verbs → B6 session history (§4.2, a CLI change). Policy:
+the daemon's per-session `auto/block/gate/none`, no `ymux-policy` port.
 
 A and B ship without touching the desktop. C is the merge-risk phase: land it
 behind the backend interface with `TauriBackend` first, ship a desktop release on
