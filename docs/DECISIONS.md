@@ -489,6 +489,20 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   (systemd `KillMode=control-group`, the default). A tmux server started by the user's own
   shell outlives a daemon restart, and its `claude` would then dial a dead port — B2 must
   check which case the daemon's `term.Tmux.Create` produces and log the answer here.
+- **Checked in B2 (2026-10-04) — the caveat was worse than written; Yossi: leave it.**
+  The unit (`addons.rs` `insights_install`) is a `systemd --user` service with no
+  `KillMode`, so `control-group` applies. A tmux server the daemon starts (the first
+  browser create on a box with no tmux running) forks into that cgroup, and the daemon
+  and the desktop share ONE tmux server (no `-L`/`-S` anywhere). So a daemon restart
+  kills **every** session on the default socket, desktop-created ones included — not just
+  the browser's. Options put to Yossi: `KillMode=process` + a sticky port and derived
+  token; a separate `-L ymux-web` socket for browser sessions (breaks "one tmux
+  reality"); or leave it. **Decided: leave it, documented** (`docs/ymux-server/DEPLOYMENT.md`).
+  Consequence for B2: the hook registry is in memory and the listener port stays
+  ephemeral.
+- **Decided — B2 policy (Yossi):** until B3, a browser session's permission request is
+  answered `allow` with `policy:"none"`. B2 has no way to reach a human (no events WS
+  yet), and `gate` with nobody to ask would deny every tool call.
 
 ### 2026-09-15 — Phase 94: `force_rtl` stops painting `dir="rtl"` on rows that have no RTL text; a pure-ASCII block never inherits RTL
 - **Context:** Yossi: Claude Code's new split-screen changed-files view renders scrambled inside a ymux remote pane on Windows and fine on the Mac; then "גם כשאני על auto per line וגם כשאני על RTL מלא, זה נראה שבור". Investigation first went to ymux's own Diff pane (Phase 91.H, PR #48 — four real bugs, kept), which was the wrong screen. The Windows box's remote profile was `force_rtl`; the Mac's is not.

@@ -27,8 +27,10 @@ import (
 	"context"
 	"errors"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"ymux-server/internal/logging"
@@ -55,6 +57,10 @@ func execRunner(ctx context.Context, name string, args ...string) ([]byte, error
 type Tmux struct {
 	bin string
 	run runner
+
+	// envOnce caches whether `new-session -e` is available (tmux >= 3.2).
+	envOnce sync.Once
+	envOK   bool
 }
 
 // NewTmux returns a Tmux driving the real binary.
@@ -159,7 +165,13 @@ func (t *Tmux) Has(name string) bool {
 // Create starts a DETACHED session. cwd may be empty (tmux inherits the
 // daemon's). Creating detached and attaching separately is deliberate: the
 // session outlives every client, which is the whole point.
-func (t *Tmux) Create(name, cwd string) error {
+//
+// env (Phase 100) becomes SESSION-scoped environment (`-e K=V`), which tmux
+// gives every pane of the session and which beats the global environment —
+// the hook variables the desktop sets with `set-environment -g`. Keys are
+// passed sorted so the argv is deterministic. Callers must check
+// SupportsSessionEnv first; tmux < 3.2 rejects `-e` and the create fails.
+func (t *Tmux) Create(name, cwd string, env map[string]string) error {
 	if !ValidName(name) {
 		return ErrBadName
 	}
@@ -167,11 +179,58 @@ func (t *Tmux) Create(name, cwd string) error {
 	if cwd != "" {
 		args = append(args, "-c", cwd)
 	}
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		args = append(args, "-e", k+"="+env[k])
+	}
 	if _, err := t.exec(args...); err != nil {
 		return err
 	}
-	logger.Info("tmux session created", "session", name, "has_cwd", cwd != "")
+	logger.Info("tmux session created", "session", name, "has_cwd", cwd != "", "env_vars", len(env))
 	return nil
+}
+
+// SupportsSessionEnv reports whether this tmux accepts `new-session -e`
+// (added in 3.2). Asked once per daemon run; a tmux that cannot even report
+// its version is treated as too old, so the create still succeeds — just
+// without the hook variables.
+func (t *Tmux) SupportsSessionEnv() bool {
+	t.envOnce.Do(func() {
+		out, err := t.exec("-V")
+		if err != nil {
+			logger.Warn("tmux -V failed; browser sessions will not route hooks to the daemon", "err", err)
+			return
+		}
+		t.envOK = versionAtLeast(strings.TrimSpace(string(out)), 3, 2)
+		if !t.envOK {
+			logger.Warn("tmux too old for new-session -e; browser sessions will not route hooks to the daemon",
+				"version", strings.TrimSpace(string(out)))
+		}
+	})
+	return t.envOK
+}
+
+// versionAtLeast parses `tmux -V` output ("tmux 3.4", "tmux 3.2a",
+// "tmux next-3.5", "tmux master") against major.minor. A development build
+// with no number ("master") is assumed new.
+func versionAtLeast(v string, major, minor int) bool {
+	v = strings.TrimPrefix(v, "tmux ")
+	v = strings.TrimPrefix(v, "next-")
+	if v == "master" {
+		return true
+	}
+	maj, rest, _ := strings.Cut(v, ".")
+	mj, err := strconv.Atoi(maj)
+	if err != nil {
+		return false
+	}
+	digits := strings.TrimRightFunc(rest, func(r rune) bool { return r < '0' || r > '9' })
+	mn, _ := strconv.Atoi(digits)
+	return mj > major || (mj == major && mn >= minor)
 }
 
 // Rename renames a session.

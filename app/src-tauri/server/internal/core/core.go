@@ -6,8 +6,8 @@
 package core
 
 import (
+	"encoding/json"
 	"io"
-	"net"
 )
 
 // Version is the ymux-server release version. Major 2 marks the API-stability
@@ -55,17 +55,35 @@ const Version = "2.4.0"
 // must fail loudly rather than silently drift.
 const FrameVersion = 2
 
-// HookConnHandler consumes a freshly-accepted hook-RPC connection and speaks the
-// Phase-66 challenge/response + JSON-RPC protocol on it. It is implemented by
-// chat's SessionManager (which owns the per-session HMAC tokens + pending-hook
-// state) and driven by the thin hooks.Listener. This indirection is the cycle
-// break: hooks → core, chat → core, and cmd wires the concrete handler in.
-type HookConnHandler interface {
-	HandleHookConn(conn net.Conn)
+// HookResolver identifies the caller on a hook-RPC connection. The listener
+// (internal/hooks) owns the Phase-66 challenge/response; after reading the
+// client's HMAC over the nonce it asks each resolver in turn whether one of its
+// per-session tokens produced it. Implemented by chat's SessionManager (claude
+// children it spawned for the phone) and by term's hook registry (tmux
+// sessions the browser created, Phase 100). This indirection is the cycle
+// break: hooks → core, chat → core, term → core, and cmd wires them.
+type HookResolver interface {
+	MatchHookHMAC(nonce, mac []byte) (HookTarget, bool)
 }
 
-// AddrSink receives the hook listener's bound localhost address so the session
-// manager can inject it (as YMUX_SOCKET_ADDR) into spawned claude children.
+// HookTarget is the session a resolver matched. DispatchHook answers the ONE
+// JSON-RPC request the connection carries: a non-nil RPCError becomes a
+// JSON-RPC `error` object, otherwise result becomes `result`. A blocking
+// permission gate may hold the call for up to its wait timeout.
+type HookTarget interface {
+	DispatchHook(method string, params json.RawMessage) (result any, err *RPCError)
+}
+
+// RPCError is a JSON-RPC error object. -32000 is the code the desktop's
+// rpc_server uses for every application error.
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// AddrSink receives the hook listener's bound localhost address so a resolver
+// can inject it (as YMUX_SOCKET_ADDR) into the processes it starts: chat's
+// claude children, term's tmux sessions.
 type AddrSink interface {
 	SetHookAddr(addr string)
 }

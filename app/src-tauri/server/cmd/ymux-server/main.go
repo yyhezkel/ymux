@@ -180,7 +180,6 @@ func main() {
 		} else {
 			logger.Warn("browser pairing disabled: home directory unresolvable")
 		}
-		hooks.Start(chatMgr) // thin listener → SessionManager.HandleHookConn (cycle-safe)
 		go chat.RunSessionSweeper(chatMgr, stop)
 		logger.Info("Claude chat subsystem enabled")
 	}
@@ -300,6 +299,18 @@ func main() {
 		logger.Warn("terminal API: chat disabled, only the shared token is accepted")
 	}
 	logger.Info("terminal API enabled", "device_scopes", chatAPI != nil)
+
+	// Hook RPC (Phase 100): one listener, two kinds of caller. term's registry
+	// answers for tmux sessions a browser created; chat (when its store opened)
+	// for the claude children it spawned for the phone. Started after both
+	// exist so each learns the listener address before its first session, and
+	// no longer conditional on chat — a failed chat.db must not cost browser
+	// sessions their hooks.
+	hookResolvers := []core.HookResolver{termSvc.Hooks()}
+	if chatMgr != nil {
+		hookResolvers = append(hookResolvers, chatMgr)
+	}
+	hooks.Start(hookResolvers...)
 
 	srv := api.NewServer(token, *port, api.Deps{
 		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,

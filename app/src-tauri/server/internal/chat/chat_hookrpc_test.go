@@ -30,7 +30,7 @@ func newTestManagerWithRPC(t *testing.T) *SessionManager {
 	}
 	t.Cleanup(store.Close)
 	m := NewSessionManager(store)
-	hooks.Start(m) // thin listener → SetHookAddr + HandleHookConn (Phase 77)
+	hooks.Start(m) // listener → SetHookAddr + MatchHookHMAC (Phase 100)
 	if m.rpcAddr == "" {
 		t.Fatal("rpcAddr not set after hooks.Start")
 	}
@@ -73,10 +73,10 @@ func cliHookCall(t *testing.T, addr, token, paneID, kind string, reqID string) (
 	}
 	// Mirror whichever dialect the server opened with, exactly as the real
 	// CLI does — this keeps the test honest across the winmux → ymux tag
-	// flip instead of pinning it to today's challengeTag.
+	// flip instead of pinning it to today's hooks.ChallengeTag.
 	trimmed := strings.TrimSpace(line)
 	tag := ""
-	for _, candidate := range []string{ymuxTag, legacyTag} {
+	for _, candidate := range []string{hooks.TagYmux, hooks.TagLegacy} {
 		if strings.HasPrefix(trimmed, candidate+"-CHALLENGE ") {
 			tag = candidate
 			break
@@ -259,7 +259,7 @@ func handshakeWithTag(t *testing.T, addr, token, tag string) string {
 // knows how to parse "WINMUX-OK" hangs up on anything else.
 func TestHookHandshakeAcceptsBothDialects(t *testing.T) {
 	m := newTestManagerWithRPC(t)
-	for _, tag := range []string{ymuxTag, legacyTag} {
+	for _, tag := range []string{hooks.TagYmux, hooks.TagLegacy} {
 		s := registerFakeSession(m, "auto")
 		if got, want := handshakeWithTag(t, m.rpcAddr, s.rpcToken, tag), tag+"-OK"; got != want {
 			t.Fatalf("dialect %s: verdict = %q, want %q", tag, got, want)
@@ -272,7 +272,7 @@ func TestHookHandshakeAcceptsBothDialects(t *testing.T) {
 func TestHookHandshakeDeniesInClientDialect(t *testing.T) {
 	m := newTestManagerWithRPC(t)
 	registerFakeSession(m, "auto")
-	for _, tag := range []string{ymuxTag, legacyTag} {
+	for _, tag := range []string{hooks.TagYmux, hooks.TagLegacy} {
 		got := handshakeWithTag(t, m.rpcAddr, "not-the-token", tag)
 		if !strings.HasPrefix(got, tag+"-DENIED") {
 			t.Fatalf("dialect %s: verdict = %q, want %s-DENIED prefix", tag, got, tag)

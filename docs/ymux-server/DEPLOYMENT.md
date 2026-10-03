@@ -9,7 +9,8 @@ that automation does, for operators who want to run it standalone.
   arch is picked from the two embedded `ymux-server-linux-{x64,arm64}`).
 - A `~/.ymux/bin/ymux-insights` symlink → `ymux-server` is kept so any
   pre-2.x tooling / version probe still resolves.
-- Data dir: `~/.ymux/insights/` (token, `*.db`, `logs/`, `insights.log`).
+- Data dir: `~/.ymux/server/` since 2.x (token, `*.db`, `logs/`, `insights.log`);
+  older installs used `~/.ymux/insights/`, migrated once on upgrade.
 
 ## systemd (user unit)
 
@@ -35,6 +36,15 @@ docker group).
 
 On SIGINT/SIGTERM the daemon drains in-flight HTTP requests (5s deadline) before
 exiting, so a `systemctl restart` won't cut off a metrics/file request.
+
+**A restart can take tmux with it (known, accepted — DECISIONS 2026-10-04).** The unit
+sets no `KillMode`, so systemd's default `control-group` applies: a restart (an add-on
+update, an `on-failure` restart) kills every process in the unit's cgroup. If the daemon
+was the one that started the user's tmux server — the first `POST /api/v2/term/sessions`
+on a box with no tmux running — that server is in the cgroup, and **every session on
+the default socket dies with it, including sessions the desktop opened.** A tmux server
+started from an SSH login lives outside the unit and survives. The `nohup` fallback
+kills only the daemon.
 
 ## Networking
 

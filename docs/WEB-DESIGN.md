@@ -217,6 +217,13 @@ binds one and reports it through `core.AddrSink`. Same challenge dialect, same C
 binary. And the hook "verbs" below are not methods: they are `subkind` values of a
 single `feed.push` (`rpc_server.rs` `feed.push` arm).
 
+**Done in B2 (Phase 100):** `internal/hooks` owns the handshake and asks each
+`core.HookResolver` (chat, term) whose token signed it; `term.HookRegistry` injects the
+three variables with `new-session -e` (tmux ≥ 3.2) and folds `feed.push` into the pane's
+traffic light and brief via `internal/agent`. Permission requests are allowed
+(`policy:"none"`) until B3 adds the events WS and real gating. State is in memory and
+not yet served.
+
 The daemon's `HookConnHandler` grows the JSON-RPC subset the desktop's
 `dispatch()` answers for remote callers:
 

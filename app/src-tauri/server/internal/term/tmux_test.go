@@ -148,7 +148,7 @@ func TestBadNamesNeverReachTmux(t *testing.T) {
 		name string
 		run  func() error
 	}{
-		{"create", func() error { return tm.Create("a:b", "") }},
+		{"create", func() error { return tm.Create("a:b", "", nil) }},
 		{"kill", func() error { return tm.Kill("a.b") }},
 		{"rename", func() error { return tm.Rename("ok", "-flag") }},
 	} {
@@ -163,7 +163,7 @@ func TestBadNamesNeverReachTmux(t *testing.T) {
 
 func TestCreateDetachedWithCwd(t *testing.T) {
 	tm, calls := fake(ok(""))
-	if err := tm.Create("work", "/srv/app"); err != nil {
+	if err := tm.Create("work", "/srv/app", nil); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	args := (*calls)[0]
