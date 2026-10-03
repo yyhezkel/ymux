@@ -28,6 +28,7 @@ import {
 } from "./textDirection";
 import type { RowDir, RowDirMode } from "./textDirection";
 import { transformMouseX, findRow } from "./mouseRtl";
+import { wheelSteps, type WheelDeltaMode } from "./wheelSteps";
 import type { RtlProfileKind } from "./types";
 import { t } from "./i18n";
 
@@ -643,6 +644,8 @@ export class TerminalInstance {
    *  65.O's proxy fired in a PLAIN shell and walked bash history, which is
    *  exactly the failure this flag exists to prevent. */
   private tmuxScroll = false;
+  /** Sub-notch wheel remainder between events (Phase 98, see wheelSteps.ts). */
+  private wheelCarry = 0;
 
   setTmuxScroll(on: boolean): void {
     if (this.tmuxScroll === on) return;
@@ -1045,11 +1048,16 @@ export class TerminalInstance {
       if (this.term.buffer.active.type !== "alternate") return true;
       if (this.term.modes.mouseTrackingMode !== "none") return true;
       ev.preventDefault();
-      // deltaMode 1 = lines (Firefox); 0 = pixels, where one notch is ~100px
-      // on Windows and a trackpad streams many small events — 3 lines per
-      // event is the rate xterm.js itself uses for a notch.
-      const n = ev.deltaMode === 1 ? Math.min(Math.abs(ev.deltaY), 10) : 3;
-      this.term.input((ev.deltaY < 0 ? "\x1b[1;2A" : "\x1b[1;2B").repeat(n), true);
+      // Phase 98: ONE key per notch — the conf scrolls 3 lines per key, as
+      // one tmux operation. 91.D sent 3 keys per event, and tmux's paste
+      // detection skipped the bindings of all but the first (the rest were
+      // dropped in copy-mode, or typed into the program once `-e` had left
+      // it). A touchpad's small deltas accumulate in `wheelCarry`.
+      const { steps, carry } = wheelSteps(this.wheelCarry, ev.deltaY, ev.deltaMode as WheelDeltaMode);
+      this.wheelCarry = carry;
+      if (steps !== 0) {
+        this.term.input((steps < 0 ? "\x1b[1;2A" : "\x1b[1;2B").repeat(Math.abs(steps)), true);
+      }
       return false;
     });
 

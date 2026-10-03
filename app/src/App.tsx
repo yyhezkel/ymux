@@ -5143,19 +5143,28 @@ function App() {
         onDrawer={() => openPanel("files")}
         onFloat={() => floatPanel("files")}
         onFullscreen={() => expandPanel("files")}
-        body={() => {
-          const ws = activeWs();
-          return ws ? (
-            <FileManagerPane
-              workspaceId={ws.id}
-              hasSsh={isRemoteWorkspace(ws)}
-              hasActiveSession={liveWorkspaceIds().has(ws.id)}
-              rememberPath={settings()?.file_manager_remember_path === true}
-            />
-          ) : (
-            <></>
-          );
-        }}
+        // Phase 98: keyed on the workspace ID, never on the workspace object.
+        // Reading activeWs() here made the body re-run on EVERY setFile —
+        // each one hands over fresh objects — and every re-run mounted a new
+        // FileManagerPane: folder, list, scroll and an open FileEditor (with
+        // its unsaved text) all reset. Phase 91's 30 s session-rows poll made
+        // that happen twice a minute. The props below are compiled into
+        // getters, so they still follow the workspace without a remount.
+        body={() => (
+          <Show when={file().active_workspace_id} keyed>
+            {(id) => (
+              <FileManagerPane
+                workspaceId={id}
+                hasSsh={(() => {
+                  const ws = activeWs();
+                  return ws ? isRemoteWorkspace(ws) : false;
+                })()}
+                hasActiveSession={liveWorkspaceIds().has(id)}
+                rememberPath={settings()?.file_manager_remember_path === true}
+              />
+            )}
+          </Show>
+        )}
       />
 
       <CreateWorkspaceModal

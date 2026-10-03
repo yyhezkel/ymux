@@ -143,6 +143,14 @@ Left in place during Phase 85 rather than deleted mid-change. Either delete it a
 from the `generate_handler!` list in `lib.rs`, or give it the one job show can't do —
 reposition WITHOUT un-hiding — which is the only reason it would earn its keep.
 
+### `FileManagerWindow.tsx` is dead code (2026-09-24)
+
+`app/src/FileManagerWindow.tsx` (151 lines) is imported by nothing — the File Manager is
+mounted by App's `files` `PanelSurface` since the drawer/float/fullscreen lifecycle landed.
+Its Phase 60 comment describes the same object-identity remount that Phase 98 fixed in the
+PanelSurface body, which is how it was noticed. Delete it (and the stale mentions in
+`LayoutView.tsx`'s header comment); drop it from `docs/vault/frontend-panes.md`'s covers list.
+
 ## Done
 
 ### Scrollback inside a locked zellij pane (2026-08-20 — closed same day)

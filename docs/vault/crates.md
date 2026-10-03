@@ -172,7 +172,7 @@ had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote 
 Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`. Bump them together, in the same
 commit, or the daemon you just rebaked never reaches a single server.
 
-## `ymux-bootstrap` (616) — remote CLI deploy
+## `ymux-bootstrap` (628) — remote CLI deploy
 
 Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
@@ -180,7 +180,9 @@ succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
 `ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the
 manifest's `tmux-conf` entry) and does nothing else: applying it to a running tmux
 server is the attach script's `source-file -q` (backend-core.md § Multiplexer
-wrappers), not the bootstrap's job.
+wrappers), not the bootstrap's job. **It runs on both exits** — after an upload and in the
+binary-hash-matches early return (`AlreadyOk`). Until Phase 98 only the upload path
+called it, so a host whose CLI was already current never received a new conf.
 
 **No `tauri` dependency, by explicit decision.** The caller resolves resource paths and
 passes in the manifest plus a resource-loader closure; `bootstrap()` does all the russh +
