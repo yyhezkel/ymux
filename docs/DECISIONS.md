@@ -464,6 +464,32 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-04 — WEB-DESIGN Phase B split into six PRs; policy and hook-port calls
+- **Context:** Yossi moved on to Phase B of "ymux in the browser". Two code surveys (Go
+  daemon + the Rust it replaces) found the design doc optimistic: `/api/v2/workspace/state`
+  and a shared events WebSocket **do not exist** (only per-session `…/subscribe`); the
+  hook "verbs" are `subkind` values of one `feed.push`, not methods; `setup-hooks` writes
+  no address (the CLI finds the listener through env / `~/.ymux/run/last.env`); and the
+  daemon's hook listener only authenticates its own chat sessions.
+- **Decided — split (Yossi):** one PR each, each with its own rebake —
+  **B1** pure Go ports (traffic light, brief parser, hook copy, send-key; Phase 99) →
+  **B2** hook listener for browser-created tmux sessions (token + pane-id scheme, env
+  injected per session with `tmux new-session -e`) → **B3** `feed.push` / `feed.decide` +
+  events + the two hydration routes → **B4** small verbs (`set-status`, `notify`,
+  `note-*`, `port.*`) → **B5** workspace state + layout verbs (`tree`, `split`, `send`,
+  `send-key`, titles) → **B6** session history (`ended_at` + `cwd` in session-meta — a CLI
+  change, mixed-version risk noted in the survey).
+- **Decided — policy (Yossi):** do **not** port `ymux-policy` to Go. A browser session's
+  PreToolUse goes through the daemon's per-session mode — `auto` / `block` / `gate` /
+  `none` (`none` is new; define it in B3 — most likely "no gate at all, hooks are
+  observability only").
+- **Decided — hook port (Yossi):** the listener's ephemeral port is acceptable, because
+  "if the server restarts the tmux will be gone anyway". **Caveat to verify in B2:** that
+  holds only when the tmux server the daemon starts lives in the daemon's cgroup
+  (systemd `KillMode=control-group`, the default). A tmux server started by the user's own
+  shell outlives a daemon restart, and its `claude` would then dial a dead port — B2 must
+  check which case the daemon's `term.Tmux.Create` produces and log the answer here.
+
 ### 2026-09-15 — Phase 94: `force_rtl` stops painting `dir="rtl"` on rows that have no RTL text; a pure-ASCII block never inherits RTL
 - **Context:** Yossi: Claude Code's new split-screen changed-files view renders scrambled inside a ymux remote pane on Windows and fine on the Mac; then "גם כשאני על auto per line וגם כשאני על RTL מלא, זה נראה שבור". Investigation first went to ymux's own Diff pane (Phase 91.H, PR #48 — four real bugs, kept), which was the wrong screen. The Windows box's remote profile was `force_rtl`; the Mac's is not.
 - **Root cause (mechanical, reproduced in a vite harness):** xterm's DOM renderer — the renderer both row-dir modes need — injects `.xterm-rows span { display: inline-block }`. An atomic inline is a neutral (U+FFFC) to UAX #9, so under `dir="rtl"` a row made of Latin style runs is laid out with the runs in **reverse order**. A single-run shell row merely right-aligns (what `force_rtl` was liked for); a diff row with a dim line number, a green gutter, two columns and a bold header comes out with its fragments mirrored — Yossi's screenshot exactly. `force_rtl` painted every row rtl. `auto_per_line` got there through step 4 of `detectRowDirections`: a bordered block with **zero** RTL text inherited the direction of the row above it — the Hebrew prompt — so the same rows went rtl. Two modes, one DOM effect. `windowsPty: conpty` without a `buildNumber` is inert in xterm 6 (checked the built lib) and the raster font in the stale settings.json were both ruled out.

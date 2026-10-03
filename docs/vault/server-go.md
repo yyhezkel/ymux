@@ -2,6 +2,7 @@
 vault: server-go
 covers:
   - app/src-tauri/server/cmd/ymux-server/main.go
+  - app/src-tauri/server/internal/agent/*.go
   - app/src-tauri/server/internal/api/*.go
   - app/src-tauri/server/internal/auth/*.go
   - app/src-tauri/server/internal/chat/*.go
@@ -56,6 +57,7 @@ dependency arrow points one way, so there is no cycle to break later.
 
 | Package | Lines | What |
 |---|---|---|
+| `agent` | 608 | Phase 99 (WEB-DESIGN B1): pure Go ports of the desktop's per-pane agent logic — traffic light, `[ymux-brief]` parser, hook copy, send-key table. Stdlib only, nothing imports it yet (see below) |
 | `api` | 838 | HTTP front door: the mux, unauthenticated liveness + version negotiation, and each subsystem mounted behind auth middleware. `huma.go` holds the typed client-SDK surface |
 | `auth` | 195 | `Bearer` middleware plus per-device scope grants (`scopes.go`) — a leaf, imports no sibling |
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
@@ -71,11 +73,38 @@ dependency arrow points one way, so there is no cycle to break later.
 | `term` | 1,090 | tmux sessions + a binary WebSocket carrying a real PTY (95), and the embedded diagnostic page (97) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
+## `agent/` — the desktop's agent logic, ported (Phase 99)
+
+WEB-DESIGN Phase B moves the brain to the daemon for browser clients, and B1 is the
+part with no IO: four files, each a **port of Rust that still runs on the desktop**,
+with the Rust tests translated under the same names.
+
+- `state.go` ← `lib.rs` `PaneAgentState` / `AgentRunState::apply_hook`. `Run.ApplyHook(subkind,
+  notificationType, now)` is the traffic-light table; `seq` bumps on every *mapped* hook,
+  `StateSince` only on a real change, an unmapped notification is a full no-op.
+  `Run.Event(paneID)` is the `pane:agent-run` payload with identical JSON keys (nil
+  pointers → `null`, like the Rust `Option`). `now` is a parameter so tests pin it.
+- `brief.go` ← `brief.rs`: `ParseBrief`, `BriefFromStop`, `PreBriefText`. `ClipChars`
+  counts **runes** (Rust counts chars) so a Hebrew value is never cut mid-letter; key and
+  marker matching are ASCII-only folds (`asciiLower` / `asciiEqualFold`), not
+  `strings.EqualFold`, to match `eq_ignore_ascii_case`. `BriefEntry` is the `pane:brief`
+  entry shape.
+- `humanize.go` ← `rpc_server.rs` `humanize_notification`: the English/Hebrew copy
+  character for character, pinned by golden tests (the Rust side has none — these are the
+  cross-check). `session_duration_seconds` must be a whole non-negative number, as
+  serde's `as_u64` demands; `json.Number` is accepted.
+- `keys.go` ← `translate_key`; an unknown name passes through **lowercased**, as in Rust.
+
+Nothing imports the package in B1 — that is deliberate: B2 (the hook listener for
+browser-created tmux sessions) and B3 (`feed.push`/`feed.decide` + events) build on
+tested logic. Until the desktop drops its own copy, **a change to either side must be
+made to both**; the Rust functions carry the same note pointing here.
+
 ## Things worth knowing before you edit
 
 **`workspace/frames.go`** — the WebSocket frame contract is **typed Go values** so
 producers cannot drift from the published schema
-(`docs/ymux-server/frames.schema.json` + `asyncapi.json`). Discriminator is `"type"`,
+(`internal/api/frames.schema.json` + `internal/api/asyncapi.json`). Discriminator is `"type"`,
 chosen because kotlinx `@JsonClassDiscriminator`, TS tagged unions, and
 AsyncAPI/JSON-Schema all default to it. Locked in S4.3 and canonical — no client is
 pinned to anything else yet.
@@ -333,5 +362,5 @@ out of the server and fails CI if the committed SDKs moved.
 
 You need an endpoint's exact path and payload, the chat session state machine, or the
 sampler's metric names. The API surface is generated into `sdk/typescript` and
-`sdk/kotlin`; the frame schema is `docs/ymux-server/frames.schema.json`, the push
+`sdk/kotlin`; the frame schema is `internal/api/frames.schema.json`, the push
 contract `docs/PUSH-PROTOCOL.md`, and the design rationale `docs/PHASE-77-DESIGN.md`.

@@ -335,6 +335,9 @@ impl AgentRunState {
 
     /// Phase 84.B: fold one hook into the effective agent state.
     ///
+    /// Phase 99: ported to Go (`server/internal/agent/state.go`, same
+    /// test names) — change both together.
+    ///
     /// Returns true when the state actually changed, so the caller can
     /// skip an emit for a no-op. `seq` bumps on every applied transition
     /// (including a no-op one, so the frontend's ordering guard still

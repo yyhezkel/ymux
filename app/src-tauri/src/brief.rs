@@ -29,6 +29,9 @@
 //! - Markdown decoration around keys/lines (`- `, `> `, `**`, backticks,
 //!   code fences) is stripped; unknown keys are ignored for forward compat.
 //!
+//! Phase 99: ported to Go for the browser build —
+//! `server/internal/agent/brief.go`. Change both together.
+//!
 //! Rule #1: brief and prompt CONTENT lives in memory and the UI only.
 //! Nothing in this module logs; callers log metadata (pane id, degraded
 //! flag, field count) at most.

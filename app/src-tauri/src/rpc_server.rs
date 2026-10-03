@@ -358,6 +358,7 @@ where
     // Return → `stream` (split halves) drop → pipe instance freed immediately.
 }
 
+// Phase 99: ported to Go (`server/internal/agent/keys.go`) — change both.
 fn translate_key(key: &str) -> Vec<u8> {
     match key.to_lowercase().as_str() {
         "enter" | "return" | "cr" => b"\r".to_vec(),
@@ -435,6 +436,9 @@ fn clip(s: &str, max: usize) -> String {
 /// beta.3 Fix 5: added the four Observability hooks (PostToolUse /
 /// SubagentStop / UserPromptSubmit / PreCompact) so `_ =>` no longer
 /// swallows them into an empty body.
+///
+/// Phase 99: ported to Go with golden tests
+/// (`server/internal/agent/humanize.go`) — change the copy in both.
 fn humanize_notification(subkind: &str, payload: &Value, ws_name: &str, lang: &str) -> (String, String) {
     let cwd = payload.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
     let tool = payload.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
