@@ -45,10 +45,15 @@ import (
 // rest of 2.4.0 testable, so releasing them apart would be releasing a
 // feature and its only client separately.
 //
+// 2.4.1 (Phase 100, WEB-DESIGN B2): hooks from tmux sessions a browser
+// creates reach the daemon (internal/hooks + term's hook registry). Bumped
+// so the add-on offers it — the desktop only offers an update when this
+// string differs, and 2.4.0 had already reached test servers.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.4.0"
+const Version = "2.4.1"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

@@ -80,7 +80,7 @@
     "app/src-tauri/cli/src/session_meta.rs": "4e179fde7b89de97f31de6bcefe1d2b91ed95bd2c417c04cc044a909b885e177"
   },
   "crates": {
-    "app/src-tauri/crates/ymux-addons/src/lib.rs": "80350c0db893321fd8ee8c70c026f89fbad79b72bb072c07ed3fdbe04300a600",
+    "app/src-tauri/crates/ymux-addons/src/lib.rs": "d52ef7702a6cc4ea6a0d8f690e260f6bcbcbb3d8c1df9390fc3a2c5d52e7bfed",
     "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "404e02208ea32cb11ef3e0b6f90ecc29fc41ab480a5e740f3e3842bd7b88b85c",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "76eb09970d1f1e5eb412e17971e87c6a0255f62a6c8a19db88a77a6d1540f9b4",
@@ -240,7 +240,7 @@
     "app/src-tauri/server/internal/config/migrate_test.go": "a64a6c4fa4ef76a1e0a1adf9fd93382226a98be5c885f923d3dbf57dc00a7b2b",
     "app/src-tauri/server/internal/config/path.go": "b1502f1b80dca133a60813459dfbf70345d7a3d980f9c17f55d496f19e4ad476",
     "app/src-tauri/server/internal/config/path_test.go": "942056634580d15dfd6ee84155e02244d0e4c25d261387588521d25f2aeb5117",
-    "app/src-tauri/server/internal/core/core.go": "d11aeb1a4a14e73995a3e8e0644e708d84876e2ac12cb59f988783e8628ebdb8",
+    "app/src-tauri/server/internal/core/core.go": "72e9a0ecf40849f0d606b4f21fcf55e3738dd71e0f5eca95f7e3262214d2d42c",
     "app/src-tauri/server/internal/desktop/desktop.go": "c7ce9b8a1e8b8a9144366bb37a673be4bc212044ff8ebf365a5b266a5e527d72",
     "app/src-tauri/server/internal/desktop/desktop_test.go": "7c18d9c81a3113b9e06c5888bf5a899f4338bae95e9786a2ffff46bf28ff1ae0",
     "app/src-tauri/server/internal/files/huma.go": "35f1cf33b44011cca7b8d9db8c6b06d32024165cb9a6f1f3abd3748be9c681ab",
