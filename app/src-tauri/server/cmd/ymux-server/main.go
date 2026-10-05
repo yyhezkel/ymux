@@ -315,6 +315,7 @@ func main() {
 	// listening ports are detected for browser clients. Port watch starts
 	// after hooks.Start so the hook listener's own port is known and skipped.
 	termSvc.SetDataDir(*base)
+	termSvc.SetWebRoot(*base)
 	termSvc.StartPortWatch(context.Background(), *port)
 
 	srv := api.NewServer(token, *port, api.Deps{

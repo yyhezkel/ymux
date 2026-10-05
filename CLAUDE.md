@@ -115,7 +115,9 @@ such. Do not "finish the rename" by deleting them; the removal is scheduled
   server" below. The `rust` job also uploads the musl CLI it stages as the
   `ymux-cli-linux-x64` artifact — that is how a CLI change gets smoke-tested
   on a real box; the committed `resources/ymux-linux-x64` still only moves
-  with a release. Bookkeeping-only diffs (`PROGRESS*`, `FOLLOWUPS*`,
+  with a release. The `frontend` job uploads the vite build as the
+  `ymux-web` artifact — the browser bundle the daemon serves from
+  `~/.ymux/server/www/current` (WEB-DESIGN §7.1, Phase 108). Bookkeeping-only diffs (`PROGRESS*`, `FOLLOWUPS*`,
   `BACKLOG.md`, `README*`, `.claude/**`) skip CI via `paths-ignore`;
   `docs/**` deliberately still triggers it, for the vault gate.
 - `build-windows.yml` — installers + exe on `workflow_dispatch` or a `v*` tag; enforces Rule #13 by asserting the asset hash is embedded, and Rule #2's spirit by asserting the `$USERNAME` scrub landed. A tag gets MSI **and** NSIS (the published `manifest.json` advertises both); a `workflow_dispatch` gets NSIS only. Publishing stays manual (`docs/RELEASING.md`).
