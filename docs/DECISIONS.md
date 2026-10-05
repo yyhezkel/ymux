@@ -464,6 +464,21 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-05 — B5: browser workspaces in term's own store; send fenced; scrollback stays a stub
+- **Decided (Yossi):** `send` / `send-key` (and, by the same logic, the pane-title verbs)
+  reach only the caller or panes of its own workspace — the desktop has no such fence, but
+  on the daemon an agent in one project must not type into another. `pane.scrollback`
+  keeps the desktop's Rule #1 error stub, although `tmux capture-pane` could answer it.
+- **Decided (Claude, flagged to Yossi): workspaces live in `<data dir>/web-workspaces.json`
+  owned by `internal/term`, NOT in `internal/workspace`'s SQLite** as WEB-DESIGN §4 had
+  it. Why: the agent verbs that edit a layout (split, titles) run in term, and writing into
+  a sibling subsystem's store breaks the rule that subsystems import only `core`; and every
+  field added to the huma-described `Workspace` there changes the OpenAPI the phone SDK is
+  generated from. Consequence: two workspace notions on the daemon (the phone's chat
+  `ws_default` substrate, and the browser's). Revisit if Phase C wants them unified.
+- **Decided (Claude):** `split` creates the new tmux session on the daemon (a browser may
+  not be connected to do it, unlike the desktop's frontend), and its reply adds `pane_id`.
+
 ### 2026-10-05 — B4: the daemon detects listening ports itself
 - **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP
   starts per host. For a browser-created session nobody starts one, and browser v1 does
