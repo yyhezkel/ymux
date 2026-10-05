@@ -61,7 +61,7 @@ restricted networks.
 
 `Connection` (`local | ssh`, plus the retired `wsl` variant that still deserializes),
 `LayoutNode` (`pane | split`), `PaneKind`, `SplitDirection`, `DiffSource`,
-`BrowserState`, `EnvVar`, `Workspace`, `WorkspaceGroup`, `KnownSession`.
+`BrowserState`, `EnvVar` (`secret: bool`, serde-default false — a secret row's value never persists in workspaces.json), `Workspace`, `WorkspaceGroup`, `KnownSession`.
 
 **`LayoutNode::Pane`** carries `diff_source` and (Phase 91.F) **`diff_cwd: Option<String>`**
 — which worktree a Diff pane is looking at, `None` = the workspace's own cwd. Both elide

@@ -285,11 +285,15 @@ pub enum LayoutNode {
 
 // ─── EnvVar ─────────────────────────────────────────────────────────
 
-#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Default, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../../../src/bindings/")]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
+    /// Secret rows keep their value out of workspaces.json and RPC output;
+    /// delivered only at spawn. Absent in legacy files → false.
+    #[serde(default)]
+    pub secret: bool,
 }
 
 // ─── Workspace ──────────────────────────────────────────────────────
@@ -1040,6 +1044,7 @@ mod tests {
             env: vec![EnvVar {
                 key: "FOO".into(),
                 value: "bar".into(),
+                secret: false,
             }],
             auto_port_forward: true,
             last_active_at: 1_700_000_000,
@@ -1062,6 +1067,16 @@ mod tests {
         assert_eq!(back.color.as_deref(), Some("#7aa2f7"));
         assert!(back.auto_port_forward);
         assert_eq!(back.env.len(), 1);
+    }
+
+    // Legacy workspaces.json rows carry no `secret`; they must load as plain.
+    #[test]
+    fn env_var_secret_defaults_false() {
+        let e: EnvVar = serde_json::from_value(json!({"key": "K", "value": "v"})).unwrap();
+        assert!(!e.secret);
+        let s: EnvVar =
+            serde_json::from_value(json!({"key": "K", "value": "v", "secret": true})).unwrap();
+        assert!(s.secret);
     }
 
     // ── SplitDirection ──────────────────────────────────────────────
