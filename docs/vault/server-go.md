@@ -188,6 +188,13 @@ the only state in a package whose rule is "tmux is the truth", kept as thin as p
 a daemon restart starts it empty, which is accepted (DECISIONS 2026-10-04) because under
 systemd a restart kills a daemon-started tmux server anyway, and a surviving session
 falls back to `last.env` (the desktop) exactly as before.
+- **That pruning trusts `Tmux.List()` completely** — an empty list empties the registry.
+  `List()` therefore uses a TAB-separated `-F` template. It used `\x1f` until 2.4.2, and
+  tmux 3.4 escapes a non-printable byte to the literal text `\037`, so on a real box every
+  list was `[]` and each list call (the diagnostic page lists on load) silently cut every
+  browser session's hooks (`auth denied: unknown-session`). A test pins "no control byte
+  but TAB in `listFormat`"; `ValidName` rejects control characters, so a name cannot hold
+  a tab, and `SplitN(…, 5)` keeps a tab inside the path.
 - `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` once.
   Older, or no listener address → the session is created exactly as before, no hooks.
 - `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
@@ -214,10 +221,14 @@ Three decisions in it worth not undoing:
   is one you cannot use when delivery is what broke. This is **not** an answer to Q2
   (how the real web bundle ships) — a few KB of diagnostics and a 3 MB app are different
   questions, and `docs/DECISIONS.md` Q2 stays open.
-- **xterm.js from cdnjs, not embedded.** The committed server blobs are ~13 MB each and
+- **xterm.js from a CDN, not embedded.** The committed server blobs are ~13 MB each and
   every rebake writes both into git history; +600 KB per rebake to save one CDN fetch is
   the wrong trade here. The page says so plainly when the CDN is blocked instead of
-  showing an empty box.
+  showing an empty box. Since 2.4.2 it is the app's own packages (`@xterm/xterm` 6.0.0 +
+  `@xterm/addon-fit` 0.11.0) from **jsdelivr, SRI-pinned**, and `page.go`'s CSP allows
+  exactly `cdn.jsdelivr.net`. The original cdnjs URLs (xterm 5.3.0, xterm-addon-fit 0.8.0)
+  were 404s — cdnjs has no fit addon at all — so before that the page never rendered a
+  terminal. Bumping a package means a new URL **and** a new `integrity` hash.
 - **`GET /{$}`, not `GET /`.** Exact-match for the root, so an unknown path still 404s.
   A catch-all that silently returns HTML is how a typo in an API path becomes an hour of
   confusion. `page_test.go` asserts it.

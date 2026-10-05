@@ -113,9 +113,15 @@ type Session struct {
 	Path     string `json:"path"`     // session working directory
 }
 
-// listFormat is the tmux -F template. The unit separator is a literal "\x1f"
-// so a session name containing spaces still parses; tmux expands the escape.
-const listFormat = "#{session_name}\x1f#{session_windows}\x1f#{session_created}\x1f#{session_attached}\x1f#{session_path}"
+// listFormat is the tmux -F template, fields separated by TAB so a session
+// name containing spaces still parses. ValidName rejects every control
+// character, so a name can never contain one.
+//
+// NOT "\x1f": tmux 3.4 (verified live 2026-10-05) escapes a non-printable
+// byte in -F output to the four literal characters `\037`, so every line came
+// back as one field, List() returned [] on every real box, and Retain() then
+// dropped every hook token on each list. A tab is passed through verbatim.
+const listFormat = "#{session_name}\t#{session_windows}\t#{session_created}\t#{session_attached}\t#{session_path}"
 
 // List returns every live tmux session.
 //
@@ -139,7 +145,8 @@ func (t *Tmux) List() ([]Session, error) {
 		if line == "" {
 			continue
 		}
-		f := strings.Split(line, "\x1f")
+		// SplitN: a tab inside the path (the last field) stays in the path.
+		f := strings.SplitN(line, "\t", 5)
 		if len(f) < 5 {
 			continue
 		}

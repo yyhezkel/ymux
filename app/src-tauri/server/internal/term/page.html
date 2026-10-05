@@ -22,11 +22,18 @@
   browser reaching this page already has a network; if the CDN is blocked the
   page says so instead of showing an empty box.
 
+  The packages are the app's own (@xterm/xterm 6.0.0 + @xterm/addon-fit 0.11.0,
+  app/package.json) from jsdelivr, each pinned with an SRI hash. Until
+  2026-10-05 this pointed at cdnjs xterm/5.3.0 + xterm-addon-fit/0.8.0 — both
+  404 there, so the terminal had never rendered. cdnjs carries no fit addon at
+  all, which is why the origin moved rather than just the version.
+
   Every step reports itself to the daemon log (POST /diag/log) so one log file
   tells the whole story. Rule #1: it reports STEP NAMES and error strings only.
   Terminal bytes never leave the terminal.
 -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css"
+      integrity="sha384-n2n7twoohnW+d3myBKaUgl7DSiwidw6MkQy9oesGzkPpMjejKRR3XlnD+5yCdtBD" crossorigin="anonymous">
 <style>
   :root {
     --bg: #12141a; --panel: #1a1d26; --line: #2b3040;
@@ -162,8 +169,10 @@
   </section>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"
+        integrity="sha384-f/1U6Z9wM4D71a5eRXEZnyOTMOvjqxr2XLwh+Go1OvIl3L3tOcvUrzudnhbECwl4" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.js"
+        integrity="sha384-txoiwu4RR2GD3qySbaj+BbzibkLbSJRcfqGYMu6z1EqHil4A2dyBiBW5dlacG6OR" crossorigin="anonymous"></script>
 <script>
 "use strict";
 

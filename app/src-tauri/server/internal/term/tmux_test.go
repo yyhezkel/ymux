@@ -66,10 +66,11 @@ func TestValidName(t *testing.T) {
 }
 
 func TestListParsesRecords(t *testing.T) {
-	// A name containing a space is the reason the format uses \x1f rather than
-	// whitespace as the field separator.
-	out := "api\x1f3\x1f1700000000\x1f1\x1f/srv/api\n" +
-		"my session\x1f1\x1f1700000100\x1f0\x1f/home/y\n"
+	// A name containing a space is the reason the format uses a tab rather
+	// than a space as the field separator; a tab inside the PATH (the last
+	// field) must survive, hence SplitN.
+	out := "api\t3\t1700000000\t1\t/srv/api\n" +
+		"my session\t1\t1700000100\t0\t/home/y/a\tb\n"
 	tm, calls := fake(ok(out))
 
 	got, err := tm.List()
@@ -83,11 +84,19 @@ func TestListParsesRecords(t *testing.T) {
 		got[0].Attached != 1 || got[0].Path != "/srv/api" {
 		t.Errorf("first session parsed wrong: %+v", got[0])
 	}
-	if got[1].Name != "my session" || got[1].Attached != 0 {
+	if got[1].Name != "my session" || got[1].Attached != 0 || got[1].Path != "/home/y/a\tb" {
 		t.Errorf("second session parsed wrong: %+v", got[1])
 	}
 	if (*calls)[0][1] != "list-sessions" {
 		t.Errorf("called %v, want list-sessions", (*calls)[0])
+	}
+	// Regression pin: the template must not use a control byte other than TAB.
+	// tmux escapes those to literal `\NNN` text (seen live on tmux 3.4 with
+	// \x1f), which silently turned every list into [].
+	for _, r := range listFormat {
+		if r < 0x20 && r != '\t' {
+			t.Errorf("listFormat contains control byte %#x; tmux escapes it in -F output", r)
+		}
 	}
 }
 

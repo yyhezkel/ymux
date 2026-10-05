@@ -99,10 +99,11 @@ func (s *Service) handlePage(w http.ResponseWriter, r *http.Request) {
 	// Never cached: this page's whole job is to reflect the daemon in front of
 	// it, and a stale copy after an upgrade would be debugging the wrong build.
 	w.Header().Set("Cache-Control", "no-store")
-	// It loads xterm.js from cdnjs and talks only to its own origin.
+	// It loads xterm.js from jsdelivr (SRI-pinned in page.html) and talks only
+	// to its own origin.
 	w.Header().Set("Content-Security-Policy",
-		"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "+
-			"style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com; "+
+		"default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
+			"style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "+
 			"connect-src 'self' ws: wss:; img-src 'self' data:")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	_, _ = w.Write(diagPage)
