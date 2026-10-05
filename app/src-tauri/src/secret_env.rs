@@ -183,6 +183,52 @@ pub(crate) fn refused_message(keys: &[String]) -> String {
     format!("environment variable refused by sshd: {}", keys.join(", "))
 }
 
+/// sshd reply to a `want_reply` env request: `Some(refused)`, `None` while
+/// the message is unrelated (window adjust, etc.).
+fn reply_refused(msg: &russh::ChannelMsg) -> Option<bool> {
+    match msg {
+        russh::ChannelMsg::Success => Some(false),
+        russh::ChannelMsg::Failure => Some(true),
+        _ => None,
+    }
+}
+
+/// Send each secret as an SSH `env` request that waits for sshd's reply and
+/// return the names refused (AcceptEnv miss, send error, close, 5 s silence).
+/// Names only: values never leave this fn except into `set_env`.
+pub(crate) async fn deliver_ssh(
+    channel: &mut russh::Channel<russh::client::Msg>,
+    vars: &[(String, String)],
+) -> Vec<String> {
+    const REPLY_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+    let mut refused = Vec::new();
+    for (k, v) in vars {
+        if channel.set_env(true, k.as_str(), v.as_str()).await.is_err() {
+            refused.push(k.clone());
+            continue;
+        }
+        let reply = tokio::time::timeout(REPLY_WAIT, async {
+            loop {
+                match channel.wait().await {
+                    Some(m) => {
+                        if let Some(r) = reply_refused(&m) {
+                            break r;
+                        }
+                    }
+                    None => break true,
+                }
+            }
+        })
+        .await
+        // AI-NOTE: timeout counts as refused so the user is told, never silently dropped
+        .unwrap_or(true);
+        if reply {
+            refused.push(k.clone());
+        }
+    }
+    refused
+}
+
 #[cfg(windows)]
 fn protect_b64(plain: &str) -> Result<String, String> {
     use base64::Engine;
@@ -372,6 +418,14 @@ mod secret_env_tests {
         assert_eq!(owner.as_deref(), Some("h"));
         assert!(s.resolve(owner.as_deref().unwrap_or(""), &["K".into()]).is_ok());
         assert_eq!(s.resolve("h", &["MISSING".into()]).err(), Some(vec!["MISSING".to_string()]));
+    }
+
+    // Pins sshd reply mapping: Success=accepted, Failure=refused, others ignored.
+    #[test]
+    fn sshd_reply_maps_to_refused() {
+        assert_eq!(reply_refused(&russh::ChannelMsg::Success), Some(false));
+        assert_eq!(reply_refused(&russh::ChannelMsg::Failure), Some(true));
+        assert_eq!(reply_refused(&russh::ChannelMsg::Eof), None);
     }
 
     // Pins the DPAPI path: protect→unprotect returns the original, blob differs.
