@@ -163,7 +163,7 @@ pub(crate) struct AppState {
     /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
     /// same rationale as agent_runs — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
-    /// Phase 104: per-Claude-session context (first prompt + brief log),
+    /// Phase 105: per-Claude-session context (first prompt + brief log),
     /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
     pub(crate) context: context_store::ContextState,
     pub(crate) feed: Arc<Mutex<FeedStore>>,
@@ -12226,7 +12226,7 @@ pub fn run() {
                     log_warn("APP", &format!("setup: notes load failed: {e} (starting empty)"));
                 }
             }
-            // Phase 104: prune 30-day-old session context files and warm
+            // Phase 105: prune 30-day-old session context files and warm
             // the cache, on a background thread.
             context_store::startup(&state);
             // Phase 12.C: load recent paths history (or empty on first run).

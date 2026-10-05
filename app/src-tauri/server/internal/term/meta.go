@@ -25,6 +25,11 @@ type MetaEntry struct {
 	Label           string `json:"label,omitempty"`
 	Origin          string `json:"origin,omitempty"`
 	UpdatedAt       string `json:"updated_at,omitempty"`
+	// Phase 104 (session history): the CLI stamps EndedAt when the tmux
+	// session is gone instead of deleting the row, and records the Claude
+	// session's Cwd. Absent on files written by an older CLI.
+	EndedAt string `json:"ended_at,omitempty"`
+	Cwd     string `json:"cwd,omitempty"`
 }
 
 // metaFile is the on-disk document.

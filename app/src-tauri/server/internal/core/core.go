@@ -64,10 +64,13 @@ import (
 // 2.7.0 (Phase 103, WEB-DESIGN B5): browser workspaces + their layout
 // document, and the agent verbs tree / split / send / titles.
 //
+// 2.8.0 (Phase 104, WEB-DESIGN B6): session history — ended rows, their
+// transcript, and resume (`claude --resume` in a new tmux session).
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.7.0"
+const Version = "2.8.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

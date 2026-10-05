@@ -44,6 +44,10 @@ type Service struct {
 	// hooks holds the hook tokens of the sessions created here (Phase 100,
 	// hookreg.go). nil disables hook routing entirely.
 	hooks *HookRegistry
+
+	// claudeBin overrides the resolved `claude` path for a resume (Phase
+	// 104, history.go); tests set it, production resolves it.
+	claudeBin string
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
@@ -133,6 +137,10 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("PUT /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("DELETE /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
+	// Phase 104 (B6): session history — ended rows, their transcript, resume.
+	mux.HandleFunc("GET /api/v2/term/history", s.gate(s.handleHistory))
+	mux.HandleFunc("POST /api/v2/term/history/{name}/resume", s.gate(s.handleResume))
+	mux.HandleFunc("GET /api/v2/claude/sessions/{id}/transcript", s.gate(s.handleTranscript))
 	// Phase 97: the diagnostic page + its log sink, both public (page.go).
 	s.registerPageRoutes(mux)
 }
@@ -240,7 +248,10 @@ var errSessionExists = errors.New("session already exists")
 // 100), with a policy (101) and a workspace (103). It is the one place a
 // session is born — the create route and an agent's split both use it.
 // hooks is false when the session was created without hook routing.
-func (s *Service) spawnSession(name, cwd, policy, workspaceID string) (entry hookEntry, hooks bool, err error) {
+//
+// cmd (Phase 104) is an optional argv the session runs instead of a shell —
+// `claude --resume <id>` for a resumed history row.
+func (s *Service) spawnSession(name, cwd, policy, workspaceID string, cmd ...string) (entry hookEntry, hooks bool, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "ymux-" + uuid.NewString()[:8]
@@ -269,7 +280,7 @@ func (s *Service) spawnSession(name, cwd, policy, workspaceID string) (entry hoo
 			}
 		}
 	}
-	if err := s.tmux.Create(name, cwd, env); err != nil {
+	if err := s.tmux.Create(name, cwd, env, cmd...); err != nil {
 		return hookEntry{}, false, err
 	}
 	if e == nil {

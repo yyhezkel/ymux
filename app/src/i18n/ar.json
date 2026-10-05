@@ -1364,10 +1364,7 @@
   "context.collapse": "طي شريط السياق",
   "context.resize": "اسحب لتغيير العرض",
   "context.noWorkspace": "لم يتم اختيار مساحة عمل.",
-  "context.prompt.label": "الرسالة الأولى",
-  "context.prompt.toggle": "إظهار / إخفاء الرسالة كاملة",
   "context.log.closed": "أُغلقت الجلسة",
-  "context.log.all": "إظهار الكل ({n})",
   "context.log.less": "إظهار أقل",
   "cmd.contextRail.toggle": "شريط السياق: إظهار/طي",
   "settings.shortcuts.toggle_context_rail": "طي / توسيع شريط السياق",
@@ -1375,6 +1372,12 @@
   "context.noSession": "لا توجد جلسة Claude في هذا اللوح بعد. ستظهر هنا رسالتها الأولى وسجل تقدمها.",
   "context.showEarlier": "جلسات سابقة في هذا اللوح ({n})",
   "context.hideEarlier": "إخفاء الجلسات السابقة",
+  "context.doneWhen": "ينتهي عندما:",
+  "context.now": "الآن:",
+  "context.next": "التالي:",
+  "context.waiting": "بانتظارك:",
+  "context.log.more": "{n} أخرى",
+  "context.prompt.original": "الرسالة الأصلية",
   "settings.brief.injectContext.label": "حقن السياق في الجلسات",
   "settings.brief.injectContext.hint": "عند ضغط جلسة Claude أو استئنافها، تتلقى رسالتها الأولى وآخر أسطر التقدم؛ وتتلقى الجلسة الجديدة هدف مساحة العمل والجلسات الأخرى فيها. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks)."
 }

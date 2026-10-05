@@ -2,7 +2,7 @@
 
 BRIEF (`docs/BRIEF.md`) answers "who needs me right now". CONTEXT answers
 "what is this session about, and where does it stand", and it keeps the answer
-across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 104.
+across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 105.
 Implementation notes: `docs/vault/backend-rpc.md` § Session context and
 `docs/vault/frontend-shell.md` § ContextRail.
 
@@ -13,6 +13,7 @@ One record per **Claude Code session id** (`payload.session_id` on every hook):
 ```
 SessionContext { session_id, ws_id, pane_id, cwd,
                  first_prompt (≤ 2000 chars), first_prompt_ms,
+                 goal?, done_when?,
                  log: [LogEntry] (≤ 200, oldest dropped first), version }
 LogEntry       { ts_ms, kind: turn | closed, status,
                  task, delta, next, ask?, rec?, degraded }
@@ -26,10 +27,13 @@ LogEntry       { ts_ms, kind: turn | closed, status,
   first line of the message, `degraded: true`). `SessionEnd` appends a `closed`
   line, with Claude Code's `reason` enum as its delta. **Nothing calls an LLM.**
   The log costs zero tokens.
+- **Goal / Done when.** Come from the brief's sticky `goal:` / `done:` keys
+  (`docs/BRIEF.md`). The *last non-empty* value wins, so the many briefs that
+  omit them keep what an earlier one said.
 - **Placement.** `ws_id` / `pane_id` / `cwd` follow the latest hook. `ws_id` is
   the *screen* workspace holding the pane (`find_workspace_for_pane` on the
   resolved pane). A value that is missing never erases a known one.
-- `version` bumps on every write. Phase 104.C uses it.
+- `version` bumps on every write. Phase 105.C uses it.
 
 ## Persistence
 
@@ -76,12 +80,34 @@ Top to bottom:
 1. **🎯 Intent:** the workspace's one-liner. It uses the same editor as the
    Briefing card (`IntentEditor.tsx`).
 2. **The focused pane's current session:** the session with the newest activity
-   whose `pane_id` is the focused pane. Its card shows:
-   - The pane's live Queue row (`QueueRow.tsx`, shared with the Queue panel and
-     the Briefing card).
-   - 📝 The first prompt, clipped to 180 characters. Click to expand.
-   - The log, newest first: `time · icon · ask·rec | delta → next`. Five lines
-     are shown, with "show all" for the rest.
+   whose `pane_id` is the focused pane. The card is modeled on
+   tzafrir/human-in-the-loop's task card: short fields under fixed labels. The
+   layout is Yossi-approved:
+
+   ```
+   🎯 <goal: one imperative line>
+      Done when: <one line>
+
+   🟢 Now: <task of the latest turn>         4m   (live light + age of last update)
+   ➜ Next: <next>
+   ❓ Waiting on you: <ask> · <rec>               (only while the latest turn asked)
+
+   ✔ <delta one-liner>                      14:20
+   ✔ <delta one-liner>                      14:05
+   ✔ <delta one-liner>                      13:40
+      ▸ N more · ▸ original prompt
+   ```
+
+   - The goal falls back to the first line of the first prompt, clipped to 80
+     characters. With no `done`, the *Done when* line is omitted.
+   - Every other line is a one-liner of about 70 characters with an ellipsis.
+     The full text is in its tooltip.
+   - The light is the pane's live traffic light (`AgentLight`). Without one, the
+     latest turn's status icon is shown instead.
+   - The ✔ list shows the 3 latest deltas, with degraded turns dimmed, and a
+     ✅ line for a closed session.
+   - "▸ N more" expands the rest of the list. "▸ original prompt" shows the raw
+     first prompt.
 3. **Earlier sessions in this pane (N):** a collapsed toggle listing the pane's
    older sessions, for example after a restarted `claude` or a `/clear`. It
    resets whenever focus moves to another pane.

@@ -351,7 +351,7 @@ function App() {
   // must read last_active_at BEFORE workspace_set_active stamps it),
   // idle-return (below), and the show_briefing shortcut/palette command.
   const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
-  // Phase 104: the Context Rail — a docked third grid column. Width and
+  // Phase 105: the Context Rail — a docked third grid column. Width and
   // collapsed state are per-machine UI prefs (localStorage, see
   // ContextRail.loadRailPrefs), not workspaces.json.
   const railPrefs = loadRailPrefs();
@@ -1124,7 +1124,7 @@ function App() {
     void splitPane(cur, splitDir);
   };
 
-  // BRIEF / Phase 104: set or clear a workspace's 🎯 intent — shared by
+  // BRIEF / Phase 105: set or clear a workspace's 🎯 intent — shared by
   // the Briefing card and the Context Rail.
   const saveIntent = (wsId: string, text: string) => {
     void (async () => {
@@ -3573,7 +3573,7 @@ function App() {
       if (surfaceOf("queue") === "closed") openPanel("queue");
       else closePanel("queue");
     } },
-    // Phase 104: collapse / expand the Context Rail.
+    // Phase 105: collapse / expand the Context Rail.
     { id: "toggle_context_rail", run: (e) => {
       e.preventDefault();
       toggleContextRail();
@@ -5110,7 +5110,7 @@ function App() {
         </Show>
       </div>
 
-      {/* Phase 104: the Context Rail — third grid column, inline-end. */}
+      {/* Phase 105: the Context Rail — third grid column, inline-end. */}
       <ContextRail
         ws={activeWs()}
         paneId={activeWs() ? activePaneId() : null}

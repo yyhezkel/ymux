@@ -8,7 +8,7 @@ import {
   type QueueStatus,
 } from "./queueModel";
 
-// BRIEF / Phase 104: one agent row — status emoji, title, age, and the
+// BRIEF / Phase 105: one agent row — status emoji, title, age, and the
 // "what's happening" line. Shared by the Queue panel, the Briefing card
 // and the Context Rail so the three can never paint the same pane
 // differently. All verdicts come from queueModel.ts; this only paints.

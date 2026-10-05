@@ -7353,7 +7353,7 @@ body.ymux-dragging .pane-conn {
 }
 .sessions-head-btn:disabled { opacity: 0.45; cursor: default; }
 
-/* ── Phase 104: Context Rail — the .app grid's third column (inline-end).
+/* ── Phase 105: Context Rail — the .app grid's third column (inline-end).
    Logical properties only: in RTL the grid flips and the rail sits on the
    left with its resizer on its right edge. ─────────────────────────────── */
 .queue-row:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }
@@ -7423,34 +7423,43 @@ body.ymux-dragging .pane-conn {
   border-radius: 8px;
 }
 .context-card-closed { opacity: 0.7; }
-.context-card-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--w-text, #e6edf3);
-  padding-inline: 4px;
-  overflow-wrap: anywhere;
-}
-.context-prompt {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px 6px;
-  border-radius: 6px;
-  cursor: pointer;
-  text-align: start;
-}
-.context-prompt:disabled { cursor: default; }
-.context-prompt:not(:disabled):hover { background: var(--w-surface-hi, rgba(255, 255, 255, 0.04)); }
-.context-prompt:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); }
-.context-prompt-label { font-size: 11px; color: var(--w-text-dim, #9aa5ce); }
 .context-prompt-text {
   font-size: 12px;
   color: var(--w-text, #e6edf3);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--w-surface-hi, rgba(255, 255, 255, 0.04));
+  max-height: 40vh;
+  overflow-y: auto;
 }
+/* Phase 105 follow-up: the HITL-style card — fixed labels, one line each. */
+.context-goal, .context-status { display: flex; flex-direction: column; gap: 3px; }
+.context-field {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--w-text, #e6edf3);
+  padding-inline: 4px;
+}
+.context-field > [dir="auto"], .context-field-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-field-icon { flex: 0 0 auto; inline-size: 1.2em; text-align: center; }
+.context-field-icon .pane-agent-light { vertical-align: middle; }
+.context-field-label { flex: 0 0 auto; color: var(--w-text-dim, #9aa5ce); font-size: 11px; }
+.context-field-sub { padding-inline-start: calc(4px + 1.2em + 6px); }
+.context-goal-text { font-size: 13px; font-weight: 600; }
+.context-age { flex: 0 0 auto; color: var(--w-text-dim, #9aa5ce); font-size: 11px; }
+.context-waiting .context-field-label { color: var(--w-warning, #e0af68); }
+.context-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .context-log {
   list-style: none;
   margin: 0;
@@ -7461,7 +7470,7 @@ body.ymux-dragging .pane-conn {
 }
 .context-log-line {
   display: grid;
-  grid-template-columns: auto auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 6px;
   align-items: baseline;
   font-size: 12px;
@@ -7469,7 +7478,7 @@ body.ymux-dragging .pane-conn {
 }
 .context-log-degraded { opacity: 0.65; }
 .context-log-time { color: var(--w-text-dim, #9aa5ce); font-size: 11px; white-space: nowrap; }
-.context-log-text { color: var(--w-text, #e6edf3); overflow-wrap: anywhere; }
+.context-log-text { color: var(--w-text, #e6edf3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .context-link {
   all: unset;
   font-size: 11px;

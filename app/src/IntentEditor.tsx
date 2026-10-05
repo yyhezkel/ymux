@@ -1,7 +1,7 @@
 import { createEffect, createSignal, on } from "solid-js";
 import { t } from "./i18n";
 
-// BRIEF / Phase 104: the 🎯 intent one-liner editor, shared by the
+// BRIEF / Phase 105: the 🎯 intent one-liner editor, shared by the
 // Briefing card and the Context Rail. Enter/blur save, plus an explicit
 // Save button whose disabled state doubles as "saved ✓" (beta feedback:
 // a field that saves invisibly reads as one that doesn't save at all).

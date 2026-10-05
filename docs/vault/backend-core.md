@@ -91,7 +91,7 @@ put logic there.
   **`AppState.briefs`** (`HashMap<pane_id, PaneBriefEntry>` from `brief.rs`, covered in
   `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
   rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
-  `pane_briefs` command — the `pane_agent_states` pattern verbatim. Phase 104
+  `pane_briefs` command — the `pane_agent_states` pattern verbatim. Phase 105
   added **`AppState.context`** (`context_store::ContextState`, also in
   `backend-rpc.md`): the per-Claude-session first prompt + brief log, the one
   piece of brief state that IS persisted (`<config>/context/sessions/`); setup

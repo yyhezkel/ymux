@@ -1364,10 +1364,7 @@
   "context.collapse": "כווץ את פס ההקשר",
   "context.resize": "גרור לשינוי רוחב",
   "context.noWorkspace": "לא נבחרה סביבת עבודה.",
-  "context.prompt.label": "פרומפט ראשון",
-  "context.prompt.toggle": "הצג / הסתר את הפרומפט המלא",
   "context.log.closed": "הסשן נסגר",
-  "context.log.all": "הצג את כל {n}",
   "context.log.less": "הצג פחות",
   "cmd.contextRail.toggle": "פס הקשר: הצג/כווץ",
   "settings.shortcuts.toggle_context_rail": "כווץ / הרחב את פס ההקשר",
@@ -1375,6 +1372,12 @@
   "context.noSession": "אין עדיין סשן Claude בפאנל הזה. הפרומפט הראשון ויומן ההתקדמות שלו יופיעו כאן.",
   "context.showEarlier": "סשנים קודמים בפאנל הזה ({n})",
   "context.hideEarlier": "הסתר סשנים קודמים",
+  "context.doneWhen": "סיום כש:",
+  "context.now": "עכשיו:",
+  "context.next": "הבא:",
+  "context.waiting": "מחכה לך:",
+  "context.log.more": "עוד {n}",
+  "context.prompt.original": "הפרומפט המקורי",
   "settings.brief.injectContext.label": "הזרק הקשר לסשנים",
   "settings.brief.injectContext.hint": "כשסשן Claude עובר compact או resume, הוא מקבל את הפרומפט הראשון שלו ואת שורות ההתקדמות האחרונות; סשן חדש מקבל את מטרת סביבת העבודה ואת הסשנים האחרים בה. דורש hooks v1.7.0 (הרץ שוב setup-hooks)."
 }

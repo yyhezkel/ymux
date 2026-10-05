@@ -19,7 +19,17 @@ ask: one closed question — only when you need my decision
 rec: your recommendation for that question, in one sentence
 next: the immediate next step
 delta: what changed since your previous brief
+goal: the session's overall goal, one imperative line
+done: when this session counts as done, one line
 ```
+
+Every value is ≤ 80 chars, imperative, and one line.
+
+`goal` and `done` are **sticky** (added in the Phase 105 follow-up). Write them
+in the first brief, and again only when they change. The per-session context
+store keeps the last non-empty value, and the Context Rail shows them as 🎯 and
+*Done when*. `done when`, `done-when` and `done_when` are accepted as aliases of
+`done`.
 
 Rules the desktop parser enforces / tolerates:
 
@@ -60,7 +70,7 @@ session ✅ closed.
 - **Sidebar** — a workspace holding a stuck/waiting pane carries the existing
   attention dot at a middle intensity (blocking permission > brief > activity).
 
-- **Context Rail** (Ctrl+Shift+K, Phase 104) — every brief also lands, one
+- **Context Rail** (Ctrl+Shift+K, Phase 105) — every brief also lands, one
   line per turn, in its Claude session's persisted log, next to the session's
   first prompt. See `docs/CONTEXT.md`.
 
@@ -68,7 +78,7 @@ session ✅ closed.
 
 Rule #1 applies throughout: brief text, intents and prompts never reach a log
 line — log lines carry pane ids, lengths and flags. The Queue's per-pane state
-(`AppState.briefs`) stays in memory; since Phase 104 the per-SESSION log of
+(`AppState.briefs`) stays in memory; since Phase 105 the per-SESSION log of
 briefs and the session's first prompt are persisted under
 `<config_dir>/context/sessions/` (30-day retention) — `docs/CONTEXT.md`.
 Briefs are treated as untrusted display data and rendered as plain text.

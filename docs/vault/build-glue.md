@@ -165,6 +165,7 @@ Nothing regenerates these automatically. Each has its own guard:
 | `app/src/bindings/*.ts` | ts-rs, via `cargo test` in `src-tauri` | `tsc` fails on drift |
 | `sdk/{typescript,kotlin}` + `sdk-gen/specs` | `npm run gen` in `sdk-gen` | `sdk-gen/ci-check.mjs` |
 | `resources/ymux-server-linux-{x64,arm64}` | CI's Go cross-build | the rebake gate in `ci-windows.yml` |
+| `resources/ymux-linux-x64` (the remote CLI) | `build:linux-cli` (musl cross) | committed only with a release; ci-windows uploads every build as the `ymux-cli-linux-x64` artifact (Phase 104) so a CLI change can be smoke-tested on a real box without a local build |
 | `docs/vault/.vault-lock.json` | `vault-check.mjs --write` | the vault gate |
 
 ## Invariants
