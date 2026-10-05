@@ -10,7 +10,6 @@ Everything below this line is OPEN.
 Format:
 
 ```
-- [ ] P1 | 2026-10-05 | app/src-tauri/server/internal/term/{verbs,notes,ports}.go + cmd/ymux-server/main.go — Phase 102 (WEB-DESIGN B4), daemon 2.6.0 | NOT VERIFIED LIVE (Rule #14). Smoke on a box running 2.6.0, events socket open: (1) in an API-created session run `ymux set-status building` → `pane:status`; `ymux notify "t" "b"` → `notification:new`; (2) `ymux note add "x" --tag todo` / `note list` / `note done <id>` / `note rm <id>` → each answers like on the desktop, `notes:changed` fires, `~/.ymux/server/notes.json` holds the result and survives a daemon restart; (3) `python3 -m http.server 8765` in the session → `port-detected` {remote_port:8765} within ~1 s, Ctrl-C → `port-undetected`; the daemon's own 7879 and hook port never appear; (4) `hello` after a reconnect carries pane_status / notifications / ports; (5) insights.log has ids only, no note text or notify body.
 - [ ] P<0|1|2|3> | <YYYY-MM-DD> | <file>:<line> | <one-line repro/symptom>
 ```
 
