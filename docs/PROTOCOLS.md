@@ -165,7 +165,7 @@ remote tool can also automate decisions.
 **Result:** `{ "ok": true }`
 **Errors:** `"unknown decision: <x>"`, `"missing request_id"`.
 
-### `context.inject` (Phase 103.C)
+### `context.inject` (Phase 104.C)
 
 Asked by `ymux claude-hook session-start`. The desktop answers with the context
 to hand back to Claude Code as `hookSpecificOutput.additionalContext`. It is a
@@ -274,7 +274,7 @@ and the summary is the JSON-stringified payload (truncated to ~280 chars).
 |---|---|---|
 | `tool-permission`, `pre-tool-use` | `permission_request` | yes |
 | anything else (`session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
-| `session-start` (Phase 103.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
+| `session-start` (Phase 104.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
 
 `session-start`'s stdout is either nothing or exactly one line:
 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`.

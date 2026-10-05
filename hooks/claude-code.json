@@ -4,7 +4,7 @@
   "min_ymux_version": "0.1.0",
   "settings_file": "~/.claude/settings.json",
   "_notes": [
-    "v1.7.0 (2026-10, Phase 103.C): SessionStart is registered again, with one",
+    "v1.7.0 (2026-10, Phase 104.C): SessionStart is registered again, with one",
     "  job: the CLI asks the desktop (RPC context.inject, ~300 ms budget,",
     "  fail-open) for this session's context and prints it on stdout as",
     "  hookSpecificOutput.additionalContext - on compact/resume the session's",

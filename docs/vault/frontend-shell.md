@@ -451,7 +451,7 @@ is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` 
 fixtures without the 20 other fields and runs under plain `node --test`.
 
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent + this
-workspace's brief rows. Since Phase 103 both pieces are shared components:
+workspace's brief rows. Since Phase 104 both pieces are shared components:
 **`IntentEditor.tsx`** (inline edit → App's `saveIntent` → `workspace_set_intent`;
 Enter/blur save, plus an explicit Save button whose disabled state doubles as
 "saved ✓" — beta feedback: a field that saves invisibly reads as one that
@@ -471,7 +471,7 @@ after the gap; **manual** =
 `show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
 toggles.
 
-**`ContextRail.tsx` (Phase 103)** + **`contextModel.ts`** — the always-docked
+**`ContextRail.tsx` (Phase 104)** + **`contextModel.ts`** — the always-docked
 context column; spec in `docs/CONTEXT.md`. It is the `.app` grid's **third
 column** (`grid-template-columns: <sidebar>px minmax(0,1fr) <rail>px`, the rail
 pinned with `grid-column: 3`), NOT a `SideDrawer`: no backdrop, nothing in

@@ -41,7 +41,7 @@ Tauri.
 
 **`BriefOptions`** (BRIEF) — the Briefing-card trigger group
 (`entry_card_on_return` / `entry_card_on_idle`, both default-false opt-ins, plus
-`absence_minutes`=30 / `idle_minutes`=15) and Phase 103.C's `inject_context`
+`absence_minutes`=30 / `idle_minutes`=15) and Phase 104.C's `inject_context`
 (default **true**: answer SessionStart with context — `docs/CONTEXT.md`; the
 container default makes a missing key read as on), container-level `#[serde(default)]`,
 hung off `Settings.brief`. Mirrored in `app/src/settings.ts` (`BriefSettings`)
@@ -52,7 +52,7 @@ incident.
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
 32 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
-Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 103's
+Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 104's
 `toggle_context_rail` Ctrl+Shift+K), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`

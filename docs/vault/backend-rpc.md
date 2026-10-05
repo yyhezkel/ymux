@@ -64,7 +64,7 @@ and **is** the canonical list — nothing else enumerates these:
 - **Input** — `send`, `send-key` (via `translate_key`: `cr`, `tab`, `escape`, `bs`,
   `arrow-*`, `home`, `end`, and `ctrl-x` forms)
 - **Agent surface** — `notify`, `feed.push`, `feed.decide`, `context.inject` (Phase
-  103.C, below), and the hook verbs
+  104.C, below), and the hook verbs
   `session-start`, `session-end`, `stop`, `user-prompt-submit`, `pre-tool-use`,
   `post-tool-use`, `subagent-stop`, `pre-compact`
 - **Notes** — `note-add`, `note-list`, `note-update`, `note-done`, `note-delete`
@@ -144,9 +144,9 @@ finished work. A non-degraded brief also rewrites the stop feed card: humanize
 sees the message with the block stripped (`pre_brief_text`), and the summary
 becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content never reaches a
 log line — log lines carry pane id + flags, never text. `BriefStatus` also derives
-`Deserialize` since Phase 103, because the session context files store it.
+`Deserialize` since Phase 104, because the session context files store it.
 
-## Session context (`context_store.rs`, Phase 103)
+## Session context (`context_store.rs`, Phase 104)
 
 The persisted counterpart of `AppState.briefs`: one record per Claude Code
 **session id**, not per pane — `SessionContext { session_id, ws_id, pane_id, cwd,
@@ -178,7 +178,7 @@ mtime older than 30 days (`prune_dir`) and warms the cache on a background
 thread. Tauri commands: `session_context_list(ws_id)` (most recent activity
 first) and `session_context_get(session_id)`.
 
-**Injection (Phase 103.C).** RPC `context.inject` (its own arm, NOT a feed.push
+**Injection (Phase 104.C).** RPC `context.inject` (its own arm, NOT a feed.push
 reply — SessionStart never touches the feed) resolves the pane with
 `resolve_hook_pane` and calls `injection_for_hook`: off when
 `settings.brief.inject_context` is false; otherwise it reads this session's

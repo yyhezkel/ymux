@@ -2,7 +2,7 @@
 
 BRIEF (`docs/BRIEF.md`) answers "who needs me right now". CONTEXT answers
 "what is this session about, and where does it stand", and it keeps the answer
-across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 103.
+across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 104.
 Implementation notes: `docs/vault/backend-rpc.md` § Session context and
 `docs/vault/frontend-shell.md` § ContextRail.
 
@@ -29,7 +29,7 @@ LogEntry       { ts_ms, kind: turn | closed, status,
 - **Placement.** `ws_id` / `pane_id` / `cwd` follow the latest hook. `ws_id` is
   the *screen* workspace holding the pane (`find_workspace_for_pane` on the
   resolved pane). A value that is missing never erases a known one.
-- `version` bumps on every write. Phase 103.C uses it.
+- `version` bumps on every write. Phase 104.C uses it.
 
 ## Persistence
 
@@ -104,7 +104,7 @@ files and the UI only. Log lines carry session ids, pane ids, counts and
 versions. The files sit in the user's own config dir, next to `notes.json`.
 Everything is rendered as plain text with `dir="auto"`.
 
-## Injection back into the agent (Phase 103.C)
+## Injection back into the agent (Phase 104.C)
 
 Claude Code's `SessionStart` hook is registered again (hook spec v1.7.0;
 existing machines re-run `setup-hooks`). Its only job is

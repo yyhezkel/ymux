@@ -856,7 +856,7 @@ pub(crate) struct Shortcuts {
     pub toggle_queue: String,
     /// BRIEF: show the Briefing card for the active workspace.
     pub show_briefing: String,
-    /// Phase 103: collapse / expand the Context Rail.
+    /// Phase 104: collapse / expand the Context Rail.
     pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,
@@ -905,7 +905,7 @@ pub(crate) struct BriefOptions {
     pub entry_card_on_idle: bool,
     pub absence_minutes: u32,
     pub idle_minutes: u32,
-    /// Phase 103.C: answer Claude Code's SessionStart hook with this
+    /// Phase 104.C: answer Claude Code's SessionStart hook with this
     /// session's context (compact/resume) or the workspace's (startup).
     /// ON by default — unlike the card triggers above it is invisible
     /// until an agent compacts or resumes.

@@ -1240,7 +1240,7 @@ fn render_dev_state_text(v: &Value) -> String {
     out
 }
 
-/// Phase 103.C: how long `claude-hook session-start` waits for the
+/// Phase 104.C: how long `claude-hook session-start` waits for the
 /// desktop's `context.inject`. ~300 ms by default, so a session start never
 /// stalls; `YMUX_CONTEXT_TIMEOUT_MS` overrides it (clamped 100..=3000) for a
 /// remote whose tunnel round trips are slower than that.
@@ -1252,7 +1252,7 @@ fn context_timeout_ms() -> u64 {
         .unwrap_or(300)
 }
 
-/// Phase 103.C: the one stdout line a SessionStart hook prints — Claude
+/// Phase 104.C: the one stdout line a SessionStart hook prints — Claude
 /// Code's documented `hookSpecificOutput.additionalContext` shape — or
 /// `None` for blank context (print nothing at all). serde does the
 /// escaping, so the text cannot break out of the JSON.
@@ -2499,7 +2499,7 @@ async fn real_main() -> ExitCode {
             }
 
             // v0.4.4 dropped SessionStart as feed noise, and it stays OFF the
-            // feed: no feed.push, no card, no toast. Phase 103.C gives it one
+            // feed: no feed.push, no card, no toast. Phase 104.C gives it one
             // job instead — ask the desktop for this session's context
             // (`context.inject`) and hand it to Claude Code as
             // `additionalContext`. Budget ~300 ms, FAIL-OPEN: any error,
