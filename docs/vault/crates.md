@@ -125,6 +125,9 @@ ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; t
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
 together or not at all.** Rule #8: the token never reaches a log.
 
+`render_env_file` (the `~/.ymux/run/last.env` body) writes `YMUX_*` lines only; the `WINMUX_*`
+dual-write was dropped, the CLI still reads the legacy names as a fallback.
+
 ## `ymux-policy` (542) — the 3-state permission engine
 
 Phase 18's PreToolUse integration routed **every** matched tool call to a blocking

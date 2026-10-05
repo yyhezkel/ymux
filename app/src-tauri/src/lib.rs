@@ -2889,10 +2889,6 @@ fn spawn_local_pty(
     // ymux-cli hook silently env-gated (main.rs `YMUX_PANE_ID unset`) and
     // the Ticker never fired outside manual injection.
     cmd.env("YMUX_PANE_ID", &pane_id);
-    // winmux → ymux rename bridge: a `ymux-cli.exe` still on PATH from a
-    // pre-rename install reads the old spelling and would otherwise
-    // env-gate itself out. Drop once 0.5.0 is the floor.
-    cmd.env("WINMUX_PANE_ID", &pane_id);
     // 2026-08-19: point zellij at ymux's own config; 2026-08-20: and at its
     // config DIRECTORY, which is how the single-pane layout gets found.
     //
@@ -3474,18 +3470,12 @@ fn build_tmux_attach_script(
     // creation. The `2>/dev/null` swallows the harmless "no server
     // running" message when this is the first attach.
     if !socket_addr.is_empty() {
-        // Both spellings: `YMUX_*` for the current CLI, `WINMUX_*` for a
-        // pre-rename `ymux-linux-x64` that a remote may still be running
-        // until the next bootstrap re-uploads it. The new CLI promotes
-        // WINMUX_* → YMUX_* at startup, so the pair is safe in either
-        // direction. Drop the legacy triple once 0.5.0 is the floor.
+        // YMUX_* only: the legacy WINMUX_* triple is no longer written. The
+        // CLI still READS WINMUX_* as a fallback, but nothing injects it.
         for (var, value) in [
             ("YMUX_SOCKET_ADDR", socket_addr),
-            ("WINMUX_SOCKET_ADDR", socket_addr),
             ("YMUX_TUNNEL_TOKEN", token),
-            ("WINMUX_TUNNEL_TOKEN", token),
             ("YMUX_PANE_ID", pane_id),
-            ("WINMUX_PANE_ID", pane_id),
         ] {
             script.push_str(&format!(
                 "tmux set-environment -g {} {} 2>/dev/null; ",
@@ -13836,10 +13826,12 @@ mod tmux_attach_script_tests {
     #[test]
     fn env_injection_precedes_exec() {
         let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m", &[]);
-        assert_eq!(s.matches("tmux set-environment -g ").count(), 6);
-        for var in ["YMUX_SOCKET_ADDR", "WINMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "WINMUX_TUNNEL_TOKEN", "YMUX_PANE_ID", "WINMUX_PANE_ID"] {
+        assert_eq!(s.matches("tmux set-environment -g ").count(), 3);
+        for var in ["YMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "YMUX_PANE_ID"] {
             assert!(s.contains(var), "missing {var}");
         }
+        // Legacy spelling is no longer written.
+        assert!(!s.contains("WINMUX_"), "legacy env leaked:\n{s}");
         let exec_at = s.find("exec tmux").expect("exec");
         let last_env = s.rfind("set-environment").expect("env");
         assert!(last_env < exec_at, "env injection must come before the exec");

@@ -292,11 +292,8 @@ pub fn generate_token() -> String {
 /// The body of `~/.ymux/run/last.env`. Pure, so the shape is testable
 /// without an SSH session.
 ///
-/// Both spellings — the file is read by whatever CLI happens to be on the
-/// remote, which may still be a pre-rename `winmux-linux-x64` until the next
-/// bootstrap replaces it. The current CLI promotes WINMUX_* → YMUX_* at
-/// startup, so duplicating here is harmless. Drop the legacy triple once
-/// 0.5.0 is the floor.
+/// YMUX_* lines only; the legacy WINMUX_* spelling is no longer written
+/// (the CLI still reads it as a fallback).
 ///
 /// `pane_id: None` omits the pane lines entirely, so the caller's
 /// read-modify-write can preserve whatever the file already had. Writing an
@@ -305,11 +302,10 @@ pub fn generate_token() -> String {
 /// tool calls, i.e. every permission card silently disappears.
 pub fn render_env_file(socket_addr: &str, token: &str, pane_id: Option<&str>) -> String {
     let mut body = format!(
-        "YMUX_SOCKET_ADDR={socket_addr}\nYMUX_TUNNEL_TOKEN={token}\n\
-         WINMUX_SOCKET_ADDR={socket_addr}\nWINMUX_TUNNEL_TOKEN={token}\n"
+        "YMUX_SOCKET_ADDR={socket_addr}\nYMUX_TUNNEL_TOKEN={token}\n"
     );
     if let Some(p) = pane_id {
-        body.push_str(&format!("YMUX_PANE_ID={p}\nWINMUX_PANE_ID={p}\n"));
+        body.push_str(&format!("YMUX_PANE_ID={p}\n"));
     }
     body
 }
@@ -359,7 +355,7 @@ pub async fn write_remote_env_file(
          fi\n\
          printf '%s' {body} > \"$f.tmp\"\n\
          if [ -n \"$pid\" ]; then\n\
-         printf 'YMUX_PANE_ID=%s\\nWINMUX_PANE_ID=%s\\n' \"$pid\" \"$pid\" >> \"$f.tmp\"\n\
+         printf 'YMUX_PANE_ID=%s\\n' \"$pid\" >> \"$f.tmp\"\n\
          fi\n\
          chmod 0600 \"$f.tmp\"\n\
          mv -f \"$f.tmp\" \"$f\"\n",
@@ -420,24 +416,21 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
-    fn env_file_carries_both_ymux_and_winmux_spellings() {
+    fn env_file_carries_only_ymux_spellings() {
         let body = render_env_file("127.0.0.1:44495", "tok123", Some("p_1_0"));
-        // A pre-rename `winmux-linux-x64` is still on already-provisioned
-        // remotes until the next bootstrap replaces it, and it only reads the
-        // legacy names. Both spellings stay until 0.5.0 is the floor.
+        // The legacy spelling is retired from the writer; a regression that
+        // re-adds it would show up as a WINMUX_ line below.
         for expect in [
             "YMUX_SOCKET_ADDR=127.0.0.1:44495",
             "YMUX_TUNNEL_TOKEN=tok123",
             "YMUX_PANE_ID=p_1_0",
-            "WINMUX_SOCKET_ADDR=127.0.0.1:44495",
-            "WINMUX_TUNNEL_TOKEN=tok123",
-            "WINMUX_PANE_ID=p_1_0",
         ] {
             assert!(
                 body.lines().any(|l| l == expect),
                 "missing line {expect:?} in:\n{body}"
             );
         }
+        assert!(!body.contains("WINMUX_"), "legacy env leaked:\n{body}");
     }
 
     #[test]

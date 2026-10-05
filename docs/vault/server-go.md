@@ -185,6 +185,7 @@ state, and why it is allowed.** A session created through `POST /api/v2/term/ses
 gets three SESSION-scoped variables (`tmux new-session -e`, which beat the desktop's
 `set-environment -g`): `YMUX_SOCKET_ADDR` (the daemon's hook listener),
 `YMUX_TUNNEL_TOKEN` (32 random bytes, the HMAC key) and `YMUX_PANE_ID` (`term_<16 hex>`).
+(Chat `spawnEnv` likewise sets only the `YMUX_*` trio; the `WINMUX_*` duplicates are gone.)
 So `ymux claude-hook` in that session dials the **daemon**, not the desktop. The
 `HookRegistry` remembers token → session (in memory, keyed by name, following
 rename/kill and pruned against every `list`) and is term's `core.HookResolver`. It is
