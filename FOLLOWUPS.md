@@ -10,7 +10,6 @@ Everything below this line is OPEN.
 Format:
 
 ```
-- [ ] P1 | 2026-10-05 | app/src-tauri/server/internal/term/{feed,events,hookdispatch,hookreg,service}.go + internal/api/mobile.go (hooks/forward) — Phase 101 (WEB-DESIGN B3), daemon 2.5.0 | NOT VERIFIED LIVE (Rule #14). Smoke on a box running 2.5.0: (1) `GET /api/v2/events?lang=he` with the owner token → first frame `hello` with the panes, briefs and feed; (2) a session created with `{"policy":"none"}` + `claude` running a tool → no card, the tool runs, events carry pane:agent-run / pane:brief, a stop card arrives in Hebrew; (3) `POST …/policy {"policy":"gate"}` → the next tool call BLOCKS, a pending `feed:item-added` arrives, `feed.decide allow` over the socket lets it run and `feed:item-resolved` follows; deny → claude reports the tool was denied; (4) gate with nobody answering → after wait_timeout (CLI default 120 s) the card goes `timedout` and claude is denied; (5) kill the session while a gate is pending → the pending request is denied at once; (6) a phone gets NO card for a browser session's tool call (hooks/forward drops term_ panes) but still gets them for desktop panes; (7) a device token without shell:attach → 403 on /api/v2/events; (8) insights.log carries request id / pane / subkind / decision only — no prompt, no tool input (Rule #1).
 - [ ] P<0|1|2|3> | <YYYY-MM-DD> | <file>:<line> | <one-line repro/symptom>
 ```
 
