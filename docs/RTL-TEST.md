@@ -14,8 +14,8 @@ Only affects the `auto_per_line` RTL mode (the default). Gated by
 
 ## Unit tests
 
-`app/src/textDirection.test.ts` — 75 cases (`node:test`), of which 10 cover
-`nextTuiOwnsBidi` and 6 cover `rowDirections` / `force_rtl`. Run:
+`app/src/textDirection.test.ts` — 41 cases (`node:test`), of which 5 cover
+`rowDirections` / `force_rtl`. Run:
 
 ```
 cd app && node --experimental-strip-types --test src/textDirection.test.ts
@@ -58,7 +58,7 @@ RTL, the runs are not reversed.
 
 ## TUI-owns-bidi smoke (Claude Code visual-order RTL)
 
-Covers `tuiOwnsBidi` / `nextTuiOwnsBidi`. **Run this whole section after any
+Covers `tuiOwnsBidi` and the hook-driven `claudeActive` signal (`setTuiSignal`). **Run this whole section after any
 merge that touches `terminalInstance.ts` or `textDirection.ts`** — the feature
 was silently lost in merge `bcaa330` (2026-07-31) and stayed gone for 18 days
 with a green test suite, because the merge deleted the code and its tests
@@ -67,7 +67,7 @@ together. See `docs/DECISIONS.md`, the TUI-owns-bidi entry.
 1. Start Claude Code in a pane and print Hebrew → renders correctly: no
    reversed letters, no left-aligned scramble, no clipped glyphs.
 2. `%APPDATA%\winmux\debug.log` shows `[TERM] tui-owns-bidi on pane=<id>` at
-   Claude start. **If this line never appears, the feature is inert** — for
+   Claude start (the ymux Claude hook reports it — no OSC title involved). **If this line never appears, the feature is inert** — for
    tmux panes that is expected to be the open question (see follow-up 3 in
    DECISIONS); for a local pane it is a bug.
 3. Type a Hebrew sentence ending in `?` into Claude's input box → the `?` stays
@@ -80,11 +80,11 @@ together. See `docs/DECISIONS.md`, the TUI-owns-bidi entry.
    renders forced-LTR with no recovery short of a new pane.
 6. Devtools console: no xterm parser errors. (Round 6 saw 519 `FSI U+2068`
    errors when the pipeline double-bidi'd.)
-7. Repeat **inside tmux over SSH**, not only locally — tmux swallows OSC 0/2
-   titles by default, so this is the case that decides follow-up 3.
+7. Repeat **inside tmux over SSH**, not only locally — the hook signal
+   does not depend on tmux passing titles through, so `tui-owns-bidi on` must appear here too.
 8. Restart the app with session restore on, reattaching a pane whose Claude is
-   already running (it will not re-emit its title) → check whether the state
-   engages. New interaction; the feature predates session restore.
+   already running (hooks fire on events, so no hook may arrive until Claude's next event) → check
+   whether the state engages. New interaction; the feature predates session restore.
 
 Accepted costs, **not** failures (`DECISIONS.md`, 2026-07-17 — display
 correctness wins): the caret sits one cell forward when typing Hebrew to

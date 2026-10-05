@@ -131,8 +131,8 @@
     "app/src/settings.ts": "2fe5a3425270c73da4c31f27cf661ca3fb3b2e8f0d48bed303cd6335c0aff7dd",
     "app/src/shortcuts.ts": "cdb7ca75c09769a29ccb2e98a0977667486f77f3385324d789ec9b62a9b98dd4",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
-    "app/src/terminalInstance.ts": "26a539f84b9c6c2072a1f91c5e67ef4bddd75cebf302d67a0f95de52211c0991",
-    "app/src/textDirection.ts": "4302533e2a671da5a9a70279b6aa8e1f8691f4894324dcb3b0bf6da19e102483",
+    "app/src/terminalInstance.ts": "54a45c557522685183cfdd48f9b910859ab7e2c5fb0d1aefbdcfba149d74696f",
+    "app/src/textDirection.ts": "a15d1af75e5967b52c401c95733dc9bd2daf2e18f396bdc8968cc7c6e1c51ef0",
     "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
   },
@@ -174,7 +174,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "587e0c6e4fb5da939afe7271390a4bba788569eeb752a14752ef8d14f69b957a",
+    "app/src/App.tsx": "9e95a0d856dd6bbd77baf30d0883c6322f735dc6d9a2868e32f910b3cac36c8d",
     "app/src/BriefingCard.tsx": "74ddaa2fe32a3d7904eb3db62ecf77184ca4f4871d4d6d28168241d376f8523a",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/ContextRail.tsx": "8f9b73396f3b00236a5edd5f36599ea18b04b4b654adfa5c832ed246821b5a79",

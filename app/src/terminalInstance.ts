@@ -21,10 +21,8 @@ import { createLogger } from "./logger";
 const termLog = createLogger("TERM");
 import {
   detectDirection,
-  foldTuiOwnsBidi,
   rowDirections,
   strongCounts,
-  nextTuiOwnsBidi,
 } from "./textDirection";
 import type { RowDir, RowDirMode } from "./textDirection";
 import { transformMouseX, findRow } from "./mouseRtl";
@@ -160,9 +158,9 @@ export interface RtlProfileSettings {
    *                     stops a TUI status bar from mirroring its own layout.
    *
    * 2026-08-19: this is deliberately keyed on the PANE CLASS and never on what
-   * is running inside the pane. The vote first shipped gated on `tuiOwnsBidi`,
-   * and since the OSC title propagates over SSH — that is how Claude Code is
-   * detected at all — it fired on remote panes too and broke them. Yossi's
+   * is running inside the pane. The vote first shipped gated on a Claude
+   * detector that also fired on remote panes (the OSC title propagated over
+   * SSH) and broke them. Yossi's
    * instruction after that: "תוודא שיש הפרדה מוחלטת בין המרוחק למקומי - ואז
    * השינויים שתרצה לעשות על המקומי לא יפגעו במרוחק". A per-profile field is that
    * separation; `remote_direction_policy_is_the_pre_2026_08_19_rule` in
@@ -351,7 +349,7 @@ export function setRtlProfiles(next: Record<RtlProfileKind, RtlProfileSettings>)
 /** Route an out-of-band "Claude is in front" signal to one pane. Used by
  *  App.tsx for the connect wizard and for session-start/end hooks; a pane that
  *  is not open yet simply has nothing to tell. */
-export function setPaneTuiSignal(paneId: string, on: boolean | null): void {
+export function setPaneTuiSignal(paneId: string, on: boolean): void {
   for (const ti of g_terminals) {
     if (ti.paneId === paneId) ti.setTuiSignal(on);
   }
@@ -613,30 +611,18 @@ export class TerminalInstance {
   // events over an RTL row, dispatches a synthetic MouseEvent with clientX
   // mirrored around the row midpoint. See mouseRtl.ts for the rationale.
   private rtlMouseTeardown: (() => void) | null = null;
-  // 2026-07-15 (Claude visual-order RTL): true while a TUI that does its
-  // own bidi reordering (Claude Code) holds this pane's foreground. While
-  // set, the per-row dir pass renders everything LTR and arrow-mirroring /
-  // the bidi_reorder write pipeline stand down — the TUI's output is
-  // already in visual order and any second bidi pass corrupts it. Driven
-  // by terminal-title changes; see nextTuiOwnsBidi in textDirection.ts.
-  private tuiOwnsBidi = false;
   /** Last direction vector reported by `logDirections`, so the per-frame pass
    *  only speaks when its answer actually changed. */
   private lastDirSignature: string | null = null;
-  /** Last `title-seen` report, as `match:len-bucket` — see onTitleChanged. */
-  private lastTitleReport: string | null = null;
   private lastDirLogMs = 0;
   private dirObserverRetries = 0;
 
-  /** The EFFECT of tuiOwnsBidi, as opposed to the detected state. Detection
-   *  and its log line always run — they are what made the 2026-08-18
-   *  diagnosis possible in minutes — but the LTR forcing is gated, because
-   *  current Claude emits logical-order Hebrew and forcing LTR corrupts it.
-   *  See settings.rs `tui_owns_bidi`. */
-  /** Out-of-band "Claude is in front", from the connect wizard or a Claude
-   *  hook. `null` = nobody told us, fall back to the title. See
-   *  `foldTuiOwnsBidi` for why this outranks the title. */
-  private tuiExplicit: boolean | null = null;
+  /** 2026-10-06: Claude Code holds this pane's foreground — the ONLY detector
+   *  (the OSC-title one never fired: zellij/tmux swallow titles). Driven by
+   *  the connect wizard and the Claude session hooks via `setPaneTuiSignal`,
+   *  so it works over SSH too. Detection is separate from its EFFECT, which is
+   *  gated by the profile's `tui_owns_bidi` (see `bidiOwnedByTui`). */
+  private claudeActive = false;
 
   /** Phase 91.D: is this pane on a multiplexer session (tmux/zellij)? Set by
    *  App.tsx from `pane_persistence_list` — the backend's answer, never a
@@ -653,16 +639,13 @@ export class TerminalInstance {
     if (on) termLog.info(`wheel proxy armed pane=${this.paneId}`);
   }
 
-  /** Called by App.tsx: `true` on connect-with-Claude and on a session-start
-   *  hook for this pane, `null` when Claude ends or the pane connects to
-   *  something else. */
-  setTuiSignal(on: boolean | null): void {
-    if (this.tuiExplicit === on) return;
-    this.tuiExplicit = on;
-    termLog.info(
-      `tui-signal pane=${this.paneId} ` +
-        `explicit=${on === null ? "-" : on ? 1 : 0} title=${this.tuiOwnsBidi ? 1 : 0}`,
-    );
+  /** Called by App.tsx: `true` on connect-with-Claude and on a Claude hook
+   *  for this pane, `false` when Claude ends or the pane connects to
+   *  something else. Transitions only; metadata only (Rule #1). */
+  setTuiSignal(on: boolean): void {
+    if (this.claudeActive === on) return;
+    this.claudeActive = on;
+    termLog.info(`tui-owns-bidi ${on ? "on" : "off"} pane=${this.paneId}`);
     this.applyRowDirections(true);
   }
 
@@ -680,7 +663,7 @@ export class TerminalInstance {
    * `normaliseIncomingToLogical`.
    */
   private get bidiOwnedByTui(): boolean {
-    return foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi) && this.rtl.tuiOwnsBidi;
+    return this.claudeActive && this.rtl.tuiOwnsBidi;
   }
 
   /**
@@ -730,7 +713,7 @@ export class TerminalInstance {
    * Two independent ways a buffer ends up visual:
    *
    *  1. The SOURCE wrote visual order — Claude Code on Windows does. Note this
-   *     reads `foldTuiOwnsBidi` directly and does NOT `&&` in
+   *     reads `claudeActive` directly and does NOT `&&` in
    *     `this.rtl.tuiOwnsBidi` the way `bidiOwnedByTui` does. That setting is a
    *     RENDERING preference; whether Claude is in front is a fact about the
    *     source. Turning off a render checkbox must not silently put reversed
@@ -746,7 +729,7 @@ export class TerminalInstance {
     // so testing `sourceIsVisual` alone would now be wrong in exactly the
     // situation the normalisation exists for.
     if (this.normaliseIncomingToLogical) return false;
-    const sourceIsVisual = foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi);
+    const sourceIsVisual = this.claudeActive;
     const weReordered =
       this.rtlModeRendered === "bidi_reorder" && !this.bidiOwnedByTui;
     return sourceIsVisual || weReordered;
@@ -1209,11 +1192,6 @@ export class TerminalInstance {
     this.ensureDirObserver();
     this.installRtlMouseCapture();
 
-    // Claude visual-order RTL: watch OSC 0/2 title reports to learn when a
-    // self-bidi TUI takes/releases the pane. Listener lifetime is tied to
-    // the Terminal — term.dispose() in dispose() drops it.
-    this.term.onTitleChange((title) => this.onTitleChanged(title));
-
     // Font-init fix: a fresh pane rendered "compressed" until the user
     // swapped the terminal font and back (notably with Courier). Root
     // cause: xterm caches the character-cell size from its FIRST
@@ -1384,42 +1362,6 @@ export class TerminalInstance {
     this.dirObserver = obs;
   }
 
-  /** Claude visual-order RTL: fold a title report into the per-pane
-   *  "TUI owns bidi" state. On a transition, force a full direction
-   *  re-pass so rows already on screen flip immediately (Claude's banner
-   *  prints before the title-driven state lands, and shell scrollback is
-   *  still visible when Claude exits). */
-  private onTitleChanged(title: string): void {
-    // 2026-08-19: report EVERY title, not only the ones that change the state.
-    // Nothing else could answer "does zellij forward a title at all, and does
-    // it ever contain 'claude'" — the absence of transitions in the log was
-    // equally consistent with "no titles" and "titles that never matched".
-    //
-    // Rule #1: a title can be Claude's auto topic name, i.e. derived from
-    // conversation content. Whether it matched and how long it was are
-    // metadata; the text itself is never logged and a length cannot
-    // reconstruct it.
-    //
-    // 2026-09-23: …but only when the report would SAY something new. Claude
-    // Code animates a spinner in its title, so "every title" was several log
-    // lines — and, before the logger batched, several IPC calls — per second
-    // per pane, for as long as Claude worked. Whether it matched is the
-    // signal; the exact length is not, so it is bucketed.
-    const match = /claude/i.test(title) ? 1 : 0;
-    const report = `${match}:${title.length === 0 ? 0 : title.length < 16 ? 1 : 2}`;
-    if (report !== this.lastTitleReport) {
-      this.lastTitleReport = report;
-      termLog.info(`title-seen pane=${this.paneId} match=${match} len=${title.length}`);
-    }
-    const next = nextTuiOwnsBidi(this.tuiOwnsBidi, title);
-    if (next === this.tuiOwnsBidi) return;
-    this.tuiOwnsBidi = next;
-    // Metadata only (Rule #1): titles can derive from conversation content
-    // (Claude's auto topic titles) — never log the title itself.
-    termLog.info(`tui-owns-bidi ${next ? "on" : "off"} pane=${this.paneId}`);
-    this.applyRowDirections(true);
-  }
-
   /** Coalesce a burst of row mutations into one direction pass per frame. */
   private scheduleRowDirections(): void {
     if (this.dirRafId != null) return;
@@ -1468,10 +1410,9 @@ export class TerminalInstance {
     // RTL — render rows plain LTR so we don't bidi it a second time.
     //
     // 2026-08-19: which direction rule applies comes from the PANE'S PROFILE,
-    // never from what is running inside the pane. This briefly read
-    // `this.tuiOwnsBidi` instead — and because the OSC title propagates over
-    // SSH, that fired on remote panes and broke a path that was working. See
-    // the note on `directionPolicy` above.
+    // never from what is running inside the pane. This briefly read the
+    // Claude detector instead, which fired on remote panes and broke a path
+    // that was working. See the note on `directionPolicy` above.
     // 2026-08-20: `normaliseIncomingToLogical` panes take the NORMAL path. The
     // buffer they hold is logical, because flushPending converted it on the way
     // in — so they need exactly what a remote pane needs: a real per-row `dir`
@@ -1482,10 +1423,10 @@ export class TerminalInstance {
       auto,
       suppress,
       dominance: this.rtl.directionPolicy === "tui_dominance",
-      // Phase 94: the DETECTED "Claude holds this pane" state (hook or
-      // title), not the profile switch — `force_rtl` uses it to leave a
+      // Phase 94: the DETECTED "Claude holds this pane" state (hook),
+      // not the profile switch — `force_rtl` uses it to leave a
       // TUI's Latin rows exactly where the TUI drew them.
-      tui: foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi),
+      tui: this.claudeActive,
     });
 
     // 2026-08-19: `dir` alone cannot do what bidiOwnedByTui promises.
@@ -1580,17 +1521,13 @@ export class TerminalInstance {
       return "-";
     };
     // `tui=` is the EFFECTIVE answer — what actually gated this pass — not the
-    // title-derived flag. Reporting the raw flag was actively misleading: the
-    // 2026-08-19 log showed `tui=0` moments after `tui-signal explicit=1`,
-    // which reads as "the signal did nothing" when in fact the signal had won
-    // and a different gate (the per-profile setting) was the one saying no.
-    // The three inputs are broken out so the next diagnosis is one line, not
-    // an inference.
+    // raw hook flag. Reporting the raw flag was misleading: a 2026-08-19 log
+    // showed `tui=0` right after the signal fired, when the per-profile
+    // setting was the gate saying no. `setting=` breaks that input out.
     termLog.info(
       `rtl-dirs pane=${this.paneId} profile=${this.profile} ` +
         `policy=${this.rtl.directionPolicy} tui=${this.bidiOwnedByTui ? 1 : 0} ` +
-        `(explicit=${this.tuiExplicit === null ? "-" : this.tuiExplicit ? 1 : 0} ` +
-        `title=${this.tuiOwnsBidi ? 1 : 0} setting=${this.rtl.tuiOwnsBidi ? 1 : 0}) ` +
+        `(setting=${this.rtl.tuiOwnsBidi ? 1 : 0}) ` +
         `rows=${dirs.length} rtl=${rtlRows} ltr=${dirs.length - rtlRows} end=${endRows} ` +
         `firstRtl=${sample("rtl")} firstLtr=${sample("ltr")}`,
     );

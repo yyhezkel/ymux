@@ -2270,16 +2270,14 @@ function App() {
     ti.workspaceId = ws.id;
     // 2026-08-19: when ymux itself launches Claude, nothing has to be
     // detected. Claude Code writes RTL pre-reordered, so the pane must not
-    // bidi it a second time — and the title-based detector never learns this
-    // inside zellij, which eats the title (measured: `title-seen … match=0`
-    // on every title, 57 chars of zellij's own).
+    // bidi it a second time.
     //
     // A RESTORE is left alone rather than cleared. Re-attaching to a
     // persistent session says nothing about what is running inside it — that
     // is the whole point of persistence — so clearing here would throw away a
     // signal a hook may have already delivered.
     if (opts.mode === "claude") ti.setTuiSignal(true);
-    else if (!opts.restoring) ti.setTuiSignal(null);
+    else if (!opts.restoring) ti.setTuiSignal(false);
     // Phase 90.B: a session row (`Workspace.tmux_session`) exists FOR one
     // session, and activation never auto-connects panes — so a plain
     // [Connect] on its first pane must attach to that session rather than
@@ -4035,8 +4033,6 @@ function App() {
         // YMUX_PANE_ID (cli/src/main.rs) — so they drive the per-pane
         // "don't bidi this twice" state. This works over SSH and through any
         // multiplexer, unlike the terminal title, which zellij consumes.
-        // session-end clears back to null rather than asserting false, so the
-        // title can still speak if it ever starts arriving.
         // A Claude hook can only be fired from INSIDE Claude, and it already
         // carries YMUX_PANE_ID (cli/src/main.rs), so ANY of them is proof that
         // Claude holds that pane — which is what decides whether the pane may
@@ -4047,13 +4043,7 @@ function App() {
         // session-start ever fires. `stop` lands after every reply, so the
         // state corrects itself on the first interaction. Measured need —
         // Yossi's log had `tui=0` on panes that had Claude running in them.
-        //
-        // Clears to null rather than false so the title can still speak, in
-        // case it ever starts arriving.
-        if (f.pane_id) {
-          if (f.subkind === "session-end") setPaneTuiSignal(f.pane_id, null);
-          else setPaneTuiSignal(f.pane_id, true);
-        }
+        if (f.pane_id) setPaneTuiSignal(f.pane_id, f.subkind !== "session-end");
         // Every hook is recorded in the Notification Center history; feedToNotif
         // carries the workspace_id so the entry shows which workspace it's from.
         pushNotif(feedToNotif(f));
