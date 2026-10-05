@@ -374,7 +374,7 @@ checked against the code on that date; line numbers drift, the function names do
 | Part | State |
 |---|---|
 | B1 — `internal/agent` (Phase 99) | **In main** (PR #54). Pure Go ports + translated tests; nothing imported it until B2. |
-| B2 — hook listener for browser sessions (Phase 100) + daemon **2.4.1** | **PR #55, green, NOT merged.** Waiting for the live test (FOLLOWUPS P1 Phase 100) on Windows build run 37180149087, then merge. Verified in the cloud session only against the built daemon + a real tmux 3.4 with a simulated hook client (create → `hooks:true` → session env → prompt/permission/stop folded, forged pane denied, no prompt text in the log). Not verified: a real `claude`, the phone path, a server updated through the add-on. |
+| B2 — hook listener for browser sessions (Phase 100) + daemon **2.4.2** | **Merged (PR #55), verified live 2026-10-05** on a real box over HTTPS — browser pairing approved on the desktop, `claude` typed into the browser xterm, all hooks folded; the chat (phone) path still answers. The live test found and fixed four bugs (term `List()` always empty on real tmux → hooks wiped on every list; diag page xterm 404; RTL overflow; close 1006). Not verified: the add-on update path, tmux < 3.2. |
 | B3 – B6 | Not started. |
 
 **B3 — `feed.push` / `feed.decide` + the events WS.**
@@ -397,9 +397,9 @@ checked against the code on that date; line numbers drift, the function names do
     and `pane_briefs` (~:2637) — `term.HookRegistry.Snapshot()` already holds both;
   - **there is no workspace-wide events WS** (§2 correction) — B3 builds it; the
     per-session `…/subscribe` and `workspace/frames.go` are the patterns to follow.
-- Decide in B3: the per-session policy `none` (Yossi's word; most likely "no gate,
-  observability only", which is what B2 does today) versus `gate` as the browser
-  default once a human can be reached.
+- **Decided 2026-10-05 (DECISIONS):** a browser session defaults to `none`
+  (observability only: folded, shown in the feed, permission answered `allow`);
+  `gate` is opt-in per session, with the desktop's timeout semantics.
 - De-duplicate: every `pre-tool-use` also arrives via the CLI's fire-and-forget
   `POST /api/v2/hooks/forward` (FOLLOWUPS P2) — ignore `term_` pane ids there, or key on
   `request_id`.
