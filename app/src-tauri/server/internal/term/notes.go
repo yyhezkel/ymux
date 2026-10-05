@@ -19,8 +19,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -61,22 +59,10 @@ func newNoteStore(path string) *noteStore {
 	if path == "" {
 		return s
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			logger.Warn("notes file unreadable; starting empty", "err", err)
-		}
-		return s
-	}
 	var f notesFile
-	if err := json.Unmarshal(b, &f); err != nil {
-		// Do not overwrite what we could not read: move it aside first.
-		bad := path + ".corrupt-" + time.Now().UTC().Format("20060102T150405")
-		_ = os.Rename(path, bad)
-		logger.Warn("notes file corrupt; moved aside", "to", filepath.Base(bad))
-		return s
+	if loadJSON(path, &f, "notes") {
+		s.notes = f.Notes
 	}
-	s.notes = f.Notes
 	return s
 }
 
@@ -86,7 +72,8 @@ func (s *noteStore) nextID() string {
 	return fmt.Sprintf("n_%x_%x", s.now().UnixNano(), s.seq.Add(1)-1)
 }
 
-// saveLocked writes the file atomically. Caller holds mu.
+// saveLocked writes the file atomically (webws.go writeFileAtomic). Caller
+// holds mu.
 func (s *noteStore) saveLocked() error {
 	if s.path == "" {
 		return nil
@@ -95,23 +82,7 @@ func (s *noteStore) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", s.path, os.Getpid())
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(b); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		return err
-	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp, s.path)
+	return writeFileAtomic(s.path, b)
 }
 
 func (s *noteStore) add(text, tag, workspaceID, paneID string) (Note, error) {

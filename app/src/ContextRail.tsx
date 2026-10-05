@@ -14,7 +14,7 @@ import {
   logIcon,
   logLineText,
   logNewestFirst,
-  othersSummary,
+  sessionsForPane,
   sessionTitle,
   LOG_PREVIEW,
   RAIL_DEFAULT_W,
@@ -23,10 +23,12 @@ import {
 
 // Phase 103: the Context Rail — a docked column at the inline-end of the
 // main layout (a third `.app` grid column, not a SideDrawer: no backdrop,
-// it never covers the panes). Shows the current workspace's context:
-// 🎯 intent, then one card per Claude session (live row + 📝 first prompt
-// + the "where we stand" log from its briefs), plus a strip pointing at
-// other workspaces that need the user. Data: `session_context_list`,
+// it never covers the panes). It shows ONE thing: the context of the
+// FOCUSED pane's Claude session (App's activePaneId) — 🎯 the workspace
+// intent, the pane's live row, 📝 the session's first prompt and its
+// "where we stand" log from its briefs; earlier sessions of the same pane
+// sit behind a toggle. Switching focus switches the card. Data:
+// `session_context_list` for the workspace, filtered to the pane,
 // refetched on `context:changed`. All agent/user text renders as plain
 // text (Solid escapes it) with dir="auto".
 
@@ -58,10 +60,11 @@ export function saveRailPrefs(p: { width: number; collapsed: boolean }): void {
 
 interface Props {
   ws: Workspace | null;
-  /** Agent rows of the current workspace (App's allPaneAgentRows). */
-  rows: QueueRow[];
-  /** Every workspace's rows — for the "others" strip only. */
-  allRows: QueueRow[];
+  /** The focused pane — App's `activePaneId`, the same signal keyboard
+   *  and focus routing use. The rail follows it. */
+  paneId: string | null;
+  /** That pane's agent row (App's allPaneAgentRows), if it has one. */
+  row: QueueRow | null;
   nowMs: number;
   collapsed: boolean;
   onToggleCollapsed: () => void;
@@ -71,13 +74,12 @@ interface Props {
   width: number;
   onSaveIntent: (text: string) => void;
   onJumpPane: (paneId: string) => void;
-  onJumpWorkspace: (wsId: string) => void;
 }
 
 export function ContextRail(p: Props) {
   const [sessions, setSessions] = createSignal<SessionContext[]>([]);
   const [error, setError] = createSignal<string | null>(null);
-  const [showClosed, setShowClosed] = createSignal(false);
+  const [showEarlier, setShowEarlier] = createSignal(false);
   // Expansion state lives here, keyed by session id: a refetch replaces
   // every SessionContext object (and remounts its card), and a new turn
   // must not snap an expanded log shut.
@@ -98,6 +100,8 @@ export function ContextRail(p: Props) {
 
   const wsId = () => p.ws?.id ?? null;
 
+  // One fetch per workspace; the focused pane is a client-side filter,
+  // so switching focus inside a workspace costs no IPC.
   let fetchSeq = 0;
   const refetch = async () => {
     const id = wsId();
@@ -119,6 +123,8 @@ export function ContextRail(p: Props) {
   };
 
   createEffect(on(wsId, () => void refetch()));
+  // A different pane's earlier sessions start collapsed.
+  createEffect(on(() => p.paneId, () => setShowEarlier(false), { defer: true }));
 
   onMount(() => {
     let un: (() => void) | null = null;
@@ -135,30 +141,10 @@ export function ContextRail(p: Props) {
     });
   });
 
-  // The most recent session per pane owns that pane's live row; an older
-  // session in the same pane shows its own title instead.
-  const liveSessionForPane = createMemo(() => {
-    const m = new Map<string, string>();
-    for (const s of sessions()) {
-      if (s.pane_id && !m.has(s.pane_id)) m.set(s.pane_id, s.session_id);
-    }
-    return m;
-  });
-  const rowFor = (s: SessionContext): QueueRow | null => {
-    if (!s.pane_id || liveSessionForPane().get(s.pane_id) !== s.session_id) return null;
-    return p.rows.find((r) => r.paneId === s.pane_id) ?? null;
-  };
-  const openSessions = () => sessions().filter((s) => !isClosed(s));
-  const closedSessions = () => sessions().filter(isClosed);
-  // Agent panes with no session record yet (an older CLI, a non-Claude
-  // agent): still worth a row in "where we stand".
-  const orphanRows = () => {
-    const covered = new Set(sessions().map((s) => s.pane_id).filter((x): x is string => !!x));
-    return p.rows.filter((r) => inQueue(r) && !covered.has(r.paneId));
-  };
-
-  const others = () => othersSummary(p.allRows, wsId());
-  const needsYouHere = () => othersSummary(p.rows, null).sessions;
+  // [current, ...earlier] for the focused pane.
+  const paneSessions = createMemo(() => sessionsForPane(sessions(), p.paneId));
+  const current = () => paneSessions()[0] ?? null;
+  const earlier = () => paneSessions().slice(1);
 
   // Drag the inline-start edge. In RTL the rail sits on the left, so the
   // pointer delta flips sign.
@@ -197,9 +183,6 @@ export function ContextRail(p: Props) {
             aria-expanded="false"
           >
             <span aria-hidden="true">🧭</span>
-            <Show when={needsYouHere() + others().sessions > 0}>
-              <span class="context-rail-strip-badge">{needsYouHere() + others().sessions}</span>
-            </Show>
           </button>
         }
       >
@@ -224,21 +207,6 @@ export function ContextRail(p: Props) {
         </div>
 
         <div class="context-rail-body">
-          <Show when={others().sessions > 0}>
-            <button
-              class="context-others"
-              onClick={() => {
-                const id = others().firstWsId;
-                if (id) p.onJumpWorkspace(id);
-              }}
-            >
-              {t("context.others", {
-                n: others().sessions,
-                m: others().workspaces,
-              })}
-            </button>
-          </Show>
-
           <Show
             when={p.ws}
             fallback={<div class="context-empty">{t("context.noWorkspace")}</div>}
@@ -256,42 +224,50 @@ export function ContextRail(p: Props) {
             {(err) => <div class="context-error" dir="auto">{err()}</div>}
           </Show>
 
-          <Show
-            when={sessions().length > 0 || orphanRows().length > 0}
-            fallback={
-              <Show when={p.ws}>
-                <div class="context-empty">{t("context.noSessions")}</div>
-              </Show>
-            }
-          >
-            <For each={openSessions()}>
-              {(s) => (
-                <SessionCard s={s} row={rowFor(s)} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
-              )}
-            </For>
-            <For each={orphanRows()}>
-              {(r) => (
-                <div class="context-card">
-                  <QueueRowView row={r} nowMs={p.nowMs} onClick={() => p.onJumpPane(r.paneId)} />
-                </div>
-              )}
-            </For>
-            <Show when={closedSessions().length > 0}>
-              <button
-                class="context-link"
-                aria-expanded={showClosed()}
-                onClick={() => setShowClosed((v) => !v)}
+          <Show when={p.ws}>
+            <Show
+              when={p.paneId}
+              fallback={<div class="context-empty">{t("context.noPane")}</div>}
+            >
+              <Show
+                when={current()}
+                fallback={
+                  // No session record for this pane: an agent pane on an
+                  // older CLI still gets its live row; anything else (a
+                  // plain shell, a Diff / Files pane) gets the hint.
+                  <Show
+                    when={p.row && inQueue(p.row) ? p.row : null}
+                    fallback={<div class="context-empty">{t("context.noSession")}</div>}
+                  >
+                    {(r) => (
+                      <div class="context-card">
+                        <QueueRowView row={r()} nowMs={p.nowMs} onClick={() => p.onJumpPane(r().paneId)} />
+                      </div>
+                    )}
+                  </Show>
+                }
               >
-                {showClosed()
-                  ? t("context.hideClosed")
-                  : t("context.showClosed", { n: closedSessions().length })}
-              </button>
-              <Show when={showClosed()}>
-                <For each={closedSessions()}>
-                  {(s) => (
-                    <SessionCard s={s} row={null} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
-                  )}
-                </For>
+                {(s) => (
+                  <SessionCard s={s()} row={p.row} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
+                )}
+              </Show>
+              <Show when={earlier().length > 0}>
+                <button
+                  class="context-link"
+                  aria-expanded={showEarlier()}
+                  onClick={() => setShowEarlier((v) => !v)}
+                >
+                  {showEarlier()
+                    ? t("context.hideEarlier")
+                    : t("context.showEarlier", { n: earlier().length })}
+                </button>
+                <Show when={showEarlier()}>
+                  <For each={earlier()}>
+                    {(s) => (
+                      <SessionCard s={s} row={null} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
+                    )}
+                  </For>
+                </Show>
               </Show>
             </Show>
           </Show>

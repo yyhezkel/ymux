@@ -29,7 +29,7 @@ func hookService(version string) (*Service, *[][]string) {
 		}
 		return nil, nil
 	})
-	s.hooks = NewHookRegistry()
+	s.attachHooks(NewHookRegistry())
 	return s, calls
 }
 
@@ -261,7 +261,7 @@ func TestPingAndUnknownMethod(t *testing.T) {
 	if res, err := tg.DispatchHook("ping", nil); err != nil || res.(map[string]any)["ok"] != true {
 		t.Errorf("ping → %v, %v", res, err)
 	}
-	if _, err := tg.DispatchHook("tree", nil); err == nil || err.Code != -32000 {
+	if _, err := tg.DispatchHook("no.such.method", nil); err == nil || err.Code != -32000 {
 		t.Errorf("unknown method → %+v", err)
 	}
 }

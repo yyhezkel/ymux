@@ -1363,11 +1363,7 @@
   "context.expand": "Показать панель контекста",
   "context.collapse": "Свернуть панель контекста",
   "context.resize": "Перетащите, чтобы изменить ширину",
-  "context.others": "{n} сессий ждут / застряли в других пространствах ({m})",
   "context.noWorkspace": "Пространство не выбрано.",
-  "context.noSessions": "Здесь пока нет сессий агента. Первый промпт и журнал прогресса каждой сессии Claude появятся здесь.",
-  "context.showClosed": "Показать закрытые сессии ({n})",
-  "context.hideClosed": "Скрыть закрытые сессии",
   "context.prompt.label": "Первый промпт",
   "context.prompt.toggle": "Показать / скрыть промпт полностью",
   "context.log.closed": "сессия закрыта",
@@ -1375,6 +1371,10 @@
   "context.log.less": "Показать меньше",
   "cmd.contextRail.toggle": "Панель контекста: показать/свернуть",
   "settings.shortcuts.toggle_context_rail": "Свернуть / развернуть панель контекста",
+  "context.noPane": "Выберите панель, чтобы увидеть её контекст.",
+  "context.noSession": "В этой панели пока нет сессии Claude. Здесь появятся её первый промпт и журнал прогресса.",
+  "context.showEarlier": "Предыдущие сессии в этой панели ({n})",
+  "context.hideEarlier": "Скрыть предыдущие сессии",
   "settings.brief.injectContext.label": "Передавать контекст в сессии",
   "settings.brief.injectContext.hint": "При compact или resume сессия Claude получает свой первый промпт и последние строки прогресса; новая сессия — цель пространства и соседние сессии. Нужны hooks v1.7.0 (перезапустите setup-hooks)."
 }

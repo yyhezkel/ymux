@@ -484,6 +484,13 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
      `additionalContext` on compact/resume/startup, capped, toggle in Settings).
   4. The rail shows the current workspace in full, plus a one-line strip for the other
      workspaces that need you.
+- **2026-10-05 follow-up: focused pane only, others strip removed.** Yossi: each window
+  shows only its own context. The rail now renders a single card, for the session of
+  the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
+  pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
+  M other workspaces" strip are gone, together with their UI, i18n keys, model helper
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (103.C) is
+  unchanged.
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, so this is 103 (no reuse).
 - **Outcome / Commit:** Phase 103.A (store + rail) on `claude/phase-103a-context-rail`;
   103.C follows. Spec: `docs/CONTEXT.md`.
@@ -497,6 +504,21 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   - Hook spec bumped to 1.7.0. `manifest.json`'s `hooks.claude-code.version` is left
     for the release cut (RELEASING.md § 4½), so the outdated-hooks banner does not
     fire before a CLI that understands the hook ships.
+
+### 2026-10-05 — B5: browser workspaces in term's own store; send fenced; scrollback stays a stub
+- **Decided (Yossi):** `send` / `send-key` (and, by the same logic, the pane-title verbs)
+  reach only the caller or panes of its own workspace — the desktop has no such fence, but
+  on the daemon an agent in one project must not type into another. `pane.scrollback`
+  keeps the desktop's Rule #1 error stub, although `tmux capture-pane` could answer it.
+- **Decided (Claude, flagged to Yossi): workspaces live in `<data dir>/web-workspaces.json`
+  owned by `internal/term`, NOT in `internal/workspace`'s SQLite** as WEB-DESIGN §4 had
+  it. Why: the agent verbs that edit a layout (split, titles) run in term, and writing into
+  a sibling subsystem's store breaks the rule that subsystems import only `core`; and every
+  field added to the huma-described `Workspace` there changes the OpenAPI the phone SDK is
+  generated from. Consequence: two workspace notions on the daemon (the phone's chat
+  `ws_default` substrate, and the browser's). Revisit if Phase C wants them unified.
+- **Decided (Claude):** `split` creates the new tmux session on the daemon (a browser may
+  not be connected to do it, unlike the desktop's frontend), and its reply adds `pane_id`.
 
 ### 2026-10-05 — B4: the daemon detects listening ports itself
 - **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP

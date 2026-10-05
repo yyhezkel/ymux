@@ -5,7 +5,6 @@
 // The wire types mirror `context_store.rs` (SessionContext / LogEntry) by
 // hand — change both together.
 import type { BriefStatus } from "./bindings/BriefStatus";
-import { inQueue, queueStatus, QUEUE_BUCKET, type QueueRow } from "./queueModel.ts";
 
 export type LogKind = "turn" | "closed";
 
@@ -104,23 +103,12 @@ export function lastActivityMs(s: SessionContext): number {
   return Math.max(last, s.first_prompt_ms ?? 0);
 }
 
-/** The "others" strip: agent rows that need the user (waiting / stuck /
- *  blocked — queue buckets 0 and 1) outside the current workspace.
- *  `firstWsId` = where a click jumps: the most urgent such workspace. */
-export interface OthersSummary {
-  sessions: number;
-  workspaces: number;
-  firstWsId: string | null;
-}
-
-export function othersSummary(rows: QueueRow[], currentWsId: string | null): OthersSummary {
-  const wanted = rows
-    .filter((r) => r.wsId !== currentWsId && inQueue(r) && QUEUE_BUCKET[queueStatus(r)] <= 1)
-    .sort((a, b) => QUEUE_BUCKET[queueStatus(a)] - QUEUE_BUCKET[queueStatus(b)]);
-  const ws = new Set(wanted.map((r) => r.wsId));
-  return {
-    sessions: wanted.length,
-    workspaces: ws.size,
-    firstWsId: wanted[0]?.wsId ?? null,
-  };
+/** The sessions that ran in one pane, newest activity first: index 0 is
+ *  the pane's current session (the one the rail shows), the rest are its
+ *  earlier sessions (a restarted `claude`, a `/clear`). Never mutates. */
+export function sessionsForPane(sessions: SessionContext[], paneId: string | null): SessionContext[] {
+  if (!paneId) return [];
+  return sessions
+    .filter((s) => s.pane_id === paneId)
+    .sort((a, b) => lastActivityMs(b) - lastActivityMs(a));
 }

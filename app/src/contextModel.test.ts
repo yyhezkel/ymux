@@ -11,7 +11,7 @@ import {
   logIcon,
   logLineText,
   logNewestFirst,
-  othersSummary,
+  sessionsForPane,
   sessionTitle,
   RAIL_DEFAULT_W,
   RAIL_MAX_W,
@@ -19,7 +19,6 @@ import {
   type LogEntry,
   type SessionContext,
 } from "./contextModel.ts";
-import type { QueueRow } from "./queueModel.ts";
 
 const entry = (over: Partial<LogEntry> = {}): LogEntry => ({
   ts_ms: 1,
@@ -44,21 +43,6 @@ const session = (over: Partial<SessionContext> = {}): SessionContext => ({
   first_prompt_ms: null,
   log: [],
   version: 1,
-  ...over,
-});
-
-const row = (over: Partial<QueueRow> = {}): QueueRow => ({
-  wsId: "ws1",
-  wsName: "CRM",
-  paneId: "p1",
-  title: "t",
-  state: "done",
-  stateSince: 1,
-  startedAt: null,
-  waitingOnPermission: false,
-  connected: true,
-  brief: null,
-  light: "yellow",
   ...over,
 });
 
@@ -113,27 +97,14 @@ test("isClosed / lastActivityMs", () => {
   assert.equal(lastActivityMs(session({ first_prompt_ms: 5 })), 5);
 });
 
-test("othersSummary counts needs-you rows outside the current workspace", () => {
-  const rows = [
-    row({ wsId: "ws1", state: "needs-input" }), // current ws: excluded
-    row({ wsId: "ws2", paneId: "a", state: "needs-input" }),
-    row({ wsId: "ws2", paneId: "b", state: "running", light: "green" }), // working: excluded
-    row({
-      wsId: "ws3",
-      paneId: "c",
-      brief: {
-        brief: {
-          task: null, status: "waiting-for-you", ask: "q", rec: "r",
-          next: null, delta: null, degraded: false, updated_ms: 1,
-        },
-        last_prompt: null, prompt_ms: null, session_ended: false, seq: 1,
-      },
-    }),
-    row({ wsId: "ws4", paneId: "d", light: null, brief: null }), // not in queue
+test("sessionsForPane: only that pane, newest first", () => {
+  const sessions = [
+    session({ session_id: "old", pane_id: "p1", first_prompt_ms: 1 }),
+    session({ session_id: "other", pane_id: "p2", first_prompt_ms: 9 }),
+    session({ session_id: "new", pane_id: "p1", log: [entry({ ts_ms: 5 })] }),
   ];
-  const s = othersSummary(rows, "ws1");
-  assert.equal(s.sessions, 2);
-  assert.equal(s.workspaces, 2);
-  assert.equal(s.firstWsId, "ws2", "blocked outranks waiting");
-  assert.deepEqual(othersSummary([], "ws1"), { sessions: 0, workspaces: 0, firstWsId: null });
+  assert.deepEqual(sessionsForPane(sessions, "p1").map((s) => s.session_id), ["new", "old"]);
+  assert.deepEqual(sessionsForPane(sessions, null), []);
+  assert.deepEqual(sessionsForPane(sessions, "p9"), []);
+  assert.equal(sessions[0].session_id, "old", "input untouched");
 });

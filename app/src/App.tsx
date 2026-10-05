@@ -5113,8 +5113,8 @@ function App() {
       {/* Phase 103: the Context Rail — third grid column, inline-end. */}
       <ContextRail
         ws={activeWs()}
-        rows={allPaneAgentRows().filter((r) => r.wsId === activeWs()?.id)}
-        allRows={allPaneAgentRows()}
+        paneId={activeWs() ? activePaneId() : null}
+        row={allPaneAgentRows().find((r) => r.paneId === activePaneId() && r.wsId === activeWs()?.id) ?? null}
         nowMs={agentClockMs()}
         collapsed={railCollapsed()}
         onToggleCollapsed={toggleContextRail}
@@ -5126,7 +5126,6 @@ function App() {
           if (id) saveIntent(id, text);
         }}
         onJumpPane={focusPane}
-        onJumpWorkspace={(id) => void handleSetActive(id)}
       />
 
       {/* Phase GG: in-app Markdown viewer (floating window). Reads its

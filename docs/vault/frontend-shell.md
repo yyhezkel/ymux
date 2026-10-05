@@ -480,20 +480,24 @@ left. App owns `railWidth` / `railCollapsed` (`loadRailPrefs` / `saveRailPrefs`,
 localStorage in try/catch — per-machine UI state per the invariant below),
 `toggleContextRail` (shortcut `toggle_context_rail` Ctrl+Shift+K + palette
 `contextRail.toggle`, one handler) and `saveIntent` (shared with the Briefing
-card). The rail itself fetches `session_context_list` for the active workspace
-on workspace change and on `context:changed` for that workspace (a sequence
-number drops a stale response after a switch), and keeps per-session
-expand state keyed by session id so a refetch doesn't collapse what the user
-opened. Sections: the "others" strip (`othersSummary` over the Queue rows of
-OTHER workspaces in buckets 0–1 → click activates the most urgent), the shared
-`IntentEditor`, then one card per open session (the newest session in a pane
-owns that pane's live `QueueRowView`; 📝 first prompt clipped to 180 chars,
-click to expand; the log newest-first, 5 then "show all") — closed sessions
-behind a toggle, and agent panes with no session record as plain rows.
-Collapsed = a 36 px strip with a needs-you badge. The resizer is the
-inline-start edge; the drag delta flips sign under RTL. `contextModel.ts` is
-pure (wire types mirrored by hand from `context_store.rs`, line text, icons,
-clipping, `othersSummary`, width clamp) and tested by `contextModel.test.ts`.
+card). **It shows only the focused pane** (Yossi, 2026-10-05 follow-up): App
+passes `paneId = activePaneId()` (the same signal keyboard/focus routing uses;
+null with no active workspace) and that pane's row from `allPaneAgentRows()`.
+The rail fetches `session_context_list` for the active workspace on workspace
+change and on `context:changed` for that workspace (a sequence number drops a
+stale response after a switch), then `sessionsForPane` picks the pane's
+sessions newest-first client-side — so a focus change costs no IPC. Body:
+the shared `IntentEditor`, then ONE `SessionCard` (the pane's live
+`QueueRowView`; 📝 first prompt clipped to 180 chars, click to expand; the log
+newest-first, 5 then "show all"), then "earlier sessions in this pane (N)"
+behind a toggle that resets on a pane change. Empty states are one-line hints
+(`context.noPane` / `context.noSession`); an agent pane with no session record
+still shows its live row. Per-session expand state is keyed by session id so a
+refetch doesn't collapse what the user opened. Collapsed = a plain 36 px
+strip. The resizer is the inline-start edge; the drag delta flips sign under
+RTL. `contextModel.ts` is pure (wire types mirrored by hand from
+`context_store.rs`, line text, icons, clipping, `sessionsForPane`, width clamp)
+and tested by `contextModel.test.ts`.
 
 ## Panel chrome — "one body, three surfaces"
 
