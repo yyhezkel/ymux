@@ -7876,6 +7876,6 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 
 2026-10-06 — claude_summary.rs module doc corrected to SSH-only (comment-only); FOLLOWUPS P3 archived; vault backend-claude.md sentence added + restamped.
 
-
 2026-10-06 — Secret env rows (EnvVar.secret): SecretEnvStore + DPAPI secret-env.json, local/SSH delivery, RPC redaction, UI checkbox + edit-modal stored keys. Vault pages updated + restamped; DECISIONS Decided entry; FOLLOWUPS P1-P3 (live check, zellij env, provisioning DPAPI reuse). Compiles untested until CI.
+
 2026-10-06 — vault cite checker: scripts/vault-cites.mjs (checkCites, symbol@file:line identity within 3 lines) wired into vault-check verify mode, eight cites migrated, unit tests in ci-windows frontend job; documented in build-glue.md + CONTRIBUTING § Citing a line; FOLLOWUPS P3 (cite rot) archived; lock restamped.
