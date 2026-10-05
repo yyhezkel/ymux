@@ -157,6 +157,8 @@ winreg = "0.55"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    # Phase secret-env: CryptProtectData / CryptUnprotectData for secret-env.json.
+    "Win32_Security_Cryptography",
     "Win32_System_Threading",
     # SHELLEXECUTEINFOW carries an HKEY field, so the Shell struct is
     # gated behind the Registry feature even though we never touch it.
