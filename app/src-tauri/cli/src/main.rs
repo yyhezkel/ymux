@@ -847,7 +847,8 @@ enum SessionMetaOp {
         #[arg(long)]
         clear_label: bool,
     },
-    /// Drop entries whose tmux session no longer exists.
+    /// Reconcile with `tmux ls`: mark gone Claude sessions ended (kept as
+    /// history, Phase 104), drop the rest and anything past retention.
     Prune,
     /// Print the whole map as JSON (debugging).
     Get,
