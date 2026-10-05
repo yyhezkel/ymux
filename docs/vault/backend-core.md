@@ -91,7 +91,11 @@ put logic there.
   **`AppState.briefs`** (`HashMap<pane_id, PaneBriefEntry>` from `brief.rs`, covered in
   `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
   rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
-  `pane_briefs` command — the `pane_agent_states` pattern verbatim.
+  `pane_briefs` command — the `pane_agent_states` pattern verbatim. Phase 105
+  added **`AppState.context`** (`context_store::ContextState`, also in
+  `backend-rpc.md`): the per-Claude-session first prompt + brief log, the one
+  piece of brief state that IS persisted (`<config>/context/sessions/`); setup
+  calls `context_store::startup` right after loading notes.
 - **`workspace_set_intent`** (BRIEF) — sets/clears `Workspace.intent` (trimmed;
   empty clears), persists atomically, emits `workspaces:changed`, returns the
   updated `Workspace`. The log line carries the intent's LENGTH only — it is user

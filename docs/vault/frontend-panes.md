@@ -235,7 +235,12 @@ after a stop) + age. **Owns no verdicts** — App hands it the same
 `allPaneAgentRows()` the sidebar derives from; this file only paints (all brief
 text renders as plain text with `dir="auto"`, never markup — it is agent
 output). Row click = `handleSetActive` + `focusPane`; a drawer closes itself on
-jump. Rides the shared PanelSurface lifecycle like Tickets.
+jump. Rides the shared PanelSurface lifecycle like Tickets. The row itself is
+`QueueRowView` from `QueueRow.tsx` (Phase 105, with `STATUS_EMOJI` and `relAge`),
+shared with the Briefing card and the Context Rail — see `frontend-shell.md`.
+`BRIEF_SNIPPET` (the empty state's copy-paste CLAUDE.md block) carries the sticky
+`goal:` / `done:` keys and the "≤ 80 chars, imperative, goal/done once, repeat only
+on change" rule since the Phase 105 follow-up; keep it in sync with `docs/BRIEF.md`.
 
 **`ClaudeUsageIndicator.tsx` (181)** + **`claudeUsageFmt.ts` (120)** — the always-visible
 subscription-usage chip. With room it shows session · week · top model; narrow, it

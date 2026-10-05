@@ -256,7 +256,8 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
-  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 91.F added
+  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
+  `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
   `open_diff` Ctrl+Shift+G in the panes group), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the

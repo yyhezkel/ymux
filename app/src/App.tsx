@@ -16,6 +16,8 @@ import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
+import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
+import { RAIL_COLLAPSED_W } from "./contextModel";
 import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { pathKey } from "./diffModel";
@@ -349,6 +351,17 @@ function App() {
   // must read last_active_at BEFORE workspace_set_active stamps it),
   // idle-return (below), and the show_briefing shortcut/palette command.
   const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
+  // Phase 105: the Context Rail — a docked third grid column. Width and
+  // collapsed state are per-machine UI prefs (localStorage, see
+  // ContextRail.loadRailPrefs), not workspaces.json.
+  const railPrefs = loadRailPrefs();
+  const [railWidth, setRailWidth] = createSignal(railPrefs.width);
+  const [railCollapsed, setRailCollapsed] = createSignal(railPrefs.collapsed);
+  const railPx = () => (railCollapsed() ? RAIL_COLLAPSED_W : railWidth());
+  const toggleContextRail = () => {
+    setRailCollapsed((v) => !v);
+    saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() });
+  };
   // cmux-A A1: pane_ids that received an OSC 9/99/777 notification and
   // haven't been focused since. Drives the amber pulse ring on the pane
   // + the sidebar aggregate badge. Cleared when the pane is focused.
@@ -1111,6 +1124,25 @@ function App() {
     void splitPane(cur, splitDir);
   };
 
+  // BRIEF: set or clear a workspace's 🎯 intent (the Briefing card).
+  const saveIntent = (wsId: string, text: string) => {
+    void (async () => {
+      try {
+        const updated = await invoke<Workspace>("workspace_set_intent", {
+          workspaceId: wsId,
+          intent: text === "" ? null : text,
+        });
+        const f = file();
+        updateFile({
+          ...f,
+          workspaces: f.workspaces.map((w) => (w.id === updated.id ? updated : w)),
+        });
+      } catch (e) {
+        log.error("workspace_set_intent failed", e);
+      }
+    })();
+  };
+
   // Phase 35 (#1.3): the command-palette catalog. Each command reuses
   // the same handler the existing UI calls. `enabled` hides commands
   // that need context they don't have (no active workspace / pane).
@@ -1122,6 +1154,7 @@ function App() {
     return [
       { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
       { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "contextRail.toggle", label: t("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
       { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
       { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
@@ -3539,6 +3572,11 @@ function App() {
       if (surfaceOf("queue") === "closed") openPanel("queue");
       else closePanel("queue");
     } },
+    // Phase 105: collapse / expand the Context Rail.
+    { id: "toggle_context_rail", run: (e) => {
+      e.preventDefault();
+      toggleContextRail();
+    } },
     // BRIEF: the Briefing card, on demand — works regardless of the
     // opt-in trigger toggles.
     { id: "show_briefing", when: () => !!activeWs(), run: (e) => {
@@ -4442,7 +4480,7 @@ function App() {
   return (
     <div
       class="app"
-      style={{ "grid-template-columns": `${sidebarPx()}px 1fr` }}
+      style={{ "grid-template-columns": `${sidebarPx()}px minmax(0, 1fr) ${railPx()}px` }}
     >
       {/* v0.4.4 (Task 1): headless auto-connect indicator — shown while a
           secondary panel arms the workspace's SSH handle in the background. */}
@@ -5071,6 +5109,20 @@ function App() {
         </Show>
       </div>
 
+      {/* Phase 105: the Context Rail — third grid column, inline-end. */}
+      <ContextRail
+        ws={activeWs()}
+        paneId={activeWs() ? activePaneId() : null}
+        row={allPaneAgentRows().find((r) => r.paneId === activePaneId() && r.wsId === activeWs()?.id) ?? null}
+        nowMs={agentClockMs()}
+        collapsed={railCollapsed()}
+        onToggleCollapsed={toggleContextRail}
+        width={railWidth()}
+        onResize={setRailWidth}
+        onResizeEnd={() => saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() })}
+        onJumpPane={focusPane}
+      />
+
       {/* Phase GG: in-app Markdown viewer (floating window). Reads its
           own global store, opened by FileManager .md double-click. */}
       <MarkdownViewer />
@@ -5350,25 +5402,7 @@ function App() {
               ws={ws}
               rows={allPaneAgentRows().filter((r) => r.wsId === wsId)}
               nowMs={agentClockMs()}
-              onSaveIntent={(text) => {
-                void (async () => {
-                  try {
-                    const updated = await invoke<Workspace>("workspace_set_intent", {
-                      workspaceId: wsId,
-                      intent: text === "" ? null : text,
-                    });
-                    const f = file();
-                    updateFile({
-                      ...f,
-                      workspaces: f.workspaces.map((w) =>
-                        w.id === updated.id ? updated : w,
-                      ),
-                    });
-                  } catch (e) {
-                    log.error("workspace_set_intent failed", e);
-                  }
-                })();
-              }}
+              onSaveIntent={(text) => saveIntent(wsId, text)}
               onJumpPane={(paneId) => {
                 setBriefingWs(null);
                 focusPane(paneId);

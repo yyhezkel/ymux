@@ -7352,3 +7352,138 @@ body.ymux-dragging .pane-conn {
   background: var(--w-accent-hi); border-color: var(--w-accent-hi); color: var(--w-bg);
 }
 .sessions-head-btn:disabled { opacity: 0.45; cursor: default; }
+
+/* ── Phase 105: Context Rail — the .app grid's third column (inline-end).
+   Logical properties only: in RTL the grid flips and the rail sits on the
+   left with its resizer on its right edge. ─────────────────────────────── */
+.queue-row:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }
+.context-rail {
+  grid-column: 3;
+  grid-row: 1;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--w-surface, #16161e);
+  border-inline-start: 1px solid var(--w-border, #2a2e44);
+}
+.context-rail-strip {
+  all: unset;
+  box-sizing: border-box;
+  width: 100%;
+  padding-block: 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 16px;
+}
+.context-rail-strip:hover { background: var(--w-surface-hi, rgba(255, 255, 255, 0.04)); }
+.context-rail-strip:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }
+.context-rail-resizer {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: 5px;
+  cursor: col-resize;
+  z-index: 2;
+}
+.context-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-block-end: 1px solid var(--w-border, #2a2e44);
+}
+.context-rail-title { font-size: 13px; font-weight: 600; color: var(--w-text, #e6edf3); }
+.context-rail-body {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.context-empty, .context-error {
+  font-size: 12px;
+  color: var(--w-text-dim, #9aa5ce);
+  padding: 6px 2px;
+}
+.context-error { color: var(--w-error, #f7768e); }
+.context-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid var(--w-border, #2a2e44);
+  border-radius: 8px;
+}
+.context-card-closed { opacity: 0.7; }
+.context-prompt-text {
+  font-size: 12px;
+  color: var(--w-text, #e6edf3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--w-surface-hi, rgba(255, 255, 255, 0.04));
+  max-height: 40vh;
+  overflow-y: auto;
+}
+/* Phase 105 follow-up: the HITL-style card — fixed labels, one line each. */
+.context-goal, .context-status { display: flex; flex-direction: column; gap: 3px; }
+.context-field {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--w-text, #e6edf3);
+  padding-inline: 4px;
+}
+.context-field > [dir="auto"], .context-field-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.context-field-icon { flex: 0 0 auto; inline-size: 1.2em; text-align: center; }
+.context-field-icon .pane-agent-light { vertical-align: middle; }
+.context-field-label { flex: 0 0 auto; color: var(--w-text-dim, #9aa5ce); font-size: 11px; }
+.context-field-sub { padding-inline-start: calc(4px + 1.2em + 6px); }
+.context-goal-text { font-size: 13px; font-weight: 600; }
+.context-age { flex: 0 0 auto; color: var(--w-text-dim, #9aa5ce); font-size: 11px; }
+.context-waiting .context-field-label { color: var(--w-warning, #e0af68); }
+.context-links { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.context-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.context-log-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+  padding-inline: 4px;
+}
+.context-log-degraded { opacity: 0.65; }
+.context-log-time { color: var(--w-text-dim, #9aa5ce); font-size: 11px; white-space: nowrap; }
+.context-log-text { color: var(--w-text, #e6edf3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.context-link {
+  all: unset;
+  font-size: 11px;
+  color: var(--w-accent, #7aa2f7);
+  cursor: pointer;
+  padding-inline: 4px;
+}
+.context-link:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); }

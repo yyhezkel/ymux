@@ -27,6 +27,8 @@ const brief = (over: Partial<PaneBrief> = {}): PaneBrief => ({
   rec: null,
   next: null,
   delta: null,
+  goal: null,
+  done: null,
   degraded: false,
   updated_ms: NOW - 60_000,
   ...over,

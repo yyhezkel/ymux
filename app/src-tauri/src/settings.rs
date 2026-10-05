@@ -856,6 +856,8 @@ pub(crate) struct Shortcuts {
     pub toggle_queue: String,
     /// BRIEF: show the Briefing card for the active workspace.
     pub show_briefing: String,
+    /// Phase 105: collapse / expand the Context Rail.
+    pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
@@ -1003,6 +1005,7 @@ impl Default for Shortcuts {
             tab_prev: "Ctrl+Shift+Tab".into(),
             toggle_queue: "Ctrl+Shift+Q".into(),
             show_briefing: "Ctrl+Alt+Q".into(),
+            toggle_context_rail: "Ctrl+Shift+K".into(),
             open_diff: "Ctrl+Shift+G".into(),
             copy_on_select_with_ctrl_c: true,
         }

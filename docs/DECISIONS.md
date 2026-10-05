@@ -464,6 +464,51 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-05 — Phase 105: Context Rail
+- **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
+  do / choose / answer tasks in a persistent pane; answers are typed back without blocking
+  the agent). Yossi wants to see, per Claude session, *what it is about and where it
+  stands* without reading the scrollback.
+- **Considered and rejected:** a HITL task layer (tasks from a brief's `ask`, an answer
+  outbox typed into the pane when the agent is idle, a secret heuristic, a manual
+  decisions log). Dropped mid-implementation at Yossi's call: the useful part is the
+  *context*, not another place to answer questions — the pane already is that place.
+- **Decided (Yossi):**
+  1. The "where we stand" log comes from the existing `[ymux-brief]` — no LLM, zero
+     tokens. No brief → a degraded line, never invented content.
+  2. Persist per Claude `session_id` to disk (`<config_dir>/context/sessions/`, 30-day
+     retention). **This reverses the 2026-09-01 BRIEF decision that briefs live in memory
+     only** — for the per-session log and the session's first prompt. The Queue's
+     per-pane `AppState.briefs` stays in memory.
+  3. Auto-injection back into the agent stays in scope: Phase 105.C (SessionStart
+     `additionalContext` on compact/resume/startup, capped, toggle in Settings).
+  4. The rail shows the current workspace in full, plus a one-line strip for the other
+     workspaces that need you.
+- **2026-10-05 follow-up: focused pane only, others strip removed.** Yossi: each window
+  shows only its own context. The rail now renders a single card, for the session of
+  the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
+  pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
+  M other workspaces" strip are gone, together with their UI, i18n keys, model helper
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (105.C) is
+  unchanged.
+- **2026-10-05 follow-up: card modeled on HITL task card.** Yossi found the rail still
+  long and unclear and approved a layout modeled on tzafrir/human-in-the-loop's task
+  card. It shows fixed labels with one short line each: 🎯 goal + *Done when*, *Now*
+  (light + age), *Next*, *Waiting on you* (ask · rec), the last 3 ✔ deltas with clock
+  time, and "▸ N more · ▸ original prompt". The raw first prompt is no longer shown on
+  top.
+  - Two optional, **sticky** brief keys were added: `goal` and `done`. The agent writes
+    them once and again only on change. The store keeps the last non-empty value.
+  - Fallbacks: with no goal, the card shows the first prompt line (80 chars). With no
+    done, that line is omitted.
+  - The compact/resume injection digest uses the same shape.
+  - **Go parity deferred:** `server/internal/agent/brief.go` does not parse `goal` /
+    `done` yet. It would need a daemon rebake plus a version bump (BACKLOG).
+- **2026-10-05 follow-up: the workspace intent editor is removed from the rail.** This fixes the double 🎯. The intent stays on the Briefing card (Ctrl+Alt+Q) and in startup injection.
+- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, 103 then went to B5 (PR #60) and 104 to B6 (PR #61), so this is 105 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
+- **Outcome / Commit:** Phase 105.A (store + rail) on `claude/phase-103a-context-rail`;
+  105.C follows. Spec: `docs/CONTEXT.md`.
+
 ### 2026-10-05 — B6 details: retention 100 rows, resume reuses the name, transcript found by id
 - **Decided (Claude, flagged to Yossi):** §4.2 left "N" open — **100** ended rows (and 90
   days, whichever is smaller). Resume **reuses the row's tmux name** when it is free, so

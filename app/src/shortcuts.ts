@@ -50,6 +50,8 @@ export interface ShortcutsSettings {
   toggle_queue: string;
   // BRIEF: show the Briefing card for the active workspace.
   show_briefing: string;
+  // Phase 105: collapse / expand the Context Rail.
+  toggle_context_rail: string;
   open_diff: string;
   copy_on_select_with_ctrl_c: boolean;
 }
@@ -85,6 +87,7 @@ export const DEFAULT_SHORTCUTS: ShortcutsSettings = {
   tab_prev: "Ctrl+Shift+Tab",
   toggle_queue: "Ctrl+Shift+Q",
   show_briefing: "Ctrl+Alt+Q",
+  toggle_context_rail: "Ctrl+Shift+K",
   open_diff: "Ctrl+Shift+G",
   copy_on_select_with_ctrl_c: true,
 };
@@ -119,6 +122,7 @@ export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
       "summarize_claude",
       "toggle_queue",
       "show_briefing",
+      "toggle_context_rail",
     ],
   },
   { key: "clipboard", ids: ["copy", "paste", "select_all", "find"] },

@@ -14,6 +14,10 @@ covers:
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
+  - app/src/QueueRow.tsx
+  - app/src/IntentEditor.tsx
+  - app/src/ContextRail.tsx
+  - app/src/contextModel.ts
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -446,11 +450,16 @@ are headers too), `screenOrSelf` (a screen is itself, a header hands over, an em
 is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` builds
 fixtures without the 20 other fields and runs under plain `node --test`.
 
-**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
-→ `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose
-disabled state doubles as "saved ✓" — beta feedback: a field that saves
-invisibly reads as one that doesn't save at all; empty clears) + this
-workspace's brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent + this
+workspace's brief rows. Since Phase 105 both pieces are separate components:
+**`IntentEditor.tsx`** (used ONLY here — the Context Rail dropped it to avoid a
+second 🎯; inline edit → App's `saveIntent` → `workspace_set_intent`;
+Enter/blur save, plus an explicit Save button whose disabled state doubles as
+"saved ✓" — beta feedback: a field that saves invisibly reads as one that
+doesn't save at all; empty clears; the draft follows external saves) and
+**`QueueRow.tsx`** (`QueueRowView` + `STATUS_EMOJI` + `relAge` — the Queue,
+the card and the Context Rail paint one row component; it is a focusable
+`role="button"`). Its `briefingWs` signal is **in
 `anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
 triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
 lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
@@ -462,6 +471,44 @@ second timer; it skips ticks while `document.hidden`), firing on the first input
 after the gap; **manual** =
 `show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
 toggles.
+
+**`ContextRail.tsx` (Phase 105)** + **`contextModel.ts`** — the always-docked
+context column; spec in `docs/CONTEXT.md`. It is the `.app` grid's **third
+column** (`grid-template-columns: <sidebar>px minmax(0,1fr) <rail>px`, the rail
+pinned with `grid-column: 3`), NOT a `SideDrawer`: no backdrop, nothing in
+`anyModalOpen()`, it never covers a pane, and in RTL the grid puts it on the
+left. App owns `railWidth` / `railCollapsed` (`loadRailPrefs` / `saveRailPrefs`,
+localStorage in try/catch — per-machine UI state per the invariant below),
+`toggleContextRail` (shortcut `toggle_context_rail` Ctrl+Shift+K + palette
+`contextRail.toggle`, one handler). The rail has NO intent editor (Yossi,
+2026-10-05: one 🎯 only — the session goal; the workspace intent stays on the
+Briefing card and in startup injection). **It shows only the focused pane** (Yossi, 2026-10-05 follow-up): App
+passes `paneId = activePaneId()` (the same signal keyboard/focus routing uses;
+null with no active workspace) and that pane's row from `allPaneAgentRows()`.
+The rail fetches `session_context_list` for the active workspace on workspace
+change and on `context:changed` for that workspace (a sequence number drops a
+stale response after a switch), then `sessionsForPane` picks the pane's
+sessions newest-first client-side — so a focus change costs no IPC. Body:
+ONE `SessionCard` — modeled on
+tzafrir/human-in-the-loop's task card (Phase 105 follow-up, Yossi-approved
+layout): 🎯 `cardGoal` (sticky brief `goal`, else the first prompt's first line
+clipped to 80) + *Done when* (`done_when`, omitted when absent); *Now* =
+`lastTurn().task` with the pane's `AgentLight` (or the turn's status icon) and
+the age of that turn; ➜ *Next*; ❓ *Waiting on you* (`waitingText`: ask · rec,
+only while the latest turn asked and the session is open); the last
+`LOG_PREVIEW` = 3 ✔ lines (`doneEntries`: deltas incl. degraded, dimmed, plus
+✅ closed) with clock time; then "▸ N more" (full ✔ list) · "▸ original
+prompt" (raw first prompt). Every one-liner goes through `oneLine` (~70
+chars + ellipsis, full text in `title`). Then "earlier sessions in this pane
+(N)" behind a toggle that resets on a pane change. Empty states are one-line hints
+(`context.noPane` / `context.noSession`); an agent pane with no session record
+still shows its live row. Per-session expand state is keyed by session id so a
+refetch doesn't collapse what the user opened. Collapsed = a plain 36 px
+strip. The resizer is the inline-start edge; the drag delta flips sign under
+RTL. `contextModel.ts` is pure (wire types mirrored by hand from
+`context_store.rs`, `oneLine` / `cardGoal` / `lastTurn` / `waitingText` /
+`doneEntries` / `doneCount`, icons, `sessionsForPane`, width clamp)
+and tested by `contextModel.test.ts`.
 
 ## Panel chrome — "one body, three surfaces"
 
