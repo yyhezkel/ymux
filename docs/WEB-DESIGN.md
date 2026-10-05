@@ -188,8 +188,10 @@ events. The change is mechanical but wide:
 - Every `invoke("x", …)` becomes `backend.call("x", …)`. A codemod plus `tsc`
   does most of it; the 29 `listen` sites in `App.tsx` lines ~2778–3200 are done
   by hand. Rule #5 holds: `call<T>` keeps the explicit return type at each site.
-- `TerminalInstance` (`terminalInstance.ts`) takes a `TermStream` instead of a
-  session id + global listeners. The RTL modules and `pty_decode`-equivalent
+- ~~`TerminalInstance` (`terminalInstance.ts`) takes a `TermStream` instead of a
+  session id + global listeners.~~ **Superseded 2026-10-05 (§8.2, C2):** no
+  `TermStream`; the WebBackend speaks the desktop's own `pty_write` / `pty_resize` /
+  `pty:data` / `pty:exit` contract over the attach WS, so the PTY path is untouched. The RTL modules and `pty_decode`-equivalent
   chunk reassembly are unchanged; **UTF-8 chunk reassembly moves into
   `WebBackend.term`** because the daemon sends raw bytes (the desktop does it in
   `pty_decode.rs`).
@@ -346,7 +348,7 @@ never enter that package's SQLite event log. Live verification is open (Rule #14
 |---|---|---|---|
 | A | Go: `terminal` kind, `/term` WS, tmux list/rename/kill, session-meta annotation, `shell:attach` scope | ~870 Go | `go test` + `websocat` into a real box |
 | B | Go: workspaces/layout/settings/notes/tickets/feed stores, `humanize` + brief port, hook-bridge method subset, `setup-hooks` env target, session history (§4.2: `ended_at` in `session_meta.rs`, transcript endpoint, resume) | ~1.7k Go + ~100 Rust (CLI) | `go test`; a `claude` run inside an attached tmux fires a gate visible on the events WS |
-| C | TS: `Backend` interface, `TauriBackend`, codemod, `WebBackend`, `layoutOps.ts`, capability gating, `TerminalInstance` on `TermStream` | ~2–3k TS | desktop unchanged in behaviour (the regression risk); web build renders against a Phase A/B daemon over plain HTTP on localhost |
+| C | TS: `Backend` interface, `TauriBackend`, codemod, `WebBackend`, `layoutOps.ts`, capability gating (no `TermStream` — §8.2) | ~2–3k TS | desktop unchanged in behaviour (the regression risk); web build renders against a Phase A/B daemon over plain HTTP on localhost |
 | D | `ymux-web` add-on, nginx `location /`, pairing page, Mobile tab → "Web & devices" | ~500 Rust + Go | full path over HTTPS from a phone |
 | E | PWA: manifest, service worker, push subscription over the existing WS channel | ~300 TS | "Add to Home Screen" on Android; a hook gate arrives as a notification |
 
@@ -469,15 +471,15 @@ Approved by Yossi 2026-10-05 (DECISIONS, "Phase C plan"). Phase numbers are allo
 #### Shape
 ```
 app/src/backend/
-  types.ts    Backend, TermStream, Capability, UnsupportedError
-  tauri.ts    TauriBackend   (invoke / listen / pty plumbing, caps = all)
+  types.ts    Backend, Capability, UnsupportedError
+  tauri.ts    TauriBackend   (invoke / listen / emit, caps = all)
   web.ts      WebBackend     (C5)
   webRoutes.ts command → handler table (C5)
-  index.ts    `backend` singleton + initBackend() awaited in index.tsx before render
+  index.ts    `backend` singleton, picked synchronously at module load
 ```
 `interface Backend { kind: "tauri"|"web"; call<T>(cmd, args?): Promise<T>;
-on<T>(event, cb): Promise<Unlisten>; term(sessionId): TermStream; caps: ReadonlySet<Capability> }`
-`TermStream { write(s: string); resize(c, r); onData(cb); onExit(cb); close() }`.
+on<T>(event, cb): Promise<UnlistenFn>; emit(event, payload?); caps: ReadonlySet<Capability> }`
+(C1 shipped `call` / `on` / `emit`; `caps` lands in C3. No `term()` — see C2.)
 `on` stays async so every `await listen(…)` ordering in App.tsx is preserved 1:1.
 
 #### PRs
@@ -495,18 +497,15 @@ C1 is **Phase 106**.
   files the codemod touched (re-stamp; prose only where it names `invoke`).
 - Size: ~150 new + ~300 mechanical line edits across 39 files.
 
-##### C2 — TermStream (desktop, the risky one)
-- TauriBackend registers the single `pty:data` / `pty:exit` listener inside
-  `initBackend()` (before render) and demuxes by `session_id` into per-session
-  subscribers. No buffering for an unsubscribed session — same drop semantics as today.
-- `TerminalInstance.attach(stream)`; `sessionId` stays as a field for the maps.
-  `pty_write` / `pty_resize` go through `stream.write` / `stream.resize`.
-- App.tsx: the global pty:data listener goes; connectPane subscribes `onData` →
-  `writeData`, `onExit` → today's exit handler body (moved, not rewritten).
-  PaneView's dropped-file `pty_write` → `stream.write`. PopoutTerminal same.
-- Keep the restore-last ordering comment true (the listener now exists at init).
-- Risk list to smoke: popout detach/reattach, exit while popped out, restore after
-  app restart, reconnect after SSH drop, resize storm, 4 panes streaming.
+##### C2 — dropped (2026-10-05, while writing C1)
+The `TermStream` refactor is not needed, and it was the one change in C1–C3 that
+touched the desktop's PTY hot path. The WebBackend can speak the desktop's own PTY
+contract instead: `pane_connect` opens the session's attach WS and returns the
+session id, `pty_write` / `pty_resize` become frames on that WS, and incoming frames
+are emitted locally as `pty:data` / `pty:exit` with the same payloads Rust sends
+(`TextDecoder("utf-8", {stream:true})` per session does `pty_decode`'s job). App.tsx,
+`TerminalInstance` and PopoutTerminal stay exactly as they are. The release that
+precedes `WebBackend` is therefore C1 + C3.
 
 ##### C3 — capabilities + import-safety (desktop, no behaviour change)
 - `Capability` set (~17): localPanes, ssh, wsl, browserPane, popout, fileManagerLocal,
@@ -520,7 +519,7 @@ C1 is **Phase 106**.
   browser without `__TAURI_INTERNALS__` loads the bundle. `opener` → `window.open`,
   `dialog` → gated off in web.
 
-→ **Desktop release (0.5.x) carrying C1–C3.** Yossi smokes on Windows + Mac against a
+→ **Desktop release (0.5.x) carrying C1 + C3.** Yossi smokes on Windows + Mac against a
 checklist (connect local + SSH, split/close/swap, popout + reattach, kill, restart →
 restore, feed gate allow/deny, file manager both sides, Browser pane, Settings, update
 check). WebBackend does not start before that release is green.
@@ -542,10 +541,11 @@ check). WebBackend does not start before that release is green.
 ##### C5 — WebBackend: auth, workspaces, terminal
 - Auth: token in localStorage; none → a small Solid login screen running the Phase 96
   request-access flow (code shown, desktop approves, poll, redeem). 401 → back to it.
-- `term(sid)` = WS `/api/v2/term/sessions/{name}/attach`, binary in →
-  `TextDecoder("utf-8", {stream:true})` → onData; `{"type":"exit"}` → onExit.
-- `pane_connect` → POST term/sessions (workspace_id, policy) or attach to an existing
-  name; `pane_disconnect` → close WS; `pane_kill_session` → DELETE.
+- PTY (the desktop contract, see C2): `pane_connect` → POST term/sessions (workspace_id,
+  policy) or an existing name, then opens WS `/api/v2/term/sessions/{name}/attach` and
+  returns a session id; binary frames → per-session `TextDecoder("utf-8",{stream:true})`
+  → local `pty:data`; `{"type":"exit"}` / close → `pty:exit`; `pty_write` / `pty_resize`
+  → WS frames; `pane_disconnect` → close WS; `pane_kill_session` → DELETE.
 - Workspaces: `/api/v2/web/workspaces` mapped to the desktop `Workspace` shape with a
   synthesized ssh-shaped connection (host = location.hostname) — the panes ARE remote
   tmux, so RTL profile and paneCaps answer "remote". Layout ops run client-side in
@@ -568,7 +568,7 @@ check). WebBackend does not start before that release is green.
   pane title / annotation via the layout leaf.
 
 #### Verification
-- C1–C3: CI (tsc + node tests + vite + both platforms), then the desktop release smoke.
+- C1 + C3: CI (tsc + node tests + vite + both platforms), then the desktop release smoke.
   "Compiles" is not "verified" — the release smoke is the gate.
 - C4–C6: live on 111.yossiyehezkel.com over HTTPS — chronoscope headless + Yossi's
   phone/laptop: pair → create workspace → split → real `claude` with gate → approve the

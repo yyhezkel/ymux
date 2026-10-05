@@ -474,6 +474,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decided (Yossi):** browser-mode **settings live on the daemon**, shared by every
   browser — an opaque JSON document with a `version` guard (`GET/PUT /api/v2/settings`),
   not per-browser localStorage. The daemon never parses the fields.
+- **Decided (Claude, flagged to Yossi), same day:** **C2 (`TermStream`) is dropped.** The
+  WebBackend answers the desktop's own PTY contract (`pty_write` / `pty_resize` calls,
+  `pty:data` / `pty:exit` events) over the attach WS, so App.tsx, `TerminalInstance` and
+  PopoutTerminal never change. The release before `WebBackend` is C1 + C3, and the PTY
+  hot path — the main desktop risk in the survey — is out of it.
 - **Decided (Yossi):** **Q2 = (b), the `ymux-web` add-on.** Phase C4 builds the serving
   half in the daemon (`~/.ymux/server/www/current/` at `/`, diagnostic page at `/diag`);
   the add-on upload is Phase D. Until then a box is loaded by hand from the CI artifact.
