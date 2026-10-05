@@ -51,7 +51,7 @@ export function BriefingCard(p: Props) {
           </button>
         </div>
 
-        {/* 🎯 Intent — the shared editor (also in the Context Rail). */}
+        {/* 🎯 Intent — IntentEditor.tsx (the Briefing card is its only host). */}
         <IntentEditor intent={p.ws.intent} onSave={p.onSaveIntent} />
 
         {/* Pane briefs — the same row shape the Queue paints. */}
