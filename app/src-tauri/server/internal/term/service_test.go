@@ -114,6 +114,9 @@ func TestGateCoversEveryRoute(t *testing.T) {
 		{"GET", "/api/v2/term/history"},
 		{"POST", "/api/v2/term/history/api/resume"},
 		{"GET", "/api/v2/claude/sessions/4f51e2fc-a5e6-4510-9565-b390290a09c1/transcript"},
+		// Phase 108: the browser settings document.
+		{"GET", "/api/v2/settings"},
+		{"PUT", "/api/v2/settings"},
 	}
 	for _, rt := range routes {
 		w := do(s, rt.method, rt.path, "device-all", "")
