@@ -175,6 +175,9 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
   `docs/CLI.md`. Nothing generates one from another.
 - The legacy `winmux-` pipe name is still answered by the app, so an old CLI on a PATH
   keeps working. Do not "finish the rename" here in isolation.
+- `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`
+  (`adopt_legacy_env` / `migrate_legacy_home_dir` removed); the `WINMUX_*` read fallbacks stay,
+  and the remote `~/.winmux` fold is the bootstrap's `migrate_legacy_remote_dir`.
 
 ## Read the source when
 

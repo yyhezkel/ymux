@@ -52,7 +52,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
-    "app/src-tauri/src/local_setup.rs": "e5ce2c7393f80f7030ae76a2e8818e5c01d97758df9a43376abd9559340110d2",
+    "app/src-tauri/src/local_setup.rs": "8b9b7d2680c078735707785f859672278abda26a4b51b65dafd62139b415479b",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "3a559022a71198338b28390b189ca8012a320ccb1f21174836cdc2f36b0f9619",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
@@ -78,7 +78,7 @@
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
     "app/src-tauri/cli/src/hooks.rs": "b5d6c745405f6218ab4c6bfd2ca76a77510dc6510389d3638671735054e13f86",
-    "app/src-tauri/cli/src/main.rs": "60f9ccc3efec84fae0e5ff4dcf9a176f450adedd20cd478eb327dad6c1eb163b",
+    "app/src-tauri/cli/src/main.rs": "3461dc8bfcc53b94c38307b5c5ff3c8a244dbe72843997f84a73ec6108c98c68",
     "app/src-tauri/cli/src/port_watch.rs": "3ec40dfe01ce2f70ded0186e70184c2346371ce5868f55b06cfea447ed1c4b46",
     "app/src-tauri/cli/src/session_meta.rs": "bdb0ebdafbea7909b183c78299471fad2b37a99d6b218a44fe6b9732ee72adcd"
   },
