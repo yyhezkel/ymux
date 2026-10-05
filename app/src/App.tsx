@@ -1248,8 +1248,10 @@ function App() {
     for (const w of all) {
       if (!w.layout) continue;
       // Phase 92: every pane is on a screen, so the queue's label keeps
-      // the machine / project it belongs to: `runner › shell`.
-      const header = ancestorsOf(all, w.id)[0];
+      // the machine it belongs to: `runner › shell`. Root = LAST ancestor
+      // (nearest-first), so a pinned folder tier is never in the label.
+      const chain = ancestorsOf(all, w.id);
+      const header = chain[chain.length - 1];
       for (const pane of collectPaneNodes(w.layout)) {
         const pid = pane.pane_id;
         const run = runs[pid];

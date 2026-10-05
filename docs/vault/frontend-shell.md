@@ -126,7 +126,7 @@ screen, not on the header. `activePaneId` is cleared when the activated workspac
 layout. The backend applies the same rule in `workspace_set_active`, so the guard here is
 belt. `headerChain()` = `ancestorsOf` of the active screen (folder, then machine): the
 main-area `.ws-header` title reads `machine › folder › screen` and its dot takes the
-nearest ancestor colour; `allPaneAgentRows` labels every Queue row `header › screen`.
+nearest ancestor colour; `allPaneAgentRows` labels every Queue row `machine › screen` (root = last ancestor; folder tier omitted).
 `rootIdOf` is the `file()`-bound wrapper of `wsTree.rootIdOf`. `newScreen(w)` is the
 header `+` (§ Sessions as rows).
 
