@@ -102,6 +102,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   not stored on the daemon yet.
 - **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
   the required groups, merged one level deep; restore-on-start ON, update checks OFF).
+  A stored non-object where the default is a group is **ignored**, not merged — found
+  live: `{"theme":"dark"}` replaced the theme object and `applyTheme` crashed
+  (`webDefaults.test.ts`). `log_dir_path` answers `""` (the console is the log).
   A 409 on save re-saves on the newer version: the whole document wins, as on the desktop.
 - **New workspace** — App's `openNewWorkspace()`: the desktop opens the wizard; the
   browser (no wizard targets) creates `workspace N` directly.
