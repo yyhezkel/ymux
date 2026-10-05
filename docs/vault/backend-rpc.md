@@ -49,7 +49,7 @@ must resolve the same path from the other side).
 
 ## The method catalog
 
-`dispatch()` ([dispatch@rpc_server.rs:655](../../app/src-tauri/src/rpc_server.rs)) is one big match
+`dispatch()` ([dispatch@rpc_server.rs:635](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
