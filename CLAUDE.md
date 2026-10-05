@@ -102,7 +102,7 @@ such. Do not "finish the rename" by deleting them; the removal is scheduled
 
 - `ci-windows.yml` — cargo test + tsc + vite + the full Go server gate on
   every push/PR to `main`, as **three parallel jobs** (~3.5 min wall-clock
-  warm, was ~6 serial): `frontend` (parse-check, vault gate, tsc, `npm
+  warm, was ~6 serial): `frontend` (parse-check, vault gate + cite-checker tests, tsc, `npm
   test`, vite build), `rust` (stage CLI + `cargo test`, windows-latest,
   `shared-key: windows-dev`), and `go` — which runs on **ubuntu-latest** on
   purpose: `go vet` + `go test` there exercise linux, the platform the
