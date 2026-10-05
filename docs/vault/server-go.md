@@ -70,7 +70,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), and session history (104) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), and serving the web bundle + the browser settings document (108) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -327,6 +327,35 @@ see the CLI vault page) and Claude Code's transcripts:
   history again. `claude` is resolved to an absolute path by the daemon (its PATH was
   augmented at start), so the tmux server's PATH does not matter.
 
+**`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
+`SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a
+symlink to `www/<version>/`, holding the desktop's own vite build. Nothing here uploads or
+versions it: the Phase D add-on will write it; until then it is copied by hand from the
+ci-windows `ymux-web` artifact.
+- `GET /` serves `current/index.html` (`Cache-Control: no-cache`, the app CSP:
+  `'self'` scripts, `connect-src 'self' ws: wss:`, `frame-ancestors 'none'`) when it
+  exists, **and the diagnostic page otherwise** — a box without a bundle is unchanged.
+  `/diag` is always the diagnostic page.
+- `GET /assets/{file...}` (immutable, a year — vite hashes those names) and
+  `GET /fonts/{file...}` (a day). A name containing `..`, `\` or a leading-dot segment is
+  a 404 before any stat.
+- **No `/{path...}` catch-all, on purpose:** the shared mux carries method-less `/api/...`
+  patterns, and a method-qualified catch-all beside them is a registration-time conflict
+  panic in Go 1.22 routing.
+- Public, like the diagnostic page: static code, no secrets, and the app's login screen is
+  how a browser gets a token in the first place.
+
+**`term/settings.go` (Phase 108, WEB-DESIGN C4) — the browser's settings.** Decided
+2026-10-05: one document on the daemon, shared by every browser. `GET /api/v2/settings` →
+`{version, settings}` (`settings` is `null` before the first save); `PUT` with
+`{version, settings}` replaces it when `version` matches, else **409 with the current
+document** (the web-workspaces guard). The document is the desktop's `Settings` JSON
+stored **opaque** — it must be a JSON object, ≤ 256 KB, and no field is parsed, so a new
+setting needs no Go change. `<data dir>/web-settings.json`, compact, tmp + fsync + rename.
+Each save publishes `settings:changed` `{version, settings}` on the events socket (the
+WebBackend unwraps it into the desktop's bare-`Settings` payload). Logs carry the version
+and byte count only.
+
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
 flow: request access → match the 6-digit code → approve in ymux → list tmux sessions →
@@ -339,7 +368,8 @@ Three decisions in it worth not undoing:
 - **Embedded in the binary**, because a debugging tool with its own delivery mechanism
   is one you cannot use when delivery is what broke. This is **not** an answer to Q2
   (how the real web bundle ships) — a few KB of diagnostics and a 3 MB app are different
-  questions, and `docs/DECISIONS.md` Q2 stays open.
+  questions. (Q2 was decided 2026-10-05 as the `ymux-web` add-on; the serving half is
+  `webapp.go` below.)
 - **xterm.js from a CDN, not embedded.** The committed server blobs are ~13 MB each and
   every rebake writes both into git history; +600 KB per rebake to save one CDN fetch is
   the wrong trade here. The page says so plainly when the CDN is blocked instead of
