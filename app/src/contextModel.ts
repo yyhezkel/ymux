@@ -2,6 +2,11 @@
 // i18n-free on purpose (same reasoning as queueModel.ts) so
 // contextModel.test.ts runs under plain `node --test`.
 //
+// The card is modeled on tzafrir/human-in-the-loop's task card: short
+// fields under fixed labels (🎯 goal / Done when / Now / Next / Waiting on
+// you), then the last few ✔ deltas. Everything here turns a
+// SessionContext into those one-liners.
+//
 // The wire types mirror `context_store.rs` (SessionContext / LogEntry) by
 // hand — change both together.
 import type { BriefStatus } from "./bindings/BriefStatus";
@@ -28,14 +33,20 @@ export interface SessionContext {
   cwd: string | null;
   first_prompt: string | null;
   first_prompt_ms: number | null;
+  /** Sticky: last non-empty `goal:` from a brief. */
+  goal: string | null;
+  /** Sticky: last non-empty `done:` from a brief. */
+  done_when: string | null;
   log: LogEntry[];
   version: number;
 }
 
-/** Log lines shown before "show all". */
-export const LOG_PREVIEW = 5;
-/** First-prompt characters shown before expanding. */
-export const PROMPT_PREVIEW_CHARS = 180;
+/** ✔ lines shown before "N more". */
+export const LOG_PREVIEW = 3;
+/** The goal line, when it falls back to the first prompt. */
+export const GOAL_MAX_CHARS = 80;
+/** Every other one-liner on the card. */
+export const LINE_MAX_CHARS = 70;
 
 export const RAIL_MIN_W = 260;
 export const RAIL_MAX_W = 640;
@@ -47,10 +58,66 @@ export function clampRailWidth(w: number): number {
   return Math.min(RAIL_MAX_W, Math.max(RAIL_MIN_W, Math.round(w)));
 }
 
-/** Newest first; `limit` null = all. Never mutates the input. */
-export function logNewestFirst(log: LogEntry[], limit: number | null): LogEntry[] {
-  const rev = [...log].reverse();
-  return limit == null ? rev : rev.slice(0, limit);
+/** A one-liner: newlines/tabs flattened, runs of spaces collapsed, clipped
+ *  to `max` characters (code points, so Hebrew is never cut mid-letter)
+ *  with an ellipsis. `full` is the flattened, unclipped text — the UI puts
+ *  it in the tooltip. */
+export function oneLine(s: string, max = LINE_MAX_CHARS): { text: string; full: string; clipped: boolean } {
+  const full = s.replace(/\s+/g, " ").trim();
+  const chars = [...full];
+  if (chars.length <= max) return { text: full, full, clipped: false };
+  return { text: `${chars.slice(0, max).join("")}…`, full, clipped: true };
+}
+
+/** 🎯 line: the brief's sticky goal, else the first non-empty line of the
+ *  session's first prompt clipped to 80. null = nothing to show. */
+export function cardGoal(s: SessionContext): { text: string; full: string; fromPrompt: boolean } | null {
+  const goal = s.goal?.trim();
+  if (goal) {
+    const g = oneLine(goal, GOAL_MAX_CHARS);
+    return { text: g.text, full: g.full, fromPrompt: false };
+  }
+  const first = s.first_prompt?.split("\n").map((l) => l.trim()).find((l) => l !== "");
+  if (!first) return null;
+  const g = oneLine(first, GOAL_MAX_CHARS);
+  return { text: g.text, full: g.full, fromPrompt: true };
+}
+
+/** The latest Turn entry — the source of Now / Next / Waiting on you. */
+export function lastTurn(s: SessionContext): LogEntry | null {
+  for (let i = s.log.length - 1; i >= 0; i--) {
+    if (s.log[i].kind === "turn") return s.log[i];
+  }
+  return null;
+}
+
+/** "Waiting on you: ask · rec" — only while the latest turn asked and the
+ *  session has not closed since. */
+export function waitingText(s: SessionContext): string | null {
+  if (isClosed(s)) return null;
+  const t = lastTurn(s);
+  if (!t?.ask) return null;
+  return t.rec ? `${t.ask} · ${t.rec}` : t.ask;
+}
+
+/** The ✔ lines, newest first: every turn that reported a delta (degraded
+ *  ones included — the UI dims them) and every closed line. `limit` null =
+ *  all. Never mutates. */
+export function doneEntries(s: SessionContext, limit: number | null): LogEntry[] {
+  const out: LogEntry[] = [];
+  for (let i = s.log.length - 1; i >= 0; i--) {
+    const e = s.log[i];
+    if (e.kind === "closed" || (e.delta && e.delta.trim() !== "")) {
+      out.push(e);
+      if (limit != null && out.length >= limit) break;
+    }
+  }
+  return out;
+}
+
+/** How many ✔ lines exist in total (for "▸ N more"). */
+export function doneCount(s: SessionContext): number {
+  return doneEntries(s, null).length;
 }
 
 export const LOG_STATUS_ICON: Record<BriefStatus, string> = {
@@ -62,35 +129,6 @@ export const LOG_STATUS_ICON: Record<BriefStatus, string> = {
 
 export function logIcon(e: LogEntry): string {
   return e.kind === "closed" ? "✅" : LOG_STATUS_ICON[e.status];
-}
-
-/** The text of one log line: `ask · rec` when the agent asked something,
- *  else `delta`, with `→ next` appended when present. Empty string when
- *  the entry carries nothing (a closed line with no reason). */
-export function logLineText(e: LogEntry): string {
-  const parts: string[] = [];
-  if (e.ask) parts.push(e.rec ? `${e.ask} · ${e.rec}` : e.ask);
-  else if (e.delta) parts.push(e.delta);
-  if (e.next && e.kind === "turn") parts.push(`→ ${e.next}`);
-  return parts.join(" ");
-}
-
-/** Clip for the collapsed first-prompt view. */
-export function clipPrompt(s: string, max = PROMPT_PREVIEW_CHARS): { text: string; clipped: boolean } {
-  const chars = [...s];
-  if (chars.length <= max) return { text: s, clipped: false };
-  return { text: `${chars.slice(0, max).join("")}…`, clipped: true };
-}
-
-/** A card title for a session with no live pane row: its latest task,
- *  else the start of its first prompt, else a short session id. */
-export function sessionTitle(s: SessionContext): string {
-  for (let i = s.log.length - 1; i >= 0; i--) {
-    const task = s.log[i].task;
-    if (task) return task;
-  }
-  if (s.first_prompt) return clipPrompt(s.first_prompt, 60).text;
-  return s.session_id.slice(0, 8);
 }
 
 export function isClosed(s: SessionContext): boolean {

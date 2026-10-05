@@ -121,7 +121,11 @@ constant.
 
 The data layer behind the Queue panel / Briefing card. An agent may end its final
 assistant message with a plain-text `[ymux-brief]` block (`task:` / `status:` /
-`ask:` / `rec:` / `next:` / `delta:`, one per line). Because the CLI forwards the
+`ask:` / `rec:` / `next:` / `delta:`, one per line, plus the Phase 104 **sticky**
+`goal:` / `done:` — aliases `done when` / `done-when` / `done_when` — written once
+and repeated only on change; `PaneBrief` carries what this turn said, the session
+store keeps the last non-empty value. The Go port does NOT parse these two yet —
+BACKLOG P2). Because the CLI forwards the
 Stop hook payload verbatim, the desktop parses `last_assistant_message` with **no
 CLI cooperation**: `parse_brief` is pure string ops (last marker line wins via a
 full-line scan, so a self-quoting agent doesn't truncate its brief; keys are ASCII
@@ -149,7 +153,9 @@ log line — log lines carry pane id + flags, never text. `BriefStatus` also der
 
 The persisted counterpart of `AppState.briefs`: one record per Claude Code
 **session id**, not per pane — `SessionContext { session_id, ws_id, pane_id, cwd,
-first_prompt (clip 2000), first_prompt_ms, log ≤ 200 LogEntry, version }`, a
+first_prompt (clip 2000), first_prompt_ms, goal, done_when, log ≤ 200 LogEntry,
+version }` (`goal` / `done_when`: last non-empty brief value wins, in
+`append_turn`), a
 `LogEntry` being `{ ts_ms, kind: turn|closed, status: BriefStatus, task, delta,
 next, ask, rec, degraded }`. Spec: `docs/CONTEXT.md`.
 

@@ -45,9 +45,13 @@ ask: one closed question — only when you need my decision
 rec: your recommendation for that question, in one sentence
 next: the immediate next step
 delta: what changed since your previous brief
+goal: the session's overall goal, one imperative line
+done: when this session counts as done, one line
 
-Rules: \`ask\` never appears without \`rec\`; no history — only this
-turn's facts; omit a field rather than leaving it empty.`;
+Rules: every value ≤ 80 chars, imperative, one line. Write \`goal\` and
+\`done\` in your FIRST brief and repeat them only when they change.
+\`ask\` never appears without \`rec\`; no history — only this turn's
+facts; omit a field rather than leaving it empty.`;
 
 export function QueuePanel(p: Props) {
   const groups = () => groupQueueRows(p.rows);

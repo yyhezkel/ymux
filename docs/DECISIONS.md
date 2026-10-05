@@ -491,6 +491,19 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   M other workspaces" strip are gone, together with their UI, i18n keys, model helper
   (`othersSummary`) and tests. Empty states are a one-line hint. Injection (104.C) is
   unchanged.
+- **2026-10-05 follow-up: card modeled on HITL task card.** Yossi found the rail still
+  long and unclear and approved a layout modeled on tzafrir/human-in-the-loop's task
+  card. It shows fixed labels with one short line each: 🎯 goal + *Done when*, *Now*
+  (light + age), *Next*, *Waiting on you* (ask · rec), the last 3 ✔ deltas with clock
+  time, and "▸ N more · ▸ original prompt". The raw first prompt is no longer shown on
+  top.
+  - Two optional, **sticky** brief keys were added: `goal` and `done`. The agent writes
+    them once and again only on change. The store keeps the last non-empty value.
+  - Fallbacks: with no goal, the card shows the first prompt line (80 chars). With no
+    done, that line is omitted.
+  - The compact/resume injection digest uses the same shape.
+  - **Go parity deferred:** `server/internal/agent/brief.go` does not parse `goal` /
+    `done` yet. It would need a daemon rebake plus a version bump (BACKLOG).
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, and 103 then went to B5 (PR #60), so this is 104 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
 - **Outcome / Commit:** Phase 104.A (store + rail) on `claude/phase-103a-context-rail`;
   104.C follows. Spec: `docs/CONTEXT.md`.

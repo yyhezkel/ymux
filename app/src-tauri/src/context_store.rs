@@ -85,6 +85,13 @@ pub(crate) struct SessionContext {
     pub(crate) first_prompt: Option<String>,
     #[serde(default)]
     pub(crate) first_prompt_ms: Option<u64>,
+    /// Phase 104: the session's goal / finish criterion from the brief's
+    /// sticky `goal` / `done` keys — last non-empty value wins, so a brief
+    /// that omits them (the normal case) keeps what an earlier one said.
+    #[serde(default)]
+    pub(crate) goal: Option<String>,
+    #[serde(default)]
+    pub(crate) done_when: Option<String>,
     #[serde(default)]
     pub(crate) log: Vec<LogEntry>,
     /// Bumped on every mutation.
@@ -186,6 +193,12 @@ impl SessionContext {
     /// A Stop: one Turn line from the brief (degraded included). The brief
     /// fields are already clipped by `brief.rs`.
     pub(crate) fn append_turn(&mut self, b: &PaneBrief, now: u64) {
+        if let Some(g) = b.goal.as_deref().map(str::trim).filter(|g| !g.is_empty()) {
+            self.goal = Some(g.to_string());
+        }
+        if let Some(d) = b.done.as_deref().map(str::trim).filter(|d| !d.is_empty()) {
+            self.done_when = Some(d.to_string());
+        }
         self.push(LogEntry {
             ts_ms: now,
             kind: LogKind::Turn,
@@ -501,6 +514,8 @@ mod tests {
             rec: None,
             next: Some("next".into()),
             delta: Some(delta.into()),
+            goal: None,
+            done: None,
             degraded,
             updated_ms: 0,
         }
@@ -536,6 +551,28 @@ mod tests {
         assert_eq!(last.kind, LogKind::Closed);
         assert_eq!(last.task.as_deref(), Some("t"), "closed line carries the last task");
         assert_eq!(c.last_activity_ms(), 999);
+    }
+
+    #[test]
+    fn goal_and_done_are_sticky() {
+        let mut c = SessionContext::new("s1");
+        let mut b = brief("t", "d", false);
+        b.goal = Some("Ship v2".into());
+        b.done = Some("CI green".into());
+        c.append_turn(&b, 1);
+        // A later brief without them keeps them…
+        c.append_turn(&brief("t", "d2", false), 2);
+        // …a degraded one too…
+        c.append_turn(&brief("t", "d3", true), 3);
+        assert_eq!(c.goal.as_deref(), Some("Ship v2"));
+        assert_eq!(c.done_when.as_deref(), Some("CI green"));
+        // …and a changed value replaces; a blank one does not.
+        let mut b2 = brief("t", "d4", false);
+        b2.goal = Some("Ship v3".into());
+        b2.done = Some("  ".into());
+        c.append_turn(&b2, 4);
+        assert_eq!(c.goal.as_deref(), Some("Ship v3"));
+        assert_eq!(c.done_when.as_deref(), Some("CI green"));
     }
 
     #[test]

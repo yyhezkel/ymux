@@ -19,7 +19,17 @@ ask: one closed question — only when you need my decision
 rec: your recommendation for that question, in one sentence
 next: the immediate next step
 delta: what changed since your previous brief
+goal: the session's overall goal, one imperative line
+done: when this session counts as done, one line
 ```
+
+Every value is ≤ 80 chars, imperative, and one line.
+
+`goal` and `done` are **sticky** (added in the Phase 104 follow-up). Write them
+in the first brief, and again only when they change. The per-session context
+store keeps the last non-empty value, and the Context Rail shows them as 🎯 and
+*Done when*. `done when`, `done-when` and `done_when` are accepted as aliases of
+`done`.
 
 Rules the desktop parser enforces / tolerates:
 

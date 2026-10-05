@@ -487,16 +487,25 @@ The rail fetches `session_context_list` for the active workspace on workspace
 change and on `context:changed` for that workspace (a sequence number drops a
 stale response after a switch), then `sessionsForPane` picks the pane's
 sessions newest-first client-side — so a focus change costs no IPC. Body:
-the shared `IntentEditor`, then ONE `SessionCard` (the pane's live
-`QueueRowView`; 📝 first prompt clipped to 180 chars, click to expand; the log
-newest-first, 5 then "show all"), then "earlier sessions in this pane (N)"
-behind a toggle that resets on a pane change. Empty states are one-line hints
+the shared `IntentEditor`, then ONE `SessionCard` — modeled on
+tzafrir/human-in-the-loop's task card (Phase 104 follow-up, Yossi-approved
+layout): 🎯 `cardGoal` (sticky brief `goal`, else the first prompt's first line
+clipped to 80) + *Done when* (`done_when`, omitted when absent); *Now* =
+`lastTurn().task` with the pane's `AgentLight` (or the turn's status icon) and
+the age of that turn; ➜ *Next*; ❓ *Waiting on you* (`waitingText`: ask · rec,
+only while the latest turn asked and the session is open); the last
+`LOG_PREVIEW` = 3 ✔ lines (`doneEntries`: deltas incl. degraded, dimmed, plus
+✅ closed) with clock time; then "▸ N more" (full ✔ list) · "▸ original
+prompt" (raw first prompt). Every one-liner goes through `oneLine` (~70
+chars + ellipsis, full text in `title`). Then "earlier sessions in this pane
+(N)" behind a toggle that resets on a pane change. Empty states are one-line hints
 (`context.noPane` / `context.noSession`); an agent pane with no session record
 still shows its live row. Per-session expand state is keyed by session id so a
 refetch doesn't collapse what the user opened. Collapsed = a plain 36 px
 strip. The resizer is the inline-start edge; the drag delta flips sign under
 RTL. `contextModel.ts` is pure (wire types mirrored by hand from
-`context_store.rs`, line text, icons, clipping, `sessionsForPane`, width clamp)
+`context_store.rs`, `oneLine` / `cardGoal` / `lastTurn` / `waitingText` /
+`doneEntries` / `doneCount`, icons, `sessionsForPane`, width clamp)
 and tested by `contextModel.test.ts`.
 
 ## Panel chrome — "one body, three surfaces"

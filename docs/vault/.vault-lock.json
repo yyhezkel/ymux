@@ -38,8 +38,8 @@
   "backend-rpc": {
     "app/src-tauri/mcp/Cargo.toml": "5837dfebec492396ba2177a733127fa3edb014effd634ec973800b5eb0ba1b41",
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
-    "app/src-tauri/src/brief.rs": "a927ffd8f86568ffcb1f015765c3a0df59a2eabf4f16734a14cdd60969fe85c6",
-    "app/src-tauri/src/context_store.rs": "f0ab32a2b1c0975a698684025f52e6f642a6a01f693bebfc3886c0e5b2d757dd",
+    "app/src-tauri/src/brief.rs": "6f22e3810dedb7113ffb037f1c453723d5c27166dca57b1a601ef361c37aa8f6",
+    "app/src-tauri/src/context_store.rs": "05acf9be695c4d0c61da880877b9df1b50eef0e61c24eca97191a93d4133c6c3",
     "app/src-tauri/src/rpc_server.rs": "11c12fe4cae4210d6dd8694f2b38f8c66fbfbd13775a541793b2836b342bf376"
   },
   "backend-sessions": {
@@ -155,7 +155,7 @@
     "app/src/MobilePairing.tsx": "d9ff30e8b1dd38b0aad3084b184f3ed48ffff95548401bd28658c714485879d8",
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "b0822121f91512c85bc0cadbd3464ea7673b36e448edb40ee01b3eb14c0db35e",
-    "app/src/QueuePanel.tsx": "b469d46537749e18a8c8c9cca9d4f6f2908b61304cdf27d22fffe05f5708415a",
+    "app/src/QueuePanel.tsx": "eab834fabf4712299c13ffd4df5a221b3cf920f6e70b6e3b029257ecd6e694a4",
     "app/src/SessionsOverviewWindow.tsx": "d097b55c279f2fb6b8b14d6ae44c52cdb814b13411630dc0e25830ea1d21bbbb",
     "app/src/TicketModal.tsx": "d271dea16f1c83d547ea209e3dd8dcfcbdd4778c2e15d69863a40b691ff505f0",
     "app/src/TicketsPanel.tsx": "480d09aa00f31cf1f8c9513ba36377a73f0440a88bd3f0fd1a5ab0b712e0294e",
@@ -175,7 +175,7 @@
     "app/src/App.tsx": "cf98d2346b7c81de0e85b1dc0d83b361d7244b59ef915e1171472c763c849807",
     "app/src/BriefingCard.tsx": "207076762c4fe63d517719d73138ba4e90d17b0078ac2c9e8a8f4b7f226e8399",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
-    "app/src/ContextRail.tsx": "cbf9e8f309574b42e0daff2bb6cfc3cb3dd710d7b7b914f4fc52fc2d5b2cbc6e",
+    "app/src/ContextRail.tsx": "07a353295d065efca273c484181f2ef874f04bb7e4e2a362f6ec9ea175d14244",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
     "app/src/IntentEditor.tsx": "c32e762b63d2598a00b8782241e14e215c39f467d4c9511a82122bc039aea5e6",
     "app/src/LayoutView.tsx": "96795d6b8b139b7b4553734535773810753f726e43031623029c12e5e24f5c54",
@@ -189,7 +189,7 @@
     "app/src/Sidebar.tsx": "3626666dfd34a242dfaea1cbd67e8dc3aad96ee5b21dd8c10f7dd2d537a85756",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
-    "app/src/contextModel.ts": "d096cca5f56d401e893d4db4084e55646287a4c2b04db8e65eba19c1c3dcc871",
+    "app/src/contextModel.ts": "f11e8b6fe99f1633fef01198849df30dffaa94c79dd833deb38829ea0c7b5e5a",
     "app/src/cwdShort.ts": "754aeb0df8c53cd8c08b2ec2d833697b5ce7b45bd73f3f728ec342f3c2f95faa",
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",
     "app/src/icons.tsx": "73c22f387100db90b5ae976faf25939326c0ddc9fe61a0f8634864062d46a32f",

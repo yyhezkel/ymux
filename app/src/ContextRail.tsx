@@ -7,15 +7,18 @@ import type { Workspace } from "./types";
 import { inQueue, type QueueRow } from "./queueModel";
 import { QueueRowView, relAge } from "./QueueRow";
 import { IntentEditor } from "./IntentEditor";
+import { AgentLight } from "./AgentLight";
 import {
+  cardGoal,
   clampRailWidth,
-  clipPrompt,
+  doneCount,
+  doneEntries,
   isClosed,
+  lastTurn,
   logIcon,
-  logLineText,
-  logNewestFirst,
+  oneLine,
   sessionsForPane,
-  sessionTitle,
+  waitingText,
   LOG_PREVIEW,
   RAIL_DEFAULT_W,
   type SessionContext,
@@ -24,13 +27,14 @@ import {
 // Phase 104: the Context Rail — a docked column at the inline-end of the
 // main layout (a third `.app` grid column, not a SideDrawer: no backdrop,
 // it never covers the panes). It shows ONE thing: the context of the
-// FOCUSED pane's Claude session (App's activePaneId) — 🎯 the workspace
-// intent, the pane's live row, 📝 the session's first prompt and its
-// "where we stand" log from its briefs; earlier sessions of the same pane
-// sit behind a toggle. Switching focus switches the card. Data:
-// `session_context_list` for the workspace, filtered to the pane,
-// refetched on `context:changed`. All agent/user text renders as plain
-// text (Solid escapes it) with dir="auto".
+// FOCUSED pane's Claude session (App's activePaneId), as a card modeled on
+// tzafrir/human-in-the-loop's task card — 🎯 goal + Done when, Now / Next /
+// Waiting on you, the last 3 ✔ deltas, then ▸ N more · ▸ original prompt
+// (SessionCard below). The workspace 🎯 intent editor sits above it;
+// earlier sessions of the same pane sit behind a toggle. Switching focus
+// switches the card. Data: `session_context_list` for the workspace,
+// filtered to the pane, refetched on `context:changed`. All agent/user
+// text renders as plain text (Solid escapes it) with dir="auto".
 
 const log = createLogger("CONTEXT");
 
@@ -248,7 +252,7 @@ export function ContextRail(p: Props) {
                 }
               >
                 {(s) => (
-                  <SessionCard s={s()} row={p.row} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
+                  <SessionCard s={s()} row={p.row} nowMs={p.nowMs} expand={expand} />
                 )}
               </Show>
               <Show when={earlier().length > 0}>
@@ -264,7 +268,7 @@ export function ContextRail(p: Props) {
                 <Show when={showEarlier()}>
                   <For each={earlier()}>
                     {(s) => (
-                      <SessionCard s={s} row={null} nowMs={p.nowMs} expand={expand} onJumpPane={p.onJumpPane} />
+                      <SessionCard s={s} row={null} nowMs={p.nowMs} expand={expand} />
                     )}
                   </For>
                 </Show>
@@ -284,72 +288,153 @@ interface Expand {
   toggleLog: (id: string) => void;
 }
 
+/** Wall-clock time of a ✔ line (the age is on the Now line). */
+function clock(ms: number): string {
+  try {
+    return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "";
+  }
+}
+
+// The card, modeled on human-in-the-loop's task card: fixed labels, one
+// short line each. Layout (Yossi-approved, 2026-10-05):
+//   🎯 goal / Done when
+//   Now (light + age) / ➜ Next / ❓ Waiting on you
+//   ✔ last 3 deltas with clock time
+//   ▸ N more · ▸ original prompt
+// Full text of every clipped line rides its tooltip.
 function SessionCard(p: {
   s: SessionContext;
   row: QueueRow | null;
   nowMs: number;
   expand: Expand;
-  onJumpPane: (paneId: string) => void;
 }) {
   const promptOpen = () => p.expand.promptOpen(p.s.session_id);
   const logOpen = () => p.expand.logOpen(p.s.session_id);
-  const prompt = () => (p.s.first_prompt ? clipPrompt(p.s.first_prompt) : null);
-  const lines = () => logNewestFirst(p.s.log, logOpen() ? null : LOG_PREVIEW);
+  const goal = () => cardGoal(p.s);
+  const doneWhen = () => (p.s.done_when ? oneLine(p.s.done_when) : null);
+  const turn = () => lastTurn(p.s);
+  const now = () => (turn()?.task ? oneLine(turn()?.task ?? "") : null);
+  const next = () => (turn()?.next ? oneLine(turn()?.next ?? "") : null);
+  const waiting = () => {
+    const w = waitingText(p.s);
+    return w ? oneLine(w) : null;
+  };
+  const done = () => doneEntries(p.s, logOpen() ? null : LOG_PREVIEW);
+  const more = () => Math.max(0, doneCount(p.s) - LOG_PREVIEW);
 
   return (
     <div class="context-card" classList={{ "context-card-closed": isClosed(p.s) }}>
-      <Show
-        when={p.row}
-        fallback={
-          <div class="context-card-title" dir="auto">
-            {isClosed(p.s) ? "✅ " : ""}
-            {sessionTitle(p.s)}
+      <Show when={goal()}>
+        {(g) => (
+          <div class="context-goal">
+            <div class="context-field" title={g().full}>
+              <span class="context-field-icon" aria-hidden="true">🎯</span>
+              <span class="context-goal-text" dir="auto">{g().text}</span>
+            </div>
+            <Show when={doneWhen()}>
+              {(d) => (
+                <div class="context-field context-field-sub" title={d().full}>
+                  <span class="context-field-label">{t("context.doneWhen")}</span>
+                  <span dir="auto">{d().text}</span>
+                </div>
+              )}
+            </Show>
           </div>
-        }
-      >
-        {(r) => <QueueRowView row={r()} nowMs={p.nowMs} onClick={() => p.onJumpPane(r().paneId)} />}
-      </Show>
-
-      <Show when={prompt()}>
-        {(pr) => (
-          <button
-            class="context-prompt"
-            aria-expanded={promptOpen()}
-            disabled={!pr().clipped}
-            onClick={() => p.expand.togglePrompt(p.s.session_id)}
-            title={pr().clipped ? t("context.prompt.toggle") : undefined}
-          >
-            <span class="context-prompt-label">📝 {t("context.prompt.label")}</span>
-            <span class="context-prompt-text" dir="auto">
-              {promptOpen() ? p.s.first_prompt : pr().text}
-            </span>
-          </button>
         )}
       </Show>
 
-      <Show when={p.s.log.length > 0}>
+      <Show when={turn()}>
+        {(tu) => (
+          <div class="context-status">
+            <div class="context-field" title={now()?.full ?? ""}>
+              <span class="context-field-icon">
+                <Show
+                  when={p.row?.light}
+                  fallback={<span aria-hidden="true">{isClosed(p.s) ? "✅" : logIcon(tu())}</span>}
+                >
+                  <AgentLight
+                    light={p.row?.light ?? null}
+                    waitingOnPermission={p.row?.waitingOnPermission ?? false}
+                    stateSince={p.row?.stateSince ?? null}
+                    nowMs={p.nowMs}
+                  />
+                </Show>
+              </span>
+              <span class="context-field-label">{t("context.now")}</span>
+              <span class="context-field-text" dir="auto">{now()?.text ?? "—"}</span>
+              <span class="context-age">{relAge(tu().ts_ms, p.nowMs)}</span>
+            </div>
+            <Show when={next()}>
+              {(n) => (
+                <div class="context-field" title={n().full}>
+                  <span class="context-field-icon" aria-hidden="true">➜</span>
+                  <span class="context-field-label">{t("context.next")}</span>
+                  <span class="context-field-text" dir="auto">{n().text}</span>
+                </div>
+              )}
+            </Show>
+            <Show when={waiting()}>
+              {(w) => (
+                <div class="context-field context-waiting" title={w().full}>
+                  <span class="context-field-icon" aria-hidden="true">❓</span>
+                  <span class="context-field-label">{t("context.waiting")}</span>
+                  <span class="context-field-text" dir="auto">{w().text}</span>
+                </div>
+              )}
+            </Show>
+          </div>
+        )}
+      </Show>
+
+      <Show when={done().length > 0}>
         <ol class="context-log">
-          <For each={lines()}>
-            {(e) => (
-              <li class="context-log-line" classList={{ "context-log-degraded": e.degraded }}>
-                <span class="context-log-time">{relAge(e.ts_ms, p.nowMs)}</span>
-                <span class="context-log-icon" aria-hidden="true">{logIcon(e)}</span>
-                <span class="context-log-text" dir="auto">
-                  {logLineText(e) || (e.kind === "closed" ? t("context.log.closed") : "—")}
-                </span>
-              </li>
-            )}
+          <For each={done()}>
+            {(e) => {
+              const line = e.kind === "closed" ? null : oneLine(e.delta ?? "");
+              return (
+                <li
+                  class="context-log-line"
+                  classList={{ "context-log-degraded": e.degraded }}
+                  title={line?.full ?? t("context.log.closed")}
+                >
+                  <span class="context-log-icon" aria-hidden="true">{e.kind === "closed" ? "✅" : "✔"}</span>
+                  <span class="context-log-text" dir="auto">
+                    {line ? line.text : t("context.log.closed")}
+                  </span>
+                  <span class="context-log-time">{clock(e.ts_ms)}</span>
+                </li>
+              );
+            }}
           </For>
         </ol>
-        <Show when={p.s.log.length > LOG_PREVIEW}>
-          <button
-            class="context-link"
-            aria-expanded={logOpen()}
-            onClick={() => p.expand.toggleLog(p.s.session_id)}
-          >
-            {logOpen() ? t("context.log.less") : t("context.log.all", { n: p.s.log.length })}
-          </button>
-        </Show>
+      </Show>
+
+      <Show when={more() > 0 || p.s.first_prompt}>
+        <div class="context-links">
+          <Show when={more() > 0}>
+            <button
+              class="context-link"
+              aria-expanded={logOpen()}
+              onClick={() => p.expand.toggleLog(p.s.session_id)}
+            >
+              {logOpen() ? `▾ ${t("context.log.less")}` : `▸ ${t("context.log.more", { n: more() })}`}
+            </button>
+          </Show>
+          <Show when={p.s.first_prompt}>
+            <button
+              class="context-link"
+              aria-expanded={promptOpen()}
+              onClick={() => p.expand.togglePrompt(p.s.session_id)}
+            >
+              {promptOpen() ? "▾" : "▸"} {t("context.prompt.original")}
+            </button>
+          </Show>
+        </div>
+      </Show>
+      <Show when={promptOpen() && p.s.first_prompt}>
+        {(fp) => <div class="context-prompt-text" dir="auto">{fp()}</div>}
       </Show>
     </div>
   );

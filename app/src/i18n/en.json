@@ -1364,15 +1364,18 @@
   "context.collapse": "Collapse the Context Rail",
   "context.resize": "Drag to resize",
   "context.noWorkspace": "No workspace selected.",
-  "context.prompt.label": "First prompt",
-  "context.prompt.toggle": "Show / hide the full prompt",
   "context.log.closed": "session closed",
-  "context.log.all": "Show all {n}",
   "context.log.less": "Show less",
   "cmd.contextRail.toggle": "Context Rail: Toggle",
   "settings.shortcuts.toggle_context_rail": "Collapse / expand the Context Rail",
   "context.noPane": "Focus a pane to see its context.",
   "context.noSession": "No Claude session in this pane yet. Its first prompt and progress log will appear here.",
   "context.showEarlier": "Earlier sessions in this pane ({n})",
-  "context.hideEarlier": "Hide earlier sessions"
+  "context.hideEarlier": "Hide earlier sessions",
+  "context.doneWhen": "Done when:",
+  "context.now": "Now:",
+  "context.next": "Next:",
+  "context.waiting": "Waiting on you:",
+  "context.log.more": "{n} more",
+  "context.prompt.original": "original prompt"
 }

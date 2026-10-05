@@ -12,7 +12,16 @@
 //! rec: Yes — it is regenerated on first run.
 //! next: Wire lock acquisition into install_all()
 //! delta: Lock module done + tested; installer not yet wired.
+//! goal: Ship the Windows installer with file-lock safety
+//! done: installer runs twice in a row without a lock error
 //! ```
+//!
+//! `goal` / `done` (Phase 104 follow-up) are STICKY: the agent writes them
+//! on its first brief and again only when they change, so most briefs
+//! carry neither. The per-session context store keeps the last non-empty
+//! value (`context_store.rs`); the per-pane brief here just carries what
+//! this turn said. The Go port (`server/internal/agent/brief.go`) does NOT
+//! know these two keys yet — BACKLOG parity entry.
 //!
 //! The Stop hook already forwards `last_assistant_message` verbatim to the
 //! desktop (the CLI pushes the whole hook payload), so this module needs no
@@ -85,6 +94,11 @@ pub(crate) struct PaneBrief {
     pub(crate) rec: Option<String>,
     pub(crate) next: Option<String>,
     pub(crate) delta: Option<String>,
+    /// Phase 104: the session's overall goal (one imperative line) —
+    /// sticky, so usually absent; see the module doc.
+    pub(crate) goal: Option<String>,
+    /// Phase 104: the finish criterion ("done when …") — sticky too.
+    pub(crate) done: Option<String>,
     pub(crate) degraded: bool,
     /// Epoch ms of the Stop that produced it. Plain number on the wire —
     /// same idiom as `FeedItem::created_ms`.
@@ -123,6 +137,8 @@ pub(crate) struct ParsedBrief {
     pub(crate) rec: Option<String>,
     pub(crate) next: Option<String>,
     pub(crate) delta: Option<String>,
+    pub(crate) goal: Option<String>,
+    pub(crate) done: Option<String>,
 }
 
 /// Clip to `max` characters on a char boundary, appending an ellipsis.
@@ -184,6 +200,8 @@ pub(crate) fn parse_brief(msg: &str) -> Option<ParsedBrief> {
         rec: None,
         next: None,
         delta: None,
+        goal: None,
+        done: None,
     };
     // Skip the marker line itself, then walk the tail.
     for line in msg[off..].split('\n').skip(1) {
@@ -208,6 +226,8 @@ pub(crate) fn parse_brief(msg: &str) -> Option<ParsedBrief> {
             "rec" => out.rec = Some(value),
             "next" => out.next = Some(value),
             "delta" => out.delta = Some(value),
+            "goal" => out.goal = Some(value),
+            "done" | "done-when" | "done_when" | "done when" => out.done = Some(value),
             _ => {}
         }
     }
@@ -231,6 +251,8 @@ pub(crate) fn brief_from_stop(
             rec: p.rec,
             next: p.next,
             delta: p.delta,
+            goal: p.goal,
+            done: p.done,
             degraded: false,
             updated_ms,
         },
@@ -243,6 +265,8 @@ pub(crate) fn brief_from_stop(
             delta: last_assistant_message
                 .and_then(|m| m.lines().map(str::trim).find(|l| !l.is_empty()))
                 .map(|l| clip_chars(l, DEGRADED_DELTA_MAX_CHARS)),
+            goal: None,
+            done: None,
             degraded: true,
             updated_ms,
         },
@@ -264,6 +288,25 @@ mod tests {
         assert_eq!(p.rec.as_deref(), Some("Yes — regenerated on first run."));
         assert_eq!(p.next.as_deref(), Some("wire into install_all()"));
         assert_eq!(p.delta.as_deref(), Some("lock module done + tested"));
+    }
+
+    #[test]
+    fn goal_and_done_keys_parse_and_clip() {
+        let msg = format!(
+            "x\n[ymux-brief]\ntask: t\n**goal**: Ship the installer\n- done when: two clean runs\nnext: {}\n",
+            "n".repeat(300)
+        );
+        let p = parse_brief(&msg).expect("marker");
+        assert_eq!(p.goal.as_deref(), Some("Ship the installer"));
+        assert_eq!(p.done.as_deref(), Some("two clean runs"));
+        assert_eq!(p.next.map(|n| n.chars().count()), Some(FIELD_MAX_CHARS + 1));
+        let plain = parse_brief("[ymux-brief]\ndone: green CI\n").expect("marker");
+        assert_eq!(plain.done.as_deref(), Some("green CI"));
+        assert_eq!(plain.goal, None, "absent stays None (sticky lives in the store)");
+        let b = brief_from_stop(Some(&msg), None, 1);
+        assert_eq!(b.goal.as_deref(), Some("Ship the installer"));
+        let d = brief_from_stop(Some("no marker"), None, 1);
+        assert!(d.goal.is_none() && d.done.is_none());
     }
 
     #[test]
