@@ -22,6 +22,8 @@ Takes a Claude Code JSONL transcript from
 `claude -p "<prompt>"` **on the same machine that holds those transcripts**, and saves
 the result as a ymux Note tagged `summary`.
 
+SSH-only: `pick_handle` matches `Session::Ssh` only, so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
+
 Two entry points:
 
 - **Manual** — Ctrl+Alt+B, the Summarize button in Settings → Claude, or the
