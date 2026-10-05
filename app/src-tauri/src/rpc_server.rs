@@ -1415,7 +1415,7 @@ async fn dispatch(
                     };
                     crate::emit_agent_run_event(app, pane, snap.0, snap.1, snap.2, snap.3, snap.4);
                 }
-                // Phase 103: where this hook's Claude session lives, for the
+                // Phase 104: where this hook's Claude session lives, for the
                 // persisted per-session context (context_store.rs). The CLI
                 // forwards the hook payload verbatim, so `session_id` and
                 // `cwd` are Claude Code's own fields. Only the three arms
@@ -1482,7 +1482,7 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
-                            // Phase 103: the session's FIRST prompt, kept
+                            // Phase 104: the session's FIRST prompt, kept
                             // (clipped to 2000) in its context file.
                             crate::context_store::on_hook(
                                 state,
@@ -1557,7 +1557,7 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
-                            // Phase 103: one "where we stand" line per turn,
+                            // Phase 104: one "where we stand" line per turn,
                             // degraded briefs included.
                             crate::context_store::on_hook(
                                 state,
@@ -1607,7 +1607,7 @@ async fn dispatch(
                         } {
                             crate::emit_brief_event(app, pane, &entry);
                         }
-                        // Phase 103: close the session's context log.
+                        // Phase 104: close the session's context log.
                         // `reason` is Claude Code's fixed enum, not prose.
                         let reason = ctx_payload
                             .and_then(|p| p.get("reason"))

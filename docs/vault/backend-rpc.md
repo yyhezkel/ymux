@@ -143,9 +143,9 @@ finished work. A non-degraded brief also rewrites the stop feed card: humanize
 sees the message with the block stripped (`pre_brief_text`), and the summary
 becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content never reaches a
 log line — log lines carry pane id + flags, never text. `BriefStatus` also derives
-`Deserialize` since Phase 103, because the session context files store it.
+`Deserialize` since Phase 104, because the session context files store it.
 
-## Session context (`context_store.rs`, Phase 103)
+## Session context (`context_store.rs`, Phase 104)
 
 The persisted counterpart of `AppState.briefs`: one record per Claude Code
 **session id**, not per pane — `SessionContext { session_id, ws_id, pane_id, cwd,

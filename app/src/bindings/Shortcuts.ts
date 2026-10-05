@@ -31,7 +31,7 @@ toggle_queue: string,
  */
 show_briefing: string,
 /**
- * Phase 103: collapse / expand the Context Rail.
+ * Phase 104: collapse / expand the Context Rail.
  */
 toggle_context_rail: string,
 open_diff: string,

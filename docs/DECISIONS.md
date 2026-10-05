@@ -464,7 +464,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
-### 2026-10-05 — Phase 103: Context Rail
+### 2026-10-05 — Phase 104: Context Rail
 - **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
   do / choose / answer tasks in a persistent pane; answers are typed back without blocking
   the agent). Yossi wants to see, per Claude session, *what it is about and where it
@@ -480,7 +480,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
      retention). **This reverses the 2026-09-01 BRIEF decision that briefs live in memory
      only** — for the per-session log and the session's first prompt. The Queue's
      per-pane `AppState.briefs` stays in memory.
-  3. Auto-injection back into the agent stays in scope: Phase 103.C (SessionStart
+  3. Auto-injection back into the agent stays in scope: Phase 104.C (SessionStart
      `additionalContext` on compact/resume/startup, capped, toggle in Settings).
   4. The rail shows the current workspace in full, plus a one-line strip for the other
      workspaces that need you.
@@ -489,11 +489,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
   pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
   M other workspaces" strip are gone, together with their UI, i18n keys, model helper
-  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (103.C) is
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (104.C) is
   unchanged.
-- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, so this is 103 (no reuse).
-- **Outcome / Commit:** Phase 103.A (store + rail) on `claude/phase-103a-context-rail`;
-  103.C follows. Spec: `docs/CONTEXT.md`.
+- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, and 103 then went to B5 (PR #60), so this is 104 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
+- **Outcome / Commit:** Phase 104.A (store + rail) on `claude/phase-103a-context-rail`;
+  104.C follows. Spec: `docs/CONTEXT.md`.
 
 ### 2026-10-05 — B5: browser workspaces in term's own store; send fenced; scrollback stays a stub
 - **Decided (Yossi):** `send` / `send-key` (and, by the same logic, the pane-title verbs)

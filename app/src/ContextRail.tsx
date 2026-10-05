@@ -21,7 +21,7 @@ import {
   type SessionContext,
 } from "./contextModel";
 
-// Phase 103: the Context Rail — a docked column at the inline-end of the
+// Phase 104: the Context Rail — a docked column at the inline-end of the
 // main layout (a third `.app` grid column, not a SideDrawer: no backdrop,
 // it never covers the panes). It shows ONE thing: the context of the
 // FOCUSED pane's Claude session (App's activePaneId) — 🎯 the workspace

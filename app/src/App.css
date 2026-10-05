@@ -7353,7 +7353,7 @@ body.ymux-dragging .pane-conn {
 }
 .sessions-head-btn:disabled { opacity: 0.45; cursor: default; }
 
-/* ── Phase 103: Context Rail — the .app grid's third column (inline-end).
+/* ── Phase 104: Context Rail — the .app grid's third column (inline-end).
    Logical properties only: in RTL the grid flips and the rail sits on the
    left with its resizer on its right edge. ─────────────────────────────── */
 .queue-row:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }

@@ -856,7 +856,7 @@ pub(crate) struct Shortcuts {
     pub toggle_queue: String,
     /// BRIEF: show the Briefing card for the active workspace.
     pub show_briefing: String,
-    /// Phase 103: collapse / expand the Context Rail.
+    /// Phase 104: collapse / expand the Context Rail.
     pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,

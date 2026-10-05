@@ -1,6 +1,6 @@
-//! Phase 103 — per-Claude-session context: the session's first prompt plus
+//! Phase 104 — per-Claude-session context: the session's first prompt plus
 //! a running "where we stand" log, persisted to disk. The Context Rail
-//! renders it; Phase 103.C injects it back into the agent on
+//! renders it; Phase 104.C injects it back into the agent on
 //! compact/resume (see docs/CONTEXT.md).
 //!
 //! Source: the existing `[ymux-brief]` (no LLM, zero tokens). Every Stop

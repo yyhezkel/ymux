@@ -50,7 +50,7 @@ export interface ShortcutsSettings {
   toggle_queue: string;
   // BRIEF: show the Briefing card for the active workspace.
   show_briefing: string;
-  // Phase 103: collapse / expand the Context Rail.
+  // Phase 104: collapse / expand the Context Rail.
   toggle_context_rail: string;
   open_diff: string;
   copy_on_select_with_ctrl_c: boolean;
