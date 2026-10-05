@@ -311,6 +311,11 @@ func main() {
 		hookResolvers = append(hookResolvers, chatMgr)
 	}
 	hooks.Start(hookResolvers...)
+	// Phase 102 (B4): notes persist next to the other stores, and the box's
+	// listening ports are detected for browser clients. Port watch starts
+	// after hooks.Start so the hook listener's own port is known and skipped.
+	termSvc.SetDataDir(*base)
+	termSvc.StartPortWatch(context.Background(), *port)
 
 	srv := api.NewServer(token, *port, api.Deps{
 		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,

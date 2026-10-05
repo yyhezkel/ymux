@@ -58,10 +58,13 @@ import (
 // 2.5.0 (Phase 101, WEB-DESIGN B3): the feed, the per-session gate and the
 // events socket (GET /api/v2/events) for browser-created sessions.
 //
+// 2.6.0 (Phase 102, WEB-DESIGN B4): set-status, notify, note-* and port.*
+// from browser sessions; notes on disk; the daemon detects listening ports.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.5.0"
+const Version = "2.6.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

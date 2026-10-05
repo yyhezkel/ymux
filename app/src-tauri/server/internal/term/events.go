@@ -123,6 +123,11 @@ type helloData struct {
 	Panes map[string]paneInfo `json:"panes"`
 	// Oldest first, in the subscriber's language.
 	Feed []FeedItem `json:"feed"`
+	// Phase 102 (B4): set-status text by pane, notifications oldest first,
+	// and the box's listening ports.
+	PaneStatus    map[string]string  `json:"pane_status"`
+	Notifications []NotificationItem `json:"notifications"`
+	Ports         []ListenPort       `json:"ports"`
 }
 
 type paneInfo struct {
@@ -135,15 +140,24 @@ func (r *HookRegistry) hello(lang string) helloData {
 		PaneAgentStates: map[string]agent.AgentRunEvent{},
 		PaneBriefs:      map[string]agent.BriefEntry{},
 		Panes:           map[string]paneInfo{},
+		PaneStatus:      map[string]string{},
+		Ports:           []ListenPort{},
 	}
 	r.mu.Lock()
 	for _, e := range r.byName {
 		d.PaneAgentStates[e.paneID] = e.run.Event(e.paneID)
 		d.PaneBriefs[e.paneID] = e.brief
 		d.Panes[e.paneID] = paneInfo{Session: e.name, Policy: e.policy}
+		if e.status != "" {
+			d.PaneStatus[e.paneID] = e.status
+		}
 	}
 	r.mu.Unlock()
 	d.Feed = r.feed.list(lang)
+	d.Notifications = r.notifs.list()
+	if r.ports != nil {
+		d.Ports = r.ports.list()
+	}
 	return d
 }
 
