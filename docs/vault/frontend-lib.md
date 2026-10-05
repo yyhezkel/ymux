@@ -90,8 +90,11 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   without a `pty:exit`, as on the desktop.
 - **Panes and sessions** — a leaf's `pane_id` IS its tmux session's hook pane id (daemon
   2.10.0 takes `pane_id` on create). `pane_connect` reuses the session the hello or a
-  create named for that leaf, else creates `<ws-slug>-<pane suffix>` with the leaf's
-  id. So reload → restore (on by default in browser settings) → the same session.
+  create named for that leaf, else a live session with the leaf's derived name
+  (`<ws-slug>-<pane suffix>`), else creates that name with the leaf's id. So reload →
+  restore (on by default in browser settings) → the same session. `init()` also seeds
+  `sessionRestore`'s per-pane hints from the daemon (hello map, else the derived name),
+  so a second browser — or one whose storage was cleared — re-attaches too.
 - **Workspaces** — the daemon's `/api/v2/web/workspaces` documents mapped to `Workspace`
   with a synthesized ssh-shaped connection (the panes ARE remote tmux: RTL profile and
   `paneCaps` answer "remote"). Layout gestures run in `layoutOps.ts` (pure ports of

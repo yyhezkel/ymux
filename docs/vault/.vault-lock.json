@@ -115,7 +115,7 @@
     "app/src/backend/index.ts": "2d138fe4adbd92b5babab60380cc92f33e6c80189b35a02af1570a31f77a6e0c",
     "app/src/backend/tauri.ts": "e173c89dc7daf27920b0aba3f37b9a1b347c544c10e230303bf309d9d37e57b9",
     "app/src/backend/types.ts": "a3b442aa8232c265a38f2d73ec8360620098a77fd51d379a075b82f87d2b8255",
-    "app/src/backend/web.ts": "2a11d158edbcd1eb5390925e9b2f89376ab72c408269f4928f93df64e6a8e6e6",
+    "app/src/backend/web.ts": "d6c0a142edb2633b3df48990ff845e4c9f2476213fb34cd26ef549d02b9555b0",
     "app/src/backend/web/api.ts": "08181d27aebd1d36067abf36d8c7de9d51cfbacbf55c282ba04d8051a1818860",
     "app/src/backend/web/defaults.ts": "a29210d09db65da91cb88821c749bd76313053be1a56715df7654f7290e5464c",
     "app/src/backend/web/events.ts": "24fd82dea2b8aacf5df3d6905eaa0b42e689facb2d1abab284a440e8fbece511",

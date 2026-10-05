@@ -39,6 +39,7 @@ import {
   splitLeaf,
   swapLeaves,
 } from "../layoutOps";
+import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
@@ -100,6 +101,10 @@ const serverConnection = (): Connection => ({
 /** tmux-safe: ValidName rejects ':' '.' control chars and a leading '-'. */
 const slug = (s: string): string =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 24) || "ws";
+
+/** The tmux name a browser pane's session is created with. */
+const derivedName = (w: { name: string }, paneId: string): string =>
+  `${slug(w.name)}-${paneId.slice(-6).replace(/[^a-z0-9]/gi, "")}`;
 
 export class WebBackend implements Backend {
   readonly kind = "web" as const;
@@ -165,6 +170,32 @@ export class WebBackend implements Backend {
     await this.loadSettings();
     await this.reloadWorkspaces();
     await this.events.start();
+    await this.seedRestoreHints();
+  }
+
+  /**
+   * Session restore (App.restoreSessions) re-attaches a pane only when this
+   * browser's localStorage remembers its tmux session. A second browser, or
+   * one whose storage was cleared, remembers nothing — so seed the hints from
+   * what the daemon knows: the hello's pane → session map, else a live
+   * session with the leaf's derived name.
+   */
+  private async seedRestoreHints(): Promise<void> {
+    let live: Set<string>;
+    try {
+      live = new Set((await this.sessions()).map((x) => x.name));
+    } catch {
+      return; // restore just falls back to [Connect]
+    }
+    for (const w of this.ws) {
+      for (const pid of leafIds(w.layout ?? null)) {
+        const known = this.paneSession.get(pid);
+        const name = known && live.has(known) ? known : live.has(derivedName(w, pid)) ? derivedName(w, pid) : "";
+        if (!name) continue;
+        this.paneSession.set(pid, name);
+        if (!getPaneSession(pid)) rememberPaneSession(pid, name);
+      }
+    }
   }
 
   // ── Backend ────────────────────────────────────────────────────────────
@@ -348,12 +379,16 @@ export class WebBackend implements Backend {
     if (!findLeaf(w.layout ?? null, paneId)) throw new Error(`no pane ${paneId}`);
     const old = this.paneSid.get(paneId);
     if (old) this.pty.close(old);
-    let name = str(a.tmuxSessionName) || this.paneSession.get(paneId) || "";
     const live = new Set((await this.sessions()).map((s) => s.name));
+    // Which session is this leaf's: the caller's choice (picker / restore
+    // hint), else what we already know, else a live session with the name
+    // this leaf's session was created with (a browser that never saw it).
+    let name = str(a.tmuxSessionName) || this.paneSession.get(paneId) || "";
+    if (!name && live.has(derivedName(w, paneId))) name = derivedName(w, paneId);
     if (!name || !live.has(name)) {
       // A fresh pane, or one whose session ended: (re)create it carrying the
       // leaf's own pane id.
-      const want = name && !live.has(name) ? name : `${slug(w.name)}-${paneId.slice(-6).replace(/[^a-z0-9]/gi, "")}`;
+      const want = name || derivedName(w, paneId);
       let created: { name: string };
       try {
         created = await api<{ name: string }>("POST", "/api/v2/term/sessions", {
