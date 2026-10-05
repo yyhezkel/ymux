@@ -378,7 +378,7 @@ checked against the code on that date; line numbers drift, the function names do
 | B3 — feed, gate, events WS (Phase 101) + daemon **2.5.0** | **Merged (PR #56), verified live 2026-10-05** — none / gate allow / deny / 120 s timeout / kill-while-pending, Hebrew cards, no phone forward for `term_`. `term/feed.go` + `events.go`; see the vault (`server-go.md`). |
 | B4 — small verbs, notes, ports (Phase 102) + daemon **2.6.0** | **Merged (PR #57), verified live 2026-10-05** with the real CLI — set-status / notify / note-* / port detection, notes survive a restart. `term/verbs.go`, `notes.go`, `ports.go`. |
 | B5 — browser workspaces + agent layout verbs (Phase 103) + daemon **2.7.0** | **Merged (PR #60), verified live 2026-10-05** with the real CLI — workspaces + version guard, tree, split (creates the session), send fenced to the workspace, titles. Workspaces in a term-owned JSON store (DECISIONS 2026-10-05), REST at `/api/v2/web/workspaces`, not `/api/v2/workspace/state`. |
-| B6 | Not started. |
+| B6 — session history (Phase 104) + daemon **2.8.0** + CLI | PR open — CLI `prune` marks `ended_at` (retention 90 days / 100 rows), records `cwd`, keeps unknown fields; daemon `term/history.go`: history list, transcript reader, resume. |
 
 **B3 — `feed.push` / `feed.decide` + the events WS.**
 - Already ported (`term/hookdispatch.go`): the traffic light and brief folding of the

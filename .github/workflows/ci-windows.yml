@@ -243,6 +243,19 @@ jobs:
         shell: cmd
         run: npm run build:linux-cli
 
+      # The musl CLI that step just cross-built, uploaded so a CLI change can
+      # be smoke-tested on a real box (Rule #14) without a local build (Rule
+      # #17): `gh run download <run> -n ymux-cli-linux-x64`. Not a rebake —
+      # the committed resources/ymux-linux-x64 still moves only with a
+      # release (CLAUDE.md). Added in Phase 104, whose session history is a
+      # CLI change nothing else could have run.
+      - name: Upload the staged Linux CLI
+        uses: actions/upload-artifact@v7
+        with:
+          name: ymux-cli-linux-x64
+          path: app/src-tauri/resources/ymux-linux-x64
+          if-no-files-found: error
+
       - name: cargo test
         working-directory: app/src-tauri
         run: cargo test --workspace

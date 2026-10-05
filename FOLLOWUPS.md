@@ -10,6 +10,7 @@ Everything below this line is OPEN.
 Format:
 
 ```
+- [ ] P1 | 2026-10-05 | app/src-tauri/cli/src/session_meta.rs + server/internal/term/{history,meta,tmux,service}.go + .github/workflows/ci-windows.yml — Phase 104 (WEB-DESIGN B6), daemon 2.8.0 | NOT VERIFIED LIVE (Rule #14). Needs the CLI from the `ymux-cli-linux-x64` artifact on the box (the desktop re-bootstraps the release CLI on its next connect, so test in one sitting). Smoke: (1) in an API-created session run `claude -p` with a prompt → `session-meta.json` gets claude_session_id + cwd; kill the session → the next prune (any `stop` elsewhere, or `ymux session-meta list`) stamps ended_at instead of deleting the row; (2) `GET /api/v2/term/history` lists it with display + cwd; (3) `GET /api/v2/claude/sessions/<id>/transcript` returns the prompt and Claude's reply, tool calls as markers, no tool output; insights.log has the id + byte count only; (4) `POST /api/v2/term/history/<name>/resume` → a tmux session named like the row, running `claude --resume <id>` in the recorded cwd, and the row stops being history; (5) unknown fields in session-meta.json survive a CLI re-save.
 - [ ] P<0|1|2|3> | <YYYY-MM-DD> | <file>:<line> | <one-line repro/symptom>
 ```
 

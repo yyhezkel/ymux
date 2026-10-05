@@ -111,7 +111,10 @@ such. Do not "finish the rename" by deleting them; the removal is scheduled
   CI compiles them. The `go` job also runs `sdk-gen/ci-check.mjs`
   (SDK/OpenAPI drift) and fails the build if `server/**` changed without
   rebaking `resources/ymux-server-linux-{x64,arm64}` — see "Rebaking the
-  server" below. Bookkeeping-only diffs (`PROGRESS*`, `FOLLOWUPS*`,
+  server" below. The `rust` job also uploads the musl CLI it stages as the
+  `ymux-cli-linux-x64` artifact — that is how a CLI change gets smoke-tested
+  on a real box; the committed `resources/ymux-linux-x64` still only moves
+  with a release. Bookkeeping-only diffs (`PROGRESS*`, `FOLLOWUPS*`,
   `BACKLOG.md`, `README*`, `.claude/**`) skip CI via `paths-ignore`;
   `docs/**` deliberately still triggers it, for the vault gate.
 - `build-windows.yml` — installers + exe on `workflow_dispatch` or a `v*` tag; enforces Rule #13 by asserting the asset hash is embedded, and Rule #2's spirit by asserting the `$USERNAME` scrub landed. A tag gets MSI **and** NSIS (the published `manifest.json` advertises both); a `workflow_dispatch` gets NSIS only. Publishing stays manual (`docs/RELEASING.md`).
