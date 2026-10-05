@@ -41,7 +41,7 @@
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
     "app/src-tauri/src/brief.rs": "21511a48dbcdaf269a6750722e7ac9185006dcd06641a15fa8f079af3c660ba4",
     "app/src-tauri/src/context_store.rs": "4c2370357fe898683e731e5e7ecffbae206f6f790e0df2e2d403990c7b4bc575",
-    "app/src-tauri/src/rpc_server.rs": "5c9ab128dc133dc9cda753f7667c3b511446111bf850347e0d582de0786ea21c"
+    "app/src-tauri/src/rpc_server.rs": "7bf6272eca515956c76d0ffe1ae9364a2b3db87019e71e3a192aaf707b1f3b3c"
   },
   "backend-sessions": {
     "app/src-tauri/src/bidi_filter.rs": "bf2f974aa4570b22a50c8f88db6a47e4509f88f41238b0f0639ce6a51039b06d",

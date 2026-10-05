@@ -665,7 +665,12 @@ async fn dispatch(
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
         "list-workspaces" => {
-            let file = state.workspaces.lock().unwrap().clone();
+            let mut file = state.workspaces.lock().unwrap().clone();
+            // AI-NOTE: second layer — persist() already blanks secret values,
+            // but RPC is agent-reachable over the tunnel, so never trust it.
+            for w in file.workspaces.iter_mut() {
+                crate::secret_env::redact(&mut w.env);
+            }
             serde_json::to_value(&file).map_err(|e| e.to_string())
         }
 
@@ -705,6 +710,9 @@ async fn dispatch(
             };
             persist(state)?;
             let _ = app.emit("workspaces:changed", ());
+            // AI-NOTE: `cloned` was taken BEFORE persist(), so it can still
+            // hold the typed secret values; redact the agent-reachable reply.
+            let cloned = crate::secret_env::redact_workspace(&cloned);
             serde_json::to_value(&cloned).map_err(|e| e.to_string())
         }
 
@@ -777,7 +785,9 @@ async fn dispatch(
                 .find(|w| w.id == workspace_id)
                 .cloned();
             match ws {
-                Some(w) => serde_json::to_value(&w).map_err(|e| e.to_string()),
+                // AI-NOTE: second layer, agent-reachable reply.
+                Some(w) => serde_json::to_value(crate::secret_env::redact_workspace(&w))
+                    .map_err(|e| e.to_string()),
                 None => Ok(json!({ "ok": true })),
             }
         }

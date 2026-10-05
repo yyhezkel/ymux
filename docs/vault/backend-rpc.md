@@ -55,6 +55,7 @@ and **is** the canonical list — nothing else enumerates these:
 
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
   `update-workspace`, `delete-workspace`, `reset-layout`
+  — `list-workspaces`, `new-workspace` and `update-workspace` replies run `secret_env::redact` (secret env rows `value: ""`), a second layer over `persist()`; `tree` / `ui.tree` emit no env
 - **Panes** — `tree`, `ui.tree`, `split`, `action.split`, `action.connect`,
   `pane.scrollback`, `pane.screenshot`, `set-pane-title`, `set-pane-annotation`,
   `set-status`, `pane.persistence.get`, `pane.persistence.list`, `pane.kill-session`
