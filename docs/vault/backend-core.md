@@ -87,7 +87,7 @@ put logic there.
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
   in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
-  takes `secret_keys` (names only) and appends them to tmux `update-environment`.
+  takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
   `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
   status `environment variable refused by sshd: K` + `log_warn`, connect continues.

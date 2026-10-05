@@ -4868,6 +4868,9 @@ async fn spawn_ssh(
         };
         let token_clone = token.as_str().to_string();
         let pane_for_exec = pane_id.clone();
+        // Secret names (never values) for tmux update-environment; owned so
+        // the 'static task can hold them.
+        let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
         // Phase tmux-conf: read the user's setting BEFORE we hand
         // control to the spawned task (state.settings is not Send-
         // safe to hold across await points). Default true so users
@@ -4904,7 +4907,7 @@ async fn spawn_ssh(
                 &pane_for_exec,
                 use_ymux_tmux_conf,
                 "[ymux] tmux not installed on remote — falling back to plain shell",
-                &[],
+                &secret_keys,
             );
             {
                 let mut sessions = sessions_clone.lock().unwrap();
