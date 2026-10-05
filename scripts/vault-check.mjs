@@ -32,6 +32,7 @@ import { execFileSync } from 'node:child_process'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { checkCites } from './vault-cites.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const LOCK_PATH = join(REPO, 'docs', 'vault', '.vault-lock.json')
@@ -175,6 +176,22 @@ for (const name of new Set([...Object.keys(fresh), ...Object.keys(lock)])) {
     err(`${vault.path} is stale — the code it explains moved:`)
     for (const d of drifted) console.error(d)
   }
+}
+
+// --- cite check ------------------------------------------------------------
+// The hash check proves a page was re-stamped, not that its line cites still
+// point at what they name. Runs on every vault page, in every mode but --write.
+{
+  const tracked = new Set(gitZ('ls-files', '-z'))
+  const readSource = (p) => (tracked.has(p) ? readFileSync(join(REPO, p), 'utf8') : null)
+  let checked = 0
+  for (const v of vaults) {
+    const r = checkCites(readFileSync(join(REPO, v.path), 'utf8'), v.path, readSource)
+    checked += r.cites
+    for (const e of r.errors) err(e)
+    if (r.errors.length) stale = true
+  }
+  console.log(`cites: ${checked} checked`)
 }
 
 // --- diff check ------------------------------------------------------------
