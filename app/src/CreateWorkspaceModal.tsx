@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { createLogger } from "./logger";
@@ -89,7 +89,7 @@ export function CreateWorkspaceModal(p: Props) {
   const saveIdentity = async (nextColor: string | null, nextEmoji: string | null) => {
     if (!p.editing) return;
     try {
-      const ws = await invoke<Workspace>("workspace_set_identity", {
+      const ws = await backend.call<Workspace>("workspace_set_identity", {
         workspaceId: p.editing.id,
         color: nextColor,
         emoji: nextEmoji,
@@ -154,7 +154,7 @@ export function CreateWorkspaceModal(p: Props) {
   const onToggleAutoPortForward = (enabled: boolean) => {
     setAutoPortForward(enabled);
     if (!p.editing) return;
-    void invoke("workspace_set_auto_port_forward", {
+    void backend.call("workspace_set_auto_port_forward", {
       workspaceId: p.editing.id,
       enabled,
     }).catch((e) => log.error("workspace_set_auto_port_forward failed", e));
@@ -171,7 +171,7 @@ export function CreateWorkspaceModal(p: Props) {
     setWtBusy(true);
     setWtErr(null);
     try {
-      await invoke("workspace_create_worktree", {
+      await backend.call("workspace_create_worktree", {
         workspaceId: p.editing.id,
         branchName: branch,
         baseBranch: base,

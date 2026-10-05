@@ -158,7 +158,7 @@ Backed by `updater_list_versions` / `updater_install_version`.
 
 ## Invariants
 
-- **Rule #5** — no `any`; `invoke` return types explicit.
+- **Rule #5** — no `any`; `backend.call<T>` return types explicit.
 - **The parent owns form state.** Every shared field block follows the
   `SshConnectionFields` pattern, so hydration and submit both live in one place.
 - A wizard step that shells out reaches the backend through a Tauri command — the

@@ -1,8 +1,7 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { Sidebar } from "./Sidebar";
@@ -211,7 +210,7 @@ function App() {
     if (!ws || !isRemoteWorkspace(ws)) return;
     setConnectingWs(ws.id);
     try {
-      await invoke("workspace_ensure_connected", { workspaceId: ws.id });
+      await backend.call("workspace_ensure_connected", { workspaceId: ws.id });
     } catch (e) {
       log.warn("armWorkspaceConnection failed", e);
     } finally {
@@ -257,7 +256,7 @@ function App() {
       return n;
     });
   const clearNotifs = () => {
-    void invoke("notifications_clear").catch(() => {});
+    void backend.call("notifications_clear").catch(() => {});
     setNotifications([]);
   };
   const unreadNotifs = () => notifications().filter((n) => !notifRead().has(n.id)).length;
@@ -268,7 +267,7 @@ function App() {
   const unreadCount = createMemo(unreadNotifs);
   createEffect(() => {
     const c = unreadCount();
-    void invoke("set_tray_badge", { count: c }).catch(() => {});
+    void backend.call("set_tray_badge", { count: c }).catch(() => {});
   });
   // #1 fix: map a FeedItem (hooks/permissions/passive) to a NotifItem so the
   // Notification Center shows the same stream the user sees in the feed. The
@@ -390,7 +389,7 @@ function App() {
       // Backend will exit() the app ~800ms after this returns; the
       // invoke promise resolves before exit so we can show "downloading"
       // → "installing" cleanly. On error the app keeps running.
-      await invoke("download_and_install_update");
+      await backend.call("download_and_install_update");
       // We're still alive briefly; the user sees the button locked in
       // "downloading…" state until the process actually exits.
     } catch (e) {
@@ -402,7 +401,7 @@ function App() {
   // Phase 65 (U): snooze the banner for a day.
   const remindUpdateLater = async () => {
     try {
-      await invoke("updater_remind_later", { hours: 24 });
+      await backend.call("updater_remind_later", { hours: 24 });
     } catch (e) {
       log.warn("updater_remind_later failed", e);
     }
@@ -414,7 +413,7 @@ function App() {
     const v = updateBanner()?.latest_version;
     if (v) {
       try {
-        await invoke("updater_skip_version", { version: v });
+        await backend.call("updater_skip_version", { version: v });
       } catch (e) {
         log.warn("updater_skip_version failed", e);
       }
@@ -490,7 +489,7 @@ function App() {
     setPoppedOutBrowsers((prev) => new Set(prev).add(ws.id));
     setShowBrowserWindow(false);
     try {
-      await invoke("browser_popout_open", {
+      await backend.call("browser_popout_open", {
         workspaceId: ws.id,
         title: `${ws.name} — Browser`,
       });
@@ -593,14 +592,14 @@ function App() {
   const [sttListening, setSttListening] = createSignal(false);
   const [sttError, setSttError] = createSignal<string | null>(null);
   const stopForward = (workspaceId: string, remotePort: number) => {
-    void invoke("port_forward_stop", { workspaceId, remotePort });
+    void backend.call("port_forward_stop", { workspaceId, remotePort });
   };
   // Phase 46: open a forward on demand from PortsWindow. The backend
   // sanity-probes the local port before returning, so on success we
   // know the browser tab will actually reach something. Returns the
   // assigned local port (or throws).
   const startForward = (workspaceId: string, remotePort: number): Promise<number> =>
-    invoke<number>("forward_port_start", { workspaceId, remotePort });
+    backend.call<number>("forward_port_start", { workspaceId, remotePort });
   // Phase 35: webview zoom factor for view.zoom.* palette commands.
   const [zoomFactor, setZoomFactor] = createSignal(1);
   const applyZoom = (f: number) => {
@@ -662,7 +661,7 @@ function App() {
     untrack(() => {
       for (const w of file().workspaces) {
         if (poppedOutBrowsers().has(w.id)) continue;
-        void invoke("workspace_browser_hide", {
+        void backend.call("workspace_browser_hide", {
           workspaceId: w.id,
         }).catch(() => {});
       }
@@ -758,7 +757,7 @@ function App() {
       if (run) run.cancelled = true;
       endReconnect(id);
       // Best-effort — a "no such pane" is fine (session may already be gone).
-      invoke("ssh_cancel_reconnect", { paneId: id }).catch(() => {});
+      backend.call("ssh_cancel_reconnect", { paneId: id }).catch(() => {});
     }
   };
   type SshDisconnectedEvent = {
@@ -785,7 +784,7 @@ function App() {
       // own pane runs the CLI under their PATH (which AddYmuxToPath
       // sets up). The command writes settings.json, then a fresh
       // restart of Claude picks up the new hooks.
-      await invoke("ssh_exec_in_workspace", {
+      await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
         cmd: "ymux setup-hooks --agent claude --force --source github",
       }).catch(async () => {
@@ -842,7 +841,7 @@ function App() {
       return;
     }
     try {
-      const r: any = await invoke("claude_summarize", {
+      const r: any = await backend.call("claude_summarize", {
         workspaceId: ws.id,
         paneId: activePaneId() ?? null,
         sessionId: null,
@@ -882,7 +881,7 @@ function App() {
   const [sessionLists, setSessionLists] = createSignal<Record<string, SessionListState>>({});
   const refreshPersistence = async () => {
     try {
-      const m = await invoke<Record<string, string>>("pane_persistence_list");
+      const m = await backend.call<Record<string, string>>("pane_persistence_list");
       setPanePersistence(m ?? {});
       // Phase 91.D: the wheel proxy is armed from THIS map and nothing else —
       // a pane the backend lists holds a tmux/zellij session, a pane it
@@ -909,7 +908,7 @@ function App() {
   };
   const refreshNotes = async () => {
     try {
-      const f = await invoke<NotesFile>("notes_load");
+      const f = await backend.call<NotesFile>("notes_load");
       setNotes(f.notes ?? []);
     } catch (e) {
       log.warn("notes_load failed", e);
@@ -970,7 +969,7 @@ function App() {
       );
     }
     try {
-      await invoke("popout_pane", {
+      await backend.call("popout_pane", {
         sessionId: sid,
         title: `${label} — ymux`,
         cols: ti.term.cols,
@@ -1152,7 +1151,7 @@ function App() {
       { id: "view.zoom.out", label: t("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
       { id: "view.zoom.reset", label: t("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
       { id: "fm.open", label: t("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
-        if (ws && pid) void invoke("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
+        if (ws && pid) void backend.call("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
       } },
     ];
   };
@@ -1448,7 +1447,7 @@ function App() {
     lastAutoConnectWs = ws.id;
     if (s.auto_connect_on_workspace_select === false) return;
     if (!isRemoteWorkspace(ws)) return;
-    void invoke("workspace_ensure_connected", { workspaceId: ws.id }).catch((e) =>
+    void backend.call("workspace_ensure_connected", { workspaceId: ws.id }).catch((e) =>
       log.warn("workspace_ensure_connected failed", e),
     );
   });
@@ -1465,10 +1464,10 @@ function App() {
   // call it on open / Refresh too — the Browser needs the port list even
   // when auto_port_forward is off (it forwards on demand per chosen port).
   const ensurePortsSnapshot = (wsId: string) => {
-    void invoke("workspace_ensure_port_watcher", { workspaceId: wsId }).catch((e) =>
+    void backend.call("workspace_ensure_port_watcher", { workspaceId: wsId }).catch((e) =>
       log.warn("workspace_ensure_port_watcher failed", e),
     );
-    void invoke<{ remote_port: number; addr: string; family: string }[]>(
+    void backend.call<{ remote_port: number; addr: string; family: string }[]>(
       "list_detected_ports",
       { workspaceId: wsId },
     )
@@ -1538,7 +1537,7 @@ function App() {
     const ws = activeWs();
     const pid = activePaneId();
     if (!ws || !pid) return;
-    void invoke("workspace_split", {
+    void backend.call("workspace_split", {
       workspaceId: ws.id,
       paneId: pid,
       direction: "horizontal",
@@ -1550,7 +1549,7 @@ function App() {
 
   const handleCreate = async (input: CreateWorkspaceInput) => {
     try {
-      const f = await invoke<WorkspacesFile>("workspace_create", { input });
+      const f = await backend.call<WorkspacesFile>("workspace_create", { input });
       updateFile(f);
     } catch (e) {
       log.error("workspace_create failed", e);
@@ -1570,7 +1569,7 @@ function App() {
     }
   ) => {
     try {
-      const f = await invoke<WorkspacesFile>("workspace_update", {
+      const f = await backend.call<WorkspacesFile>("workspace_update", {
         workspaceId: id,
         name: fields.name,
         color: fields.color,
@@ -1592,7 +1591,7 @@ function App() {
     const next = window.prompt("Rename workspace", ws.name);
     if (!next || !next.trim()) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_rename", {
+      const f = await backend.call<WorkspacesFile>("workspace_rename", {
         workspaceId: id,
         name: next.trim(),
       });
@@ -1671,18 +1670,18 @@ function App() {
       touchedSessions = true;
       if (!gone.has(w.id)) {
         if (wsCaps(w).sessionBound) {
-          try { await invoke("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
+          try { await backend.call("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
         }
         const out = await killSessionByName(w.id, name);
         const ok = !!out && ["killed", "already_gone", "no_session", "attempted"].includes(out.result);
         if (!ok) flashSummaryToast("err", t("workspace.delete.sessionKillFailed", { name }));
       }
       try {
-        await invoke("workspace_remember_sessions", { workspaceId: rootId, entries: [], forget: [name] });
+        await backend.call("workspace_remember_sessions", { workspaceId: rootId, entries: [], forget: [name] });
       } catch { /* memory only */ }
     }
     try {
-      const f = await invoke<WorkspacesFile>("workspace_delete", {
+      const f = await backend.call<WorkspacesFile>("workspace_delete", {
         workspaceId: id,
       });
       updateFile(f);
@@ -1715,7 +1714,7 @@ function App() {
     const prevActiveId = file().active_workspace_id;
     const prevSnapshot = file().workspaces.find((w) => w.id === id);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_set_active", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_active", {
         workspaceId: id,
       });
       updateFile(f);
@@ -1755,7 +1754,7 @@ function App() {
   // returns the updated workspace; patch it into the file state.
   const handleToggleAutoForward = async (workspaceId: string, enabled: boolean) => {
     try {
-      const updated = await invoke<Workspace>("workspace_set_auto_port_forward", {
+      const updated = await backend.call<Workspace>("workspace_set_auto_port_forward", {
         workspaceId,
         enabled,
       });
@@ -1802,8 +1801,8 @@ function App() {
     connection: Connection | null,
   ) => {
     try {
-      const isRepo = await invoke<boolean>("project_folder_probe", { path, connection });
-      const f = await invoke<WorkspacesFile>("workspace_pin_project_folder", {
+      const isRepo = await backend.call<boolean>("project_folder_probe", { path, connection });
+      const f = await backend.call<WorkspacesFile>("workspace_pin_project_folder", {
         parentWorkspaceId,
         path,
         name: null,
@@ -1831,13 +1830,13 @@ function App() {
     const ws = file().workspaces.find((w) => w.id === workspaceId);
     if (!ws?.cwd) return;
     try {
-      const list = await invoke<WorktreeEntry[]>("git_probe_worktrees", {
+      const list = await backend.call<WorktreeEntry[]>("git_probe_worktrees", {
         path: ws.cwd,
         connection: ws.connection ?? null,
       });
       // Phase 91.F: feed the sidebar card's branch line (branchForCard).
       setWorktreeLists((prev) => ({ ...prev, [workspaceId]: list }));
-      const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_project_root", {
         workspaceId,
         isProjectRoot: true,
       });
@@ -1861,7 +1860,7 @@ function App() {
       // panes are all disconnected — otherwise the browser opens straight
       // onto "connect a terminal pane first". Idempotent and PTY-free.
       try {
-        await invoke("workspace_ensure_connected", { workspaceId });
+        await backend.call("workspace_ensure_connected", { workspaceId });
       } catch (e) {
         log.warn("ensure_connected before folder pick failed", e);
       }
@@ -1886,7 +1885,7 @@ function App() {
 
   /** Reload the workspaces file after a project-folder mutation. */
   const reloadWorkspaces = async () => {
-    const f = await invoke<WorkspacesFile>("workspaces_load");
+    const f = await backend.call<WorkspacesFile>("workspaces_load");
     updateFile(f);
   };
 
@@ -1902,7 +1901,7 @@ function App() {
   const openWorktree = async (rootWorkspaceId: string, wt: WorktreeEntry) => {
     const root = file().workspaces.find((w) => w.id === rootWorkspaceId);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_open_worktree", {
+      const f = await backend.call<WorkspacesFile>("workspace_open_worktree", {
         rootWorkspaceId,
         worktreePath: wt.path,
         // Branch name is what the user recognises; a detached worktree
@@ -1929,7 +1928,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_split", {
+      const f = await backend.call<WorkspacesFile>("workspace_split", {
         workspaceId: ws.id,
         paneId,
         direction,
@@ -1948,7 +1947,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_set_tabs_mode", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_tabs_mode", {
         workspaceId: ws.id,
         tabsMode: enabled,
       });
@@ -2043,7 +2042,7 @@ function App() {
     if (!ws) return;
     if (paneAId === paneBId) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_swap_panes", {
+      const f = await backend.call<WorkspacesFile>("workspace_swap_panes", {
         workspaceId: ws.id,
         paneAId,
         paneBId,
@@ -2066,7 +2065,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_navigate", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_navigate", {
         workspaceId: ws.id,
         paneId,
         url,
@@ -2081,7 +2080,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_go_back", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_go_back", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2095,7 +2094,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_go_home", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_go_home", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2115,7 +2114,7 @@ function App() {
     )
       return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_reset_layout", {
+      const f = await backend.call<WorkspacesFile>("workspace_reset_layout", {
         workspaceId: id,
       });
       updateFile(f);
@@ -2128,7 +2127,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_set_forward", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_set_forward", {
         workspaceId: ws.id,
         paneId,
         forward,
@@ -2143,7 +2142,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_close_pane", {
+      const f = await backend.call<WorkspacesFile>("workspace_close_pane", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2173,7 +2172,7 @@ function App() {
     });
     if (commit) {
       if (ratioCommitTimer) clearTimeout(ratioCommitTimer);
-      invoke("workspace_set_split_ratio", {
+      backend.call("workspace_set_split_ratio", {
         workspaceId: ws.id,
         splitId,
         ratio,
@@ -2258,7 +2257,7 @@ function App() {
         : null;
     setStatus(paneId, "connecting…", false);
     try {
-      const sessionId = await invoke<string>("pane_connect", {
+      const sessionId = await backend.call<string>("pane_connect", {
         workspaceId: ws.id,
         paneId,
         password: opts.password ?? null,
@@ -2421,7 +2420,7 @@ function App() {
           flashSummaryToast("err", t("reconnect.failed", { host: ev.host }));
           // Best-effort clear of the server flag so a future drop can
           // re-emit cleanly.
-          invoke("ssh_cancel_reconnect", { paneId }).catch(() => {});
+          backend.call("ssh_cancel_reconnect", { paneId }).catch(() => {});
           return;
         }
         const delay = reconnectJitter(RECONNECT_BACKOFFS_MS[nextAttempt]);
@@ -2438,7 +2437,7 @@ function App() {
 
   const disconnectPane = async (paneId: string) => {
     try {
-      await invoke("pane_disconnect", { paneId });
+      await backend.call("pane_disconnect", { paneId });
     } catch (e) {
       log.warn("disconnect failed", e);
     }
@@ -2460,7 +2459,7 @@ function App() {
     // with zellij uninstalled that is exactly what happened.
     let out: KillSessionOutcome | null = null;
     try {
-      out = await invoke<KillSessionOutcome>("pane_kill_session", { paneId });
+      out = await backend.call<KillSessionOutcome>("pane_kill_session", { paneId });
     } catch (e) {
       log.warn("kill_session failed", e);
     }
@@ -2532,7 +2531,7 @@ function App() {
     s: { name: string; display: string; cwd: string | null },
     autoConnect = true,
   ) => {
-    const f = await invoke<WorkspacesFile>("workspace_open_session", {
+    const f = await backend.call<WorkspacesFile>("workspace_open_session", {
       workspaceId: wsId,
       sessionName: s.name,
       displayName: s.display,
@@ -2573,7 +2572,7 @@ function App() {
     const paneId = paneHoldingSession(name);
     if (paneId) return killSession(paneId);
     try {
-      const out = await invoke<KillSessionOutcome>("sessions_kill_by_name", {
+      const out = await backend.call<KillSessionOutcome>("sessions_kill_by_name", {
         workspaceId: wsId,
         name,
       });
@@ -2650,7 +2649,7 @@ function App() {
         // Idempotent, PTY-free; a password-auth workspace no-ops here and
         // the list below comes back empty — which `reachable` records.
         try {
-          await invoke("workspace_ensure_connected", { workspaceId: rootId });
+          await backend.call("workspace_ensure_connected", { workspaceId: rootId });
         } catch (e) {
           patch({ loading: false, reachable: false, error: String(e) });
           return;
@@ -2658,7 +2657,7 @@ function App() {
       }
       let rows: TmuxSessionInfo[];
       try {
-        rows = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        rows = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: rootId,
           projectPath: null,
         });
@@ -2682,7 +2681,7 @@ function App() {
           cwd: r.cwd ?? r.owner_cwd ?? null,
         }));
       try {
-        const f = await invoke<WorkspacesFile>("workspace_remember_sessions", {
+        const f = await backend.call<WorkspacesFile>("workspace_remember_sessions", {
           workspaceId: rootId,
           entries: remembered,
           forget: [],
@@ -2697,7 +2696,7 @@ function App() {
       const candidates = mirrorCandidates(rows).filter((c) => !carried.has(c.name));
       if (candidates.length === 0) return;
       try {
-        const f = await invoke<WorkspacesFile>("workspace_mirror_sessions", {
+        const f = await backend.call<WorkspacesFile>("workspace_mirror_sessions", {
           workspaceId: rootId,
           sessions: candidates,
         });
@@ -2934,7 +2933,7 @@ function App() {
   const newScreen = async (w: Workspace) => {
     if (sessionsAsRows() && wsCaps(w).sessionPersistence) return newSessionRow(w);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_new_screen", {
+      const f = await backend.call<WorkspacesFile>("workspace_new_screen", {
         parentWorkspaceId: w.id,
         name: null,
       });
@@ -2980,7 +2979,7 @@ function App() {
   // hint of the holding pane must follow, or the next boot probes a name
   // that no longer exists and skips the pane.
   const renameSessionByName = async (wsId: string, oldName: string, newName: string) => {
-    await invoke("tmux_rename_session", { workspaceId: wsId, oldName, newName });
+    await backend.call("tmux_rename_session", { workspaceId: wsId, oldName, newName });
     const paneId = paneHoldingSession(oldName);
     if (paneId) rememberPaneSession(paneId, newName);
     await refreshPersistence();
@@ -3040,7 +3039,7 @@ function App() {
   // content (Rule #1).
   const restoreLog = (msg: string): void => {
     console.log("session restore:", msg);
-    void invoke("diag_log", { level: "info", msg: `[restore] ${msg}` }).catch(
+    void backend.call("diag_log", { level: "info", msg: `[restore] ${msg}` }).catch(
       () => {},
     );
   };
@@ -3168,7 +3167,7 @@ function App() {
     if (wsc.sessionPersistence) {
       try {
         if (wsc.sessionBound) {
-          await invoke("workspace_ensure_connected", { workspaceId: ws.id });
+          await backend.call("workspace_ensure_connected", { workspaceId: ws.id });
         }
       } catch (e) {
         restoreLog(`abort: ensure_connected failed — ${String(e)}`);
@@ -3179,7 +3178,7 @@ function App() {
         // No projectPath: restore must see EVERY session on the host.
         // A pane whose session sits outside the workspace's folder still has
         // to come back — scoping this call would silently strand it.
-        sessions = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        sessions = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: ws.id,
           projectPath: null,
         });
@@ -3252,8 +3251,8 @@ function App() {
         // The answer is authoritative: [] really means "no live sessions".
         const list = isMac() && isLocalConn(conn)
           // projectPath: null — restore is unscoped, see above.
-          ? await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", { workspaceId: wsId, projectPath: null })
-          : await invoke<TmuxSessionInfo[] | null>(
+          ? await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", { workspaceId: wsId, projectPath: null })
+          : await backend.call<TmuxSessionInfo[] | null>(
               "pane_probe_tmux_sessions",
               { workspaceId: wsId, paneId },
             );
@@ -3413,7 +3412,7 @@ function App() {
       });
     }
     try {
-      const f = await invoke<WorkspacesFile>("workspace_distribute_evenly", {
+      const f = await backend.call<WorkspacesFile>("workspace_distribute_evenly", {
         workspaceId: ws.id,
       });
       updateFile(f);
@@ -3697,7 +3696,7 @@ function App() {
   const refreshFromBackend = async () => {
     try {
       const prevActive = file().active_workspace_id;
-      const f = await invoke<WorkspacesFile>("workspaces_load");
+      const f = await backend.call<WorkspacesFile>("workspaces_load");
       updateFile(f);
       // If active workspace changed externally (e.g. via CLI), pick a pane to focus.
       if (
@@ -3790,7 +3789,7 @@ function App() {
       // #1: seed the Notification Center with any notifications already
       // collected this session (RPC/agent items live in the backend Vec).
       try {
-        const seed = await invoke<NotifItem[]>("notifications_list");
+        const seed = await backend.call<NotifItem[]>("notifications_list");
         setNotifications(seed.map((n) => ({ ...n, kind: n.kind || "agent" })).reverse());
       } catch (e) {
         log.warn("notifications_list failed", e);
@@ -3816,7 +3815,7 @@ function App() {
     // keeps this in memory only, so an app restart legitimately starts
     // empty; it is a reload we are covering, which is far more common.
     try {
-      const snaps = await invoke<Record<string, PaneAgentSnapshot>>(
+      const snaps = await backend.call<Record<string, PaneAgentSnapshot>>(
         "pane_agent_states",
       );
       const seeded: ReturnType<typeof agentRuns> = {};
@@ -3836,21 +3835,21 @@ function App() {
 
     // BRIEF: same reload story for the brief entries.
     try {
-      setBriefs(await invoke<Record<string, PaneBriefEntry>>("pane_briefs"));
+      setBriefs(await backend.call<Record<string, PaneBriefEntry>>("pane_briefs"));
     } catch (e) {
       log.warn("pane_briefs failed", e);
     }
 
     const unlistens: UnlistenFn[] = [];
     unlistens.push(
-      await listen<PtyDataEvent>("pty:data", (e) => {
+      await backend.on<PtyDataEvent>("pty:data", (e) => {
         const pid = sessionToPane.get(e.payload.session_id);
         if (!pid) return;
         terms.get(pid)?.writeData(e.payload.data);
       })
     );
     unlistens.push(
-      await listen<PtyExitEvent>("pty:exit", (e) => {
+      await backend.on<PtyExitEvent>("pty:exit", (e) => {
         const pid = sessionToPane.get(e.payload.session_id);
         if (!pid) return;
         sessionToPane.delete(e.payload.session_id);
@@ -3890,7 +3889,7 @@ function App() {
     // drive the auto-reconnect toast + backoff loop. pty:exit fires
     // alongside — the `[disconnected]` terminal notice still shows.
     unlistens.push(
-      await listen<SshDisconnectedEvent>("ssh:disconnected", (e) => {
+      await backend.on<SshDisconnectedEvent>("ssh:disconnected", (e) => {
         // Guard: only handle transport drops; a clean Eof/Close doesn't
         // emit this event (backend filters), but defense in depth.
         if (e.payload.reason !== "transport-dropped") return;
@@ -3899,7 +3898,7 @@ function App() {
     );
     // Connect-time verdict on whether the remote CLI matches our build.
     unlistens.push(
-      await listen<CliAlignmentEvent>("workspace:cli-alignment", (e) => {
+      await backend.on<CliAlignmentEvent>("workspace:cli-alignment", (e) => {
         const p = e.payload;
         setCliSkew((prev) => {
           const next = { ...prev };
@@ -3917,7 +3916,7 @@ function App() {
     // The payload crossed a JSON boundary from an untrusted page, so it
     // is narrowed before anything opens (see parseCapture).
     unlistens.push(
-      await listen<unknown>("browser:ticket-captured", (e) => {
+      await backend.on<unknown>("browser:ticket-captured", (e) => {
         const raw = e.payload;
         if (typeof raw !== "object" || raw === null) return;
         const o = raw as Record<string, unknown>;
@@ -3929,7 +3928,7 @@ function App() {
     );
 
     unlistens.push(
-      await listen<string>("popout:closed", (e) => {
+      await backend.on<string>("popout:closed", (e) => {
         const sid = e.payload;
         const pid = sessionToPane.get(sid);
         // pty:exit-driven close already cleared the maps AND un-pruned the
@@ -3957,7 +3956,7 @@ function App() {
     // the child under `main`. The Rust `Destroyed` handler already
     // dropped the Webview and cleared the persisted mode.
     unlistens.push(
-      await listen<string>("browser-popout:closed", (e) => {
+      await backend.on<string>("browser-popout:closed", (e) => {
         const wsId = e.payload;
         setPoppedOutBrowsers((prev) => {
           if (!prev.has(wsId)) return prev;
@@ -3969,7 +3968,7 @@ function App() {
     );
     // Initial feed load.
     try {
-      const items = await invoke<FeedItem[]>("feed_list");
+      const items = await backend.call<FeedItem[]>("feed_list");
       // The live feed now carries ONLY actionable blocking permission cards;
       // passive hooks (stop / notification / …) live in the Notification
       // Center. Re-hydrate just the still-pending permission requests so a
@@ -3982,7 +3981,7 @@ function App() {
     }
     // Phase 6.5 feed events.
     unlistens.push(
-      await listen<FeedItem>("feed:item-added", (e) => {
+      await backend.on<FeedItem>("feed:item-added", (e) => {
         const f = e.payload;
         const isBlocking = f.kind === "permission_request" && f.state === "pending";
         const isMeaningful = !isBlocking && MEANINGFUL_SUBKINDS.has(f.subkind);
@@ -4033,7 +4032,7 @@ function App() {
       })
     );
     unlistens.push(
-      await listen<FeedResolvedEvent>("feed:item-resolved", (e) => {
+      await backend.on<FeedResolvedEvent>("feed:item-resolved", (e) => {
         const verdict = e.payload.decision === "allow" ? "allowed" : e.payload.decision === "deny" ? "denied" : e.payload.decision === "timeout" ? "timedout" : "denied";
         setFeedItems((prev) =>
           prev.map((i) =>
@@ -4052,7 +4051,7 @@ function App() {
     // Claude-specific hooks — works for cargo, pytest, any tool that
     // prints the escape sequence.
     unlistens.push(
-      await listen<{ pane_id: string; title: string; body: string; kind: string }>(
+      await backend.on<{ pane_id: string; title: string; body: string; kind: string }>(
         "osc-notification",
         (e) => {
           const { title, body } = e.payload;
@@ -4091,11 +4090,11 @@ function App() {
     // #1: RPC/agent notifications (Claude hooks). Backend pushes to
     // state.notifications AND emits this — the center mirrors it live.
     unlistens.push(
-      await listen<NotifItem>("notification:new", (e) => pushNotif(e.payload)),
+      await backend.on<NotifItem>("notification:new", (e) => pushNotif(e.payload)),
     );
     // #2: tray menu actions routed from the Rust tray handler.
     unlistens.push(
-      await listen<string>("tray:action", (e) => {
+      await backend.on<string>("tray:action", (e) => {
         if (e.payload === "new_workspace") setShowSetup({});
         else if (e.payload === "settings") setShowSettings(true);
       }),
@@ -4112,7 +4111,7 @@ function App() {
     //   port-forwarded     → add to portForwards
     //   port-forward-stopped → remove from portForwards
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number; addr: string; family: string }>(
+      await backend.on<{ workspace_id: string; remote_port: number; addr: string; family: string }>(
         "port-detected",
         (e) => {
           setDetectedPorts((prev) => [
@@ -4130,7 +4129,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number }>(
+      await backend.on<{ workspace_id: string; remote_port: number }>(
         "port-undetected",
         (e) => {
           setDetectedPorts((prev) =>
@@ -4143,7 +4142,7 @@ function App() {
     );
     // Phase 47: detection toggled off → wipe the workspace's entries.
     unlistens.push(
-      await listen<{ workspace_id: string }>(
+      await backend.on<{ workspace_id: string }>(
         "port-detection-cleared",
         (e) => {
           setDetectedPorts((prev) =>
@@ -4153,7 +4152,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_addr: string; remote_port: number; local_port: number }>(
+      await backend.on<{ workspace_id: string; remote_addr: string; remote_port: number; local_port: number }>(
         "port-forwarded",
         (e) => {
           const row: ForwardRow = {
@@ -4173,7 +4172,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number }>(
+      await backend.on<{ workspace_id: string; remote_port: number }>(
         "port-forward-stopped",
         (e) => {
           setPortForwards((prev) =>
@@ -4194,7 +4193,7 @@ function App() {
     // silence. Only raised when there WAS a command; a plain attach is the
     // normal case and needs no announcement.
     unlistens.push(
-      await listen<{
+      await backend.on<{
         pane_id: string;
         session_name: string;
         skipped: string;
@@ -4218,13 +4217,13 @@ function App() {
     // Phase 7.B: notes
     await refreshNotes();
     unlistens.push(
-      await listen("notes:changed", () => {
+      await backend.on("notes:changed", () => {
         void refreshNotes();
       })
     );
     // Per-pane status events (e.g. remote-bootstrap progress).
     unlistens.push(
-      await listen<{ pane_id: string; text: string }>("pane:status", (e) => {
+      await backend.on<{ pane_id: string; text: string }>("pane:status", (e) => {
         const next = { ...paneStatusText() };
         if (e.payload.text) {
           next[e.payload.pane_id] = e.payload.text;
@@ -4236,7 +4235,7 @@ function App() {
     );
     // issue #4: per-pane agent turn timing for the chrome Ticker.
     unlistens.push(
-      await listen<{
+      await backend.on<{
         pane_id: string;
         started_at: number | null;
         avg_ms: number | null;
@@ -4276,7 +4275,7 @@ function App() {
     // BRIEF: per-pane brief entries. Same seq guard as pane:agent-run —
     // hooks race over a socket, drop anything not newer than what we hold.
     unlistens.push(
-      await listen<{ pane_id: string; entry: PaneBriefEntry }>("pane:brief", (e) => {
+      await backend.on<{ pane_id: string; entry: PaneBriefEntry }>("pane:brief", (e) => {
         const { pane_id, entry } = e.payload;
         const prev = briefs()[pane_id];
         if (prev && entry.seq <= prev.seq) return;
@@ -4285,13 +4284,13 @@ function App() {
     );
     // Live refresh when an external mutation happens (RPC over named pipe).
     unlistens.push(
-      await listen("workspaces:changed", () => {
+      await backend.on("workspaces:changed", () => {
         void refreshFromBackend();
       })
     );
     // Phase 9.A: settings updated externally (CLI / RPC) — re-apply theme.
     unlistens.push(
-      await listen<Settings>("settings:changed", (e) => {
+      await backend.on<Settings>("settings:changed", (e) => {
         setSettings(e.payload);
         setLoggerLevel(e.payload.logs?.level ?? "info");
         applyTheme(e.payload);
@@ -4307,14 +4306,14 @@ function App() {
     // Phase 18: agent-hooks outdated event from the backend's
     // post-bootstrap probe. Surface the banner once per connection.
     unlistens.push(
-      await listen<HooksOutdatedInfo>("hooks:outdated", (e) => {
+      await backend.on<HooksOutdatedInfo>("hooks:outdated", (e) => {
         setHooksBanner(e.payload);
       })
     );
 
     // Phase 9.B: update available — show a banner; user clicks to open notes.
     unlistens.push(
-      await listen<UpdateInfo>("update:available", (e) => {
+      await backend.on<UpdateInfo>("update:available", (e) => {
         setUpdateBanner(e.payload);
       })
     );
@@ -4432,7 +4431,7 @@ function App() {
         handleFileLinkRelative,
       );
       for (const [pid] of paneToSession) {
-        invoke("pane_disconnect", { paneId: pid }).catch(() => {});
+        backend.call("pane_disconnect", { paneId: pid }).catch(() => {});
       }
       for (const [, ti] of terms) ti.dispose();
       terms.clear();
@@ -4501,8 +4500,8 @@ function App() {
           groups={file().groups ?? []}
           onGroupCreate={async (name, color) => {
             try {
-              const g = await invoke<WorkspaceGroup>("workspace_group_create", { name, color });
-              const f = await invoke<WorkspacesFile>("workspaces_load");
+              const g = await backend.call<WorkspaceGroup>("workspace_group_create", { name, color });
+              const f = await backend.call<WorkspacesFile>("workspaces_load");
               updateFile(f);
               return g;
             } catch (e) {
@@ -4513,8 +4512,8 @@ function App() {
           onGroupRename={(id, name) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name, color: null, isCollapsed: null });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name, color: null, isCollapsed: null });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update rename failed", e); }
             })();
@@ -4522,8 +4521,8 @@ function App() {
           onGroupSetColor={(id, color) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name: null, color, isCollapsed: null });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name: null, color, isCollapsed: null });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update color failed", e); }
             })();
@@ -4531,8 +4530,8 @@ function App() {
           onGroupToggleCollapse={(id, isCollapsed) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name: null, color: null, isCollapsed });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name: null, color: null, isCollapsed });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update collapse failed", e); }
             })();
@@ -4540,8 +4539,8 @@ function App() {
           onGroupDelete={(id) => {
             void (async () => {
               try {
-                await invoke("workspace_group_delete", { id });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_delete", { id });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_delete failed", e); }
             })();
@@ -4549,8 +4548,8 @@ function App() {
           onWorkspaceSetGroup={(workspaceId, groupId) => {
             void (async () => {
               try {
-                await invoke("workspace_set_group", { workspaceId, groupId });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_set_group", { workspaceId, groupId });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_set_group failed", e); }
             })();
@@ -4562,7 +4561,7 @@ function App() {
           onWorkspaceReorder={(workspaceId, groupId, newIndex) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_reorder", {
+                const f = await backend.call<WorkspacesFile>("workspace_reorder", {
                   workspaceId,
                   groupId,
                   newIndex,
@@ -4574,7 +4573,7 @@ function App() {
           onGroupReorder={(groupId, newIndex) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_group_reorder", {
+                const f = await backend.call<WorkspacesFile>("workspace_group_reorder", {
                   groupId,
                   newIndex,
                 });
@@ -4612,7 +4611,7 @@ function App() {
           onSetCollapsed={(workspaceId, isCollapsed) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_set_collapsed", {
+                const f = await backend.call<WorkspacesFile>("workspace_set_collapsed", {
                   workspaceId,
                   collapsed: isCollapsed,
                 });
@@ -5035,7 +5034,7 @@ function App() {
                     onSetTitle={(pid, title) => {
                       const ws = activeWs();
                       if (!ws) return;
-                      invoke<WorkspacesFile>("pane_set_title", {
+                      backend.call<WorkspacesFile>("pane_set_title", {
                         workspaceId: ws.id,
                         paneId: pid,
                         title: title.trim() === "" ? null : title,
@@ -5046,7 +5045,7 @@ function App() {
                     onSetAnnotation={(pid, annotation) => {
                       const ws = activeWs();
                       if (!ws) return;
-                      invoke<WorkspacesFile>("pane_set_annotation", {
+                      backend.call<WorkspacesFile>("pane_set_annotation", {
                         workspaceId: ws.id,
                         paneId: pid,
                         annotation:
@@ -5300,7 +5299,7 @@ function App() {
         onToggleSeparateClaudeAccount={(v) => {
           const id = addonsWin()?.id;
           if (!id) return;
-          void invoke("workspace_set_claude_separate_account", {
+          void backend.call("workspace_set_claude_separate_account", {
             workspaceId: id,
             enabled: v,
           }).catch((e) =>
@@ -5353,7 +5352,7 @@ function App() {
               onSaveIntent={(text) => {
                 void (async () => {
                   try {
-                    const updated = await invoke<Workspace>("workspace_set_intent", {
+                    const updated = await backend.call<Workspace>("workspace_set_intent", {
                       workspaceId: wsId,
                       intent: text === "" ? null : text,
                     });
@@ -5705,7 +5704,7 @@ function App() {
         activeWorkspaceId={file().active_workspace_id}
         onClose={() => setShowNotes(false)}
         onAdd={(text, tag, workspaceId) => {
-          invoke<Note>("notes_add", {
+          backend.call<Note>("notes_add", {
             text,
             tag: tag ?? null,
             workspaceId: workspaceId ?? null,
@@ -5715,17 +5714,17 @@ function App() {
             .catch((e) => log.error("notes_add failed", e));
         }}
         onDone={(id) =>
-          invoke("notes_update", { id, status: "done" })
+          backend.call("notes_update", { id, status: "done" })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_update done failed", e))
         }
         onReopen={(id) =>
-          invoke("notes_update", { id, status: "open" })
+          backend.call("notes_update", { id, status: "open" })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_update reopen failed", e))
         }
         onDelete={(id) =>
-          invoke("notes_delete", { id })
+          backend.call("notes_delete", { id })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_delete failed", e))
         }
@@ -5744,7 +5743,7 @@ function App() {
                 : i
             )
           );
-          invoke("feed_decide", { requestId: rid, decision: dec }).catch(
+          backend.call("feed_decide", { requestId: rid, decision: dec }).catch(
             (err) => log.error("feed_decide failed", err)
           );
         }}

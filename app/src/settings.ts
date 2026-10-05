@@ -2,7 +2,7 @@
 // The Rust backend owns the canonical schema in src-tauri/src/settings.rs;
 // this file is the typed mirror used by the frontend.
 
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { createLogger } from "./logger";
 
 /** Rule #9: the unified logger, not console.*. */
@@ -490,34 +490,34 @@ export interface UpdateInfo {
 // ─── disk I/O via Tauri commands ─────────────────────────────────────────
 
 export const loadSettings = (): Promise<Settings> =>
-  invoke<Settings>("settings_load");
+  backend.call<Settings>("settings_load");
 
 export const saveSettings = (settings: Settings): Promise<Settings> =>
-  invoke<Settings>("settings_save", { settings });
+  backend.call<Settings>("settings_save", { settings });
 
 export const getPresets = (): Promise<PresetEntry[]> =>
-  invoke<PresetEntry[]>("settings_get_presets");
+  backend.call<PresetEntry[]>("settings_get_presets");
 
 export const applyPreset = (preset: string): Promise<Settings> =>
-  invoke<Settings>("settings_apply_preset", { preset });
+  backend.call<Settings>("settings_apply_preset", { preset });
 
 export const resetSettings = (): Promise<Settings> =>
-  invoke<Settings>("settings_reset");
+  backend.call<Settings>("settings_reset");
 
 export const listSystemFonts = (): Promise<FontFamilies> =>
-  invoke<FontFamilies>("list_system_fonts");
+  backend.call<FontFamilies>("list_system_fonts");
 
 export const fontCatalog = (): Promise<FontCatalogItem[]> =>
-  invoke<FontCatalogItem[]>("font_catalog");
+  backend.call<FontCatalogItem[]>("font_catalog");
 
 export const fontInstall = (id: string): Promise<FontInstallResult> =>
-  invoke<FontInstallResult>("font_install", { id });
+  backend.call<FontInstallResult>("font_install", { id });
 
 export const fontUninstall = (id: string): Promise<FontUninstallResult> =>
-  invoke<FontUninstallResult>("font_uninstall", { id });
+  backend.call<FontUninstallResult>("font_uninstall", { id });
 
 export const checkForUpdates = (): Promise<UpdateInfo> =>
-  invoke<UpdateInfo>("check_for_updates_now");
+  backend.call<UpdateInfo>("check_for_updates_now");
 
 // ─── theme apply ─────────────────────────────────────────────────────────
 

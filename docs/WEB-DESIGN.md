@@ -250,7 +250,7 @@ browser gets those for free. The reverse (daemon → desktop) is out of scope.
 
 ## 7. Delivery, auth, and the security line
 
-### 7.1 Web bundle delivery (Q2, open)
+### 7.1 Web bundle delivery (Q2 — decided 2026-10-05: (b))
 
 The bundle is vite's output — `index.html`, hashed JS/CSS chunks, fonts, ~3 MB.
 Something has to serve it at `https://<domain>/`. Three ways:
@@ -446,11 +446,143 @@ struct (`lib.rs` ~:9491) and `server/internal/term/meta.go`.
 - A daemon restart under systemd can kill the shared tmux server, desktop sessions
   included — accepted, documented in `docs/ymux-server/DEPLOYMENT.md`.
 
+### 8.2 Phase C — plan (2026-10-05)
+
+Approved by Yossi 2026-10-05 (DECISIONS, "Phase C plan"). Phase numbers are allocated at PR time
+(`git log --all --grep=Phase`; 105 is taken by the Context Rail PRs #58/#59).
+
+#### Survey (main = b3aec42)
+- 42 files import `@tauri-apps/*`: api/core 39, api/event 9, plugin-opener 6,
+  plugin-dialog 5, api/window 4, api/webview 3, api/app 1.
+- 192 distinct `invoke` names, ~266 sites (App.tsx 91, FileManagerPane 36, PaneView 14,
+  BrowserPane 11, settings.ts 10, terminalInstance 7, MobilePairing 7, …). Two dynamic
+  sites (`invoke(cmd, …)` in YmuxToolsTab, AddonsTab).
+- 29 `listen` events, 24 of them in App.tsx's onMount.
+- PTY path: `pane_connect` → sessionId → `TerminalInstance.attach(sid)` (onData →
+  `pty_write`, `fitAndResize` → `pty_resize`); output through ONE global `listen("pty:data")`
+  in App.tsx:3846 demuxed via `sessionToPane`, plus a copy in PopoutTerminal.tsx:98.
+  `writeData` already coalesces per rAF, so a WebBackend only needs a streaming TextDecoder.
+- Rust does three things to output the browser will not get in v1: UTF-8 reassembly
+  (pty_decode — redone in TS), the opt-in bidi filter, the OSC 9/99/777 notification parser.
+- Tests: `node --test src/*.test.ts` (15 files) — pure modules only.
+
+#### Shape
+```
+app/src/backend/
+  types.ts    Backend, TermStream, Capability, UnsupportedError
+  tauri.ts    TauriBackend   (invoke / listen / pty plumbing, caps = all)
+  web.ts      WebBackend     (C5)
+  webRoutes.ts command → handler table (C5)
+  index.ts    `backend` singleton + initBackend() awaited in index.tsx before render
+```
+`interface Backend { kind: "tauri"|"web"; call<T>(cmd, args?): Promise<T>;
+on<T>(event, cb): Promise<Unlisten>; term(sessionId): TermStream; caps: ReadonlySet<Capability> }`
+`TermStream { write(s: string); resize(c, r); onData(cb); onExit(cb); close() }`.
+`on` stays async so every `await listen(…)` ordering in App.tsx is preserved 1:1.
+
+#### PRs
+
+C1 is **Phase 106**.
+
+##### C1 — seam + codemod (desktop, no behaviour change)
+- `backend/types.ts`, `tauri.ts`, `index.ts`. `call` = `invoke`, `on` = `listen`.
+- One-off codemod script (scratch, not committed): `invoke<T>("x", a)` →
+  `backend.call<T>("x", a)`, `listen<T>(` → `backend.on<T>(`, imports rewritten.
+  Generic parameters kept verbatim (Rule #5). The two dynamic sites by hand.
+- Guard: `src/backendSeam.test.ts` fails when any file outside `src/backend/` imports
+  `@tauri-apps/api/core` or `@tauri-apps/api/event`.
+- Vault: frontend-lib.md (new "backend seam" section) + every covering page whose
+  files the codemod touched (re-stamp; prose only where it names `invoke`).
+- Size: ~150 new + ~300 mechanical line edits across 39 files.
+
+##### C2 — TermStream (desktop, the risky one)
+- TauriBackend registers the single `pty:data` / `pty:exit` listener inside
+  `initBackend()` (before render) and demuxes by `session_id` into per-session
+  subscribers. No buffering for an unsubscribed session — same drop semantics as today.
+- `TerminalInstance.attach(stream)`; `sessionId` stays as a field for the maps.
+  `pty_write` / `pty_resize` go through `stream.write` / `stream.resize`.
+- App.tsx: the global pty:data listener goes; connectPane subscribes `onData` →
+  `writeData`, `onExit` → today's exit handler body (moved, not rewritten).
+  PaneView's dropped-file `pty_write` → `stream.write`. PopoutTerminal same.
+- Keep the restore-last ordering comment true (the listener now exists at init).
+- Risk list to smoke: popout detach/reattach, exit while popped out, restore after
+  app restart, reconnect after SSH drop, resize storm, 4 panes streaming.
+
+##### C3 — capabilities + import-safety (desktop, no behaviour change)
+- `Capability` set (~17): localPanes, ssh, wsl, browserPane, popout, fileManagerLocal,
+  fileManagerRemote, diffPane, worktrees, tickets, skills, addons, mobilePairingAdmin,
+  updater, fonts, stt, tray, portForward, provisioning, insights.
+  TauriBackend = all, so the desktop renders exactly what it does today.
+- Gate the sidebar menus, command palette, Settings tabs, pane-kind pickers, and
+  `paneCaps()` (intersect with backend caps).
+- window / webview / dialog / opener: wrap the call sites that run at import or boot
+  (index.tsx `getCurrentWindow().label`, logger, platform `host_platform`) so a
+  browser without `__TAURI_INTERNALS__` loads the bundle. `opener` → `window.open`,
+  `dialog` → gated off in web.
+
+→ **Desktop release (0.5.x) carrying C1–C3.** Yossi smokes on Windows + Mac against a
+checklist (connect local + SSH, split/close/swap, popout + reattach, kill, restart →
+restore, feed gate allow/deny, file manager both sides, Browser pane, Settings, update
+check). WebBackend does not start before that release is green.
+
+##### C4 — the daemon serves the bundle (Go, small)
+- `ymux-server` serves `~/.ymux/server/www/current/` at `/` when it exists
+  (`index.html` no-cache, `/assets/*` immutable, CSP for the app); the diagnostic page
+  stays at `/diag`. `/api/version` gains `web_version` + `web_caps`.
+- ci-windows frontend job uploads the vite `dist/` as a `ymux-web` artifact, so a
+  box can be loaded by hand (`gh run download` → copy into `www/<ver>/`, symlink
+  `current`). This is the serving half of Q2 option (b); the add-on upload is Phase D.
+- Settings store (decided 2026-10-05: on the daemon, shared by every browser):
+  `GET/PUT /api/v2/settings` → `<dir>/web-settings.json`, an opaque JSON document +
+  `version` (same 409 guard as web workspaces, atomic write), `settings:changed` on the
+  events WS. The daemon never parses the fields — the desktop `Settings` type stays the
+  only schema.
+- Version bump (2.9.0) with the usual five places; rebake.
+
+##### C5 — WebBackend: auth, workspaces, terminal
+- Auth: token in localStorage; none → a small Solid login screen running the Phase 96
+  request-access flow (code shown, desktop approves, poll, redeem). 401 → back to it.
+- `term(sid)` = WS `/api/v2/term/sessions/{name}/attach`, binary in →
+  `TextDecoder("utf-8", {stream:true})` → onData; `{"type":"exit"}` → onExit.
+- `pane_connect` → POST term/sessions (workspace_id, policy) or attach to an existing
+  name; `pane_disconnect` → close WS; `pane_kill_session` → DELETE.
+- Workspaces: `/api/v2/web/workspaces` mapped to the desktop `Workspace` shape with a
+  synthesized ssh-shaped connection (host = location.hostname) — the panes ARE remote
+  tmux, so RTL profile and paneCaps answer "remote". Layout ops run client-side in
+  `layoutOps.ts` (ported from lib.rs split_pane_in / close_pane_in / set_split_ratio_in
+  / swap_two_panes_in_layout / reset_all_split_ratios, with their tests), then PUT with
+  `version`; 409 → take the returned doc, re-apply the op once, else surface.
+- Events: one WS `/api/v2/events?lang=…`; `initBackend` awaits `hello` and serves the
+  boot reads (`pane_agent_states`, `pane_briefs`, `feed_list`, `notifications_list`,
+  `list_detected_ports`) from it. Reconnect with backoff → new hello → a synthetic
+  `backend:resync` event App.tsx re-seeds on (TauriBackend never emits it).
+- Settings: `settings_load` / `settings_save` → the daemon store from C4 (defaults when
+  empty); `settings:changed` from another browser re-applies live.
+- Any command not in the route table rejects with `UnsupportedError` (logged once per
+  name) — a hidden-by-caps button should never reach it; if one does, it is a C3 bug.
+
+##### C6 — WebBackend: the ymux surfaces
+- feed_decide (WS frame), feed history persisted in IndexedDB, notes CRUD,
+  notifications clear, history + transcript + resume (Sessions panel), files via
+  `/api/v2/files/*`, insights / claude usage via the existing daemon routes,
+  pane title / annotation via the layout leaf.
+
+#### Verification
+- C1–C3: CI (tsc + node tests + vite + both platforms), then the desktop release smoke.
+  "Compiles" is not "verified" — the release smoke is the gate.
+- C4–C6: live on 111.yossiyehezkel.com over HTTPS — chronoscope headless + Yossi's
+  phone/laptop: pair → create workspace → split → real `claude` with gate → approve the
+  card in the browser → reload → layout and feed restored → kill → history → resume.
+
+#### Not in Phase C
+Popouts as tabs, the bidi filter, OSC notifications from the web PTY, tickets / skills / diff pane in web mode, the ymux-web add-on (D), PWA (E).
+
 ## 9. Questions (tracked in `docs/DECISIONS.md`)
 
 - **Q1 truth model — DECIDED 2026-09-10:** server-native workspaces; tmux
   sessions are the shared reality (§4).
-- **Q2 bundle delivery — OPEN:** three options in §7.1. Recommendation: add-on.
+- **Q2 bundle delivery — DECIDED 2026-10-05: (b), the `ymux-web` add-on** (§7.1);
+  the daemon's serving half lands in Phase C4, the upload in Phase D.
 - **Q3 "local parallel" — DEFERRED 2026-09-10** until the remote path is proven
   end-to-end. It would mean the Rust backend implementing the same HTTP/WS API
   — two implementations of one contract in two languages, the macOS-branch

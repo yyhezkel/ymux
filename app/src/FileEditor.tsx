@@ -1,5 +1,5 @@
 import { createSignal, Show, onMount, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { keyEq } from "./shortcuts";
 import { TechText } from "./TechText";
@@ -85,8 +85,8 @@ export function FileEditor(p: Props) {
     try {
       const fc: FileContents =
         p.side === "local"
-          ? await invoke("file_read_local", { path: p.path })
-          : await invoke("file_read_remote", {
+          ? await backend.call("file_read_local", { path: p.path })
+          : await backend.call("file_read_remote", {
               workspaceId: p.workspaceId,
               path: p.path,
             });
@@ -96,7 +96,7 @@ export function FileEditor(p: Props) {
       // Phase 17.B threshold check happens against the actual byte
       // size returned by the backend so we don't second-guess what
       // counts as "large".
-      const threshold = await invoke<number>("file_large_threshold");
+      const threshold = await backend.call<number>("file_large_threshold");
       setLargeWarn(fc.size > threshold && !fc.is_binary);
     } catch (e) {
       setErr(String(e));
@@ -111,9 +111,9 @@ export function FileEditor(p: Props) {
     setErr(null);
     try {
       if (p.side === "local") {
-        await invoke("file_write_local", { path: p.path, text: contents() });
+        await backend.call("file_write_local", { path: p.path, text: contents() });
       } else {
-        await invoke("file_write_remote", {
+        await backend.call("file_write_remote", {
           workspaceId: p.workspaceId,
           path: p.path,
           text: contents(),

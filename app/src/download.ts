@@ -1,5 +1,5 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 // Phase 65 (bug K): "always ask where to save" downloads. Opens a native
 // Save dialog (Tauri dialog plugin), defaulting to the last folder the
@@ -45,7 +45,7 @@ export async function saveRemoteFileAs(
     : suggestedName;
   const dest = await save({ defaultPath });
   if (!dest) return null; // cancelled
-  await invoke("file_download", {
+  await backend.call("file_download", {
     workspaceId,
     remotePath,
     localPath: dest,

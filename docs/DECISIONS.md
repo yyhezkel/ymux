@@ -161,6 +161,7 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
   dependency the daemon does not have and REQUIRES signature verification (a fetched
   bundle served to the user's browser is code execution in their session).
   **Recommendation: (b), with (c) as a later opt-in.**
+  **→ DECIDED 2026-10-05: (b).** See Decided, "Phase C plan".
 - **Q3 "local parallel" — DEFERRED (Yossi, 2026-09-10): revisit after the remote path
   is proven end-to-end.** It means the Rust backend re-implementing the same HTTP/WS
   API (two implementations, two languages — the macOS-branch lesson). When it comes
@@ -463,6 +464,19 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 ---
 
 ## Decided
+
+### 2026-10-05 — Phase C plan: C1–C3 ship in one desktop release; settings on the daemon; Q2 = (b)
+- **Context:** Phase B is merged; Phase C moves the frontend onto a `Backend` seam
+  (WEB-DESIGN §5). The plan is WEB-DESIGN §8.2: C1 seam + codemod, C2 `TermStream`,
+  C3 capabilities, C4 the daemon serves the bundle + a settings store, C5/C6 `WebBackend`.
+- **Decided (Yossi):** C1–C3 (all "desktop behaviour unchanged") ship together in **one
+  desktop release** with one Windows + Mac smoke; `WebBackend` work starts only after it.
+- **Decided (Yossi):** browser-mode **settings live on the daemon**, shared by every
+  browser — an opaque JSON document with a `version` guard (`GET/PUT /api/v2/settings`),
+  not per-browser localStorage. The daemon never parses the fields.
+- **Decided (Yossi):** **Q2 = (b), the `ymux-web` add-on.** Phase C4 builds the serving
+  half in the daemon (`~/.ymux/server/www/current/` at `/`, diagnostic page at `/diag`);
+  the add-on upload is Phase D. Until then a box is loaded by hand from the CI artifact.
 
 ### 2026-10-05 — B6 details: retention 100 rows, resume reuses the name, transcript found by id
 - **Decided (Claude, flagged to Yossi):** §4.2 left "N" open — **100** ended rows (and 90

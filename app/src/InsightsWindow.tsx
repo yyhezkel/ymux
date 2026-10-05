@@ -10,7 +10,7 @@ import {
   IconRefresh,
   IconClose,
 } from "./icons";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t, currentLanguage } from "./i18n";
 import { formatResetLocal } from "./claudeUsageFmt";
 import { MobilePairing } from "./MobilePairing";
@@ -121,7 +121,7 @@ export function InsightsWindow(p: Props) {
     setUsageLoading(true);
     setUsageErr(null);
     try {
-      const u = await invoke<ClaudeUsage>("claude_usage_fetch", {
+      const u = await backend.call<ClaudeUsage>("claude_usage_fetch", {
         workspaceId: p.workspaceId,
         force,
       });
@@ -158,7 +158,7 @@ export function InsightsWindow(p: Props) {
     setLogLoading(true);
     setLogErr(null);
     try {
-      const r = await invoke<string>("insights_fetch", {
+      const r = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: "/logs?tail=400",
       });
@@ -199,14 +199,14 @@ export function InsightsWindow(p: Props) {
     setLoading(true);
     setErr(null);
     try {
-      const cur = await invoke<string>("insights_fetch", {
+      const cur = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: "/current",
       });
       if (!cur.trim()) throw new Error(t("insights.unreachable"));
       setSnap(JSON.parse(cur) as Snapshot);
       try {
-        const d = await invoke<string>("insights_fetch", {
+        const d = await backend.call<string>("insights_fetch", {
           workspaceId: p.workspaceId,
           path: "/docker",
         });
@@ -256,7 +256,7 @@ export function InsightsWindow(p: Props) {
   const dockerAction = async (id: string, action: string) => {
     if (!p.workspaceId) return;
     try {
-      await invoke("insights_docker_action", {
+      await backend.call("insights_docker_action", {
         workspaceId: p.workspaceId,
         containerId: id,
         action,

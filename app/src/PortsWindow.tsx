@@ -1,5 +1,5 @@
 import { createMemo, createEffect, createSignal, For, Show, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ForwardRow, Workspace } from "./types";
 import { t } from "./i18n";
@@ -58,7 +58,7 @@ export function PortsWindow(p: Props) {
     if (!p.open) return;
     void (async () => {
       try {
-        const snap = await invoke<{ rpc_server?: { bind_error?: string | null } }>("doctor");
+        const snap = await backend.call<{ rpc_server?: { bind_error?: string | null } }>("doctor");
         setRpcDown(snap.rpc_server?.bind_error ?? null);
       } catch (e) {
         // Diagnostics are best-effort — never let them break the panel.

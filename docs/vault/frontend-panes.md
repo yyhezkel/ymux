@@ -96,7 +96,7 @@ hide blanks a window that will never call show again.
 
 **The `shownWsId` invariant.** The chrome must hide the Webview belonging to the
 workspace that is **actually on screen**, which is *not* the same as `p.workspace?.id`.
-One writer (the show effect's `.then`, after the invoke resolves), one reader
+One writer (the show effect's `.then`, after the `backend.call` resolves), one reader
 (`hideShown`), and three callers: the workspace-switch effect (hide the **outgoing**
 workspace before forgetting which it was), the show effect's no-URL branch, and the
 falling-edge close effect. Phase 85.B: all three used to pass the *active* id, so opening

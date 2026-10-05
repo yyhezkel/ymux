@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onMount, onCleanup, createMemo } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { IconClose, IconCheck, IconCircle } from "./icons";
@@ -114,10 +113,10 @@ export function LocalSetupFlow(p: Props) {
     // listeners only need to be live before local_setup_start (a user
     // click), not before the read-only inspect.
     void runInspect();
-    unlisten = await listen<StepProgress>("local-setup:progress", (e) => {
+    unlisten = await backend.on<StepProgress>("local-setup:progress", (e) => {
       setStepStates((prev) => ({ ...prev, [e.payload.step_index]: e.payload }));
     });
-    unlistenComplete = await listen<LocalSetupResult>("local-setup:complete", (e) => {
+    unlistenComplete = await backend.on<LocalSetupResult>("local-setup:complete", (e) => {
       setResult(e.payload);
       setStep("done");
     });
@@ -131,14 +130,14 @@ export function LocalSetupFlow(p: Props) {
     setInspecting(true);
     setInspectErr(null);
     try {
-      const r = await invoke<LocalSetupInspect>("local_setup_inspect", {
+      const r = await backend.call<LocalSetupInspect>("local_setup_inspect", {
         distro: null,
       });
       setInspect(r);
       // Read-only; a failure here must not block the wizard, it only
       // costs us the up-front UAC warning.
       try {
-        setPreflight(await invoke<WslPreflight>("local_setup_preflight"));
+        setPreflight(await backend.call<WslPreflight>("local_setup_preflight"));
       } catch {
         setPreflight(null);
       }
@@ -218,7 +217,7 @@ export function LocalSetupFlow(p: Props) {
     setResult(null);
     setStep("execute");
     try {
-      const handle = await invoke<RunHandle>("local_setup_start", {
+      const handle = await backend.call<RunHandle>("local_setup_start", {
         input: {
           steps,
           distro: mac ? null : (inspect()?.wsl.default_distro ?? null),
@@ -502,7 +501,7 @@ export function LocalSetupFlow(p: Props) {
                                 class="danger"
                                 onClick={() => {
                                   setRestartErr(null);
-                                  invoke("restart_windows").catch((e) =>
+                                  backend.call("restart_windows").catch((e) =>
                                     setRestartErr(String(e))
                                   );
                                 }}

@@ -127,7 +127,7 @@ nearest ancestor colour; `allPaneAgentRows` labels every Queue row `header › s
 header `+` (§ Sessions as rows).
 
 **The event subscriptions are the map of the backend↔frontend contract.** Around
-lines 2778–3200, `App.tsx` registers `listen()` for: `pty:data`, `pty:exit`,
+the onMount block (~3840–4100), `App.tsx` registers `backend.on()` for: `pty:data`, `pty:exit`,
 `ssh-disconnected`, CLI alignment, the feed (`FeedItem` + resolved), notifications,
 `notes:changed`, `workspaces:changed`, `settings:changed`, `pane:agent-run` (the
 per-pane Claude traffic light), hooks-outdated, and `update:available`. If you are hunting "who reacts to event X", it is almost always
@@ -519,8 +519,9 @@ four layers.
 
 ## Invariants
 
-- **Rule #5** — no `any`. `unknown` and narrow, or define the type. `invoke` return
-  types are always explicit.
+- **Rule #5** — no `any`. `unknown` and narrow, or define the type. `backend.call<T>`
+  return types are always explicit (the Tauri imports live only in `src/backend/`, see
+  frontend-lib.md § The backend seam).
 - **Rule #9** — `createLogger(tag)` from `logger.ts`, never raw `console.*`.
 - **Nothing idle may cost IPC or paint.** An effect that invokes must track only what it
   needs (`set_tray_badge` goes through the `unreadCount` memo; the modal browser-hide

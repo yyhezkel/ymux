@@ -1,5 +1,5 @@
 import { createSignal, createEffect, For, Show, onMount, onCleanup, createMemo } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { t } from "./i18n";
 import { FileEditor } from "./FileEditor";
@@ -218,7 +218,7 @@ export function FileManagerPane(p: Props) {
 
   const refreshLocal = async () => {
     try {
-      const list = await invoke<FileEntry[]>("file_list_local", {
+      const list = await backend.call<FileEntry[]>("file_list_local", {
         path: localPath(),
         showHidden: showHidden(),
       });
@@ -233,7 +233,7 @@ export function FileManagerPane(p: Props) {
   // still exist?" without flashing a red error for a stale bookmark.
   const probeLocal = async (path: string): Promise<FileEntry[] | null> => {
     try {
-      return await invoke<FileEntry[]>("file_list_local", {
+      return await backend.call<FileEntry[]>("file_list_local", {
         path,
         showHidden: showHidden(),
       });
@@ -243,7 +243,7 @@ export function FileManagerPane(p: Props) {
   };
   const probeRemote = async (path: string): Promise<FileEntry[] | null> => {
     try {
-      return await invoke<FileEntry[]>("file_list_remote", {
+      return await backend.call<FileEntry[]>("file_list_remote", {
         workspaceId: p.workspaceId,
         path,
         showHidden: showHidden(),
@@ -256,7 +256,7 @@ export function FileManagerPane(p: Props) {
   const refreshRemote = async () => {
     if (!p.hasSsh) return;
     try {
-      const list = await invoke<FileEntry[]>("file_list_remote", {
+      const list = await backend.call<FileEntry[]>("file_list_remote", {
         workspaceId: p.workspaceId,
         path: remotePath(),
         showHidden: showHidden(),
@@ -345,7 +345,7 @@ export function FileManagerPane(p: Props) {
       setLocalEntries(savedLocal);
     } else {
       try {
-        const home = await invoke<string>("file_home_local");
+        const home = await backend.call<string>("file_home_local");
         setLocalPath(home);
       } catch (e) {
         setLocalPath(isWindows() ? "C:\\" : "/");
@@ -367,7 +367,7 @@ export function FileManagerPane(p: Props) {
       } else {
         let home: string | null = null;
         try {
-          home = await invoke<string>("file_home_remote", {
+          home = await backend.call<string>("file_home_remote", {
             workspaceId: p.workspaceId,
           });
         } catch {
@@ -434,7 +434,7 @@ export function FileManagerPane(p: Props) {
               const dest = fullLocal(basename);
               if (dest.toLowerCase() === host.toLowerCase()) continue;
               await wrap(`copy ${basename}`, async () => {
-                await invoke("file_copy_local", { src: host, dest });
+                await backend.call("file_copy_local", { src: host, dest });
               });
             }
             await refreshLocal();
@@ -530,13 +530,13 @@ export function FileManagerPane(p: Props) {
     // Phase GG: render .md in the in-app viewer instead of the OS app.
     if (isMarkdownFile(e.name)) {
       await wrap(`open ${e.name}`, async () => {
-        const fc = await invoke<{ text: string }>("file_read_local", { path });
+        const fc = await backend.call<{ text: string }>("file_read_local", { path });
         openMarkdown(e.name, fc.text);
       });
       return;
     }
     await wrap(`open ${e.name}`, async () => {
-      await invoke("file_open_local", { path });
+      await backend.call("file_open_local", { path });
       setStatus(t("fm.toast.opened_local", { file: e.name }));
     });
   };
@@ -550,7 +550,7 @@ export function FileManagerPane(p: Props) {
     // instead of downloading to a temp file + opening the OS app.
     if (isMarkdownFile(e.name)) {
       await wrap(`open ${e.name}`, async () => {
-        const fc = await invoke<{ text: string }>("file_read_remote", {
+        const fc = await backend.call<{ text: string }>("file_read_remote", {
           workspaceId: p.workspaceId,
           path,
         });
@@ -559,7 +559,7 @@ export function FileManagerPane(p: Props) {
       return;
     }
     await wrap(`open ${e.name}`, async () => {
-      const tempPath = await invoke<string>("file_open_remote", {
+      const tempPath = await backend.call<string>("file_open_remote", {
         workspaceId: p.workspaceId,
         remotePath: path,
       });
@@ -590,7 +590,7 @@ export function FileManagerPane(p: Props) {
     const local = fullLocal(name);
     const remote = fullRemote(name);
     const n = await wrap(`upload ${name}`, () =>
-      invoke<number>("file_upload", {
+      backend.call<number>("file_upload", {
         workspaceId: p.workspaceId,
         localPath: local,
         remotePath: remote,
@@ -639,7 +639,7 @@ export function FileManagerPane(p: Props) {
     const outputName = `${name}.zip`;
     if (s.side === "local") {
       const out = await wrap(`zip ${name}`, () =>
-        invoke<string>("file_manager_zip_local", {
+        backend.call<string>("file_manager_zip_local", {
           cwd: localPath(),
           paths: [name],
           outputName,
@@ -657,7 +657,7 @@ export function FileManagerPane(p: Props) {
       setStatus(`zip ${name}`);
       setErr(null);
       try {
-        await invoke<string>("file_manager_zip_remote", {
+        await backend.call<string>("file_manager_zip_remote", {
           workspaceId: p.workspaceId,
           cwd: remotePath(),
           paths: [name],
@@ -703,7 +703,7 @@ export function FileManagerPane(p: Props) {
     const name = s.entry.name;
     const outputName = `${name}.tar.gz`;
     const out = await wrap(`tar ${name}`, () =>
-      invoke<string>("file_manager_targz_remote", {
+      backend.call<string>("file_manager_targz_remote", {
         workspaceId: p.workspaceId,
         cwd: remotePath(),
         paths: [name],
@@ -733,7 +733,7 @@ export function FileManagerPane(p: Props) {
     const name = s.entry.name;
     if (s.side === "local") {
       const out = await wrap(`unzip ${name}`, () =>
-        invoke<string>("file_manager_unzip_local", {
+        backend.call<string>("file_manager_unzip_local", {
           zipPath: fullLocal(name),
         })
       );
@@ -743,7 +743,7 @@ export function FileManagerPane(p: Props) {
       }
     } else {
       const out = await wrap(`unzip ${name}`, () =>
-        invoke<string>("file_manager_unzip_remote", {
+        backend.call<string>("file_manager_unzip_remote", {
           workspaceId: p.workspaceId,
           zipPath: fullRemote(name),
         })
@@ -772,10 +772,10 @@ export function FileManagerPane(p: Props) {
     try {
       conflict =
         s.side === "local"
-          ? await invoke<boolean>("file_manager_unzip_local_check", {
+          ? await backend.call<boolean>("file_manager_unzip_local_check", {
               zipPath: fullLocal(name),
             })
-          : await invoke<boolean>("file_manager_unzip_remote_check", {
+          : await backend.call<boolean>("file_manager_unzip_remote_check", {
               workspaceId: p.workspaceId,
               zipPath: fullRemote(name),
             });
@@ -800,12 +800,12 @@ export function FileManagerPane(p: Props) {
   const performDelete = async (side: Side, name: string) => {
     if (side === "local") {
       const path = fullLocal(name);
-      await wrap(`delete ${name}`, () => invoke("file_delete_local", { path }));
+      await wrap(`delete ${name}`, () => backend.call("file_delete_local", { path }));
       await refreshLocal();
     } else {
       const path = fullRemote(name);
       await wrap(`delete ${name}`, () =>
-        invoke("file_delete_remote", { workspaceId: p.workspaceId, path })
+        backend.call("file_delete_remote", { workspaceId: p.workspaceId, path })
       );
       await refreshRemote();
     }
@@ -828,7 +828,7 @@ export function FileManagerPane(p: Props) {
     if (!next || next === name) return;
     if (side === "local") {
       await wrap(`rename ${name}`, () =>
-        invoke("file_rename_local", {
+        backend.call("file_rename_local", {
           oldPath: fullLocal(name),
           newPath: fullLocal(next),
         })
@@ -836,7 +836,7 @@ export function FileManagerPane(p: Props) {
       await refreshLocal();
     } else {
       await wrap(`rename ${name}`, () =>
-        invoke("file_rename_remote", {
+        backend.call("file_rename_remote", {
           workspaceId: p.workspaceId,
           oldPath: fullRemote(name),
           newPath: fullRemote(next),
@@ -850,12 +850,12 @@ export function FileManagerPane(p: Props) {
     if (!name) return;
     if (side === "local") {
       await wrap(`mkdir ${name}`, () =>
-        invoke("file_mkdir_local", { path: fullLocal(name) })
+        backend.call("file_mkdir_local", { path: fullLocal(name) })
       );
       await refreshLocal();
     } else {
       await wrap(`mkdir ${name}`, () =>
-        invoke("file_mkdir_remote", {
+        backend.call("file_mkdir_remote", {
           workspaceId: p.workspaceId,
           path: fullRemote(name),
         })
@@ -872,12 +872,12 @@ export function FileManagerPane(p: Props) {
     if (!name) return;
     if (side === "local") {
       await wrap(`create ${name}`, () =>
-        invoke("file_create_local", { path: fullLocal(name) })
+        backend.call("file_create_local", { path: fullLocal(name) })
       );
       await refreshLocal();
     } else {
       await wrap(`create ${name}`, () =>
-        invoke("file_create_remote", {
+        backend.call("file_create_remote", {
           workspaceId: p.workspaceId,
           path: fullRemote(name),
         })
@@ -909,26 +909,26 @@ export function FileManagerPane(p: Props) {
     }
     const ok = await wrap(`${c.op === "cut" ? "move" : "copy"} ${c.name}`, async () => {
       if (c.side === "local" && targetSide === "local") {
-        await invoke("file_copy_local", { src: c.path, dest });
-        if (c.op === "cut") await invoke("file_delete_local", { path: c.path });
+        await backend.call("file_copy_local", { src: c.path, dest });
+        if (c.op === "cut") await backend.call("file_delete_local", { path: c.path });
       } else if (c.side === "remote" && targetSide === "remote") {
         if (c.op === "cut") {
-          await invoke("file_rename_remote", {
+          await backend.call("file_rename_remote", {
             workspaceId: p.workspaceId,
             oldPath: c.path,
             newPath: dest,
           });
         } else {
-          await invoke("file_copy_remote", { workspaceId: p.workspaceId, src: c.path, dest });
+          await backend.call("file_copy_remote", { workspaceId: p.workspaceId, src: c.path, dest });
         }
       } else {
         // local → remote: upload, then delete local on cut.
-        await invoke<number>("file_upload", {
+        await backend.call<number>("file_upload", {
           workspaceId: p.workspaceId,
           localPath: c.path,
           remotePath: dest,
         });
-        if (c.op === "cut") await invoke("file_delete_local", { path: c.path });
+        if (c.op === "cut") await backend.call("file_delete_local", { path: c.path });
       }
       return true;
     });
@@ -1000,7 +1000,7 @@ export function FileManagerPane(p: Props) {
       const name = src.split(/[\\/]/).filter(Boolean).pop() || "file";
       if (side === "remote") {
         await wrap(`upload ${name}`, () =>
-          invoke<number>("file_upload", {
+          backend.call<number>("file_upload", {
             workspaceId: p.workspaceId,
             localPath: src,
             remotePath: fullRemote(name),
@@ -1008,7 +1008,7 @@ export function FileManagerPane(p: Props) {
         );
       } else {
         await wrap(`copy ${name}`, () =>
-          invoke("file_copy_local", { src, dest: fullLocal(name) })
+          backend.call("file_copy_local", { src, dest: fullLocal(name) })
         );
       }
     }
@@ -1027,7 +1027,7 @@ export function FileManagerPane(p: Props) {
       const basename = host.split(/[\\/]/).filter(Boolean).pop() || "dropped";
       const remote = fullRemote(basename);
       await wrap(`upload ${basename}`, () =>
-        invoke<number>("file_upload", {
+        backend.call<number>("file_upload", {
           workspaceId: p.workspaceId,
           localPath: host,
           remotePath: remote,

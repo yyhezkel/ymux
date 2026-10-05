@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import qrcode from "qrcode-generator";
 import { t } from "./i18n";
@@ -83,7 +83,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
   const refreshStatus = async () => {
     if (!ws()) return;
     try {
-      const s = JSON.parse(await invoke<string>("mobile_pairing_status", { workspaceId: ws() })) as PairStatus;
+      const s = JSON.parse(await backend.call<string>("mobile_pairing_status", { workspaceId: ws() })) as PairStatus;
       setStatus(s);
       if (s.domain && !domain()) setDomain(s.domain);
     } catch (e) {
@@ -94,7 +94,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
   const refreshDevices = async () => {
     if (!ws()) return;
     try {
-      const r = JSON.parse(await invoke<string>("mobile_pairing_list_devices", { workspaceId: ws() })) as {
+      const r = JSON.parse(await backend.call<string>("mobile_pairing_list_devices", { workspaceId: ws() })) as {
         devices: PairedDevice[];
       };
       setDevices(r.devices ?? []);
@@ -114,7 +114,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setNote(null);
     try {
       const r = JSON.parse(
-        await invoke<string>("mobile_pairing_init", {
+        await backend.call<string>("mobile_pairing_init", {
           workspaceId: ws(),
           domain: domain().trim(),
           cfToken: cfToken().trim(),
@@ -143,7 +143,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setErr(null);
     setNote(null);
     try {
-      await invoke("mobile_pairing_disconnect", { workspaceId: ws() });
+      await backend.call("mobile_pairing_disconnect", { workspaceId: ws() });
       setDomain(""); // clear the typed value so the setup form comes back empty
       await refreshStatus();
     } catch (e) {
@@ -183,7 +183,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setCopied(false);
     try {
       const issued = JSON.parse(
-        await invoke<string>("mobile_pairing_generate_qr", {
+        await backend.call<string>("mobile_pairing_generate_qr", {
           workspaceId: ws(),
           deviceName: pairName().trim() || "device",
         }),
@@ -254,7 +254,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
 
   const revoke = async (id: string) => {
     try {
-      await invoke("mobile_pairing_revoke", { workspaceId: ws(), deviceId: id });
+      await backend.call("mobile_pairing_revoke", { workspaceId: ws(), deviceId: id });
       await refreshDevices();
     } catch (e) {
       setErr(String(e));
@@ -265,7 +265,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     const name = window.prompt(t("mobile.rename_prompt"), current);
     if (name == null) return;
     try {
-      await invoke("mobile_pairing_rename", { workspaceId: ws(), deviceId: id, name });
+      await backend.call("mobile_pairing_rename", { workspaceId: ws(), deviceId: id, name });
       await refreshDevices();
     } catch (e) {
       setErr(String(e));

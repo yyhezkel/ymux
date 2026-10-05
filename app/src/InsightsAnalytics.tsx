@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createEffect, on, onCleanup, For, Show } from "solid-js";
 import { createNarrow } from "./useNarrow";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { IconClipboard, IconRefresh, IconTerminal } from "./icons";
 import { t, currentLanguage } from "./i18n";
 import { fmtBytes, fmtBps, fmtPct, fmtSpan } from "./insightsFmt";
@@ -104,7 +104,7 @@ export function InsightsAnalytics(p: Props) {
     setHover(null);
     const since = Math.floor(Date.now() / 1000) - rangeSeconds();
     try {
-      const raw = await invoke<string>("insights_fetch", {
+      const raw = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: `/analytics?since=${since}&points=120`,
       });

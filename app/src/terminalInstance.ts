@@ -8,7 +8,7 @@ import type {
 } from "@xterm/addon-clipboard";
 
 import { visualToLogical, visualToLogicalStream } from "./copyBidi";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
@@ -425,7 +425,7 @@ export async function readClipboardText(): Promise<string> {
   } catch {
     // Expected in WebView2 — fall through rather than log noise per paste.
   }
-  return await invoke<string>("clipboard_read_text");
+  return await backend.call<string>("clipboard_read_text");
 }
 
 /** Paste arbitrary text into the active terminal. xterm.js will wrap
@@ -941,7 +941,7 @@ export class TerminalInstance {
           const path = m[1];
           if (!this.fileLinkMatchLogged) {
             this.fileLinkMatchLogged = true;
-            void invoke("diag_log", {
+            void backend.call("diag_log", {
               level: "info",
               msg: `[file] link provider matched in pane ${this.paneId}`,
             }).catch(() => {});
@@ -1616,7 +1616,7 @@ export class TerminalInstance {
         out = swapArrowSeq(data);
       }
       if (this.sessionId)
-        invoke("pty_write", { sessionId: this.sessionId, data: out }).catch(
+        backend.call("pty_write", { sessionId: this.sessionId, data: out }).catch(
           (err) => console.error("pty_write failed", err)
         );
     });
@@ -1709,7 +1709,7 @@ export class TerminalInstance {
     // tmux painting at the stale width. Forcing the resize
     // guarantees tmux is told the final dimensions.
     if (this.sessionId && (changed || force)) {
-      invoke("pty_resize", {
+      backend.call("pty_resize", {
         sessionId: this.sessionId,
         cols: this.term.cols,
         rows: this.term.rows,
@@ -1754,7 +1754,7 @@ export class TerminalInstance {
   logFontSwap(label: string): void {
     const cs = this.cs();
     const fam = String(this.term.options.fontFamily ?? "").slice(0, 40);
-    void invoke("diag_log", {
+    void backend.call("diag_log", {
       level: "info",
       msg: `[font-swap] ${label} pane=${this.paneId} charSvc=${cs?.width}x${cs?.height} size=${this.term.options.fontSize} fam=${JSON.stringify(fam)}`,
     }).catch(() => {});
@@ -1807,7 +1807,7 @@ export class TerminalInstance {
         if (!g_terminals.has(this)) return;
         this.applyFontOnce(real, px);
         const cs = this.cs();
-        void invoke("diag_log", {
+        void backend.call("diag_log", {
           level: "info",
           msg: `[font-fix] pane=${this.paneId} afterSwap charSvc=${cs?.width}x${cs?.height} size=${this.term.options.fontSize}`,
         }).catch(() => {});
@@ -1917,7 +1917,7 @@ export class TerminalInstance {
     // them) - not a linkHandler bug.
     if (!this.oscHyperlinkLogged && merged.includes("]8;")) {
       this.oscHyperlinkLogged = true;
-      void invoke("diag_log", {
+      void backend.call("diag_log", {
         level: "info",
         msg: `OSC8 hyperlink sequence detected in pane ${this.paneId}`,
       }).catch(() => {});

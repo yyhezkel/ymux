@@ -22,12 +22,35 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+  - app/src/backend/types.ts
+  - app/src/backend/tauri.ts
+  - app/src/backend/index.ts
 ---
 
 # Frontend library modules
 
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
+
+## The backend seam — `src/backend/` (Phase 106, WEB-DESIGN §5)
+
+Every host call goes through the `backend` singleton from `src/backend/index.ts`:
+`backend.call<T>(cmd, args)` (was `invoke`), `await backend.on<T>(event, cb)` (was
+`listen`), `backend.emit(event, payload)` (cross-window, popouts only). `TauriBackend`
+is a pass-through to Tauri IPC, so the desktop behaves exactly as before. The point is
+the second implementation: a browser build (Phase C5) swaps in a `WebBackend` that
+answers the same command names from the daemon's HTTP/WS API.
+
+- **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
+  `src/backend/` imports `@tauri-apps/api/core` or `@tauri-apps/api/event`. Other
+  `@tauri-apps/*` modules (window, webview, dialog, opener) are still imported
+  directly; capability gating them is Phase C3.
+- `types.ts` imports nothing from the app — `logger.ts` calls through the backend, so a
+  logger import there would be a cycle.
+- `on` stays async on purpose: App.tsx awaits each registration so the "listeners
+  before session restore" ordering holds.
+- The singleton is picked synchronously at module load, so any module may call it from
+  its first line.
 
 ## `terminalInstance.ts` (2,018) — the xterm.js wrapper
 
