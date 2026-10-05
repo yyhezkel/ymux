@@ -465,6 +465,16 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-05 — C5 (WebBackend) starts before the C1 + C3 desktop smoke
+- **Decided (Yossi):** "let's move on to the next stage before we do smoke tests" —
+  Phase 109 (C5) is built on top of the unmerged C1 + C3 branches instead of waiting
+  for their desktop release. Supersedes "WebBackend work starts only after it" in the
+  Phase C plan entry below. The C1 + C3 smoke still gates their merge to `main`.
+- **Decided (Claude):** a browser leaf's `pane_id` is also its tmux session's hook pane
+  id — the daemon (2.10.0) takes `pane_id` on create rather than the client rewriting
+  the leaf to a minted `term_<hex>`. Keeps the id stable across reconnects and reloads,
+  and the agent verbs (tree / split / send) keep addressing the leaf the UI drew.
+
 ### 2026-10-05 — Phase C plan: C1–C3 ship in one desktop release; settings on the daemon; Q2 = (b)
 - **Context:** Phase B is merged; Phase C moves the frontend onto a `Backend` seam
   (WEB-DESIGN §5). The plan is WEB-DESIGN §8.2: C1 seam + codemod, C2 `TermStream`,

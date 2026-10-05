@@ -121,22 +121,40 @@ func (r *HookRegistry) hookAddr() string {
 
 // mint creates the identity for a session about to be created and returns
 // the tmux environment that carries it. Nothing is registered until add.
-func (r *HookRegistry) mint(name, addr string) (*hookEntry, map[string]string, error) {
+//
+// paneID is the caller's own pane id (Phase 109: a browser layout leaf, so
+// the leaf a hook reports is the leaf the UI drew); "" mints term_<hex>.
+func (r *HookRegistry) mint(name, addr, paneID string) (*hookEntry, map[string]string, error) {
 	tok, err := randHex(32)
 	if err != nil {
 		return nil, nil, err
 	}
-	id, err := randHex(8)
-	if err != nil {
-		return nil, nil, err
+	if paneID == "" {
+		id, err := randHex(8)
+		if err != nil {
+			return nil, nil, err
+		}
+		paneID = "term_" + id
 	}
-	e := &hookEntry{name: name, token: tok, paneID: "term_" + id, policy: policyNone}
+	e := &hookEntry{name: name, token: tok, paneID: paneID, policy: policyNone}
 	env := map[string]string{
 		"YMUX_SOCKET_ADDR":  addr,
 		"YMUX_TUNNEL_TOKEN": tok,
 		"YMUX_PANE_ID":      e.paneID,
 	}
 	return e, env, nil
+}
+
+// paneInUse reports whether a live session already carries paneID.
+func (r *HookRegistry) paneInUse(paneID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.byName {
+		if e.paneID == paneID {
+			return true
+		}
+	}
+	return false
 }
 
 // add registers a session that tmux has just created.

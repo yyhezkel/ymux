@@ -1122,7 +1122,7 @@ function App() {
     const hasWs = !!ws;
     const hasPane = !!pid;
     return [
-      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
+      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => openNewWorkspace() },
       { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
       { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
@@ -1561,6 +1561,20 @@ function App() {
     } catch (e) {
       log.error("workspace_create failed", e);
     }
+  };
+
+  // Phase 109: the browser host has no wizard targets (no local machine, no
+  // SSH out — both gated off), so "new workspace" there is just a named
+  // workspace on the daemon's own box. The desktop opens the wizard as before.
+  const openNewWorkspace = (opts: { target?: "local" | "server" } = {}) => {
+    if (backend.kind !== "web") {
+      setShowSetup(opts);
+      return;
+    }
+    void handleCreate({
+      name: `workspace ${file().workspaces.length + 1}`,
+      connection: { type: "local", shell: null },
+    });
   };
 
   const handleUpdate = async (
@@ -3538,7 +3552,7 @@ function App() {
     } },
     { id: "toggle_notes", run: (e) => { e.preventDefault(); setShowNotes((v) => !v); } },
     { id: "toggle_settings", run: (e) => { e.preventDefault(); setShowSettings((v) => !v); } },
-    { id: "new_workspace", run: (e) => { e.preventDefault(); setShowSetup({}); } },
+    { id: "new_workspace", run: (e) => { e.preventDefault(); openNewWorkspace(); } },
     // BRIEF: the cross-workspace agent Queue.
     { id: "toggle_queue", run: (e) => {
       e.preventDefault();
@@ -4485,7 +4499,7 @@ function App() {
             <div class="sidebar-error">
               <p>{t("error.sidebarRender")}</p>
               <pre>{String(err)}</pre>
-              <button class="primary" onClick={() => setShowSetup({})}>
+              <button class="primary" onClick={() => openNewWorkspace()}>
                 + New workspace
               </button>
             </div>
@@ -4589,7 +4603,7 @@ function App() {
             })();
           }}
           onActivate={handleSetActive}
-          onCreate={() => setShowSetup({})}
+          onCreate={() => openNewWorkspace()}
           onOpenSettings={() => setShowSettings(true)}
           onOpenNotes={() => setShowNotes(true)}
           onAction={(id, action) => {
@@ -4849,7 +4863,7 @@ function App() {
             Workspaces exist but none active → light "pick one" prompt. */}
         <Show when={file().workspaces.length === 0}>
           <WelcomeScreen
-            onCreate={() => setShowSetup({ target: "local" })}
+            onCreate={() => openNewWorkspace({ target: "local" })}
             onConnectSsh={() => setShowSetup({ target: "server" })}
             onProvision={() => setShowSetup({ target: "server" })}
           />
@@ -4857,7 +4871,7 @@ function App() {
         <Show when={file().workspaces.length > 0 && !activeWs()}>
           <div class="empty">
             <p>{t("ws.empty.none")}</p>
-            <button class="primary" onClick={() => setShowSetup({})}>
+            <button class="primary" onClick={() => openNewWorkspace()}>
               {t("ws.empty.new")}
             </button>
           </div>

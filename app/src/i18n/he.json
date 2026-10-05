@@ -1358,5 +1358,16 @@
   "sessions.selectAll": "בחר הכל",
   "sessions.selectNone": "נקה בחירה",
   "sessions.selectGroup": "בחר את כל הסשנים בתיקייה הזו",
-  "sessions.summarizeSelected": "סכם נבחרים ({n})"
+  "sessions.summarizeSelected": "סכם נבחרים ({n})",
+  "web.login.intro": "הדפדפן הזה לא מחובר ל-ymux בשרת הזה. בקש גישה, ואשר אותה ב-ymux בדסקטופ.",
+  "web.login.request": "בקש גישה",
+  "web.login.waiting": "אשר את הבקשה ב-ymux בדסקטופ. ודא שמופיע שם אותו קוד:",
+  "web.login.expires": "פג בעוד {s} שניות",
+  "web.login.no_desktop": "ymux בדסקטופ לא מחובר לשרת הזה. פתח אותו, ודא שיש חיבור SSH, ונסה שוב.",
+  "web.login.rate_limited": "יותר מדי בקשות. חכה כמה דקות.",
+  "web.login.expired": "הבקשה פגה.",
+  "web.login.denied": "הבקשה נדחתה או לא נענתה.",
+  "web.login.no_shell": "המכשיר הזה מחובר, אבל לא קיבל הרשאת טרמינל (shell:attach). תן אותה מ-ymux בדסקטופ ורענן.",
+  "web.login.device": "מכשיר:",
+  "web.login.forget": "התנתק"
 }

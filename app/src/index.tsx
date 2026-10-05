@@ -2,7 +2,9 @@
 // logger.ts must load BEFORE the console monkeypatch below — it captures the
 // original console fns so logger output is never forwarded twice.
 import { enqueueLog } from "./logger";
-import { backend } from "./backend";
+import { backend, initBackend } from "./backend";
+import { WebLogin } from "./WebLogin";
+import { applyI18nSettings } from "./i18n";
 import { render } from "solid-js/web";
 // Global stylesheets live at the entry point so BOTH the main <App> and the
 // #4 pop-out window (which bypasses <App>) get xterm's CSS + our theme.
@@ -83,6 +85,14 @@ const popoutBrowserWs = winLabel.startsWith("browser-popout-")
 // An async IIFE rather than top-level await: Vite's default build target is
 // `es2020`, where esbuild refuses TLA outright.
 void (async () => {
+  // Phase 109: a browser tab first signs in and hydrates from the daemon;
+  // on the desktop this resolves "ready" immediately.
+  const boot = await initBackend();
+  if (boot !== "ready") {
+    applyI18nSettings({ language: navigator.language.startsWith("he") ? "he" : "en", direction: "auto" });
+    render(() => <WebLogin mode={boot} />, document.getElementById("root") as HTMLElement);
+    return;
+  }
   await initPlatform();
   if (popoutBrowserWs) {
     render(

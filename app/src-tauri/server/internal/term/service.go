@@ -68,7 +68,7 @@ func (s *Service) attachHooks(r *HookRegistry) {
 	s.hooks = r
 	r.tmux = s.tmux
 	r.spawn = func(name, cwd, policy, workspaceID string) (hookEntry, error) {
-		e, hooks, err := s.spawnSession(name, cwd, policy, workspaceID)
+		e, hooks, err := s.spawnSession(name, cwd, policy, workspaceID, "")
 		if err == nil && !hooks {
 			// A split pane must be addressable by pane id; one without hook
 			// routing (tmux < 3.2, no listener) is not. Undo it.
@@ -251,6 +251,26 @@ func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
 // errSessionExists is a create whose name tmux already has.
 var errSessionExists = errors.New("session already exists")
 
+var (
+	errBadPaneID = errors.New("pane_id must be 1-64 of [A-Za-z0-9_-]")
+	errPaneInUse = errors.New("pane_id is already carried by a live session")
+)
+
+// ValidPaneID is the shape a caller-chosen pane id may take (Phase 109). It
+// lands in the session's environment and in hook payloads, so it is kept to a
+// plain token: no spaces, quotes, separators or control characters.
+func ValidPaneID(id string) bool {
+	if id == "" || len(id) > 64 {
+		return false
+	}
+	for _, c := range id {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '_' || c == '-') {
+			return false
+		}
+	}
+	return true
+}
+
 // spawnSession creates a tmux session, hook-enabled when it can be (Phase
 // 100), with a policy (101) and a workspace (103). It is the one place a
 // session is born — the create route and an agent's split both use it.
@@ -258,7 +278,11 @@ var errSessionExists = errors.New("session already exists")
 //
 // cmd (Phase 104) is an optional argv the session runs instead of a shell —
 // `claude --resume <id>` for a resumed history row.
-func (s *Service) spawnSession(name, cwd, policy, workspaceID string, cmd ...string) (entry hookEntry, hooks bool, err error) {
+//
+// paneID (Phase 109) is the caller's pane id for the session's hooks — a
+// browser layout leaf — or "" to mint term_<hex>. It must be ValidPaneID and
+// not carried by another live session.
+func (s *Service) spawnSession(name, cwd, policy, workspaceID, paneID string, cmd ...string) (entry hookEntry, hooks bool, err error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		name = "ymux-" + uuid.NewString()[:8]
@@ -271,6 +295,14 @@ func (s *Service) spawnSession(name, cwd, policy, workspaceID string, cmd ...str
 	if s.tmux.Has(name) {
 		return hookEntry{}, false, errSessionExists
 	}
+	if paneID != "" {
+		if !ValidPaneID(paneID) {
+			return hookEntry{}, false, errBadPaneID
+		}
+		if s.hooks != nil && s.hooks.paneInUse(paneID) {
+			return hookEntry{}, false, errPaneInUse
+		}
+	}
 	// Phase 100: point the session's hooks at the daemon. Without a listener
 	// address, or on a tmux too old for `-e`, the session is created exactly
 	// as before and its hooks go wherever the global environment says.
@@ -279,7 +311,7 @@ func (s *Service) spawnSession(name, cwd, policy, workspaceID string, cmd ...str
 	if s.hooks != nil {
 		if addr := s.hooks.hookAddr(); addr != "" && s.tmux.SupportsSessionEnv() {
 			var err error
-			if e, env, err = s.hooks.mint(name, addr); err != nil {
+			if e, env, err = s.hooks.mint(name, addr, paneID); err != nil {
 				logger.Error("hook token mint failed; creating without hooks", "err", err)
 				e, env = nil, nil
 			} else {
@@ -303,6 +335,7 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Cwd         string `json:"cwd"`
 		Policy      string `json:"policy"`       // Phase 101: "none" (default) | "gate"
 		WorkspaceID string `json:"workspace_id"` // Phase 103: a browser workspace
+		PaneID      string `json:"pane_id"`      // Phase 109: the browser leaf this session fills
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Policy == "" {
@@ -316,9 +349,13 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such workspace", http.StatusBadRequest)
 		return
 	}
-	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID)
-	if errors.Is(err, errSessionExists) {
+	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID)
+	if errors.Is(err, errSessionExists) || errors.Is(err, errPaneInUse) {
 		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if errors.Is(err, errBadPaneID) {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err != nil {

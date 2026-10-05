@@ -64,7 +64,7 @@ func nextOf(t *testing.T, sub *subscriber, typ string) frame {
 func gateEntry(t *testing.T, policy string) (*HookRegistry, *hookEntry, termHookTarget) {
 	t.Helper()
 	r := NewHookRegistry()
-	e, _, _ := r.mint("web", "127.0.0.1:1")
+	e, _, _ := r.mint("web", "127.0.0.1:1", "")
 	e.policy = policy
 	r.add(e)
 	return r, e, matched(t, r, e)
@@ -253,7 +253,7 @@ func TestPolicyRoute(t *testing.T) {
 	if w := do(s, "POST", "/api/v2/term/sessions/web/policy", "owner-token", `{"policy":"gate"}`); w.Code != http.StatusNotFound {
 		t.Errorf("unknown session → %d, want 404", w.Code)
 	}
-	e, _, _ := s.hooks.mint("web", "127.0.0.1:1")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "")
 	s.hooks.add(e)
 	if w := do(s, "POST", "/api/v2/term/sessions/web/policy", "owner-token", `{"policy":"gate"}`); w.Code != http.StatusOK {
 		t.Errorf("set policy → %d, want 200", w.Code)
@@ -287,7 +287,7 @@ func TestDecideRoute(t *testing.T) {
 	if w := do(s, "POST", "/api/v2/feed/nope/decide", "owner-token", `{"decision":"maybe"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("bad decision → %d, want 400", w.Code)
 	}
-	e, _, _ := s.hooks.mint("web", "127.0.0.1:1")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "")
 	e.policy = policyGate
 	s.hooks.add(e)
 	tg := matched(t, s.hooks, e)
@@ -309,7 +309,7 @@ func TestDecideRoute(t *testing.T) {
 // language, and a feed.decide frame answers a gate.
 func TestEventsSocket(t *testing.T) {
 	s, _ := hookService("tmux 3.4")
-	e, _, _ := s.hooks.mint("web", "127.0.0.1:1")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "")
 	e.policy = policyGate
 	s.hooks.add(e)
 	tg := matched(t, s.hooks, e)

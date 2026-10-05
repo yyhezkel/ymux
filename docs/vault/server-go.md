@@ -327,6 +327,13 @@ see the CLI vault page) and Claude Code's transcripts:
   history again. `claude` is resolved to an absolute path by the daemon (its PATH was
   augmented at start), so the tmux server's PATH does not matter.
 
+**Caller-chosen pane ids (Phase 109, 2.10.0).** `POST /api/v2/term/sessions` takes an
+optional `pane_id`; `spawnSession` passes it to `mint`, so the session's
+`YMUX_PANE_ID` (and every hook it reports) is the browser layout leaf's own id instead of
+a minted `term_<hex>`. `ValidPaneID`: 1–64 of `[A-Za-z0-9_-]` (it lands in an env var
+and in hook payloads), else 400; an id a live session already carries → 409. Agent
+splits and resumes still mint.
+
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a
 symlink to `www/<version>/`, holding the desktop's own vite build. Nothing here uploads or

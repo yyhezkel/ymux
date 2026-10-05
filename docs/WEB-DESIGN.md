@@ -541,6 +541,12 @@ check). WebBackend does not start before that release is green.
 - Version bump (2.9.0) with the usual five places; rebake.
 
 ##### C5 — WebBackend: auth, workspaces, terminal
+**Phase 109**, daemon 2.10.0 — started before the C1 + C3 smoke (Yossi, 2026-10-05).
+As built (vault frontend-lib § The browser arm): a leaf's pane id is also its session's
+hook pane id (the daemon takes `pane_id` on create), so no id ever has to be rewritten;
+`WebLogin.tsx` is the sign-in; the browser's "new workspace" skips the wizard. Not yet:
+`mode: "claude"` / `cmd` on `pane_connect` (the pane opens a shell), colour / emoji /
+groups / order of a browser workspace, `backend:resync` re-seeding the lights.
 - Auth: token in localStorage; none → a small Solid login screen running the Phase 96
   request-access flow (code shown, desktop approves, poll, redeem). 401 → back to it.
 - PTY (the desktop contract, see C2): `pane_connect` → POST term/sessions (workspace_id,

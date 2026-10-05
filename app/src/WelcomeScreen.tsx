@@ -23,7 +23,8 @@ export function WelcomeScreen(p: Props) {
         <p class="welcome-subtitle">{t("ws.welcome.subtitle")}</p>
 
         <div class="welcome-cards">
-          <Show when={backend.can("localPanes")}>
+          {/* The browser host (Phase 109) creates a workspace on the daemon's box here. */}
+          <Show when={backend.can("localPanes") || backend.kind === "web"}>
             <button class="welcome-card" onClick={p.onCreate}>
               <span class="welcome-card-icon">▮</span>
               <span class="welcome-card-title">{t("ws.welcome.local.title")}</span>

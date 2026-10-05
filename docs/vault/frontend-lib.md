@@ -25,6 +25,10 @@ covers:
   - app/src/backend/types.ts
   - app/src/backend/tauri.ts
   - app/src/backend/index.ts
+  - app/src/backend/web.ts
+  - app/src/backend/web/*.ts
+  - app/src/layoutOps.ts
+  - app/src/WebLogin.tsx
 ---
 
 # Frontend library modules
@@ -59,6 +63,50 @@ answers the same command names from the daemon's HTTP/WS API.
   YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
 - **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
   `src/backend/` imports anything from `@tauri-apps/*`.
+
+### The browser arm — `backend/web.ts` + `backend/web/` (Phase 109, WEB-DESIGN C5)
+
+`index.ts` picks `WebBackend` when `__TAURI_INTERNALS__` is absent (a tab served by the
+daemon, vault server-go § webapp.go). `index.tsx` awaits `initBackend()` before the first
+render: `ready` → `<App>`, `login` / `no-shell` → `<WebLogin>` (the Phase 96 pairing flow:
+request → code → approve on the desktop → redeem; `no-shell` = signed in without
+`shell:attach`). The same vite bundle serves both hosts.
+
+- **Commands** — `WebBackend.handlers`, one entry per desktop command name, answered from
+  the daemon. A name with no handler rejects (warned once): reaching one means a missing
+  `can()` gate. Rejections are strings, like Tauri's.
+- **Events** — `web/events.ts`: `EventBus` behind `backend.on`, fed by the daemon events
+  socket (`{type,data}` frames already carry the desktop's names) and by the backend.
+  `settings:changed` `{version, settings}` is unwrapped to the bare `Settings`;
+  `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
+  payload. The first `hello` answers `pane_agent_states` / `pane_briefs` / `feed_list` /
+  `notifications_list`; a reconnect's hello re-reads workspaces and emits
+  `backend:resync` (nothing listens yet).
+- **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
+  `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
+  `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
+  `TextDecoder` (the job `pty_decode.rs` does on the desktop) into `pty:data`; the
+  server's `{"type":"exit"}` or a close becomes `pty:exit`. `pane_disconnect` closes
+  without a `pty:exit`, as on the desktop.
+- **Panes and sessions** — a leaf's `pane_id` IS its tmux session's hook pane id (daemon
+  2.10.0 takes `pane_id` on create). `pane_connect` reuses the session the hello or a
+  create named for that leaf, else creates `<ws-slug>-<pane suffix>` with the leaf's
+  id. So reload → restore (on by default in browser settings) → the same session.
+- **Workspaces** — the daemon's `/api/v2/web/workspaces` documents mapped to `Workspace`
+  with a synthesized ssh-shaped connection (the panes ARE remote tmux: RTL profile and
+  `paneCaps` answer "remote"). Layout gestures run in `layoutOps.ts` (pure ports of
+  lib.rs `split_pane_in` / `close_pane_in` / `set_split_ratio_in` /
+  `swap_two_panes_in_layout` / `reset_all_split_ratios`, pinned by `layoutOps.test.ts`)
+  and PUT with the version; a 409 re-applies the op once on the returned document. The
+  active workspace is per browser (localStorage). Colour, emoji, groups and order are
+  not stored on the daemon yet.
+- **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
+  the required groups, merged one level deep; restore-on-start ON, update checks OFF).
+  A 409 on save re-saves on the newer version: the whole document wins, as on the desktop.
+- **New workspace** — App's `openNewWorkspace()`: the desktop opens the wizard; the
+  browser (no wizard targets) creates `workspace N` directly.
+- `web/` cannot import `logger.ts` (cycle through `backend`), so it uses `console.*` — the
+  browser console is the sink there. No PTY bytes, no token.
 - `types.ts` imports nothing from the app — `logger.ts` calls through the backend, so a
   logger import there would be a cycle.
 - `on` stays async on purpose: App.tsx awaits each registration so the "listeners

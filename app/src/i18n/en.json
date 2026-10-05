@@ -1358,5 +1358,16 @@
   "sessions.selectAll": "Select all",
   "sessions.selectNone": "Clear selection",
   "sessions.selectGroup": "Select every session in this folder",
-  "sessions.summarizeSelected": "Summarize selected ({n})"
+  "sessions.summarizeSelected": "Summarize selected ({n})",
+  "web.login.intro": "This browser is not signed in to ymux on this server. Request access, then approve it in ymux on your desktop.",
+  "web.login.request": "Request access",
+  "web.login.waiting": "Approve this request in ymux on your desktop. Check that it shows the same code:",
+  "web.login.expires": "Expires in {s}s",
+  "web.login.no_desktop": "ymux on your desktop is not connected to this server. Open it, make sure the SSH connection is up, and try again.",
+  "web.login.rate_limited": "Too many requests. Wait a few minutes.",
+  "web.login.expired": "The request expired.",
+  "web.login.denied": "The request was denied or not answered.",
+  "web.login.no_shell": "This device is signed in, but it has not been granted terminal access (shell:attach). Grant it from ymux on your desktop, then reload.",
+  "web.login.device": "Device:",
+  "web.login.forget": "Sign out"
 }
