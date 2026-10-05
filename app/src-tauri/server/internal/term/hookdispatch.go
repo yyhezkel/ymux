@@ -4,12 +4,13 @@ package term
 // tmux session (Phase 100, WEB-DESIGN B2).
 //
 // It is the daemon's counterpart of the per-subkind arms in the desktop's
-// feed.push (app/src-tauri/src/rpc_server.rs), reduced to what B2 needs:
-// fold the hook into the pane's traffic light and brief (internal/agent, the
-// Phase-99 port) and answer. There is no feed, no card and no gate yet — B3
-// adds those. Until then every permission request is ALLOWED: the browser
-// session's policy is "none" (Yossi, 2026-10-04), because a gate with no way
-// to reach a human would block every tool call.
+// feed.push (app/src-tauri/src/rpc_server.rs): fold the hook into the pane's
+// traffic light and brief (internal/agent, the Phase-99 port), tell the
+// events subscribers (Phase 101), make the card the desktop would make, and
+// answer. A permission request follows the session's policy (DECISIONS
+// 2026-10-05): `none` — the default — answers allow at once and makes no card,
+// as the desktop's Auto does; `gate` makes a blocking card and waits for a
+// feed.decide, up to wait_timeout_seconds.
 //
 // Rule #1: a hook payload carries the user's prompt, Claude's reply and tool
 // input. Logs here carry the pane id, the subkind and nothing else.
@@ -39,6 +40,12 @@ type feedPushParams struct {
 	Payload     json.RawMessage `json:"payload"`
 	TmuxSession string          `json:"tmux_session"`
 	ClaudeTitle string          `json:"claude_title"`
+	// Card text the CLI derived; the lifecycle subkinds are re-humanized.
+	Title   string `json:"title"`
+	Summary string `json:"summary"`
+	// How long a gated request may wait; default 120, clamped 1–600 exactly
+	// as the desktop does, so a buggy client cannot pin a goroutine forever.
+	WaitTimeoutSeconds *int64 `json:"wait_timeout_seconds"`
 }
 
 // hookPayload is the subset of Claude Code's hook payload the state needs.
@@ -68,18 +75,20 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 		return map[string]any{"decision": "deny"}
 	}
 	deny := map[string]any{"request_id": p.RequestID, "decision": "deny"}
+	r := t.r
 
-	t.r.mu.Lock()
-	defer t.r.mu.Unlock()
+	r.mu.Lock()
 	e := t.e
 	// Defense in depth: the HMAC already identified the session, so a hook
 	// naming another pane or another tmux session is something forging
 	// across sessions — refuse rather than fold it into the wrong light.
 	if p.PaneID != e.paneID {
+		r.mu.Unlock()
 		logger.Warn("hook pane_id mismatch — denying", "pane", e.paneID, "claimed", p.PaneID)
 		return deny
 	}
 	if p.TmuxSession != "" && p.TmuxSession != e.name {
+		r.mu.Unlock()
 		logger.Warn("hook tmux_session mismatch — denying", "pane", e.paneID)
 		return deny
 	}
@@ -88,14 +97,120 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	if len(p.Payload) > 0 {
 		_ = json.Unmarshal(p.Payload, &pl)
 	}
-	t.r.applyLocked(e, p.Subkind, pl, p.ClaudeTitle)
-	logger.Debug("hook folded", "pane", e.paneID, "subkind", p.Subkind,
-		"state", string(e.run.CurrentState()), "seq", e.run.Seq)
-
-	if p.Kind == "permission_request" {
-		return map[string]any{"request_id": p.RequestID, "decision": "allow", "policy": "none"}
+	runSeq, briefSeq := e.run.Seq, e.brief.Seq
+	r.applyLocked(e, p.Subkind, pl, p.ClaudeTitle)
+	// Copies taken under the lock; everything below runs without it, so a
+	// gate that waits two minutes holds nothing another hook needs.
+	var runEv *agent.AgentRunEvent
+	if e.run.Seq != runSeq {
+		ev := e.run.Event(e.paneID)
+		runEv = &ev
 	}
-	return map[string]any{"request_id": p.RequestID, "decision": "passive"}
+	var briefEv *agent.BriefEntry
+	if e.brief.Seq != briefSeq {
+		b := e.brief
+		briefEv = &b
+	}
+	var stopBrief *agent.Brief
+	if p.Subkind == "stop" && e.brief.Brief != nil {
+		b := *e.brief.Brief
+		stopBrief = &b
+	}
+	pane, session, policy := e.paneID, e.name, e.policy
+	logger.Debug("hook folded", "pane", pane, "subkind", p.Subkind,
+		"state", string(e.run.CurrentState()), "seq", e.run.Seq)
+	r.mu.Unlock()
+
+	if runEv != nil {
+		r.hub.publish("pane:agent-run", same(*runEv))
+	}
+	if briefEv != nil {
+		r.hub.publish("pane:brief", same(map[string]any{"pane_id": pane, "entry": *briefEv}))
+	}
+
+	passive := map[string]any{"request_id": p.RequestID, "decision": "passive"}
+	// The desktop's early returns: a prompt is turn bookkeeping, a
+	// notification is a state signal only — neither ever makes a card.
+	if p.Subkind == "user-prompt-submit" || p.Subkind == "notification" {
+		return passive
+	}
+	blocking := p.Kind == "permission_request"
+	if blocking && policy != policyGate {
+		return map[string]any{"request_id": p.RequestID, "decision": "allow", "policy": policyNone}
+	}
+
+	item, ch := r.addCard(p, pane, session, stopBrief, blocking)
+	if ch == nil {
+		return passive
+	}
+	decision := r.await(item.RequestID, ch, waitTimeout(p.WaitTimeoutSeconds))
+	return map[string]any{"request_id": item.RequestID, "decision": decision, "policy": policyGate}
+}
+
+// addCard builds the desktop's card for a hook, stores it and announces it.
+// A blocking card comes back with the channel its decision arrives on.
+func (r *HookRegistry) addCard(p feedPushParams, pane, session string, stopBrief *agent.Brief, blocking bool) (FeedItem, chan string) {
+	reqID := p.RequestID
+	if reqID == "" {
+		h, _ := randHex(8)
+		reqID = "req_" + h
+	}
+	title := p.Title
+	if title == "" {
+		title = "(no title)"
+	}
+	var payload map[string]any
+	if len(p.Payload) > 0 {
+		_ = json.Unmarshal(p.Payload, &payload)
+	}
+	tEn, sEn := cardText(p.Subkind, title, p.Summary, payload, stopBrief, "en")
+	tHe, sHe := cardText(p.Subkind, title, p.Summary, payload, stopBrief, "he")
+	state := statePassive
+	if blocking {
+		state = statePending
+	}
+	kind := p.Kind
+	if kind == "" {
+		kind = "passive"
+	}
+	entry := &feedEntry{
+		item: FeedItem{
+			RequestID: reqID, Kind: kind, Subkind: p.Subkind, PaneID: pane, Session: session,
+			Title: tEn, Summary: sEn, Payload: p.Payload, State: state,
+			CreatedMs: r.now().UnixMilli(), Blocking: blocking,
+		},
+		titleHe: tHe, summaryHe: sHe,
+	}
+	ch := r.feed.add(entry)
+	logger.Info("feed item added", "request", reqID, "pane", pane, "subkind", p.Subkind, "blocking", blocking)
+	r.hub.publish("feed:item-added", func(lang string) any { return r.feed.viewOf(entry, lang) })
+	return entry.item, ch
+}
+
+// await blocks until a gated request is decided or its timeout fires. A
+// timeout resolves the card as "timeout" (the CLI treats it as deny), unless
+// a decision won the race, in which case that decision stands.
+func (r *HookRegistry) await(reqID string, ch chan string, timeout time.Duration) string {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case d := <-ch:
+		return d
+	case <-timer.C:
+		if r.decide(reqID, "timeout", "timer") {
+			return "timeout"
+		}
+		return <-ch // decided just before the timer; its value is buffered
+	}
+}
+
+// waitTimeout is the desktop's clamp: default 120 s, 1–600.
+func waitTimeout(secs *int64) time.Duration {
+	n := int64(120)
+	if secs != nil {
+		n = min(max(*secs, 1), 600)
+	}
+	return time.Duration(n) * time.Second
 }
 
 // applyLocked folds one hook into the entry, mirroring the desktop's

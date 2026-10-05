@@ -46,7 +46,20 @@ type hookEntry struct {
 	paneID string
 	run    agent.Run
 	brief  agent.BriefEntry
+	// policy is what a permission request from this session gets (Phase
+	// 101): policyNone answers allow at once, policyGate waits for a human.
+	policy string
 }
+
+// Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
+// offered: `none` is auto plus the light and the feed, and a browser user who
+// wants "block" can deny from the gate.
+const (
+	policyNone = "none"
+	policyGate = "gate"
+)
+
+func validPolicy(p string) bool { return p == policyNone || p == policyGate }
 
 // HookRegistry implements core.HookResolver and core.AddrSink for term.
 type HookRegistry struct {
@@ -54,13 +67,19 @@ type HookRegistry struct {
 	addr   string
 	byName map[string]*hookEntry
 	now    func() time.Time
+
+	// feed and hub are B3 (Phase 101): the cards, the pending approvals and
+	// the events subscribers. Each has its own lock; neither is ever taken
+	// while mu is held by the same goroutine.
+	feed *feedStore
+	hub  *eventHub
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
 // (hooks.Start not run, or its listen failed) sessions are created without
 // hook variables and keep whatever global environment tmux has.
 func NewHookRegistry() *HookRegistry {
-	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now}
+	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub()}
 }
 
 // SetHookAddr implements core.AddrSink.
@@ -87,7 +106,7 @@ func (r *HookRegistry) mint(name, addr string) (*hookEntry, map[string]string, e
 	if err != nil {
 		return nil, nil, err
 	}
-	e := &hookEntry{name: name, token: tok, paneID: "term_" + id}
+	e := &hookEntry{name: name, token: tok, paneID: "term_" + id, policy: policyNone}
 	env := map[string]string{
 		"YMUX_SOCKET_ADDR":  addr,
 		"YMUX_TUNNEL_TOKEN": tok,
@@ -115,11 +134,51 @@ func (r *HookRegistry) Rename(from, to string) {
 	}
 }
 
-// Remove forgets a killed session.
+// Remove forgets a killed session, denying any approval it left pending —
+// the desktop's "sender dropped → deny", rather than a card that sits there
+// until it times out for a claude that no longer exists.
 func (r *HookRegistry) Remove(name string) {
 	r.mu.Lock()
-	delete(r.byName, name)
+	var gone []string
+	if e, ok := r.byName[name]; ok {
+		gone = append(gone, e.paneID)
+		delete(r.byName, name)
+	}
 	r.mu.Unlock()
+	r.denyPendingOf(gone)
+}
+
+func (r *HookRegistry) denyPendingOf(paneIDs []string) {
+	for _, pane := range paneIDs {
+		for _, id := range r.feed.pendingFor(pane) {
+			r.decide(id, "deny", "session-gone")
+		}
+	}
+}
+
+// SetPolicy changes a session's hook policy. False when the session is not
+// one this registry knows (not created through the API, or already gone).
+func (r *HookRegistry) SetPolicy(name, policy string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.byName[name]
+	if !ok {
+		return false
+	}
+	e.policy = policy
+	logger.Info("hook policy set", "pane", e.paneID, "policy", policy)
+	return true
+}
+
+// decide resolves a pending card and tells every subscriber. by is who
+// answered, for the log only. False when there was nothing pending to decide.
+func (r *HookRegistry) decide(requestID, decision, by string) bool {
+	if !r.feed.decide(requestID, decision) {
+		return false
+	}
+	logger.Info("feed decided", "request", requestID, "decision", decision, "by", by)
+	r.hub.publish("feed:item-resolved", same(map[string]string{"request_id": requestID, "decision": decision}))
+	return true
 }
 
 // Retain drops every entry whose session tmux no longer reports — a session
@@ -130,12 +189,15 @@ func (r *HookRegistry) Retain(live []Session) {
 		keep[s.Name] = true
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	for name := range r.byName {
+	var gone []string
+	for name, e := range r.byName {
 		if !keep[name] {
+			gone = append(gone, e.paneID)
 			delete(r.byName, name)
 		}
 	}
+	r.mu.Unlock()
+	r.denyPendingOf(gone)
 }
 
 // MatchHookHMAC implements core.HookResolver. O(hook-enabled sessions),
@@ -161,8 +223,8 @@ type PaneSnapshot struct {
 	Brief    agent.BriefEntry    `json:"brief"`
 }
 
-// Snapshot returns every hook-enabled pane's state, keyed by pane id. Nothing
-// serves it yet — B3 adds the route and the live events (WEB-DESIGN §8).
+// Snapshot returns every hook-enabled pane's state, keyed by pane id. The
+// events socket's hello (events.go) is the served form of the same data.
 func (r *HookRegistry) Snapshot() map[string]PaneSnapshot {
 	r.mu.Lock()
 	defer r.mu.Unlock()

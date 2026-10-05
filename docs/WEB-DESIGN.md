@@ -375,7 +375,8 @@ checked against the code on that date; line numbers drift, the function names do
 |---|---|
 | B1 — `internal/agent` (Phase 99) | **In main** (PR #54). Pure Go ports + translated tests; nothing imported it until B2. |
 | B2 — hook listener for browser sessions (Phase 100) + daemon **2.4.2** | **Merged (PR #55), verified live 2026-10-05** on a real box over HTTPS — browser pairing approved on the desktop, `claude` typed into the browser xterm, all hooks folded; the chat (phone) path still answers. The live test found and fixed four bugs (term `List()` always empty on real tmux → hooks wiped on every list; diag page xterm 404; RTL overflow; close 1006). Not verified: the add-on update path, tmux < 3.2. |
-| B3 – B6 | Not started. |
+| B3 — feed, gate, events WS (Phase 101) + daemon **2.5.0** | **Merged (PR #56), verified live 2026-10-05** — none / gate allow / deny / 120 s timeout / kill-while-pending, Hebrew cards, no phone forward for `term_`. `term/feed.go` + `events.go`; see the vault (`server-go.md`). |
+| B4 – B6 | Not started. |
 
 **B3 — `feed.push` / `feed.decide` + the events WS.**
 - Already ported (`term/hookdispatch.go`): the traffic light and brief folding of the
@@ -398,8 +399,10 @@ checked against the code on that date; line numbers drift, the function names do
   - **there is no workspace-wide events WS** (§2 correction) — B3 builds it; the
     per-session `…/subscribe` and `workspace/frames.go` are the patterns to follow.
 - **Decided 2026-10-05 (DECISIONS):** a browser session defaults to `none`
-  (observability only: folded, shown in the feed, permission answered `allow`);
-  `gate` is opt-in per session, with the desktop's timeout semantics.
+  (observability only: folded, permission answered `allow`, no card — the desktop's
+  Auto); `gate` is opt-in per session, with the desktop's timeout semantics. Events on
+  `GET /api/v2/events` behind the terminal gate; feed history in the browser
+  (IndexedDB); card language per subscriber.
 - De-duplicate: every `pre-tool-use` also arrives via the CLI's fire-and-forget
   `POST /api/v2/hooks/forward` (FOLLOWUPS P2) — ignore `term_` pane ids there, or key on
   `request_id`.
