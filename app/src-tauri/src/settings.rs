@@ -563,11 +563,7 @@ pub(crate) struct TerminalSettings {
     /// truecolour (Phase 91.B). Set false to fall back to the user's own
     /// `~/.tmux.conf`. The conf file is uploaded by the bootstrap
     /// regardless, so the toggle takes effect on the NEXT pane connect.
-    /// `alias`: settings.json files written before the winmux → ymux
-    /// rename carry the old key. Without it a user who had explicitly
-    /// turned this OFF would silently get it back on after upgrading,
-    /// because the unknown key falls through to `default_true`.
-    #[serde(default = "default_true", alias = "use_winmux_tmux_config")]
+    #[serde(default = "default_true")]
     pub use_ymux_tmux_config: bool,
     /// Phase HH: mirror the physical Left/Right arrow keys when the
     /// terminal line under the cursor is right-to-left (Hebrew/Arabic).

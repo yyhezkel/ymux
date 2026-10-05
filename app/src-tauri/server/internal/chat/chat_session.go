@@ -288,18 +288,11 @@ func (s *Session) spawn(systemPrompt, resumeID string) error {
 func (m *SessionManager) spawnEnv(s *Session) []string {
 	env := os.Environ()
 	if m.rpcAddr != "" {
-		// Both spellings — the hook binary Claude invokes may still be a
-		// pre-rename `winmux` CLI on a remote that hasn't been
-		// re-bootstrapped yet. The current CLI promotes WINMUX_* → YMUX_*
-		// at startup, so the duplicate is inert there. Drop the legacy
-		// trio once 0.5.0 is the floor.
+		// YMUX_* only; the legacy WINMUX_* trio is no longer written.
 		env = append(env,
 			"YMUX_SOCKET_ADDR="+m.rpcAddr,
 			"YMUX_TUNNEL_TOKEN="+s.rpcToken,
 			"YMUX_PANE_ID=mob_"+s.id,
-			"WINMUX_SOCKET_ADDR="+m.rpcAddr,
-			"WINMUX_TUNNEL_TOKEN="+s.rpcToken,
-			"WINMUX_PANE_ID=mob_"+s.id,
 		)
 	}
 	return env

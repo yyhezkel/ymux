@@ -1146,8 +1146,8 @@ pub(crate) fn local_tmux_conf_path() -> PathBuf {
 /// True when a local tmux.conf is in place for `-f $HOME/.ymux/tmux.conf`.
 ///
 /// winmux -> ymux rename: a Mac provisioned by a pre-rename build has the
-/// file under `~/.winmux`, and nothing migrates it locally — the CLI's
-/// `migrate_legacy_home_dir` runs on the *remote*. Fold it over once here
+/// file under `~/.winmux`, and nothing migrates it locally — the remote
+/// `~/.winmux` fold is the bootstrap's `migrate_legacy_remote_dir`, not the CLI. Fold it over once here
 /// rather than dual-reading: `build_tmux_attach_script` hardcodes the
 /// `.ymux` path (it is shared with the WSL/SSH deploys), so merely
 /// *detecting* the legacy file would point tmux at one that isn't there.
