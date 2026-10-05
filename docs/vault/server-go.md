@@ -229,6 +229,10 @@ Three decisions in it worth not undoing:
   exactly `cdn.jsdelivr.net`. The original cdnjs URLs (xterm 5.3.0, xterm-addon-fit 0.8.0)
   were 404s — cdnjs has no fit addon at all — so before that the page never rendered a
   terminal. Bumping a package means a new URL **and** a new `integrity` hash.
+  Two layout traps, both fixed in 2.4.2 and commented in place: xterm parks its
+  char-measure span at `left:-9999em`, which in this `dir="rtl"` document made the page
+  scroll 130,000 px sideways (`#termWrap` clips it); and the font is an explicit stack,
+  because a bare `monospace` resolved to a proportional face in a stock headless Chrome.
 - **`GET /{$}`, not `GET /`.** Exact-match for the root, so an unknown path still 404s.
   A catch-all that silently returns HTML is how a typo in an API path becomes an hour of
   confusion. `page_test.go` asserts it.

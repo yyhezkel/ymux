@@ -86,7 +86,11 @@
     background: #0e1016; border: 1px solid var(--line); border-radius: 7px;
     padding: 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--dim);
   }
-  #termWrap { background: #000; border-radius: 8px; padding: 6px; direction: ltr; }
+  /* overflow + position: xterm parks its char-measure span at left:-9999em, and
+     in this dir=rtl document an overflow to the LEFT is scrollable — the page
+     grew 130,000 px wide. Clipping here contains it. */
+  #termWrap { background: #000; border-radius: 8px; padding: 6px; direction: ltr;
+              overflow: hidden; position: relative; }
   #log {
     direction: ltr; unicode-bidi: isolate; max-height: 220px; overflow-y: auto;
     font: 12px/1.6 ui-monospace, Consolas, monospace;
@@ -415,7 +419,11 @@ function attach(name) {
   $("termSec").classList.remove("hidden");
   $("termName").textContent = name;
 
+  // An explicit stack: the bare generic `monospace` resolved to a PROPORTIONAL
+  // face in a stock headless Chrome, and xterm measures the cell from it.
   term = new Terminal({ fontSize: 13, cursorBlink: true, convertEol: false,
+                        fontFamily: 'ui-monospace, "Cascadia Mono", Menlo, Consolas, ' +
+                                    '"Liberation Mono", "DejaVu Sans Mono", courier-new, courier, monospace',
                         theme: { background: "#000000" } });
   fit = new FitAddon.FitAddon();
   term.loadAddon(fit);
