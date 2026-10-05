@@ -102,7 +102,7 @@ metadata only.
 workspaces on the same (host, port, user) subscribe to the owner's events. Duplicates
 and ppid=1 orphans are the two things `insights/hygiene.go` reaps.
 
-## `session_meta.rs` (818) — multi-machine session labels
+## `session_meta.rs` (982) — multi-machine session labels and session history
 
 `~/.ymux/session-meta.json` on the **server** maps a tmux session name to the Claude
 session running inside it plus display metadata, so any ymux desktop connecting to that
@@ -114,6 +114,22 @@ desktop writes labels and origin. `origin` carries the desktop's `machine_id`
 (`lib.rs::machine_id`) so the picker can say which machine created a session. Labels cross
 the SSH exec **hex-encoded** (`--label-hex`, `lib.rs::hex_utf8`) so Hebrew never meets
 shell quoting.
+
+**Session history (Phase 104, WEB-DESIGN §4.2).** `prune` (every `stop`, every
+`session-end`, every `session-meta set`) no longer deletes a row whose tmux session is
+gone: `prune_with` stamps **`ended_at`** once (a later pass keeps the first time), clears
+it when the name is live again, and keeps the row's mapping to its transcript so the
+daemon can list, open and resume it (`server/internal/term/history.go`). Retention:
+an ended row with **no `claude_session_id`** is dropped at once (nothing to open — the
+old behaviour), one older than `HISTORY_MAX_DAYS` (90) is dropped, and only the
+`HISTORY_MAX_ENDED` (100) newest ended rows are kept; an unparsable `ended_at` counts as
+"now", never as ancient. `record_live` (user-prompt-submit / stop) clears `ended_at` and
+records the hook payload's **`cwd`**. `SessionMetaEntry.extra` is a `serde(flatten)`
+map, so a field a newer writer adds **survives an older reader's re-save** — before
+this, an older CLI silently dropped unknown fields. Mixed-version caveat: a box still on a
+pre-0.5.x CLI deletes ended rows until the desktop re-bootstraps it. The desktop only
+READS this file (writes go through `ymux session-meta set`), so its struct copy in
+`lib.rs` needs no change; it simply ignores the new fields.
 
 ## Logging
 

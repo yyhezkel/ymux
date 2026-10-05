@@ -508,6 +508,18 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Outcome / Commit:** Phase 104.A (store + rail) on `claude/phase-103a-context-rail`;
   104.C follows. Spec: `docs/CONTEXT.md`.
 
+### 2026-10-05 — B6 details: retention 100 rows, resume reuses the name, transcript found by id
+- **Decided (Claude, flagged to Yossi):** §4.2 left "N" open — **100** ended rows (and 90
+  days, whichever is smaller). Resume **reuses the row's tmux name** when it is free, so
+  the row flips back to live; otherwise mints a new name. The transcript is found by
+  globbing `~/.claude/projects/*/<id>.jsonl`, so neither the API nor the history needs
+  the cwd to open one; the cwd is recorded anyway, for resume. An ended row with no
+  Claude session is still dropped immediately (nothing to open).
+- **Decided (Claude):** ci-windows now uploads the staged musl CLI as the
+  `ymux-cli-linux-x64` artifact. Without it a CLI change cannot be smoke-tested on a real
+  box without a local build; the committed `resources/ymux-linux-x64` still only moves
+  with a release.
+
 ### 2026-10-05 — B5: browser workspaces in term's own store; send fenced; scrollback stays a stub
 - **Decided (Yossi):** `send` / `send-key` (and, by the same logic, the pane-title verbs)
   reach only the caller or panes of its own workspace — the desktop has no such fence, but
