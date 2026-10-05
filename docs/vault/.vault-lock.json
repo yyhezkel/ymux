@@ -271,7 +271,7 @@
     "app/src-tauri/server/internal/logs/store.go": "76d9f41c8202ee75c8a5547f89fc8c735f97ba2245a9ea3743d471c975eb44f4",
     "app/src-tauri/server/internal/push/push.go": "883fc172c43c8a05f3a9919f56bbc40572aea4e73409c430b1275c14e71f551a",
     "app/src-tauri/server/internal/push/push_test.go": "0f3cfc2445347b45725051df98f443ffd0930090edf26a29e5056349f0e863da",
-    "app/src-tauri/server/internal/term/attach.go": "647dca022a5cbe73c2d532cae979f156cac76699e7b04eba2400233c37e63a89",
+    "app/src-tauri/server/internal/term/attach.go": "cbe488dba5f4b2874f5fe1132aa25253f306f88bbb4fa14404321cbbe3b0ee60",
     "app/src-tauri/server/internal/term/hookdispatch.go": "c6092404c9f04e227c959dce0dfc50382e04717dcae624b4ec5b6503e93579e1",
     "app/src-tauri/server/internal/term/hookreg.go": "cbc172e4a8a38fbca156289990559d68476b315dbb3f13dae82cbfb4126bfb29",
     "app/src-tauri/server/internal/term/hookreg_test.go": "6639284387498de1179e23c6709296bc1bd151acbcd4e54ea221b21efed72d40",

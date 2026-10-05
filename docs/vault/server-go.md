@@ -140,6 +140,10 @@ WebSocket simply owns one `tmux attach` process and tmux does the mirroring. The
 `workspace` package's `KindTerminal` constant is reserved and deliberately unimplemented
 — PTY bytes must never enter that package's append-only SQLite event log.
 
+When the PTY ends (the session was killed, or tmux detached this client) `attach.go`
+sends `{"type":"exit"}` **and then a close frame with 1000**. Without that frame the
+browser saw 1006, the same code as a dropped network — found live 2026-10-05.
+
 `/api/v2/term/*` mounts **raw**, not behind `auth.Bearer`, for the same reason `push`
 does: that middleware only knows the shared token, and a paired device's token has to
 work too. `service.go`'s `gate` does both checks and **fails closed** — a Service with

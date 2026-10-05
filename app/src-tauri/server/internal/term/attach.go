@@ -201,6 +201,13 @@ func (s *Service) handleAttach(w http.ResponseWriter, r *http.Request) {
 				// it can say so instead of showing a frozen screen.
 				_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
 				_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+				// A real close frame, so the browser sees 1000 ("ended") and
+				// not 1006 ("connection dropped") — verified live 2026-10-05:
+				// without it a killed session was indistinguishable from a
+				// network failure.
+				_ = conn.WriteControl(websocket.CloseMessage,
+					websocket.FormatCloseMessage(websocket.CloseNormalClosure, "pty ended"),
+					time.Now().Add(writeWait))
 				return
 			}
 			_ = conn.SetWriteDeadline(time.Now().Add(writeWait))
