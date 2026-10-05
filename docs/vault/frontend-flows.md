@@ -70,8 +70,10 @@ rather than duplicated:
 - **`SshConnectionFields.tsx` (492)** — the SSH form. **The parent owns the form state**
   (via `createSshFormState`) so it can hydrate from an existing workspace or read the
   built `Connection` on submit; everything transient stays inside the component.
-- **`WorkspaceExtrasFields.tsx` (91)** — the setup/teardown/env block, same ownership
-  split.
+- **`WorkspaceExtrasFields.tsx` (114)** — the setup/teardown/env block, same ownership
+  split. Each env row has a `secret` checkbox: secret → password input, unchecking clears
+  the value; optional `storedSecretKeys` prop swaps the placeholder to "stored — leave
+  blank to keep".
 
 ## Dialogs
 
