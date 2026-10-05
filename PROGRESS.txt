@@ -7875,3 +7875,5 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-05 — Phase 108 verified live on 2.9.0 (by hand): / = diag page without a bundle, the app with www/current (also over HTTPS), /diag kept, assets immutable, traversal 404; app loads under its CSP in headless Chrome (only Cloudflare's injected beacon blocked); settings round-trip + 409 + 401 + settings:changed + restart persistence, log = version+bytes. FOLLOWUPS P1 Phase 108 archived.
 
 2026-10-06 — claude_summary.rs module doc corrected to SSH-only (comment-only); FOLLOWUPS P3 archived; vault backend-claude.md sentence added + restamped.
+
+2026-10-06 — Secret env rows (EnvVar.secret): SecretEnvStore + DPAPI secret-env.json, local/SSH delivery, RPC redaction, UI checkbox + edit-modal stored keys. Vault pages updated + restamped; DECISIONS Decided entry; FOLLOWUPS P1-P3 (live check, zellij env, provisioning DPAPI reuse). Compiles untested until CI.
