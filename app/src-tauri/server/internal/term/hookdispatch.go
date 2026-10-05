@@ -68,6 +68,9 @@ func (t termHookTarget) DispatchHook(method string, raw json.RawMessage) (any, *
 	if res, err, ok := t.verb(method, raw); ok { // B4 (verbs.go)
 		return res, err
 	}
+	if res, err, ok := t.agentVerb(method, raw); ok { // B5 (agentverbs.go)
+		return res, err
+	}
 	logger.Warn("hook method not handled", "method", method)
 	return nil, errUnknownMethod
 }

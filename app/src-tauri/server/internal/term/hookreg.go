@@ -51,6 +51,10 @@ type hookEntry struct {
 	policy string
 	// status is the pane's set-status text (Phase 102).
 	status string
+	// workspaceID is the browser workspace this session belongs to (Phase
+	// 103) — "" for a session created outside one. It fences an agent's
+	// send / title verbs to its own workspace.
+	workspaceID string
 }
 
 // Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
@@ -82,6 +86,12 @@ type HookRegistry struct {
 	notes  *noteStore
 	notifs *notifStore
 	ports  *portWatch
+
+	// B5 (Phase 103): the browser workspaces, and what an agent's split and
+	// send need from the service — set by Service.attachHooks.
+	webws *webWSStore
+	tmux  *Tmux
+	spawn func(name, cwd, policy, workspaceID string) (hookEntry, error)
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
@@ -89,7 +99,7 @@ type HookRegistry struct {
 // hook variables and keep whatever global environment tmux has.
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
-		notes: newNoteStore(""), notifs: &notifStore{}}
+		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore("")}
 }
 
 // SetHookAddr implements core.AddrSink.

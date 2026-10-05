@@ -70,7 +70,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 3,110 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), and the small verbs, notes and port detection (102) |
+| `term` | 3,950 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), and browser workspaces with the agent layout verbs (103) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -270,6 +270,43 @@ announcing the desktop's event on the events socket:
   in the same set. Detection only — v1 forwards nothing.
 - Wiring: `main.go` calls `SetDataDir` and `StartPortWatch` after `hooks.Start`, so the
   listener's port is known before the first scan.
+
+**`term/webws.go` + `layout.go` + `agentverbs.go` (Phase 103, WEB-DESIGN B5) — the
+browser's workspaces and agent automation.**
+- **Where they live (DECISIONS 2026-10-05):** `<data dir>/web-workspaces.json`, owned by
+  term — not `internal/workspace`'s SQLite. The verbs that change a layout run here, and
+  writing into a sibling subsystem's store would break the import rule; and every field
+  added to the huma-described `Workspace` there is an SDK regeneration for the phone.
+  Shape `{id, name, version, layout, tabs_mode, intent, is_project_root}` — the desktop's
+  workspaces.json fields. REST: `GET/POST /api/v2/web/workspaces`,
+  `GET/PUT/DELETE /api/v2/web/workspaces/{id}`. **PUT carries `version`**; a stale one gets
+  **409 with the current document** (last-writer-wins with a guard, no CRDT — §10).
+  Every change → `workspaces:changed` {workspace_id, version}.
+- **Layout is the desktop's `LayoutNode` JSON, stored opaque.** `layout.go` handles it as
+  generic maps so unknown fields (connection, color, a field added next year) survive a
+  daemon-side edit. Only three operations exist: find a leaf, split a leaf (the
+  desktop's `split_pane_in`: `{first: leaf, second: new, ratio 0.5}`, `sp_<hex>_<hex>`
+  ids), set/clear a leaf's title or annotation. Everything else is the browser's (§4).
+- **A pane is a tmux session.** Its leaf's `pane_id` is the session's hook pane id
+  (`term_<hex>`); `POST /api/v2/term/sessions` takes `workspace_id` (must exist) and
+  answers `pane_id`. `hookEntry.workspaceID` is the membership.
+- **Agent verbs** (`agentVerb`, after B4's `verb` in `DispatchHook`): `tree` (defaults to
+  the caller's workspace; `null` when none), `ui.tree`, `split`/`action.split`,
+  `send`/`send-key`/`action.send_keys`, `set-pane-title`/`set-pane-annotation`,
+  `pane.scrollback`. Rules decided for the daemon (Yossi): **send and the title verbs only
+  reach the caller itself or panes of its own workspace** (the desktop has no fence);
+  **`pane.scrollback` stays the desktop's error stub**, text identical (Rule #1).
+  `send` goes through `Tmux.SendBytes` = `send-keys -t =name: -H <hex bytes>` — exact
+  bytes, no key parsing, chunked; the trailing `:` makes it a PANE target (a bare
+  `=name` is rejected by pane commands — verified on tmux 3.4).
+- **`split` creates the session itself** (the desktop leaves that to its frontend; a
+  browser may not be connected): same workspace, same policy, the source pane's
+  `pane_current_path`, via `spawnSession` — the one place a session is born, shared with
+  the create route. A session that could not get hook routing is killed rather than left
+  unaddressable, and a layout write that fails kills the new session too. The reply adds
+  `pane_id` + `session` to the desktop's `{ok, workspace_id, split_from}`.
+- `writeFileAtomic` / `loadJSON` here are shared with `notes.go` (tmp + fsync + rename;
+  an unparsable file is moved aside, never overwritten).
 
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
