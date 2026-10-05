@@ -178,7 +178,12 @@ func (t *Tmux) Has(name string) bool {
 // the hook variables the desktop sets with `set-environment -g`. Keys are
 // passed sorted so the argv is deterministic. Callers must check
 // SupportsSessionEnv first; tmux < 3.2 rejects `-e` and the create fails.
-func (t *Tmux) Create(name, cwd string, env map[string]string) error {
+//
+// cmd (Phase 104), when given, is the session's program as an argv array
+// after `--`: tmux execs it directly, no shell, no expansion (verified on
+// tmux 3.4 with an argument containing `$(id)`) — Rule #3. Without it the
+// session runs the user's shell.
+func (t *Tmux) Create(name, cwd string, env map[string]string, cmd ...string) error {
 	if !ValidName(name) {
 		return ErrBadName
 	}
@@ -193,6 +198,9 @@ func (t *Tmux) Create(name, cwd string, env map[string]string) error {
 	sort.Strings(keys)
 	for _, k := range keys {
 		args = append(args, "-e", k+"="+env[k])
+	}
+	if len(cmd) > 0 {
+		args = append(append(args, "--"), cmd...)
 	}
 	if _, err := t.exec(args...); err != nil {
 		return err

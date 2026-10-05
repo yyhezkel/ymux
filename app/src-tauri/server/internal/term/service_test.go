@@ -110,6 +110,10 @@ func TestGateCoversEveryRoute(t *testing.T) {
 		{"GET", "/api/v2/web/workspaces/w_1"},
 		{"PUT", "/api/v2/web/workspaces/w_1"},
 		{"DELETE", "/api/v2/web/workspaces/w_1"},
+		// Phase 104: session history — transcripts are conversations.
+		{"GET", "/api/v2/term/history"},
+		{"POST", "/api/v2/term/history/api/resume"},
+		{"GET", "/api/v2/claude/sessions/4f51e2fc-a5e6-4510-9565-b390290a09c1/transcript"},
 	}
 	for _, rt := range routes {
 		w := do(s, rt.method, rt.path, "device-all", "")

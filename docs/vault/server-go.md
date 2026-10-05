@@ -70,7 +70,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 3,950 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), and browser workspaces with the agent layout verbs (103) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), and session history (104) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -307,6 +307,25 @@ browser's workspaces and agent automation.**
   `pane_id` + `session` to the desktop's `{ok, workspace_id, split_from}`.
 - `writeFileAtomic` / `loadJSON` here are shared with `notes.go` (tmp + fsync + rename;
   an unparsable file is moved aside, never overwritten).
+
+**`term/history.go` (Phase 104, WEB-DESIGN §4.2 / B6) — session history.** Reads, never
+writes, the CLI's `session-meta.json` (which now keeps ended rows with `ended_at` + `cwd`,
+see the CLI vault page) and Claude Code's transcripts:
+- `GET /api/v2/term/history` — rows with `ended_at` AND a `claude_session_id`, newest
+  first, minus any whose tmux name is live again (the CLI may not have re-pruned yet).
+- `GET /api/v2/claude/sessions/{id}/transcript?offset=&limit=` — found by globbing
+  `~/.claude/projects/*/<id>.jsonl`, so the cwd is not needed. The id must be a **UUID
+  before it touches a path or an argv**. Turns are the user's prompts, Claude's text and
+  one `{role:"tool", tool}` marker per call; tool results, thinking, sidechain (sub-agent)
+  and `isMeta` lines are left out. Page default 200, max 1000. **Rule #1: logs carry the
+  id, byte count and turn count only.**
+- `POST /api/v2/term/history/{name}/resume` {workspace_id?, policy?} — `spawnSession`
+  with a command: `tmux new-session … -- <claude abs path> --resume <id>` (argv, no shell
+  — `Tmux.Create` takes an optional `cmd`, verified on tmux 3.4 that `$(id)` arrives
+  literally). The row's own name is reused when free, so the CLI's next prune flips it
+  back to live; else a name is minted. When claude exits the session ends and the row is
+  history again. `claude` is resolved to an absolute path by the daemon (its PATH was
+  augmented at start), so the tmux server's PATH does not matter.
 
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
