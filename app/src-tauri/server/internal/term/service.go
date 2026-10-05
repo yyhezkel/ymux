@@ -48,6 +48,10 @@ type Service struct {
 	// claudeBin overrides the resolved `claude` path for a resume (Phase
 	// 104, history.go); tests set it, production resolves it.
 	claudeBin string
+
+	// webRoot is <data dir>/www/current, the installed web bundle (Phase 108,
+	// webapp.go); "" serves the diagnostic page at `/`.
+	webRoot string
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
@@ -85,6 +89,7 @@ func (s *Service) SetDataDir(dir string) {
 	if s.hooks != nil {
 		s.hooks.notes = newNoteStore(filepath.Join(dir, "notes.json"))
 		s.hooks.webws = newWebWSStore(filepath.Join(dir, "web-workspaces.json"))
+		s.hooks.settings = newSettingsStore(filepath.Join(dir, "web-settings.json"))
 	}
 }
 
@@ -138,6 +143,8 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("DELETE /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	// Phase 104 (B6): session history — ended rows, their transcript, resume.
+	mux.HandleFunc("GET /api/v2/settings", s.gate(s.handleSettings))
+	mux.HandleFunc("PUT /api/v2/settings", s.gate(s.handleSettings))
 	mux.HandleFunc("GET /api/v2/term/history", s.gate(s.handleHistory))
 	mux.HandleFunc("POST /api/v2/term/history/{name}/resume", s.gate(s.handleResume))
 	mux.HandleFunc("GET /api/v2/claude/sessions/{id}/transcript", s.gate(s.handleTranscript))

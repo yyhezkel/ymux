@@ -88,8 +88,12 @@ func (s *Service) registerPageRoutes(mux *http.ServeMux) {
 	// `/{$}` is an EXACT match for the root in Go 1.22+ patterns, not a
 	// catch-all: an unknown path still 404s honestly instead of silently
 	// returning the page.
-	mux.HandleFunc("GET /{$}", s.handlePage)
+	// `/` is the web app once a bundle is installed (webapp.go), this page
+	// until then; `/diag` is always this page.
+	mux.HandleFunc("GET /{$}", s.handleRoot)
 	mux.HandleFunc("GET /diag", s.handlePage)
+	mux.HandleFunc("GET /assets/{file...}", s.handleWebAsset)
+	mux.HandleFunc("GET /fonts/{file...}", s.handleWebAsset)
 	mux.HandleFunc("POST /diag/log", s.handleDiagLog)
 }
 
