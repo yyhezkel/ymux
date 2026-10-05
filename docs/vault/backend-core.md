@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
+  - app/src-tauri/src/secret_env.rs
 ---
 
 # Backend core — `lib.rs`
@@ -76,6 +77,12 @@ put logic there.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
+- **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
+  runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
+  keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
+  changed, and a store failure returns `Err("secret env not saved: ..")` after
+  `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
+  `workspace_secret_env_keys(workspace_id)` returns names only.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
   in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints

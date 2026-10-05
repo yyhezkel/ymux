@@ -32,6 +32,7 @@ mod pty_decode;
 mod pty_emit;
 mod remote_bootstrap;
 mod rpc_server;
+mod secret_env;
 mod sessions_overview;
 mod settings;
 mod skills;
@@ -152,6 +153,9 @@ pub(crate) struct AppState {
     pub(crate) core: CoreState,
     pub(crate) workspaces: WorkspacesState,
     pub(crate) load_state: Arc<Mutex<Option<LoadState>>>,
+    /// Secret env row values (`EnvVar.secret`), keyed by env owner. Kept out
+    /// of `workspaces` by `secret_env::reconcile` — see `secret_env.rs`.
+    pub(crate) secret_env: Arc<Mutex<secret_env::SecretEnvStore>>,
     pub(crate) notifications: Arc<Mutex<Vec<NotificationItem>>>,
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
@@ -1323,6 +1327,9 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     // workspaces.json stopped saving.
     let caller = std::panic::Location::caller();
     tracing::debug!("persist: called from {}:{}", caller.file(), caller.line());
+    // Secret env rows: move values into the store BEFORE the load-state gate so
+    // no path (including a refused persist) leaves a value in `workspaces`.
+    let secret_err = reconcile_secret_env(state).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
     let load_state = *state.load_state.lock().unwrap();
@@ -1342,7 +1349,41 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
         }
     }
     let file = state.workspaces.lock().unwrap().clone();
-    save_to_disk(&file)
+    save_to_disk(&file)?;
+    match secret_err {
+        Some(e) => Err(format!("secret env not saved: {e}")),
+        None => Ok(()),
+    }
+}
+
+/// `<config>/secret-env.json`, beside workspaces.json.
+fn secret_env_path() -> Result<std::path::PathBuf, String> {
+    let path = config_path()?;
+    let dir = path.parent().ok_or_else(|| "no parent dir".to_string())?;
+    Ok(dir.join("secret-env.json"))
+}
+
+/// Run `secret_env::reconcile` over the live workspaces; save the store when
+/// it changed. Error text never carries a value.
+fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
+    let mut file = state.workspaces.lock().unwrap();
+    let mut store = state.secret_env.lock().unwrap();
+    if store.reconcile(&mut file.workspaces) {
+        store.save(&secret_env_path()?)?;
+    }
+    Ok(())
+}
+
+/// Names (never values) of the secret rows that have a stored value.
+#[tauri::command]
+fn workspace_secret_env_keys(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<String>, String> {
+    let file = state.workspaces.lock().unwrap();
+    let owner = secret_env::env_owner(&file.workspaces, &workspace_id)
+        .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+    Ok(state.secret_env.lock().unwrap().keys_for(&owner))
 }
 
 // ─── Tree operations ─────────────────────────────────────────────────────────
@@ -12201,9 +12242,17 @@ pub fn run() {
                 Ok(()) => log_debug("APP", "setup: system tray created"),
                 Err(e) => log_warn("APP", &format!("setup: tray init failed (continuing): {e}")),
             }
+            match secret_env_path().and_then(|p| secret_env::SecretEnvStore::load(&p)) {
+                Ok(store) => *state.secret_env.lock().unwrap() = store,
+                Err(e) => log_warn("APP", &format!("setup: secret env load failed: {e} (starting empty)")),
+            }
             match load_from_disk() {
                 Ok(file) => {
                     *state.workspaces.lock().unwrap() = file;
+                    // Plaintext secret values from a pre-flag file move into the store.
+                    if let Err(e) = reconcile_secret_env(&state) {
+                        log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
+                    }
                     *state.load_state.lock().unwrap() = Some(LoadState::Loaded);
                     log_info("APP", "setup: load_state = Loaded");
                 }
@@ -12467,6 +12516,7 @@ pub fn run() {
             workspaces_load,
             workspace_create,
             workspace_update,
+            workspace_secret_env_keys,
             workspace_rename,
             workspace_set_identity,
             // cmux-A A2: workspace groups (sidebar collapsible sections).
