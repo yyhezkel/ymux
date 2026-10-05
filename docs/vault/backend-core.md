@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
+  - app/src-tauri/src/secret_env.rs
 ---
 
 # Backend core — `lib.rs`
@@ -76,6 +77,20 @@ put logic there.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
+- **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
+  runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
+  keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
+  changed, and a store failure returns `Err("secret env not saved: ..")` after
+  `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
+  `workspace_secret_env_keys(workspace_id)` returns names only.
+  `pane_connect` runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
+  secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
+  `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
+  in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
+  takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
+  `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
+  `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
+  status `environment variable refused by sshd: K` + `log_warn`, connect continues.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
   in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints
@@ -125,7 +140,7 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:874](../../app/src-tauri/src/lib.rs)).
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:878](../../app/src-tauri/src/lib.rs)).
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
@@ -171,7 +186,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:8883](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:8960](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -190,7 +205,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2426](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2467](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke

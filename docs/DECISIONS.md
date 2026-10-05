@@ -464,6 +464,15 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Secret env rows (`EnvVar.secret`): values out of workspaces.json
+- **Context:** workspace env values lived in plaintext in `workspaces.json`, RPC replies and `last.env`.
+- **Options:** A) per-row `secret` flag, value in DPAPI-protected `secret-env.json` / B) whole-workspace vault / C) keep plaintext.
+- **Decision:** A. Secret values are blanked in `workspaces.json`, kept in `secret_env::SecretEnvStore`
+  (DPAPI on Windows, base64 blob per owner/key), delivered via `cmd.env` (local) or sshd `set_env` (SSH, before the
+  existing `set_env`), never typed, never in `last.env`. RPC `list/new/update-workspace` redact as a second layer.
+  Edit modal reads stored key names via `workspace_secret_env_keys`; empty value on a secret row = keep stored.
+- **Outcome / Commit:** branch feature/ymux-implament (93551ec..339f998). Compiles untested until CI.
+
 ### 2026-10-05 — Phase 105: Context Rail
 - **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
   do / choose / answer tasks in a persistent pane; answers are typed back without blocking

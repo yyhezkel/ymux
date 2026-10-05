@@ -100,6 +100,9 @@ browser webviews depend on. Bumping tauri means verifying `add_child`'s signatur
 multi-webview shape still compile — push the bump and let CI type-check it (Rule #17),
 then smoke-test the workspace Browser.
 
+`windows-sys` carries `Win32_Security_Cryptography` for `CryptProtectData` /
+`CryptUnprotectData` in `secret_env.rs` (secret env rows; see `backend-core.md`).
+
 **`devtools` is the dangerous one.** It is the only thing that makes wry call
 `setInspectable(true)` on macOS, i.e. the only way Safari's Develop menu can attach to the
 workspace Browser webview in a release build (Phase 82.E). But `tauri-runtime-wry` reads

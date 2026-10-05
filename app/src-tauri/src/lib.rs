@@ -32,6 +32,7 @@ mod pty_decode;
 mod pty_emit;
 mod remote_bootstrap;
 mod rpc_server;
+mod secret_env;
 mod sessions_overview;
 mod settings;
 mod skills;
@@ -152,6 +153,9 @@ pub(crate) struct AppState {
     pub(crate) core: CoreState,
     pub(crate) workspaces: WorkspacesState,
     pub(crate) load_state: Arc<Mutex<Option<LoadState>>>,
+    /// Secret env row values (`EnvVar.secret`), keyed by env owner. Kept out
+    /// of `workspaces` by `secret_env::reconcile` — see `secret_env.rs`.
+    pub(crate) secret_env: Arc<Mutex<secret_env::SecretEnvStore>>,
     pub(crate) notifications: Arc<Mutex<Vec<NotificationItem>>>,
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
@@ -1323,6 +1327,9 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     // workspaces.json stopped saving.
     let caller = std::panic::Location::caller();
     tracing::debug!("persist: called from {}:{}", caller.file(), caller.line());
+    // Secret env rows: move values into the store BEFORE the load-state gate so
+    // no path (including a refused persist) leaves a value in `workspaces`.
+    let secret_err = reconcile_secret_env(state).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
     let load_state = *state.load_state.lock().unwrap();
@@ -1342,7 +1349,41 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
         }
     }
     let file = state.workspaces.lock().unwrap().clone();
-    save_to_disk(&file)
+    save_to_disk(&file)?;
+    match secret_err {
+        Some(e) => Err(format!("secret env not saved: {e}")),
+        None => Ok(()),
+    }
+}
+
+/// `<config>/secret-env.json`, beside workspaces.json.
+fn secret_env_path() -> Result<std::path::PathBuf, String> {
+    let path = config_path()?;
+    let dir = path.parent().ok_or_else(|| "no parent dir".to_string())?;
+    Ok(dir.join("secret-env.json"))
+}
+
+/// Run `secret_env::reconcile` over the live workspaces; save the store when
+/// it changed. Error text never carries a value.
+fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
+    let mut file = state.workspaces.lock().unwrap();
+    let mut store = state.secret_env.lock().unwrap();
+    if store.reconcile(&mut file.workspaces) {
+        store.save(&secret_env_path()?)?;
+    }
+    Ok(())
+}
+
+/// Names (never values) of the secret rows that have a stored value.
+#[tauri::command]
+fn workspace_secret_env_keys(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<String>, String> {
+    let file = state.workspaces.lock().unwrap();
+    let owner = secret_env::env_owner(&file.workspaces, &workspace_id)
+        .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+    Ok(state.secret_env.lock().unwrap().keys_for(&owner))
 }
 
 // ─── Tree operations ─────────────────────────────────────────────────────────
@@ -2776,6 +2817,9 @@ fn spawn_local_pty(
     // shell is spawned exactly as before and the attach line is typed into it
     // afterwards. zellij on Windows, tmux elsewhere; see the doc comment.
     persist_session: Option<String>,
+    // `EnvVar.secret` rows, resolved from the store: set on the child via
+    // `cmd.env` only — never typed, never logged.
+    secret_env: &[(String, String)],
 ) -> Result<String, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -2887,6 +2931,9 @@ fn spawn_local_pty(
             "zellij config: ymux-zellij.kdl + layouts/ymux.kdl NOT FOUND — \
              zellij keeps its own chrome, keybinds and mouse capture",
         ),
+    }
+    for (k, v) in secret_env {
+        cmd.env(k, v);
     }
     tracing::debug!("spawn_local_pty[{pane_id}]: injected hyperlink + YMUX_PANE_ID env vars");
     let mut child = pair
@@ -3022,6 +3069,7 @@ fn spawn_local_pty(
             let sessions_clone = state.core.sessions.clone();
             let id_clone = id.clone();
             let pane_for_exec = pane_id.clone();
+            let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 crate::log_info("PTY", &format!(
@@ -3037,6 +3085,7 @@ fn spawn_local_pty(
                     &pane_for_exec,
                     use_ymux_tmux_conf,
                     "[ymux] tmux not installed — falling back to plain shell",
+                    &secret_keys,
                 );
                 let mut sessions = sessions_clone.lock().unwrap();
                 if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
@@ -3408,8 +3457,17 @@ fn build_tmux_attach_script(
     pane_id: &str,
     use_ymux_tmux_conf: bool,
     fallback_msg: &str,
+    // Names only (never values): appended to tmux `update-environment` so a
+    // re-attach copies them from the attaching client's environment.
+    secret_keys: &[String],
 ) -> String {
     let mut script = String::new();
+    for k in secret_keys {
+        let q = shell_quote(k);
+        script.push_str(&format!(
+            "tmux show-options -gv update-environment 2>/dev/null | grep -qx {q} || tmux set-option -ga update-environment {q} 2>/dev/null; "
+        ));
+    }
     // Push the env vars into tmux's global environment so a re-attach to
     // a long-lived session sees the *current* YMUX_SOCKET_ADDR/
     // TUNNEL_TOKEN/PANE_ID rather than the stale ones from the original
@@ -3651,6 +3709,7 @@ fn spawn_wsl_pty(
                 &pane_for_exec,
                 use_ymux_tmux_conf,
                 "[ymux] tmux not installed in WSL — falling back to plain shell",
+                &[],
             );
             let mut sessions = sessions_clone.lock().unwrap();
             if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
@@ -4252,6 +4311,9 @@ async fn spawn_ssh(
     // name. Passed through from pane_connect when the picker UI chose
     // a specific orphan session to attach to.
     tmux_session_name: Option<String>,
+    // Secret env rows (resolved values), delivered per channel via
+    // `set_env` and never typed, logged or written to `last.env`.
+    secret_env: &[(String, String)],
 ) -> Result<String, String> {
     log_debug("SSH", &format!(
         "spawn_ssh: entry ws={} pane={} target={}@{}:{}",
@@ -4447,6 +4509,20 @@ async fn spawn_ssh(
         .channel_open_session()
         .await
         .map_err(|e| format!("channel_open_session: {e}"))?;
+
+    // Secret rows go first, with a reply awaited: sshd's AcceptEnv may refuse
+    // them, and the user must learn that. Names only in the status and log
+    // (Rule #2); the connect continues either way.
+    if !secret_env.is_empty() {
+        let refused = secret_env::deliver_ssh(&mut channel, secret_env).await;
+        if !refused.is_empty() {
+            log_warn("SSH", &format!(
+                "spawn_ssh[{pane_id}]: sshd refused secret env: {}",
+                refused.join(", ")
+            ));
+            emit_pane_status_event(app, &pane_id, &secret_env::refused_message(&refused));
+        }
+    }
 
     // Best-effort: try to set env vars on the shell. sshd's AcceptEnv may filter; if so,
     // the env-file fallback covers it.
@@ -4792,6 +4868,9 @@ async fn spawn_ssh(
         };
         let token_clone = token.as_str().to_string();
         let pane_for_exec = pane_id.clone();
+        // Secret names (never values) for tmux update-environment; owned so
+        // the 'static task can hold them.
+        let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
         // Phase tmux-conf: read the user's setting BEFORE we hand
         // control to the spawned task (state.settings is not Send-
         // safe to hold across await points). Default true so users
@@ -4828,6 +4907,7 @@ async fn spawn_ssh(
                 &pane_for_exec,
                 use_ymux_tmux_conf,
                 "[ymux] tmux not installed on remote — falling back to plain shell",
+                &secret_keys,
             );
             {
                 let mut sessions = sessions_clone.lock().unwrap();
@@ -8957,6 +9037,35 @@ async fn pane_connect(
         )
     };
 
+    // Secret rows never reach the typed `export` path: split them off, resolve
+    // their values from the store by env owner. A name with no stored value is
+    // reported on the pane, never typed and never guessed.
+    let (ws_env, secret_names) = secret_env::split_env(&ws_env);
+    let (secret_rows, secret_missing): (Vec<(String, String)>, Vec<String>) = if secret_names.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        let owner = {
+            let file = state.workspaces.lock().unwrap();
+            secret_env::env_owner(&file.workspaces, &workspace_id)
+        };
+        match owner {
+            Some(owner) => {
+                // Per key, so the rows that did resolve are still delivered.
+                let store = state.secret_env.lock().unwrap();
+                let mut found = Vec::new();
+                let mut missing = Vec::new();
+                for k in &secret_names {
+                    match store.resolve(&owner, std::slice::from_ref(k)) {
+                        Ok(mut row) => found.append(&mut row),
+                        Err(mut m) => missing.append(&mut m),
+                    }
+                }
+                (found, missing)
+            }
+            None => (Vec::new(), secret_names.clone()),
+        }
+    };
+
     let effective_tmux_name: Option<String> =
         resolve_effective_session_name(tmux_session_name.as_deref(), pane_title.as_deref());
 
@@ -9100,12 +9209,23 @@ async fn pane_connect(
                 cols,
                 rows,
                 persist_name,
+                &secret_rows,
             )?
         }
         // Phase 80: WSL panes default to PERSISTENT (tmux) — persistence
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // No delivery path into a wsl.exe session: say so instead of
+            // silently dropping the rows.
+            if !secret_names.is_empty() {
+                log_warn("PTY", &format!("secret env not delivered to WSL pane {pane_id}: {}", secret_names.join(", ")));
+                emit_pane_status_event(
+                    &app,
+                    &pane_id,
+                    &format!("secret env not supported on WSL: {}", secret_names.join(", ")),
+                );
+            }
             let effective_persistent = match mode.as_deref() {
                 Some("tmux") => true,
                 Some("plain") => false,
@@ -9162,6 +9282,7 @@ async fn pane_connect(
                 rows,
                 effective_persistent,
                 effective_tmux_name.clone(),
+                &secret_rows,
             )
             .await?
         }
@@ -9171,6 +9292,18 @@ async fn pane_connect(
         .lock()
         .unwrap()
         .insert(pane_id.clone(), session_id.clone());
+
+    if !secret_missing.is_empty() {
+        log_warn("PTY", &format!("secret env not set for pane {pane_id}: {}", secret_missing.join(", ")));
+        emit_pane_status_event(
+            &app,
+            &pane_id,
+            &format!(
+                "secret env not set: {} (re-enter in workspace settings)",
+                secret_missing.join(", ")
+            ),
+        );
+    }
 
     // 2026-08-23: is this pane actually multiplexer-wrapped? Read it off the
     // session the spawn arms just built rather than re-deriving
@@ -12201,9 +12334,17 @@ pub fn run() {
                 Ok(()) => log_debug("APP", "setup: system tray created"),
                 Err(e) => log_warn("APP", &format!("setup: tray init failed (continuing): {e}")),
             }
+            match secret_env_path().and_then(|p| secret_env::SecretEnvStore::load(&p)) {
+                Ok(store) => *state.secret_env.lock().unwrap() = store,
+                Err(e) => log_warn("APP", &format!("setup: secret env load failed: {e} (starting empty)")),
+            }
             match load_from_disk() {
                 Ok(file) => {
                     *state.workspaces.lock().unwrap() = file;
+                    // Plaintext secret values from a pre-flag file move into the store.
+                    if let Err(e) = reconcile_secret_env(&state) {
+                        log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
+                    }
                     *state.load_state.lock().unwrap() = Some(LoadState::Loaded);
                     log_info("APP", "setup: load_state = Loaded");
                 }
@@ -12467,6 +12608,7 @@ pub fn run() {
             workspaces_load,
             workspace_create,
             workspace_update,
+            workspace_secret_env_keys,
             workspace_rename,
             workspace_set_identity,
             // cmux-A A2: workspace groups (sidebar collapsible sections).
@@ -13653,9 +13795,19 @@ mod tmux_attach_script_tests {
 
     const CONF: &str = include_str!("../resources/ymux-tmux.conf");
 
+    // Pins: secret NAMES reach tmux update-environment, VALUES never appear in the script.
+    #[test]
+    fn tmux_attach_script_lists_secret_names_never_values() {
+        let keys = vec!["API_KEY".to_string()];
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m", &keys);
+        assert!(s.contains("update-environment 'API_KEY'") || s.contains("update-environment API_KEY"));
+        assert!(s.contains("grep -qx"));
+        assert!(!s.contains("hunter2"));
+    }
+
     #[test]
     fn with_conf_chains_source_file_and_never_mouse_on() {
-        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m");
+        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m", &[]);
         assert_eq!(
             s,
             format!(
@@ -13668,7 +13820,7 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn without_conf_appends_nothing() {
-        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m");
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m", &[]);
         assert_eq!(
             s,
             format!(
@@ -13683,7 +13835,7 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn env_injection_precedes_exec() {
-        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m");
+        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m", &[]);
         assert_eq!(s.matches("tmux set-environment -g ").count(), 6);
         for var in ["YMUX_SOCKET_ADDR", "WINMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "WINMUX_TUNNEL_TOKEN", "YMUX_PANE_ID", "WINMUX_PANE_ID"] {
             assert!(s.contains(var), "missing {var}");
@@ -13696,7 +13848,7 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn session_name_is_shell_quoted() {
-        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m");
+        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m", &[]);
         assert!(s.contains(&format!("-s {} ", shell_quote("it's"))));
     }
 
