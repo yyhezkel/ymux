@@ -24,27 +24,21 @@ const HANDSHAKE_TIMEOUT_SECS: u64 = 10;
 
 // ─── handshake wire tags (winmux → ymux rename) ──────────────────────
 //
-// The handshake is the one surface where the rename cannot be
-// unilateral: a remote still running a pre-rename `winmux-linux-x64`
-// does a literal `strip_prefix("WINMUX-CHALLENGE ")` and hangs up on
-// anything else. So the *challenge we emit* stays on the legacy tag for
-// one release while both ends learn to read either dialect and mirror
-// whatever they were spoken to in. That makes all four version pairings
-// work:
+// The challenge we emit is `YMUX-CHALLENGE`. Both ends still read *and
+// mirror* either dialect, so a pre-rename `WINMUX-RESPONSE` is accepted
+// and answered in kind:
 //
-//   new desktop ↔ new CLI   → legacy tag, both understand it
-//   new desktop ↔ old CLI   → legacy tag, old CLI unchanged
+//   new desktop ↔ new CLI   → ymux, native
+//   new desktop ↔ old CLI   → ymux challenge; an old CLI that only
+//                             matches `WINMUX-CHALLENGE` needs re-bootstrap
 //   old desktop ↔ new CLI   → legacy tag, new CLI mirrors it back
-//   (and once CHALLENGE_TAG flips, new↔new speaks ymux natively)
 //
-// FOLLOWUPS P1: flip `CHALLENGE_TAG` to `YMUX_TAG` in the release after
-// 0.5.0, once every provisioned remote has been re-bootstrapped. The
-// accept-both arms can go at the same time.
+// Mirrors `ChallengeTag` in server/internal/hooks/hooks.go — flip both
+// together. The accept-both arms stay.
 const YMUX_TAG: &str = "YMUX";
 const LEGACY_TAG: &str = "WINMUX";
-/// Dialect this side *emits* when it opens a handshake. Legacy for now
-/// — see the note above.
-const CHALLENGE_TAG: &str = LEGACY_TAG;
+/// Dialect this side *emits* when it opens a handshake.
+const CHALLENGE_TAG: &str = YMUX_TAG;
 
 fn hex_encode(b: &[u8]) -> String {
     let mut s = String::with_capacity(b.len() * 2);

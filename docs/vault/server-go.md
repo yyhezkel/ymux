@@ -118,8 +118,8 @@ hooks, status) into the substrate.
 **`chat/chat_hookrpc.go`** — chat's `core.HookResolver`: `MatchHookHMAC` finds the
 mobile session whose token signed the nonce, `dispatchHook` answers its `feed.push`
 (policy `auto`/`block`/`gate`, the phone approves). Since Phase 100 the handshake itself
-lives in `hooks` (below); `hooks.ChallengeTag` still speaks the legacy
-`WINMUX-CHALLENGE` dialect on purpose; the Rust half is `CHALLENGE_TAG` in
+lives in `hooks` (below); `hooks.ChallengeTag` emits
+`YMUX-CHALLENGE` (WINMUX responses still accepted); the Rust half is `CHALLENGE_TAG` in
 `ymux-tunnel`. **Flip both together.**
 
 **`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
@@ -420,10 +420,9 @@ It speaks **exactly what the Linux CLI speaks** — same endpoint, same HMAC
 challenge-response, same newline-delimited JSON-RPC — so it inherits an
 already-deployed server side instead of adding a protocol. The Rust counterparts are
 `cli/src/main.rs::perform_handshake` (the client half it mirrors) and
-`crates/ymux-tunnel/src/lib.rs` (the server half it talks to). The desktop still
-OPENS with the legacy `WINMUX` tag on purpose, so the client mirrors whichever tag it
-is addressed in and accepts either in the verdict; the day `CHALLENGE_TAG` flips,
-nothing here changes. The tests run a Go implementation of the server half written
+`crates/ymux-tunnel/src/lib.rs` (the server half it talks to). The desktop now
+OPENS with `YMUX`; the client still mirrors whichever tag it is addressed in and
+accepts either in the verdict, so a pre-flip desktop works unchanged. The tests run a Go implementation of the server half written
 from the wire spec, so a drift in either direction fails in CI rather than on a box
 where the only symptom is "the approval card never appears".
 

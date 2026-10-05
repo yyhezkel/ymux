@@ -120,9 +120,9 @@ Bridges a remote-forwarded TCP channel to the local RPC endpoint. The preamble i
 **HMAC-SHA256 challenge/response**, not a plain token, so the shared secret never travels
 in cleartext.
 
-**`CHALLENGE_TAG` still emits the legacy `WINMUX-CHALLENGE`** on purpose — a pre-rename
-remote CLI does a literal prefix match. Both ends read *and mirror* either dialect; the
-Go counterpart is `challengeTag` in `server/internal/chat/chat_hookrpc.go`. **Flip both
+**`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
+ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
+counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
 together or not at all.** Rule #8: the token never reaches a log.
 
 ## `ymux-policy` (542) — the 3-state permission engine
