@@ -464,6 +464,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
+- **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
+- **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.
+- **Decision:** A. Handshake emits `YMUX-CHALLENGE` (Rust + Go together); `WINMUX_*` env dual-writes, CLI legacy adoption, legacy pipe listener, `X-Winmux-Truncated` and the `use_winmux_tmux_config` alias are gone. Readers (`WINMUX-RESPONSE`, env-file fallback, `default_pipe_name_legacy`) and the `%APPDATA%` / `~/.winmux` / `WINMUX_CONFIG_DIR` migrations stay: they cost nothing and a user can upgrade from any age.
+- **Outcome / Commit:** branch feature/ymux-crates-ymux-tunnel-src (fc83075..e213dc1). Compiles untested until CI; server blobs need a CI rebake + live smoke (FOLLOWUPS P1).
+
 ### 2026-10-06 — Secret env rows (`EnvVar.secret`): values out of workspaces.json
 - **Context:** workspace env values lived in plaintext in `workspaces.json`, RPC replies and `last.env`.
 - **Options:** A) per-row `secret` flag, value in DPAPI-protected `secret-env.json` / B) whole-workspace vault / C) keep plaintext.

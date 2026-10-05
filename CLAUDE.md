@@ -80,17 +80,20 @@ See FOLLOWUPS.
 ## The winmux → YMUX rename (2026-08-18)
 
 The app was `winmux` until 0.4.5. **A `winmux` you find in the code is almost
-certainly load-bearing, not a leftover** — every one is a compat shim for an
+certainly load-bearing, not a leftover** — it is a read-side compat shim for an
 existing install or an already-provisioned remote, and each is commented as
-such. Do not "finish the rename" by deleting them; the removal is scheduled
-(FOLLOWUPS P1, one release after 0.5.0) and has to happen as a set.
+such. The write-side shims (wire tag, `WINMUX_*` env dual-write, legacy pipe
+listener, `X-Winmux-Truncated`, `use_winmux_tmux_config` alias, CLI
+`adopt_legacy_env`) were retired in ticket `ymux-crates-ymux-tunnel-src`; do not
+"finish the rename" by deleting the readers or migrations that remain.
 
-- **Still emits the legacy wire tag.** The handshake sends `WINMUX-CHALLENGE`
-  on purpose: a pre-rename remote CLI does a literal prefix match. Both ends
-  read *and mirror* either dialect (`CHALLENGE_TAG` in `crates/ymux-tunnel`,
-  `challengeTag` in `server/internal/chat/chat_hookrpc.go`) — flip both together.
+- **Emits `YMUX-CHALLENGE`, still reads both.** The handshake now sends the
+  YMUX tag (`CHALLENGE_TAG` in `crates/ymux-tunnel`, `ChallengeTag` in
+  `server/internal/hooks/hooks.go`). Both ends still accept `WINMUX-RESPONSE` /
+  `WINMUX-CHALLENGE` and mirror the peer's dialect, so an old client or CLI keeps
+  working. Never drop those read arms without checking for pre-rename remotes.
 - **Migrations that run once, on upgrade:** `%APPDATA%\winmux` → `ymux`
-  (`ymux-core::config_dir`), `~/.winmux` → `~/.ymux` (bootstrap + CLI), and
+  (`ymux-core::config_dir`), `~/.winmux` → `~/.ymux` (bootstrap only — the CLI no longer migrates), and
   the daemon's data dir. These stay long after the rest go.
 - **`"winmux"` does not contain `"ymux"`.** Two substring checks broke on
   exactly that and were fixed; if you add another, match both spellings.
