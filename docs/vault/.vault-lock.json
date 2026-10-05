@@ -210,7 +210,7 @@
     "app/src-tauri/server/internal/agent/state_test.go": "840b2525f53bdd435ad84d0054138818d56ef50c24fa5b6035826fbcc4fc1056",
     "app/src-tauri/server/internal/api/api.go": "21031c35c8cbbe5b0fa1e25bbcc76be576c3e391072d7441ebf05a9fbac2713f",
     "app/src-tauri/server/internal/api/api_test.go": "9f0bb84c40297350681a90ddbe052a4e831674e481559d59bb9baab478ac8849",
-    "app/src-tauri/server/internal/api/forward_test.go": "d7834d0d1c5ad0ecce6b3fe29b8d5836d4e28212ff15b6714dde0617ec7813cf",
+    "app/src-tauri/server/internal/api/forward_test.go": "3667d977f1333c7bdb807d74b45fde3bcfef5eee1cb101d96cf299d548665e23",
     "app/src-tauri/server/internal/api/huma.go": "06024f1f16dbd14bcaec0c1b684ac684522b93acc5342ff423d159a387558712",
     "app/src-tauri/server/internal/api/integration_test.go": "9032d1e0a60f4038afbc61a90d74c57e7d751b9c3afd323fcfe93e72fd951bea",
     "app/src-tauri/server/internal/api/mobile.go": "13ab97db09ff17042b902503d42f48ac315d63f25f6d9c02d371961d92c6579d",

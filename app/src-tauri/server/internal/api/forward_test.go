@@ -28,7 +28,7 @@ func TestHooksForwardDropsBrowserSessions(t *testing.T) {
 	}).Handler()
 
 	forward := func(reqID, pane string) int {
-		body := `{"req_id":"` + reqID + `","workspace_id":"ws1","pane_id":"` + pane + `","tool_name":"Bash","title":"t"}`
+		body := `{"req_id":"` + reqID + `","workspace_id":"ws1","pane_id":"` + pane + `","tool_name":"Bash","title":"t","timeout_at":0}`
 		r := httptest.NewRequest("POST", "/api/v2/hooks/forward", strings.NewReader(body))
 		r.Header.Set("Authorization", "Bearer secret")
 		r.Header.Set("Content-Type", "application/json")
