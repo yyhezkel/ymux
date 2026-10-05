@@ -364,6 +364,83 @@ Phase E is the answer to the parked Android port (DECISIONS 2026-08-23, "Fork
 scan", options A/B/C): **option D — a PWA on this stack**. It closes that
 thread; no third platform to keep green.
 
+### 8.1 Phase B — status and handoff (2026-10-05)
+
+Written when Phase B moved from a cloud session to a session on a real machine. Read
+this, `docs/DECISIONS.md` (Decided, 2026-10-04 "WEB-DESIGN Phase B split…") and the
+FOLLOWUPS P1 entries for Phase 99/100 before touching Phase B. Everything below was
+checked against the code on that date; line numbers drift, the function names do not.
+
+| Part | State |
+|---|---|
+| B1 — `internal/agent` (Phase 99) | **In main** (PR #54). Pure Go ports + translated tests; nothing imported it until B2. |
+| B2 — hook listener for browser sessions (Phase 100) + daemon **2.4.1** | **PR #55, green, NOT merged.** Waiting for the live test (FOLLOWUPS P1 Phase 100) on Windows build run 37180149087, then merge. Verified in the cloud session only against the built daemon + a real tmux 3.4 with a simulated hook client (create → `hooks:true` → session env → prompt/permission/stop folded, forged pane denied, no prompt text in the log). Not verified: a real `claude`, the phone path, a server updated through the add-on. |
+| B3 – B6 | Not started. |
+
+**B3 — `feed.push` / `feed.decide` + the events WS.**
+- Already ported (`term/hookdispatch.go`): the traffic light and brief folding of the
+  desktop's `feed.push` arms (`rpc_server.rs` `feed.push`, ~:1289–1865, the
+  `user-prompt-submit` / `stop` / `session-end` / `pre-tool-use` / `notification` arms).
+- Missing, desktop behaviour to mirror:
+  - a feed store (desktop `FeedStore`, cap 50 items; `FeedItem` in `lib.rs` ~:114 =
+    `{request_id, kind, subkind, pane_id?, workspace_id?, title, summary, payload,
+    state: pending|allowed|denied|timedout|passive, created_ms, blocking}`);
+  - card text via `agent.Humanize` for `stop` / `session-*` / `post-tool-use` /
+    `subagent-stop` / `pre-compact` (a stop with a non-degraded brief uses
+    `agent.PreBriefText` and `ask · rec` else `delta`, clipped to 160);
+  - `user-prompt-submit` returns early (no card); `notification` never makes a card;
+  - the blocking wait: `wait_timeout_seconds` default 120, clamped 1–600; a dropped
+    channel → deny, an expired timer → `"timeout"` (the CLI treats it as deny);
+  - events `feed:item-added`, `feed:item-resolved` `{request_id, decision}`,
+    `pane:agent-run` (`agent.Run.Event`), `pane:brief` `{pane_id, entry}`
+    (`agent.BriefEntry`); hydration commands `pane_agent_states` (`lib.rs` ~:2599)
+    and `pane_briefs` (~:2637) — `term.HookRegistry.Snapshot()` already holds both;
+  - **there is no workspace-wide events WS** (§2 correction) — B3 builds it; the
+    per-session `…/subscribe` and `workspace/frames.go` are the patterns to follow.
+- Decide in B3: the per-session policy `none` (Yossi's word; most likely "no gate,
+  observability only", which is what B2 does today) versus `gate` as the browser
+  default once a human can be reached.
+- De-duplicate: every `pre-tool-use` also arrives via the CLI's fire-and-forget
+  `POST /api/v2/hooks/forward` (FOLLOWUPS P2) — ignore `term_` pane ids there, or key on
+  `request_id`.
+
+**B4 — small verbs** (desktop `dispatch()` in `rpc_server.rs`): `set-status`
+(`pane_id`, `text` → event `pane:status`), `notify` (`title`, `body`, `kind` →
+`notification:new`), `note-add/list/update/done/delete` (delegates to `notes.rs`),
+`port.opened` / `port.closed` (`workspace_id`, `port`, `addr`, `family` →
+`port-detected` / `port-undetected`; detection only in browser mode). B2 answers all of
+these with JSON-RPC error -32000 today.
+
+**B5 — workspace state + layout verbs.** `/api/v2/workspace/state` does not exist (§4
+correction); the `Workspace` row is only `{ID, Name, CreatedAt}` and the workspace
+store has no ALTER yet (copy `chat/chat_store.go`'s `ALTER TABLE … ADD COLUMN` pattern).
+Verbs: `tree`, `split` (daemon understands only "split leaf X"), `send`, `send-key`
+(`agent.TranslateKey` is ready), `set-pane-title`, `set-pane-annotation`.
+`pane.scrollback` is a deliberate error stub on the desktop (Rule #1) — a daemon
+`tmux capture-pane` would be new behaviour, not a port; decide explicitly.
+
+**B6 — session history (§4.2), the one CLI change.** `cli/src/session_meta.rs`
+`prune` (~:132) DELETES every entry with no live tmux session, and treats a failed
+`tmux` (non-zero exit) as "no sessions" — wiping the file. The entry has no `cwd`
+field. `SessionMetaEntry` has no catch-all for unknown fields, so an old CLI on a remote
+re-saves the file and silently drops `ended_at` — mixed-version remotes lose history
+until re-bootstrapped. Readers to update together: the CLI, the desktop's copy of the
+struct (`lib.rs` ~:9491) and `server/internal/term/meta.go`.
+
+**Working notes for the session that picks this up.**
+- Rebake = download the `ymux-server-linux` artifact of the PR's ci-windows run
+  (`gh run download <run> -n ymux-server-linux -D <tmp>`, then copy — `gh run
+  download` will not overwrite existing files). The two local rebakes in Phase 100 were
+  a one-off cloud-session exception to Rule #17 (that session could not download
+  artifacts); not a precedent.
+- Rule #17 holds: builds and tests run on CI. Live checks on the machine (a real
+  daemon, tmux, `claude`) are exactly what Rule #14 asks for — do them.
+- The desktop offers a server add-on update only when the version string changes
+  (`addons.rs` ~:752). Bump `core.Version` + `INSIGHTS_VERSION` + the four sdk-gen
+  version strings together whenever a server change must reach already-updated hosts.
+- A daemon restart under systemd can kill the shared tmux server, desktop sessions
+  included — accepted, documented in `docs/ymux-server/DEPLOYMENT.md`.
+
 ## 9. Questions (tracked in `docs/DECISIONS.md`)
 
 - **Q1 truth model — DECIDED 2026-09-10:** server-native workspaces; tmux
