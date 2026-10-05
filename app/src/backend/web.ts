@@ -411,6 +411,7 @@ export class WebBackend implements Backend {
     workspace_ensure_connected: async () => null, // the daemon is the host
     workspace_ensure_port_watcher: async () => null,
     list_detected_ports: async () => [],
+    log_dir_path: async () => "", // no local log file: the browser console is the log
 
     // settings
     settings_load: () => this.loadSettings(),

@@ -78,7 +78,10 @@ export const WEB_DEFAULT_SETTINGS: Settings = {
 /**
  * A stored document over the defaults: top-level groups that are objects are
  * merged one level deep, so a setting added after the document was saved
- * still gets its default.
+ * still gets its default. A stored value whose shape does not match an object
+ * default (a hand-written or foreign document) is ignored rather than allowed
+ * to replace a whole group — `applyTheme` reading `theme.text_primary` off a
+ * string is exactly how a bad document would otherwise blank the UI.
  */
 export function withDefaults(stored: unknown): Settings {
   if (typeof stored !== "object" || stored === null || Array.isArray(stored)) {
@@ -87,10 +90,12 @@ export function withDefaults(stored: unknown): Settings {
   const out: Record<string, unknown> = structuredClone(WEB_DEFAULT_SETTINGS) as unknown as Record<string, unknown>;
   for (const [k, v] of Object.entries(stored as Record<string, unknown>)) {
     const d = out[k];
-    out[k] =
-      typeof d === "object" && d !== null && !Array.isArray(d) && typeof v === "object" && v !== null && !Array.isArray(v)
-        ? { ...(d as Record<string, unknown>), ...(v as Record<string, unknown>) }
-        : v;
+    const isObj = (x: unknown) => typeof x === "object" && x !== null && !Array.isArray(x);
+    if (isObj(d)) {
+      if (isObj(v)) out[k] = { ...(d as Record<string, unknown>), ...(v as Record<string, unknown>) };
+      continue; // keep the default group
+    }
+    out[k] = v;
   }
   return out as unknown as Settings;
 }
