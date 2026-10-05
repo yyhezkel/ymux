@@ -1124,8 +1124,7 @@ function App() {
     void splitPane(cur, splitDir);
   };
 
-  // BRIEF / Phase 105: set or clear a workspace's 🎯 intent — shared by
-  // the Briefing card and the Context Rail.
+  // BRIEF: set or clear a workspace's 🎯 intent (the Briefing card).
   const saveIntent = (wsId: string, text: string) => {
     void (async () => {
       try {
@@ -5121,10 +5120,6 @@ function App() {
         width={railWidth()}
         onResize={setRailWidth}
         onResizeEnd={() => saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() })}
-        onSaveIntent={(text) => {
-          const id = activeWs()?.id;
-          if (id) saveIntent(id, text);
-        }}
         onJumpPane={focusPane}
       />
 

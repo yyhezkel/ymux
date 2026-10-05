@@ -504,6 +504,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   - The compact/resume injection digest uses the same shape.
   - **Go parity deferred:** `server/internal/agent/brief.go` does not parse `goal` /
     `done` yet. It would need a daemon rebake plus a version bump (BACKLOG).
+- **2026-10-05 follow-up: the workspace intent editor is removed from the rail.** This fixes the double 🎯. The intent stays on the Briefing card (Ctrl+Alt+Q) and in startup injection.
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, 103 then went to B5 (PR #60) and 104 to B6 (PR #61), so this is 105 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
 - **Outcome / Commit:** Phase 105.A (store + rail) on `claude/phase-103a-context-rail`;
   105.C follows. Spec: `docs/CONTEXT.md`.

@@ -451,8 +451,9 @@ is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` 
 fixtures without the 20 other fields and runs under plain `node --test`.
 
 **`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent + this
-workspace's brief rows. Since Phase 105 both pieces are shared components:
-**`IntentEditor.tsx`** (inline edit → App's `saveIntent` → `workspace_set_intent`;
+workspace's brief rows. Since Phase 105 both pieces are separate components:
+**`IntentEditor.tsx`** (used ONLY here — the Context Rail dropped it to avoid a
+second 🎯; inline edit → App's `saveIntent` → `workspace_set_intent`;
 Enter/blur save, plus an explicit Save button whose disabled state doubles as
 "saved ✓" — beta feedback: a field that saves invisibly reads as one that
 doesn't save at all; empty clears; the draft follows external saves) and
@@ -479,15 +480,16 @@ pinned with `grid-column: 3`), NOT a `SideDrawer`: no backdrop, nothing in
 left. App owns `railWidth` / `railCollapsed` (`loadRailPrefs` / `saveRailPrefs`,
 localStorage in try/catch — per-machine UI state per the invariant below),
 `toggleContextRail` (shortcut `toggle_context_rail` Ctrl+Shift+K + palette
-`contextRail.toggle`, one handler) and `saveIntent` (shared with the Briefing
-card). **It shows only the focused pane** (Yossi, 2026-10-05 follow-up): App
+`contextRail.toggle`, one handler). The rail has NO intent editor (Yossi,
+2026-10-05: one 🎯 only — the session goal; the workspace intent stays on the
+Briefing card and in startup injection). **It shows only the focused pane** (Yossi, 2026-10-05 follow-up): App
 passes `paneId = activePaneId()` (the same signal keyboard/focus routing uses;
 null with no active workspace) and that pane's row from `allPaneAgentRows()`.
 The rail fetches `session_context_list` for the active workspace on workspace
 change and on `context:changed` for that workspace (a sequence number drops a
 stale response after a switch), then `sessionsForPane` picks the pane's
 sessions newest-first client-side — so a focus change costs no IPC. Body:
-the shared `IntentEditor`, then ONE `SessionCard` — modeled on
+ONE `SessionCard` — modeled on
 tzafrir/human-in-the-loop's task card (Phase 105 follow-up, Yossi-approved
 layout): 🎯 `cardGoal` (sticky brief `goal`, else the first prompt's first line
 clipped to 80) + *Done when* (`done_when`, omitted when absent); *Now* =

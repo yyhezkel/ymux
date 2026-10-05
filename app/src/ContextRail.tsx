@@ -6,7 +6,6 @@ import { createLogger } from "./logger";
 import type { Workspace } from "./types";
 import { inQueue, type QueueRow } from "./queueModel";
 import { QueueRowView, relAge } from "./QueueRow";
-import { IntentEditor } from "./IntentEditor";
 import { AgentLight } from "./AgentLight";
 import {
   cardGoal,
@@ -30,8 +29,8 @@ import {
 // FOCUSED pane's Claude session (App's activePaneId), as a card modeled on
 // tzafrir/human-in-the-loop's task card — 🎯 goal + Done when, Now / Next /
 // Waiting on you, the last 3 ✔ deltas, then ▸ N more · ▸ original prompt
-// (SessionCard below). The workspace 🎯 intent editor sits above it;
-// earlier sessions of the same pane sit behind a toggle. Switching focus
+// (SessionCard below) — nothing else: the workspace intent lives on the
+// Briefing card only. Earlier sessions of the same pane sit behind a toggle. Switching focus
 // switches the card. Data: `session_context_list` for the workspace,
 // filtered to the pane, refetched on `context:changed`. All agent/user
 // text renders as plain text (Solid escapes it) with dir="auto".
@@ -76,7 +75,6 @@ interface Props {
   onResize: (width: number) => void;
   onResizeEnd: () => void;
   width: number;
-  onSaveIntent: (text: string) => void;
   onJumpPane: (paneId: string) => void;
 }
 
@@ -211,17 +209,8 @@ export function ContextRail(p: Props) {
         </div>
 
         <div class="context-rail-body">
-          <Show
-            when={p.ws}
-            fallback={<div class="context-empty">{t("context.noWorkspace")}</div>}
-          >
-            {(ws) => (
-              <IntentEditor
-                class="context-intent"
-                intent={ws().intent}
-                onSave={p.onSaveIntent}
-              />
-            )}
+          <Show when={!p.ws}>
+            <div class="context-empty">{t("context.noWorkspace")}</div>
           </Show>
 
           <Show when={error()}>

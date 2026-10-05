@@ -69,6 +69,9 @@ drawer: there is no backdrop and it never covers the panes.
 - **Width and collapsed state:** stored in `localStorage`. Each access is wrapped
   in try/catch.
 
+The rail does **not** show the workspace intent. That stays on the Briefing card
+(Ctrl+Alt+Q), and startup injection still uses it.
+
 **Each window shows only its own context.** The rail follows the **focused pane**:
 App's `activePaneId`, the same signal keyboard and focus routing use. Changing
 focus changes the card. There is no list of the workspace's other sessions and
@@ -77,9 +80,7 @@ Yossi's call (DECISIONS 2026-10-05 follow-up).
 
 Top to bottom:
 
-1. **🎯 Intent:** the workspace's one-liner. It uses the same editor as the
-   Briefing card (`IntentEditor.tsx`).
-2. **The focused pane's current session:** the session with the newest activity
+1. **The focused pane's current session:** the session with the newest activity
    whose `pane_id` is the focused pane. The card is modeled on
    tzafrir/human-in-the-loop's task card: short fields under fixed labels. The
    layout is Yossi-approved:
@@ -108,7 +109,7 @@ Top to bottom:
      ✅ line for a closed session.
    - "▸ N more" expands the rest of the list. "▸ original prompt" shows the raw
      first prompt.
-3. **Earlier sessions in this pane (N):** a collapsed toggle listing the pane's
+2. **Earlier sessions in this pane (N):** a collapsed toggle listing the pane's
    older sessions, for example after a restarted `claude` or a `/clear`. It
    resets whenever focus moves to another pane.
 
