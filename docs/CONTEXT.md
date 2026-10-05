@@ -89,13 +89,38 @@ files and the UI only. Log lines carry session ids, pane ids, counts and
 versions. The files sit in the user's own config dir, next to `notes.json`.
 Everything is rendered as plain text with `dir="auto"`.
 
-## Stage C (next PR)
+## Injection back into the agent (Phase 103.C)
 
-Phase 103.C feeds this context back to the agent. The `SessionStart` hook asks
-the desktop for `additional_context`:
+Claude Code's `SessionStart` hook is registered again (hook spec v1.7.0;
+existing machines re-run `setup-hooks`). Its only job is
+`ymux claude-hook session-start` → RPC `context.inject` → print
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":…}}`.
+It never creates a feed card and never fires a toast.
 
-- On `compact` / `resume`: the session's first prompt plus its last 8 log lines.
-- On `startup`: the workspace intent plus one line per sibling session.
+| `source` | What the agent gets |
+|---|---|
+| `compact`, `resume` | `This session's first prompt: …` (≤ 500 chars), then `Where this session stands (oldest → newest):` and the last 8 log lines (`- [status] task — delta → next: … (asked: … · rec: …)`) |
+| `startup` | `Workspace goal: <intent>`, then `Other agent sessions in this workspace:` with one `- task — status` line per other OPEN session, most recent first, at most 8 |
+| `clear`, anything else | nothing |
 
-The result is capped at 1.5 KB under a `[ymux-context]` header, and Settings has
-a toggle to turn it off.
+Rules:
+
+- Everything sits under a `[ymux-context]` header line.
+- Each field is flattened to one line with control characters stripped.
+- The total is capped at **1536 bytes**. When the text doesn't fit, the oldest
+  log/sibling lines are dropped first, then the result is hard-clipped on a char
+  boundary.
+- Nothing to say → empty → the hook prints nothing.
+
+The budget is **~300 ms** and the hook **fails open**: a missing app, a slow
+tunnel or an error (including the Go daemon, which does not know the method)
+means no context, never a stalled session start. Set
+`YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote whose tunnel round trip is
+slower than that.
+
+**Off switch:** Settings → General → Briefing → *Inject context into sessions*
+(`settings.brief.inject_context`, on by default).
+
+**Privacy:** the injected text is the user's own prompt and the agent's own
+briefs, returned to that same agent or to an agent working in the same
+workspace. Log lines record the source, the ids and the byte count only.

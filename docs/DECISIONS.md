@@ -487,6 +487,16 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, so this is 103 (no reuse).
 - **Outcome / Commit:** Phase 103.A (store + rail) on `claude/phase-103a-context-rail`;
   103.C follows. Spec: `docs/CONTEXT.md`.
+- **103.C choices (made while implementing, no new user decision):**
+  - The transport is a new RPC method `context.inject`, not a reply field on
+    `feed.push`, because SessionStart must not touch the feed path at all.
+  - The CLI waits ~300 ms and fails open. `YMUX_CONTEXT_TIMEOUT_MS` raises the wait
+    for slow tunnels.
+  - `source=clear` injects nothing: the user just asked for a clean slate.
+  - On `startup`, closed sibling sessions are not listed.
+  - Hook spec bumped to 1.7.0. `manifest.json`'s `hooks.claude-code.version` is left
+    for the release cut (RELEASING.md § 4½), so the outdated-hooks banner does not
+    fire before a CLI that understands the hook ships.
 
 ### 2026-10-05 — B4: the daemon detects listening ports itself
 - **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP

@@ -1374,5 +1374,7 @@
   "context.log.all": "إظهار الكل ({n})",
   "context.log.less": "إظهار أقل",
   "cmd.contextRail.toggle": "شريط السياق: إظهار/طي",
-  "settings.shortcuts.toggle_context_rail": "طي / توسيع شريط السياق"
+  "settings.shortcuts.toggle_context_rail": "طي / توسيع شريط السياق",
+  "settings.brief.injectContext.label": "حقن السياق في الجلسات",
+  "settings.brief.injectContext.hint": "عند ضغط جلسة Claude أو استئنافها، تتلقى رسالتها الأولى وآخر أسطر التقدم؛ وتتلقى الجلسة الجديدة هدف مساحة العمل والجلسات الأخرى فيها. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks)."
 }

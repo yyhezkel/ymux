@@ -63,7 +63,8 @@ and **is** the canonical list — nothing else enumerates these:
 
 - **Input** — `send`, `send-key` (via `translate_key`: `cr`, `tab`, `escape`, `bs`,
   `arrow-*`, `home`, `end`, and `ctrl-x` forms)
-- **Agent surface** — `notify`, `feed.push`, `feed.decide`, and the hook verbs
+- **Agent surface** — `notify`, `feed.push`, `feed.decide`, `context.inject` (Phase
+  103.C, below), and the hook verbs
   `session-start`, `session-end`, `stop`, `user-prompt-submit`, `pre-tool-use`,
   `post-tool-use`, `subagent-stop`, `pre-compact`
 - **Notes** — `note-add`, `note-list`, `note-update`, `note-done`, `note-delete`
@@ -175,7 +176,20 @@ built. A file that fails to parse is **poisoned**: never written over, mutations
 refused. `startup()` (called from `run()`'s setup) prunes `*.json`/`*.tmp` with
 mtime older than 30 days (`prune_dir`) and warms the cache on a background
 thread. Tauri commands: `session_context_list(ws_id)` (most recent activity
-first) and `session_context_get(session_id)`. Every path takes a `dir`
+first) and `session_context_get(session_id)`.
+
+**Injection (Phase 103.C).** RPC `context.inject` (its own arm, NOT a feed.push
+reply — SessionStart never touches the feed) resolves the pane with
+`resolve_hook_pane` and calls `injection_for_hook`: off when
+`settings.brief.inject_context` is false; otherwise it reads this session's
+record, the pane's workspace (falling back to the record's `ws_id`) and that
+workspace's `intent`, and the workspace's sessions for `startup`. The text comes
+from the pure `build_injection(source, this, intent, siblings)`: `compact`/`resume`
+→ first prompt (≤ 500 chars) + last `INJECT_LOG_LINES` = 8 lines; `startup` →
+intent + ≤ 8 other OPEN sessions (task + status); `clear`/unknown → "". Every field
+is flattened to one line, control chars dropped; `[ymux-context]` header;
+`INJECT_MAX_BYTES` = 1536 with the oldest items dropped first (`assemble`), then a
+char-boundary byte clip. Logged: source, ids, byte count. Every path takes a `dir`
 parameter so the unit tests run against a tempdir: first prompt set once, the
 200-line cap, degraded turns, round-trip + version, the poison gate, id
 validation, prune.

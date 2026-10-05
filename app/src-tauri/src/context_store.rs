@@ -469,6 +469,220 @@ pub(crate) fn startup(state: &AppState) {
     });
 }
 
+// ─── Phase 103.C: context injection (SessionStart) ─────────────────────────
+
+/// Hard cap on what is handed back to the agent, in BYTES (UTF-8).
+pub(crate) const INJECT_MAX_BYTES: usize = 1536;
+/// Log lines included on compact / resume.
+pub(crate) const INJECT_LOG_LINES: usize = 8;
+/// Sibling sessions listed on startup.
+const INJECT_MAX_SIBLINGS: usize = 8;
+/// The first prompt is clipped harder here than in storage, so the log
+/// still fits under the byte cap.
+const INJECT_PROMPT_CHARS: usize = 500;
+pub(crate) const INJECT_HEADER: &str = "[ymux-context]";
+
+/// One line, no control characters — what an agent reads must not carry
+/// stray escapes or fake structure from a multi-line field.
+fn flat(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        let c = if c == '\n' || c == '\r' || c == '\t' { ' ' } else { c };
+        if !c.is_control() {
+            out.push(c);
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn status_word(s: BriefStatus) -> &'static str {
+    match s {
+        BriefStatus::Working => "working",
+        BriefStatus::WaitingForYou => "waiting-for-you",
+        BriefStatus::Stuck => "stuck",
+        BriefStatus::Done => "done",
+    }
+}
+
+fn log_line(e: &LogEntry) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if e.kind == LogKind::Closed {
+        parts.push("session closed".into());
+    } else {
+        parts.push(format!("[{}]", status_word(e.status)));
+    }
+    if let Some(t) = e.task.as_deref().filter(|t| !t.is_empty()) {
+        parts.push(flat(t));
+    }
+    if let Some(d) = e.delta.as_deref().filter(|d| !d.is_empty()) {
+        parts.push(format!("— {}", flat(d)));
+    }
+    if let Some(n) = e.next.as_deref().filter(|n| !n.is_empty()) {
+        parts.push(format!("→ next: {}", flat(n)));
+    }
+    if let Some(a) = e.ask.as_deref().filter(|a| !a.is_empty()) {
+        match e.rec.as_deref().filter(|r| !r.is_empty()) {
+            Some(r) => parts.push(format!("(asked: {} · rec: {})", flat(a), flat(r))),
+            None => parts.push(format!("(asked: {})", flat(a))),
+        }
+    }
+    format!("- {}", parts.join(" "))
+}
+
+/// Byte-cap on a char boundary.
+fn clip_bytes(s: &str, max: usize) -> String {
+    if s.len() <= max {
+        return s.to_string();
+    }
+    let ell = "…";
+    let mut end = max.saturating_sub(ell.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{ell}", &s[..end])
+}
+
+/// Join a fixed head with as many `items` as fit under the cap, dropping
+/// from the FRONT (the oldest) first; a still-too-long result is clipped.
+fn assemble(head: &[String], items: &[String]) -> String {
+    let mut start = 0;
+    loop {
+        let mut lines: Vec<&str> = vec![INJECT_HEADER];
+        lines.extend(head.iter().map(String::as_str));
+        lines.extend(items[start..].iter().map(String::as_str));
+        let text = lines.join("\n");
+        if text.len() <= INJECT_MAX_BYTES || start >= items.len() {
+            return clip_bytes(&text, INJECT_MAX_BYTES);
+        }
+        start += 1;
+    }
+}
+
+/// The `additionalContext` for a SessionStart hook. Pure: the caller
+/// resolves the session, the workspace intent and the siblings.
+///
+/// - `compact` / `resume`: this session's first prompt + its last
+///   `INJECT_LOG_LINES` log lines (oldest → newest).
+/// - `startup`: the workspace intent + one line per OTHER open session in
+///   the same workspace (task + status), most recent first.
+/// - anything else (`clear`, an unknown future value): nothing.
+///
+/// Returns "" when there is nothing worth saying — the hook then prints
+/// nothing at all.
+pub(crate) fn build_injection(
+    source: &str,
+    this: Option<&SessionContext>,
+    intent: Option<&str>,
+    siblings: &[SessionContext],
+) -> String {
+    match source {
+        "compact" | "resume" => {
+            let Some(c) = this else { return String::new() };
+            let mut head = Vec::new();
+            if let Some(p) = c.first_prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+                head.push(format!(
+                    "This session's first prompt: {}",
+                    flat(&clip_chars(p, INJECT_PROMPT_CHARS))
+                ));
+            }
+            let n = c.log.len();
+            let tail = &c.log[n.saturating_sub(INJECT_LOG_LINES)..];
+            let items: Vec<String> = tail.iter().map(log_line).collect();
+            if head.is_empty() && items.is_empty() {
+                return String::new();
+            }
+            if !items.is_empty() {
+                head.push("Where this session stands (oldest → newest):".into());
+            }
+            assemble(&head, &items)
+        }
+        "startup" => {
+            let mut head = Vec::new();
+            if let Some(i) = intent.map(flat).filter(|i| !i.is_empty()) {
+                head.push(format!("Workspace goal: {i}"));
+            }
+            let mut sibs: Vec<&SessionContext> = siblings
+                .iter()
+                .filter(|s| this.map_or(true, |t| t.session_id != s.session_id))
+                .filter(|s| s.log.last().map_or(false, |e| e.kind == LogKind::Turn))
+                .collect();
+            sibs.sort_by(|a, b| b.last_activity_ms().cmp(&a.last_activity_ms()));
+            let items: Vec<String> = sibs
+                .iter()
+                .take(INJECT_MAX_SIBLINGS)
+                .filter_map(|s| {
+                    let last = s.log.last()?;
+                    let task = s
+                        .log
+                        .iter()
+                        .rev()
+                        .find_map(|e| e.task.as_deref())
+                        .map(flat)
+                        .unwrap_or_else(|| "(untitled session)".into());
+                    Some(format!("- {task} — {}", status_word(last.status)))
+                })
+                .collect();
+            if head.is_empty() && items.is_empty() {
+                return String::new();
+            }
+            if !items.is_empty() {
+                head.push("Other agent sessions in this workspace:".into());
+            }
+            assemble(&head, &items)
+        }
+        _ => String::new(),
+    }
+}
+
+/// RPC `context.inject` body: resolve the pane's workspace + this session,
+/// build the text. Returns "" when injection is off or there is nothing.
+/// Rule #1: logs carry ids, the source and the byte count — never text.
+pub(crate) fn injection_for_hook(
+    state: &AppState,
+    pane_id: Option<&str>,
+    session_id: Option<&str>,
+    source: &str,
+) -> String {
+    let enabled = lock(&state.settings).brief.inject_context;
+    if !enabled {
+        return String::new();
+    }
+    let Ok(dir) = sessions_dir() else {
+        return String::new();
+    };
+    let this = session_id
+        .filter(|s| !s.is_empty())
+        .and_then(|s| state.context.get_at(&dir, s).ok().flatten());
+    let (ws_id, intent) = {
+        let file = lock(&state.workspaces);
+        let ws_id = pane_id
+            .and_then(|p| crate::find_workspace_for_pane(&file, p))
+            .or_else(|| this.as_ref().and_then(|t| t.ws_id.clone()));
+        let intent = ws_id.as_deref().and_then(|w| {
+            file.workspaces
+                .iter()
+                .find(|x| x.id == w)
+                .and_then(|x| x.intent.clone())
+        });
+        (ws_id, intent)
+    };
+    let siblings = match (source, ws_id.as_deref()) {
+        ("startup", Some(w)) => state.context.list_at(&dir, w),
+        _ => Vec::new(),
+    };
+    let text = build_injection(source, this.as_ref(), intent.as_deref(), &siblings);
+    log_debug(
+        "CONTEXT",
+        &format!(
+            "inject source={source} session={} pane={} bytes={}",
+            session_id.unwrap_or("-"),
+            pane_id.unwrap_or("-"),
+            text.len()
+        ),
+    );
+    text
+}
+
 // ─── Tauri commands ─────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -591,6 +805,73 @@ mod tests {
             assert!(validate_session_id(bad).is_err(), "{bad:?} must be rejected");
         }
         assert!(validate_session_id(&"a".repeat(129)).is_err());
+    }
+
+    fn ctx_with(id: &str, prompt: Option<&str>, turns: usize) -> SessionContext {
+        let mut c = SessionContext::new(id);
+        if let Some(p) = prompt {
+            c.set_first_prompt(p, 1);
+        }
+        for i in 0..turns {
+            c.append_turn(&brief(&format!("task{i}"), &format!("delta{i}"), false), 10 + i as u64);
+        }
+        c
+    }
+
+    #[test]
+    fn inject_compact_has_prompt_and_last_eight() {
+        let c = ctx_with("s1", Some("build the\ninstaller"), 12);
+        let out = build_injection("compact", Some(&c), None, &[]);
+        assert!(out.starts_with(INJECT_HEADER));
+        assert!(out.contains("first prompt: build the installer"), "newline flattened: {out}");
+        assert!(!out.contains("delta3"), "only the last 8: {out}");
+        assert!(out.contains("delta4") && out.contains("delta11"));
+        assert!(out.find("delta4") < out.find("delta11"), "oldest → newest");
+        assert_eq!(build_injection("resume", Some(&c), None, &[]), out);
+    }
+
+    #[test]
+    fn inject_startup_lists_intent_and_open_siblings() {
+        let me = ctx_with("me", Some("x"), 1);
+        let a = ctx_with("a", None, 2);
+        let mut closed = ctx_with("b", None, 1);
+        closed.append_closed(Some("clear"), 99);
+        let out = build_injection("startup", Some(&me), Some("ship v2"), &[me.clone(), a, closed]);
+        assert!(out.contains("Workspace goal: ship v2"));
+        assert!(out.contains("- task1 — working"), "{out}");
+        assert!(!out.contains("task0 — "), "only the latest task per sibling: {out}");
+        assert_eq!(out.matches("\n- ").count(), 1, "self and closed sessions excluded: {out}");
+    }
+
+    #[test]
+    fn inject_empty_cases_produce_nothing() {
+        assert_eq!(build_injection("compact", None, Some("goal"), &[]), "");
+        assert_eq!(build_injection("compact", Some(&SessionContext::new("s")), None, &[]), "");
+        assert_eq!(build_injection("startup", None, None, &[]), "");
+        assert_eq!(build_injection("startup", None, Some("   "), &[]), "");
+        let c = ctx_with("s1", Some("p"), 3);
+        assert_eq!(build_injection("clear", Some(&c), Some("g"), &[]), "");
+        assert_eq!(build_injection("whatever", Some(&c), Some("g"), &[]), "");
+    }
+
+    #[test]
+    fn inject_respects_byte_cap_dropping_oldest() {
+        let mut c = SessionContext::new("s1");
+        c.set_first_prompt(&"פ".repeat(3000), 1);
+        for i in 0..8 {
+            let mut b = brief(&"מ".repeat(20), &format!("D{i}{}", "ד".repeat(60)), false);
+            b.next = Some("נ".repeat(20));
+            c.append_turn(&b, i);
+        }
+        let out = build_injection("compact", Some(&c), None, &[]);
+        assert!(out.len() <= INJECT_MAX_BYTES, "len {}", out.len());
+        assert!(out.contains("D7"), "the newest line survives: {}", out.len());
+        assert!(!out.contains("D0"), "the oldest goes first");
+        // A single huge field is still hard-clipped on a char boundary.
+        let mut big = SessionContext::new("s2");
+        big.set_first_prompt(&"ש".repeat(2000), 1);
+        let out = build_injection("compact", Some(&big), None, &[]);
+        assert!(out.len() <= INJECT_MAX_BYTES);
     }
 
     #[test]

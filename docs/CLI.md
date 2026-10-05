@@ -174,7 +174,8 @@ user's decision (for blocking subcommands) or returns immediately
 |---|---|
 | `tool-permission` | **Blocks** until Allow / Deny / timeout. |
 | `pre-tool-use` | **Blocks** until Allow / Deny / timeout. |
-| `session-start`, `session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end` | Passive: emits a feed card + toast; returns immediately. |
+| `session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end` | Passive: emits a feed card + toast; returns immediately. |
+| `session-start` | Phase 103.C. Makes no feed card. It asks the app for this session's context over `context.inject`, waiting `YMUX_CONTEXT_TIMEOUT_MS` (default 300 ms). If the answer is non-empty, it prints one `hookSpecificOutput.additionalContext` JSON line on stdout. On any error it fails open: prints nothing and exits 0. |
 | Any other name | Treated as passive. |
 
 #### stdin payload (suggested fields — all optional)

@@ -266,6 +266,8 @@ export interface BriefSettings {
   entry_card_on_idle: boolean;
   absence_minutes: number;
   idle_minutes: number;
+  // Phase 103.C: SessionStart context injection — ON by default.
+  inject_context: boolean;
 }
 
 export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
@@ -273,6 +275,7 @@ export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
   entry_card_on_idle: false,
   absence_minutes: 30,
   idle_minutes: 15,
+  inject_context: true,
 };
 
 export interface I18nSettings {

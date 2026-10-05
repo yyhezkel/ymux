@@ -1374,5 +1374,7 @@
   "context.log.all": "הצג את כל {n}",
   "context.log.less": "הצג פחות",
   "cmd.contextRail.toggle": "פס הקשר: הצג/כווץ",
-  "settings.shortcuts.toggle_context_rail": "כווץ / הרחב את פס ההקשר"
+  "settings.shortcuts.toggle_context_rail": "כווץ / הרחב את פס ההקשר",
+  "settings.brief.injectContext.label": "הזרק הקשר לסשנים",
+  "settings.brief.injectContext.hint": "כשסשן Claude עובר compact או resume, הוא מקבל את הפרומפט הראשון שלו ואת שורות ההתקדמות האחרונות; סשן חדש מקבל את מטרת סביבת העבודה ואת הסשנים האחרים בה. דורש hooks v1.7.0 (הרץ שוב setup-hooks)."
 }

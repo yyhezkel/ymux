@@ -1374,5 +1374,7 @@
   "context.log.all": "Показать все ({n})",
   "context.log.less": "Показать меньше",
   "cmd.contextRail.toggle": "Панель контекста: показать/свернуть",
-  "settings.shortcuts.toggle_context_rail": "Свернуть / развернуть панель контекста"
+  "settings.shortcuts.toggle_context_rail": "Свернуть / развернуть панель контекста",
+  "settings.brief.injectContext.label": "Передавать контекст в сессии",
+  "settings.brief.injectContext.hint": "При compact или resume сессия Claude получает свой первый промпт и последние строки прогресса; новая сессия — цель пространства и соседние сессии. Нужны hooks v1.7.0 (перезапустите setup-hooks)."
 }

@@ -15,4 +15,11 @@ entry_card_on_return: boolean,
  * Show the card on the first input after `idle_minutes` with no
  * keyboard/mouse activity in the app.
  */
-entry_card_on_idle: boolean, absence_minutes: number, idle_minutes: number, };
+entry_card_on_idle: boolean, absence_minutes: number, idle_minutes: number, 
+/**
+ * Phase 103.C: answer Claude Code's SessionStart hook with this
+ * session's context (compact/resume) or the workspace's (startup).
+ * ON by default — unlike the card triggers above it is invisible
+ * until an agent compacts or resumes.
+ */
+inject_context: boolean, };
