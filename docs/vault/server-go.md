@@ -533,8 +533,8 @@ is watched from `~/.ymux/log-level`, which the desktop pushes (see
 **huma and the OpenAPI spec.** `files/huma.go`, `logs/huma.go`, and `api/huma.go` reflect
 request/response structs into the server's OpenAPI, so the spec cannot drift from the
 handlers. The wire contract is byte-for-byte identical to the stdlib handlers they
-replaced — same query params, status codes, headers (`X-Ymux-Truncated`,
-`Content-Disposition`), same JSON. `sdk-gen/ci-check.mjs` regenerates the spec straight
+replaced — same query params, status codes, headers (`X-Ymux-Truncated` only —
+the pre-rename `X-Winmux-Truncated` twin is gone, `Content-Disposition`), same JSON. `sdk-gen/ci-check.mjs` regenerates the spec straight
 out of the server and fails CI if the committed SDKs moved.
 
 ## Invariants

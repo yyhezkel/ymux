@@ -54,7 +54,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "8b9b7d2680c078735707785f859672278abda26a4b51b65dafd62139b415479b",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "3a559022a71198338b28390b189ca8012a320ccb1f21174836cdc2f36b0f9619",
+    "app/src-tauri/src/settings.rs": "9919c0bbaca44f1d67e712b1a33cb536d7d21e223aab863ced5a9c94741c3336",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
   },
   "build-glue": {
@@ -251,7 +251,7 @@
     "app/src-tauri/server/internal/core/core.go": "ab9b3cc7f8dc276d32419e91d03be97e5572d8f54174c3ca9a13da800ce00f4e",
     "app/src-tauri/server/internal/desktop/desktop.go": "c004c3b9150b4f506ebd6c965bb7a7c9e31d83e7efe8dc3449c282fa46374012",
     "app/src-tauri/server/internal/desktop/desktop_test.go": "45807ec0ad975a508cda0cff839d4a9d644e2939045047c84d9fb26280b117eb",
-    "app/src-tauri/server/internal/files/huma.go": "35f1cf33b44011cca7b8d9db8c6b06d32024165cb9a6f1f3abd3748be9c681ab",
+    "app/src-tauri/server/internal/files/huma.go": "86fa4cf286b1928ce9450e6c36453017e8d3597d059b87b920705ef8b7616024",
     "app/src-tauri/server/internal/files/local.go": "b42a0c29bcc2d1a80d12f64c25f9d2800e50eb3131d3a7e40f2965dbe24a0705",
     "app/src-tauri/server/internal/files/local_test.go": "9708fceda433946e5549bdb7800eb4a771a82f32149f75077f914a24f3585be4",
     "app/src-tauri/server/internal/files/service.go": "fee5ecb6d670fd10110ef1b8bedcb3d32786751f9f32c673c31dd29a06f1691c",
