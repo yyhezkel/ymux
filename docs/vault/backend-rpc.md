@@ -38,7 +38,7 @@ must resolve the same path from the other side).
   at 104 bytes and a long `$TMPDIR` can push the primary name over it, so `ymux-core`
   offers a list — and `ymux-tunnel` walks the same list in the same order. Binding all
   of them means the two ends cannot split.
-- **`BIND_ERROR`** ([rpc_server.rs:37](../../app/src-tauri/src/rpc_server.rs)) records why
+- **`BIND_ERROR`** ([BIND_ERROR@rpc_server.rs:37](../../app/src-tauri/src/rpc_server.rs)) records why
   the endpoint isn't listening. It exists because a failed bind used to be one
   `log_warn` and a bare `return` — indistinguishable from "no ports detected yet", with
   `PortsWindow` spinning forever. `doctor` reads it. Zero binds is a `log_error`; a
@@ -50,7 +50,7 @@ must resolve the same path from the other side).
 
 ## The method catalog
 
-`dispatch()` ([rpc_server.rs:646](../../app/src-tauri/src/rpc_server.rs)) is one big match
+`dispatch()` ([dispatch@rpc_server.rs:655](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,

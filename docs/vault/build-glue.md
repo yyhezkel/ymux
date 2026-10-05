@@ -15,6 +15,7 @@ covers:
   - sdk-gen/gen-kotlin.mjs
   - sdk-gen/package.json
   - scripts/vault-check.mjs
+  - scripts/vault-cites.mjs
 ---
 
 # Build glue and code generation
@@ -145,18 +146,25 @@ derived artifact didn't" family as the server-rebake gate and, now, the vault ga
 
 ## `scripts/vault-check.mjs` — this vault's own gate
 
-Two checks over `docs/vault/*.md`:
+Three checks over `docs/vault/*.md`:
 
 - **hash** — sha256 of every file a vault `covers:`, against `docs/vault/.vault-lock.json`
 - **diff** (`--diff-base <sha>`) — if a covered file moved in this change, the owning
   vault file must have moved too
+- **cites** — every `[symbol@file:line](link)` in a page is checked by identity
+  (`checkCites` in `scripts/vault-cites.mjs`): `symbol` must appear as a whole word
+  within `CITE_WINDOW` (3) lines of `line` in the linked file. A miss fails with the
+  real line and a corrected cite; a bare `file:line` with no symbol fails too. Runs on
+  every verify, regardless of `[vault-skip]`; prints `cites: <N> checked`. Pure and
+  import-safe — file access is injected, so `scripts/vault-cites.test.mjs` (run by
+  ci-windows' `frontend` job) needs no repo
 
 ```bash
 node scripts/vault-check.mjs
 ```
 
 `--write` re-stamps the lock after you update the prose. `[vault-skip]` in the PR title
-or head commit subject skips the diff half with a `::notice::`. No dependencies, so it
+or head commit subject skips the diff half (never the cite check) with a `::notice::`. No dependencies, so it
 runs on a fresh checkout. See `docs/CONTRIBUTING.md` § Updating the vault.
 
 ## The three generated things

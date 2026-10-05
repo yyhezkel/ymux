@@ -75,7 +75,7 @@ must be a CLEAN `index.html`, because the built app's asset protocol treats any 
 as a literal path and serves a blank page. The workspace id rides the window LABEL.
 
 **The devtools split is deliberate.** The popout WINDOW gets `.devtools(false)` — it
-renders ymux's own UI, and per the Cargo.toml:44-51 warning the `devtools` feature flips
+renders ymux's own UI, and per the [devtools@Cargo.toml:44](../../app/src-tauri/Cargo.toml) warning the `devtools` feature flips
 wry's runtime default to `true` for every webview, so the explicit opt-out is the only
 thing holding Rule #1. The CHILD webview inside it keeps `.devtools(true)`: that one
 shows a tunneled third-party page, nothing of ours.
@@ -92,7 +92,7 @@ the workspace it belongs to.
 
 **`workspace_browser_open_devtools` calls `open_devtools()` with no `#[cfg]` around it,
 and that is deliberate.** The method is gated on the **tauri crate's**
-`any(debug_assertions, feature = "devtools")`, and `Cargo.toml:52` turns that feature on
+`any(debug_assertions, feature = "devtools")`, and [tauri@Cargo.toml:52](../../app/src-tauri/Cargo.toml) turns that feature on
 for every build, so the call compiles in release — and stops compiling loudly if anyone
 ever strips the feature. Phase 85.A removed a gate that *looked* like it mirrored tauri's
 but did not: inside this crate `feature = "devtools"` resolves against **`app`'s own**

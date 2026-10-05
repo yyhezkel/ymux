@@ -150,6 +150,13 @@ jobs:
             node scripts/vault-check.mjs --diff-base "$base"
           fi
 
+      # The cite checker the gate above calls (scripts/vault-cites.mjs) has
+      # its own unit tests; nothing else would ever run them. Node only, a
+      # few seconds.
+      - name: Vault cite checker tests
+        shell: bash
+        run: node --test scripts/vault-cites.test.mjs
+
       - name: Install frontend deps
         working-directory: app
         run: npm ci
