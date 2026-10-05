@@ -36,7 +36,7 @@
 //! Nothing in this module logs; callers log metadata (pane id, degraded
 //! flag, field count) at most.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// Hard cap per parsed field — bounds both memory and what the UI must lay out.
 const FIELD_MAX_CHARS: usize = 200;
@@ -48,7 +48,7 @@ pub(crate) const PROMPT_MAX_CHARS: usize = 160;
 /// The marker line, compared case-insensitively after decoration stripping.
 const MARKER: &str = "[ymux-brief]";
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, ts_rs::TS)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum BriefStatus {

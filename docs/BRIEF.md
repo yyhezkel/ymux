@@ -60,8 +60,15 @@ session ✅ closed.
 - **Sidebar** — a workspace holding a stuck/waiting pane carries the existing
   attention dot at a middle intensity (blocking permission > brief > activity).
 
+- **Context Rail** (Ctrl+Shift+K, Phase 103) — every brief also lands, one
+  line per turn, in its Claude session's persisted log, next to the session's
+  first prompt. See `docs/CONTEXT.md`.
+
 ## Privacy
 
-Rule #1 applies throughout: brief text, intents and prompts live in memory and
-the UI only. Log lines carry pane ids, lengths and flags — never content.
+Rule #1 applies throughout: brief text, intents and prompts never reach a log
+line — log lines carry pane ids, lengths and flags. The Queue's per-pane state
+(`AppState.briefs`) stays in memory; since Phase 103 the per-SESSION log of
+briefs and the session's first prompt are persisted under
+`<config_dir>/context/sessions/` (30-day retention) — `docs/CONTEXT.md`.
 Briefs are treated as untrusted display data and rendered as plain text.

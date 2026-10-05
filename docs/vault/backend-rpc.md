@@ -3,6 +3,7 @@ vault: backend-rpc
 covers:
   - app/src-tauri/src/rpc_server.rs
   - app/src-tauri/src/brief.rs
+  - app/src-tauri/src/context_store.rs
   - app/src-tauri/mcp/src/main.rs
   - app/src-tauri/mcp/Cargo.toml
 ---
@@ -140,8 +141,44 @@ you: …" line), `stop` stores the parsed/degraded brief and clears `session_end
 `session-end` sets `session_ended` but **keeps** the brief — it summarizes
 finished work. A non-degraded brief also rewrites the stop feed card: humanize
 sees the message with the block stripped (`pre_brief_text`), and the summary
-becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content lives in memory
-and the UI only — log lines carry pane id + flags, never text.
+becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content never reaches a
+log line — log lines carry pane id + flags, never text. `BriefStatus` also derives
+`Deserialize` since Phase 103, because the session context files store it.
+
+## Session context (`context_store.rs`, Phase 103)
+
+The persisted counterpart of `AppState.briefs`: one record per Claude Code
+**session id**, not per pane — `SessionContext { session_id, ws_id, pane_id, cwd,
+first_prompt (clip 2000), first_prompt_ms, log ≤ 200 LogEntry, version }`, a
+`LogEntry` being `{ ts_ms, kind: turn|closed, status: BriefStatus, task, delta,
+next, ask, rec, degraded }`. Spec: `docs/CONTEXT.md`.
+
+The same three `feed.push` arms feed it, through `context_store::on_hook(state,
+app, HookOrigin, HookEvent)`. The origin is read once above the `match`:
+`payload.session_id` and `payload.cwd` (the CLI forwards the hook payload
+verbatim, so these are Claude Code's own fields; a hook with no session id is a
+no-op), the **resolved** pane, and `find_workspace_for_pane` on it (only for the
+three subkinds). `user-prompt-submit` → `Prompt` sets `first_prompt` **only while
+empty** and writes only when that or the placement changed (every prompt passes
+through here); `stop` → `Stop(&brief)` appends a `turn` line from the same
+`PaneBrief` the Queue gets, degraded included; `session-end` → `End(reason)`
+appends `closed` with Claude Code's `reason` enum as delta and the last task.
+Each write emits `context:changed {session_id, ws_id}`. Failure is a `log_warn`
+with ids only and never touches the hook's own handling.
+
+Storage: `ContextState` (on `AppState.context`) caches every file of
+`<config>/context/sessions/` behind one mutex, loaded once (`ensure_loaded`);
+`mutate_at` is clone → apply → bump `version` → atomic write → swap, so a failed
+write leaves memory and disk as they were, and a closure returning `false` writes
+nothing. Session ids are validated as `[A-Za-z0-9_-]{1,128}` before any path is
+built. A file that fails to parse is **poisoned**: never written over, mutations
+refused. `startup()` (called from `run()`'s setup) prunes `*.json`/`*.tmp` with
+mtime older than 30 days (`prune_dir`) and warms the cache on a background
+thread. Tauri commands: `session_context_list(ws_id)` (most recent activity
+first) and `session_context_get(session_id)`. Every path takes a `dir`
+parameter so the unit tests run against a tempdir: first prompt set once, the
+200-line cap, degraded turns, round-trip + version, the poison gate, id
+validation, prune.
 
 ## The MCP bridge (`mcp/`)
 

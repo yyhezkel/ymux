@@ -1358,5 +1358,21 @@
   "sessions.selectAll": "Выбрать все",
   "sessions.selectNone": "Снять выбор",
   "sessions.selectGroup": "Выбрать все сессии в этой папке",
-  "sessions.summarizeSelected": "Свести выбранные ({n})"
+  "sessions.summarizeSelected": "Свести выбранные ({n})",
+  "context.title": "Контекст",
+  "context.expand": "Показать панель контекста",
+  "context.collapse": "Свернуть панель контекста",
+  "context.resize": "Перетащите, чтобы изменить ширину",
+  "context.others": "{n} сессий ждут / застряли в других пространствах ({m})",
+  "context.noWorkspace": "Пространство не выбрано.",
+  "context.noSessions": "Здесь пока нет сессий агента. Первый промпт и журнал прогресса каждой сессии Claude появятся здесь.",
+  "context.showClosed": "Показать закрытые сессии ({n})",
+  "context.hideClosed": "Скрыть закрытые сессии",
+  "context.prompt.label": "Первый промпт",
+  "context.prompt.toggle": "Показать / скрыть промпт полностью",
+  "context.log.closed": "сессия закрыта",
+  "context.log.all": "Показать все ({n})",
+  "context.log.less": "Показать меньше",
+  "cmd.contextRail.toggle": "Панель контекста: показать/свернуть",
+  "settings.shortcuts.toggle_context_rail": "Свернуть / развернуть панель контекста"
 }

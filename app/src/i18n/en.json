@@ -1358,5 +1358,21 @@
   "sessions.selectAll": "Select all",
   "sessions.selectNone": "Clear selection",
   "sessions.selectGroup": "Select every session in this folder",
-  "sessions.summarizeSelected": "Summarize selected ({n})"
+  "sessions.summarizeSelected": "Summarize selected ({n})",
+  "context.title": "Context",
+  "context.expand": "Show the Context Rail",
+  "context.collapse": "Collapse the Context Rail",
+  "context.resize": "Drag to resize",
+  "context.others": "{n} sessions waiting / stuck in {m} other workspaces",
+  "context.noWorkspace": "No workspace selected.",
+  "context.noSessions": "No agent sessions here yet. Each Claude session's first prompt and progress log appear here.",
+  "context.showClosed": "Show {n} closed sessions",
+  "context.hideClosed": "Hide closed sessions",
+  "context.prompt.label": "First prompt",
+  "context.prompt.toggle": "Show / hide the full prompt",
+  "context.log.closed": "session closed",
+  "context.log.all": "Show all {n}",
+  "context.log.less": "Show less",
+  "cmd.contextRail.toggle": "Context Rail: Toggle",
+  "settings.shortcuts.toggle_context_rail": "Collapse / expand the Context Rail"
 }

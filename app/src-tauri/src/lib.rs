@@ -10,6 +10,7 @@ mod claude_log;
 mod claude_summary;
 mod claude_usage;
 mod connect_wizard;
+mod context_store;
 mod dev;
 mod diff_pane;
 mod file_manager;
@@ -162,6 +163,9 @@ pub(crate) struct AppState {
     /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
     /// same rationale as agent_runs — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
+    /// Phase 103: per-Claude-session context (first prompt + brief log),
+    /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
+    pub(crate) context: context_store::ContextState,
     pub(crate) feed: Arc<Mutex<FeedStore>>,
     pub(crate) notes: Arc<Mutex<notes::NotesFile>>,
     // Phase 9.A: persistent app settings (theme, fonts, terminal, hooks, etc.)
@@ -12222,6 +12226,9 @@ pub fn run() {
                     log_warn("APP", &format!("setup: notes load failed: {e} (starting empty)"));
                 }
             }
+            // Phase 103: prune 30-day-old session context files and warm
+            // the cache, on a background thread.
+            context_store::startup(&state);
             // Phase 12.C: load recent paths history (or empty on first run).
             match local_wizard::load_recent_from_disk() {
                 Ok(rf) => {
@@ -12520,6 +12527,8 @@ pub fn run() {
             workspace_set_intent,
             pane_agent_states,
             pane_briefs,
+            context_store::session_context_list,
+            context_store::session_context_get,
             worktrees::git_probe_worktrees,
             worktrees::project_folder_probe,
             worktrees::workspace_list_worktrees,

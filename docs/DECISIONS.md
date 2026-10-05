@@ -464,6 +464,30 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-05 — Phase 103: Context Rail
+- **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
+  do / choose / answer tasks in a persistent pane; answers are typed back without blocking
+  the agent). Yossi wants to see, per Claude session, *what it is about and where it
+  stands* without reading the scrollback.
+- **Considered and rejected:** a HITL task layer (tasks from a brief's `ask`, an answer
+  outbox typed into the pane when the agent is idle, a secret heuristic, a manual
+  decisions log). Dropped mid-implementation at Yossi's call: the useful part is the
+  *context*, not another place to answer questions — the pane already is that place.
+- **Decided (Yossi):**
+  1. The "where we stand" log comes from the existing `[ymux-brief]` — no LLM, zero
+     tokens. No brief → a degraded line, never invented content.
+  2. Persist per Claude `session_id` to disk (`<config_dir>/context/sessions/`, 30-day
+     retention). **This reverses the 2026-09-01 BRIEF decision that briefs live in memory
+     only** — for the per-session log and the session's first prompt. The Queue's
+     per-pane `AppState.briefs` stays in memory.
+  3. Auto-injection back into the agent stays in scope: Phase 103.C (SessionStart
+     `additionalContext` on compact/resume/startup, capped, toggle in Settings).
+  4. The rail shows the current workspace in full, plus a one-line strip for the other
+     workspaces that need you.
+- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, so this is 103 (no reuse).
+- **Outcome / Commit:** Phase 103.A (store + rail) on `claude/phase-103a-context-rail`;
+  103.C follows. Spec: `docs/CONTEXT.md`.
+
 ### 2026-10-05 — B4: the daemon detects listening ports itself
 - **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP
   starts per host. For a browser-created session nobody starts one, and browser v1 does

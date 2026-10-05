@@ -1415,6 +1415,35 @@ async fn dispatch(
                     };
                     crate::emit_agent_run_event(app, pane, snap.0, snap.1, snap.2, snap.3, snap.4);
                 }
+                // Phase 103: where this hook's Claude session lives, for the
+                // persisted per-session context (context_store.rs). The CLI
+                // forwards the hook payload verbatim, so `session_id` and
+                // `cwd` are Claude Code's own fields. Only the three arms
+                // that write the context need it.
+                let ctx_payload = params.get("payload");
+                let ctx_session_id = ctx_payload
+                    .and_then(|p| p.get("session_id"))
+                    .and_then(|v| v.as_str());
+                let ctx_cwd = ctx_payload
+                    .and_then(|p| p.get("cwd"))
+                    .and_then(|v| v.as_str());
+                let ctx_ws: Option<String> =
+                    if matches!(subkind.as_str(), "user-prompt-submit" | "stop" | "session-end") {
+                        state
+                            .workspaces
+                            .lock()
+                            .ok()
+                            .and_then(|f| find_workspace_for_pane(&f, pane))
+                    } else {
+                        None
+                    };
+                let ctx_ws_ref = ctx_ws.as_deref();
+                let ctx_origin = || crate::context_store::HookOrigin {
+                    session_id: ctx_session_id,
+                    ws_id: ctx_ws_ref,
+                    pane_id: Some(pane),
+                    cwd: ctx_cwd,
+                };
                 match subkind.as_str() {
                     "user-prompt-submit" => {
                         let (started, avg, st, since, seq) = {
@@ -1453,6 +1482,14 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
+                            // Phase 103: the session's FIRST prompt, kept
+                            // (clipped to 2000) in its context file.
+                            crate::context_store::on_hook(
+                                state,
+                                app,
+                                ctx_origin(),
+                                crate::context_store::HookEvent::Prompt(prompt),
+                            );
                         }
                         // Session auto-name: the CLI derives it from the
                         // first prompt and sends it under the existing
@@ -1520,6 +1557,14 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
+                            // Phase 103: one "where we stand" line per turn,
+                            // degraded briefs included.
+                            crate::context_store::on_hook(
+                                state,
+                                app,
+                                ctx_origin(),
+                                crate::context_store::HookEvent::Stop(&b),
+                            );
                             stop_brief = Some(b);
                         }
                     }
@@ -1562,6 +1607,17 @@ async fn dispatch(
                         } {
                             crate::emit_brief_event(app, pane, &entry);
                         }
+                        // Phase 103: close the session's context log.
+                        // `reason` is Claude Code's fixed enum, not prose.
+                        let reason = ctx_payload
+                            .and_then(|p| p.get("reason"))
+                            .and_then(|v| v.as_str());
+                        crate::context_store::on_hook(
+                            state,
+                            app,
+                            ctx_origin(),
+                            crate::context_store::HookEvent::End(reason),
+                        );
                     }
                     _ => {}
                 }

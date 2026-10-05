@@ -14,6 +14,10 @@ covers:
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
+  - app/src/QueueRow.tsx
+  - app/src/IntentEditor.tsx
+  - app/src/ContextRail.tsx
+  - app/src/contextModel.ts
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -446,11 +450,15 @@ are headers too), `screenOrSelf` (a screen is itself, a header hands over, an em
 is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` builds
 fixtures without the 20 other fields and runs under plain `node --test`.
 
-**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
-→ `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose
-disabled state doubles as "saved ✓" — beta feedback: a field that saves
-invisibly reads as one that doesn't save at all; empty clears) + this
-workspace's brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent + this
+workspace's brief rows. Since Phase 103 both pieces are shared components:
+**`IntentEditor.tsx`** (inline edit → App's `saveIntent` → `workspace_set_intent`;
+Enter/blur save, plus an explicit Save button whose disabled state doubles as
+"saved ✓" — beta feedback: a field that saves invisibly reads as one that
+doesn't save at all; empty clears; the draft follows external saves) and
+**`QueueRow.tsx`** (`QueueRowView` + `STATUS_EMOJI` + `relAge` — the Queue,
+the card and the Context Rail paint one row component; it is a focusable
+`role="button"`). Its `briefingWs` signal is **in
 `anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
 triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
 lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
@@ -462,6 +470,30 @@ second timer; it skips ticks while `document.hidden`), firing on the first input
 after the gap; **manual** =
 `show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
 toggles.
+
+**`ContextRail.tsx` (Phase 103)** + **`contextModel.ts`** — the always-docked
+context column; spec in `docs/CONTEXT.md`. It is the `.app` grid's **third
+column** (`grid-template-columns: <sidebar>px minmax(0,1fr) <rail>px`, the rail
+pinned with `grid-column: 3`), NOT a `SideDrawer`: no backdrop, nothing in
+`anyModalOpen()`, it never covers a pane, and in RTL the grid puts it on the
+left. App owns `railWidth` / `railCollapsed` (`loadRailPrefs` / `saveRailPrefs`,
+localStorage in try/catch — per-machine UI state per the invariant below),
+`toggleContextRail` (shortcut `toggle_context_rail` Ctrl+Shift+K + palette
+`contextRail.toggle`, one handler) and `saveIntent` (shared with the Briefing
+card). The rail itself fetches `session_context_list` for the active workspace
+on workspace change and on `context:changed` for that workspace (a sequence
+number drops a stale response after a switch), and keeps per-session
+expand state keyed by session id so a refetch doesn't collapse what the user
+opened. Sections: the "others" strip (`othersSummary` over the Queue rows of
+OTHER workspaces in buckets 0–1 → click activates the most urgent), the shared
+`IntentEditor`, then one card per open session (the newest session in a pane
+owns that pane's live `QueueRowView`; 📝 first prompt clipped to 180 chars,
+click to expand; the log newest-first, 5 then "show all") — closed sessions
+behind a toggle, and agent panes with no session record as plain rows.
+Collapsed = a 36 px strip with a needs-you badge. The resizer is the
+inline-start edge; the drag delta flips sign under RTL. `contextModel.ts` is
+pure (wire types mirrored by hand from `context_store.rs`, line text, icons,
+clipping, `othersSummary`, width clamp) and tested by `contextModel.test.ts`.
 
 ## Panel chrome — "one body, three surfaces"
 

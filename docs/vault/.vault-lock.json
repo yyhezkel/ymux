@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "0fb7f10b73842e53a0945ed2cf5fdb36e44be6a3b680c08f69447148702e657f",
+    "app/src-tauri/src/lib.rs": "c26f6505baa484f8fa9710981179501994613f1204a95f235917d265dd2b9a3a",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
@@ -38,8 +38,9 @@
   "backend-rpc": {
     "app/src-tauri/mcp/Cargo.toml": "5837dfebec492396ba2177a733127fa3edb014effd634ec973800b5eb0ba1b41",
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
-    "app/src-tauri/src/brief.rs": "4381deb4c9d49ad011cd09a0f4e824e054e3f02a925dd500a0f124bd15352c60",
-    "app/src-tauri/src/rpc_server.rs": "8dbd58b212a898dabe98cf76ef6f7b8bb378c8e6cac65ecd0d29e5d701c903af"
+    "app/src-tauri/src/brief.rs": "a927ffd8f86568ffcb1f015765c3a0df59a2eabf4f16734a14cdd60969fe85c6",
+    "app/src-tauri/src/context_store.rs": "6ba03bd3bfbe91a70d6e0882c890d271446a4edf7515129f7d1f8d3879c91991",
+    "app/src-tauri/src/rpc_server.rs": "23af4a16842e602692724986f788fefbee172953c5d88672be6c809268addfce"
   },
   "backend-sessions": {
     "app/src-tauri/src/bidi_filter.rs": "bf2f974aa4570b22a50c8f88db6a47e4509f88f41238b0f0639ce6a51039b06d",
@@ -52,7 +53,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "e5ce2c7393f80f7030ae76a2e8818e5c01d97758df9a43376abd9559340110d2",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "a17ecf3db894116de5b0ea59e55520d45a393fbbc66344248b5f6f9478fdcaee",
+    "app/src-tauri/src/settings.rs": "fef14e1ffd6dc41fb335170f01ddf29c8996e252da9fe4db8478b51ba06b8ceb",
     "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
   },
   "build-glue": {
@@ -126,7 +127,7 @@
     "app/src/platform.ts": "7e6c44b3a326540d0fc88ee8230525bfef3796234c2727038a398d06ee994dbb",
     "app/src/sessionRestore.ts": "2a0d8510e07835167777dd833f9e10025fe07b1f29aac31a4eb4c748603259f3",
     "app/src/settings.ts": "8308e6c9479e076329a9693d1e953bc35bc02724273c3d53e3e3ed1d42acf98f",
-    "app/src/shortcuts.ts": "40188c8824bbe531df71dbe2bff4cc05e6f81985e98c6b55c4d35e8cc29d0d8c",
+    "app/src/shortcuts.ts": "26980490125ad82e0a7c9b6d0eec1844a77b21a80ac57798ca481c2cbbe73fcf",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
     "app/src/terminalInstance.ts": "26a539f84b9c6c2072a1f91c5e67ef4bddd75cebf302d67a0f95de52211c0991",
     "app/src/textDirection.ts": "4302533e2a671da5a9a70279b6aa8e1f8691f4894324dcb3b0bf6da19e102483",
@@ -154,7 +155,7 @@
     "app/src/MobilePairing.tsx": "d9ff30e8b1dd38b0aad3084b184f3ed48ffff95548401bd28658c714485879d8",
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "b0822121f91512c85bc0cadbd3464ea7673b36e448edb40ee01b3eb14c0db35e",
-    "app/src/QueuePanel.tsx": "401716a6a25f6b5ce73cbcac68f9b2a51f608c82cd6af4bd16f4577000c43ee3",
+    "app/src/QueuePanel.tsx": "b469d46537749e18a8c8c9cca9d4f6f2908b61304cdf27d22fffe05f5708415a",
     "app/src/SessionsOverviewWindow.tsx": "d097b55c279f2fb6b8b14d6ae44c52cdb814b13411630dc0e25830ea1d21bbbb",
     "app/src/TicketModal.tsx": "d271dea16f1c83d547ea209e3dd8dcfcbdd4778c2e15d69863a40b691ff505f0",
     "app/src/TicketsPanel.tsx": "480d09aa00f31cf1f8c9513ba36377a73f0440a88bd3f0fd1a5ab0b712e0294e",
@@ -171,20 +172,24 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "2fb3b02c44158e50a7e8677fc1e7c59a744b731cd10495b9733d16f095dea7a5",
-    "app/src/BriefingCard.tsx": "8c27bdeb211056209f9921947a5e479df60e6fcc5c1c57cf00fbdb9c84bb7ba7",
+    "app/src/App.tsx": "ac7f7c17f8e5d3a4632cc1792a235f8f4a108f9f203904844205ad269c3f7f64",
+    "app/src/BriefingCard.tsx": "207076762c4fe63d517719d73138ba4e90d17b0078ac2c9e8a8f4b7f226e8399",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
+    "app/src/ContextRail.tsx": "a8c80cc7c55974c5358725446daaf0dbdf2cd9960492c341ef589f24a6bc8c97",
     "app/src/Divider.tsx": "d8eca6fe0f2844a0d48394fa5b5b1e74d25f4a425419bf507143dcc6bbcc5569",
+    "app/src/IntentEditor.tsx": "1990cd8f3ae56a63df3ce17a4fa8ebf95581abf37a4d7156301d153cd3eb9215",
     "app/src/LayoutView.tsx": "96795d6b8b139b7b4553734535773810753f726e43031623029c12e5e24f5c54",
     "app/src/PaneTabs.tsx": "24c45c6948eaea14b09a29aac2c1297d310517f1dc87de2c1cc15b7fa4261a20",
     "app/src/PaneView.tsx": "37bdb0af3496f1a5e7e42a799c6972de67f2c2f33f3ab2d3477445d7a25796cc",
     "app/src/PanelChrome.tsx": "784073f0b0e87e11eeb7b9eb0f8edbde221e4bf7fe757f412e59f1a427b8c2f5",
     "app/src/PanelFloat.tsx": "c73d3b1ec18f5c31f84079445ef786ed51005b9da60bb2435ad17b9316ebbe51",
     "app/src/PanelSurface.tsx": "d7baafe4d0187a3ccbb30d8ddaf6af44e8fe12ad09dbc84ede5aabfaed4ebf00",
+    "app/src/QueueRow.tsx": "bac171819ecd8906ae3a0be329f6166c109db2b4a5af0f33d40e50e09624c5b2",
     "app/src/SideDrawer.tsx": "baf72d7230d67cd602586b627bf0e6204e9b3e0e788ae7dbca092d0cbd1432a9",
     "app/src/Sidebar.tsx": "3626666dfd34a242dfaea1cbd67e8dc3aad96ee5b21dd8c10f7dd2d537a85756",
     "app/src/TechText.tsx": "b21daabe4afb0c5942ececc5fc38983424ed574ba977fa685b488989f11d4b59",
     "app/src/WelcomeScreen.tsx": "3827503b5ccf4d0cf33b3d14868104cd99253651763d266afb5d76eb49e5261a",
+    "app/src/contextModel.ts": "acaece7aaf804e260ee0819f9cc7d4351a99e2502827c740ea8bbdf543429fe2",
     "app/src/cwdShort.ts": "754aeb0df8c53cd8c08b2ec2d833697b5ce7b45bd73f3f728ec342f3c2f95faa",
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",
     "app/src/icons.tsx": "73c22f387100db90b5ae976faf25939326c0ddc9fe61a0f8634864062d46a32f",
