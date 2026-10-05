@@ -81,7 +81,9 @@ func (s *webWSStore) saveLocked() error {
 	if s.path == "" {
 		return nil
 	}
-	b, err := json.MarshalIndent(webWSFile{Version: 1, Workspaces: s.ws}, "", "  ")
+	// Compact, not indented: MarshalIndent re-indents the embedded layout
+	// RawMessage, so a reload would hand clients a reformatted document.
+	b, err := json.Marshal(webWSFile{Version: 1, Workspaces: s.ws})
 	if err != nil {
 		return err
 	}
