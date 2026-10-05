@@ -4,11 +4,11 @@
   "min_ymux_version": "0.1.0",
   "settings_file": "~/.claude/settings.json",
   "_notes": [
-    "v1.7.0 (2026-10, Phase 104.C): SessionStart is registered again, with one",
+    "v1.7.0 (2026-10, Phase 105.C): SessionStart is registered again, with one",
     "  job: the CLI asks the desktop (RPC context.inject, ~300 ms budget,",
     "  fail-open) for this session's context and prints it on stdout as",
     "  hookSpecificOutput.additionalContext - on compact/resume the session's",
-    "  first prompt + last 8 brief lines, on startup the workspace intent +",
+    "  goal / done-when / now / next + last 5 deltas + original request, on startup the workspace intent +",
     "  sibling sessions. Never a feed item or a toast. Off switch: Settings ->",
     "  General -> Inject context into sessions. Existing machines must re-run",
     "  setup-hooks to get it; an older CLI that sees the entry silent-acks it.",

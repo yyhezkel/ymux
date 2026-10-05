@@ -507,7 +507,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, 103 then went to B5 (PR #60) and 104 to B6 (PR #61), so this is 105 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
 - **Outcome / Commit:** Phase 105.A (store + rail) on `claude/phase-103a-context-rail`;
   105.C follows. Spec: `docs/CONTEXT.md`.
-- **104.C choices (made while implementing, no new user decision):**
+- **105.C choices (made while implementing, no new user decision):**
   - The transport is a new RPC method `context.inject`, not a reply field on
     `feed.push`, because SessionStart must not touch the feed path at all.
   - The CLI waits ~300 ms and fails open. `YMUX_CONTEXT_TIMEOUT_MS` raises the wait

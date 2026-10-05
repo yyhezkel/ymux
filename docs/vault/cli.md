@@ -63,7 +63,7 @@ observability-only; it is back with a different job — the CLI filters on
 agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `hooks.claude-code.version` is what tells existing installs to re-sync.
 
-**`SessionStart` is registered again as of hooks v1.7.0 (Phase 104.C)** — also with a
+**`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
 new job, and still never a feed card. The `session-start` branch (after the env gate)
 sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
 `tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`

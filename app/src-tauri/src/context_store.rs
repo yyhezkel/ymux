@@ -482,17 +482,17 @@ pub(crate) fn startup(state: &AppState) {
     });
 }
 
-// ─── Phase 104.C: context injection (SessionStart) ─────────────────────────
+// ─── Phase 105.C: context injection (SessionStart) ─────────────────────────
 
 /// Hard cap on what is handed back to the agent, in BYTES (UTF-8).
 pub(crate) const INJECT_MAX_BYTES: usize = 1536;
-/// Log lines included on compact / resume.
-pub(crate) const INJECT_LOG_LINES: usize = 8;
+/// ✔ delta lines included on compact / resume.
+pub(crate) const INJECT_LOG_LINES: usize = 5;
 /// Sibling sessions listed on startup.
 const INJECT_MAX_SIBLINGS: usize = 8;
-/// The first prompt is clipped harder here than in storage, so the log
-/// still fits under the byte cap.
-const INJECT_PROMPT_CHARS: usize = 500;
+/// "Original request": the first prompt, clipped harder than in storage so
+/// the rest still fits under the byte cap.
+const INJECT_PROMPT_CHARS: usize = 400;
 pub(crate) const INJECT_HEADER: &str = "[ymux-context]";
 
 /// One line, no control characters — what an agent reads must not carry
@@ -517,29 +517,17 @@ fn status_word(s: BriefStatus) -> &'static str {
     }
 }
 
-fn log_line(e: &LogEntry) -> String {
-    let mut parts: Vec<String> = Vec::new();
+/// One ✔ line of the digest: the turn's delta (degraded included), or the
+/// session-closed marker.
+fn delta_line(e: &LogEntry) -> Option<String> {
     if e.kind == LogKind::Closed {
-        parts.push("session closed".into());
-    } else {
-        parts.push(format!("[{}]", status_word(e.status)));
+        return Some("- session closed".into());
     }
-    if let Some(t) = e.task.as_deref().filter(|t| !t.is_empty()) {
-        parts.push(flat(t));
-    }
-    if let Some(d) = e.delta.as_deref().filter(|d| !d.is_empty()) {
-        parts.push(format!("— {}", flat(d)));
-    }
-    if let Some(n) = e.next.as_deref().filter(|n| !n.is_empty()) {
-        parts.push(format!("→ next: {}", flat(n)));
-    }
-    if let Some(a) = e.ask.as_deref().filter(|a| !a.is_empty()) {
-        match e.rec.as_deref().filter(|r| !r.is_empty()) {
-            Some(r) => parts.push(format!("(asked: {} · rec: {})", flat(a), flat(r))),
-            None => parts.push(format!("(asked: {})", flat(a))),
-        }
-    }
-    format!("- {}", parts.join(" "))
+    e.delta
+        .as_deref()
+        .map(flat)
+        .filter(|d| !d.is_empty())
+        .map(|d| format!("- {d}"))
 }
 
 /// Byte-cap on a char boundary.
@@ -555,14 +543,16 @@ fn clip_bytes(s: &str, max: usize) -> String {
     format!("{}{ell}", &s[..end])
 }
 
-/// Join a fixed head with as many `items` as fit under the cap, dropping
-/// from the FRONT (the oldest) first; a still-too-long result is clipped.
-fn assemble(head: &[String], items: &[String]) -> String {
+/// Join a fixed head, as many `items` as fit under the cap (dropping from
+/// the FRONT — the oldest — first) and a fixed tail; a still-too-long
+/// result is clipped.
+fn assemble(head: &[String], items: &[String], tail: &[String]) -> String {
     let mut start = 0;
     loop {
         let mut lines: Vec<&str> = vec![INJECT_HEADER];
         lines.extend(head.iter().map(String::as_str));
         lines.extend(items[start..].iter().map(String::as_str));
+        lines.extend(tail.iter().map(String::as_str));
         let text = lines.join("\n");
         if text.len() <= INJECT_MAX_BYTES || start >= items.len() {
             return clip_bytes(&text, INJECT_MAX_BYTES);
@@ -574,8 +564,9 @@ fn assemble(head: &[String], items: &[String]) -> String {
 /// The `additionalContext` for a SessionStart hook. Pure: the caller
 /// resolves the session, the workspace intent and the siblings.
 ///
-/// - `compact` / `resume`: this session's first prompt + its last
-///   `INJECT_LOG_LINES` log lines (oldest → newest).
+/// - `compact` / `resume`: the same shape as the Context Rail card —
+///   Goal, Done when, Now, Next, the last `INJECT_LOG_LINES` ✔ deltas
+///   (oldest → newest) and the first prompt as "Original request".
 /// - `startup`: the workspace intent + one line per OTHER open session in
 ///   the same workspace (task + status), most recent first.
 /// - anything else (`clear`, an unknown future value): nothing.
@@ -591,23 +582,36 @@ pub(crate) fn build_injection(
     match source {
         "compact" | "resume" => {
             let Some(c) = this else { return String::new() };
-            let mut head = Vec::new();
-            if let Some(p) = c.first_prompt.as_deref().filter(|p| !p.trim().is_empty()) {
+            let field = |label: &str, v: Option<&str>| {
+                v.map(flat).filter(|v| !v.is_empty()).map(|v| format!("{label}: {v}"))
+            };
+            let turn = c.log.iter().rev().find(|e| e.kind == LogKind::Turn);
+            let mut head: Vec<String> = Vec::new();
+            head.extend(field("Goal", c.goal.as_deref()));
+            head.extend(field("Done when", c.done_when.as_deref()));
+            if let Some(t) = turn {
+                let task = t.task.as_deref().map(flat).filter(|v| !v.is_empty());
                 head.push(format!(
-                    "This session's first prompt: {}",
-                    flat(&clip_chars(p, INJECT_PROMPT_CHARS))
+                    "Now: [{}] {}",
+                    status_word(t.status),
+                    task.unwrap_or_else(|| "(no task reported)".into())
                 ));
+                head.extend(field("Next", t.next.as_deref()));
             }
-            let n = c.log.len();
-            let tail = &c.log[n.saturating_sub(INJECT_LOG_LINES)..];
-            let items: Vec<String> = tail.iter().map(log_line).collect();
-            if head.is_empty() && items.is_empty() {
+            let mut items: Vec<String> = c.log.iter().rev().filter_map(delta_line).take(INJECT_LOG_LINES).collect();
+            items.reverse();
+            let mut tail: Vec<String> = Vec::new();
+            tail.extend(field(
+                "Original request",
+                c.first_prompt.as_deref().map(|p| clip_chars(p, INJECT_PROMPT_CHARS)).as_deref(),
+            ));
+            if head.is_empty() && items.is_empty() && tail.is_empty() {
                 return String::new();
             }
             if !items.is_empty() {
-                head.push("Where this session stands (oldest → newest):".into());
+                head.push("Recent progress (oldest → newest):".into());
             }
-            assemble(&head, &items)
+            assemble(&head, &items, &tail)
         }
         "startup" => {
             let mut head = Vec::new();
@@ -641,7 +645,7 @@ pub(crate) fn build_injection(
             if !items.is_empty() {
                 head.push("Other agent sessions in this workspace:".into());
             }
-            assemble(&head, &items)
+            assemble(&head, &items, &[])
         }
         _ => String::new(),
     }
@@ -856,15 +860,25 @@ mod tests {
     }
 
     #[test]
-    fn inject_compact_has_prompt_and_last_eight() {
-        let c = ctx_with("s1", Some("build the\ninstaller"), 12);
+    fn inject_compact_has_the_card_shape() {
+        let mut c = ctx_with("s1", Some("build the\ninstaller"), 12);
+        c.goal = Some("Ship the installer".into());
+        c.done_when = Some("two clean runs".into());
         let out = build_injection("compact", Some(&c), None, &[]);
         assert!(out.starts_with(INJECT_HEADER));
-        assert!(out.contains("first prompt: build the installer"), "newline flattened: {out}");
-        assert!(!out.contains("delta3"), "only the last 8: {out}");
-        assert!(out.contains("delta4") && out.contains("delta11"));
-        assert!(out.find("delta4") < out.find("delta11"), "oldest → newest");
+        assert!(out.contains("\nGoal: Ship the installer\n"), "{out}");
+        assert!(out.contains("\nDone when: two clean runs\n"), "{out}");
+        assert!(out.contains("\nNow: [working] task11\n"), "{out}");
+        assert!(out.contains("\nNext: next\n"), "{out}");
+        assert!(!out.contains("delta6"), "only the last 5 deltas: {out}");
+        assert!(out.contains("- delta7") && out.contains("- delta11"));
+        assert!(out.find("delta7") < out.find("delta11"), "oldest → newest");
+        assert!(out.ends_with("Original request: build the installer"), "{out}");
         assert_eq!(build_injection("resume", Some(&c), None, &[]), out);
+        // No goal / done: those lines are simply absent.
+        let bare = build_injection("compact", Some(&ctx_with("s2", None, 1)), None, &[]);
+        assert!(!bare.contains("Goal:") && !bare.contains("Done when:") && !bare.contains("Original request"));
+        assert!(bare.contains("- delta0"));
     }
 
     #[test]
@@ -903,7 +917,8 @@ mod tests {
         let out = build_injection("compact", Some(&c), None, &[]);
         assert!(out.len() <= INJECT_MAX_BYTES, "len {}", out.len());
         assert!(out.contains("D7"), "the newest line survives: {}", out.len());
-        assert!(!out.contains("D0"), "the oldest goes first");
+        assert!(!out.contains("D0"), "only the last 5 deltas");
+        assert!(out.contains("Original request: "), "the tail is kept");
         // A single huge field is still hard-clipped on a char boundary.
         let mut big = SessionContext::new("s2");
         big.set_first_prompt(&"ש".repeat(2000), 1);

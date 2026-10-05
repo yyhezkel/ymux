@@ -1290,7 +1290,7 @@ async fn dispatch(
         }
 
         // ─── Phase 6.5: agent feed ────────────────────────────────────────
-        // Phase 104.C: the SessionStart hook asks for context to hand back
+        // Phase 105.C: the SessionStart hook asks for context to hand back
         // to Claude Code as `additionalContext`. Request/response, never a
         // feed item or a toast (SessionStart stays silent). The CLI waits
         // ~300 ms and fails open, so this must stay cheap: memory + one

@@ -123,7 +123,7 @@ fn bundled_claude_spec() -> HookSpec {
         },
     );
     // v0.4.4 dropped Notification and SessionStart as observability-only
-    // noise. v1.7.0 (Phase 104.C) registers SessionStart again for ONE job:
+    // noise. v1.7.0 (Phase 105.C) registers SessionStart again for ONE job:
     // the CLI asks the desktop for this session's context and prints it as
     // `additionalContext` (compact/resume/startup). It still never becomes
     // a feed item or a toast — see the session-start branch in main.rs.

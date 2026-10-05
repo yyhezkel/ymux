@@ -165,7 +165,7 @@ remote tool can also automate decisions.
 **Result:** `{ "ok": true }`
 **Errors:** `"unknown decision: <x>"`, `"missing request_id"`.
 
-### `context.inject` (Phase 104.C)
+### `context.inject` (Phase 105.C)
 
 Asked by `ymux claude-hook session-start`. The desktop answers with the context
 to hand back to Claude Code as `hookSpecificOutput.additionalContext`. It is a
@@ -185,8 +185,10 @@ any of these cases:
 
 When there is text, it starts with `[ymux-context]` and is at most 1536 bytes.
 Its content depends on the source:
-- `compact` / `resume`: the session's first prompt (≤ 500 chars) plus its last
-  8 brief-log lines.
+- `compact` / `resume`: the same shape as the Context Rail card. The lines are
+  `Goal`, `Done when`, `Now: [status] task` and `Next`. Then come the last 5 ✔
+  deltas, and finally `Original request` (the first prompt, ≤ 400 chars). A
+  missing field is omitted.
 - `startup`: the workspace intent plus one line per other open session in the
   workspace (task + status, ≤ 8).
 
@@ -274,7 +276,7 @@ and the summary is the JSON-stringified payload (truncated to ~280 chars).
 |---|---|---|
 | `tool-permission`, `pre-tool-use` | `permission_request` | yes |
 | anything else (`session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
-| `session-start` (Phase 104.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
+| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
 
 `session-start`'s stdout is either nothing or exactly one line:
 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`.

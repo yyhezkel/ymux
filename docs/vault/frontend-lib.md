@@ -225,7 +225,7 @@ what the backend emits for anything the model did not say cleanly).
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
-(`BriefSettings` gained `inject_context`, default true, in Phase 104.C). Also
+(`BriefSettings` gained `inject_context`, default true, in Phase 105.C). Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.

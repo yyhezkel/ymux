@@ -17,7 +17,7 @@ entry_card_on_return: boolean,
  */
 entry_card_on_idle: boolean, absence_minutes: number, idle_minutes: number, 
 /**
- * Phase 104.C: answer Claude Code's SessionStart hook with this
+ * Phase 105.C: answer Claude Code's SessionStart hook with this
  * session's context (compact/resume) or the workspace's (startup).
  * ON by default — unlike the card triggers above it is invisible
  * until an agent compacts or resumes.

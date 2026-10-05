@@ -130,7 +130,7 @@ files and the UI only. Log lines carry session ids, pane ids, counts and
 versions. The files sit in the user's own config dir, next to `notes.json`.
 Everything is rendered as plain text with `dir="auto"`.
 
-## Injection back into the agent (Phase 104.C)
+## Injection back into the agent (Phase 105.C)
 
 Claude Code's `SessionStart` hook is registered again (hook spec v1.7.0;
 existing machines re-run `setup-hooks`). Its only job is
@@ -140,7 +140,7 @@ It never creates a feed card and never fires a toast.
 
 | `source` | What the agent gets |
 |---|---|
-| `compact`, `resume` | `This session's first prompt: …` (≤ 500 chars), then `Where this session stands (oldest → newest):` and the last 8 log lines (`- [status] task — delta → next: … (asked: … · rec: …)`) |
+| `compact`, `resume` | The card's shape: `Goal: …`, `Done when: …`, `Now: [status] task`, `Next: …`, then `Recent progress (oldest → newest):` and the last 5 ✔ deltas (`- …`, `- session closed`), and last `Original request: <first prompt ≤ 400 chars>`. A missing field is omitted |
 | `startup` | `Workspace goal: <intent>`, then `Other agent sessions in this workspace:` with one `- task — status` line per other OPEN session, most recent first, at most 8 |
 | `clear`, anything else | nothing |
 

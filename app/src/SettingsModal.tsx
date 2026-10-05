@@ -831,7 +831,7 @@ export function SettingsModal(p: Props) {
                       }}
                     />
                   </label>
-                  {/* Phase 104.C: SessionStart context injection. Default ON,
+                  {/* Phase 105.C: SessionStart context injection. Default ON,
                       so anything but an explicit false reads as checked. */}
                   <label class="settings-checkbox">
                     <input
