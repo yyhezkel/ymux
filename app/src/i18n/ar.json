@@ -1377,5 +1377,7 @@
   "context.next": "التالي:",
   "context.waiting": "بانتظارك:",
   "context.log.more": "{n} أخرى",
-  "context.prompt.original": "الرسالة الأصلية"
+  "context.prompt.original": "الرسالة الأصلية",
+  "settings.brief.injectContext.label": "حقن السياق في الجلسات",
+  "settings.brief.injectContext.hint": "عند ضغط جلسة Claude أو استئنافها، تتلقى رسالتها الأولى وآخر أسطر التقدم؛ وتتلقى الجلسة الجديدة هدف مساحة العمل والجلسات الأخرى فيها. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks)."
 }

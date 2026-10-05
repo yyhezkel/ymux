@@ -104,7 +104,7 @@ fn hook_entry(matcher: &str, command: &str, timeout: Option<u64>) -> Value {
 /// `source=bundled` AND as the version recorded when no fetched spec
 /// was applied. Bump whenever you ship a new hook in a release with a
 /// matching `hooks/claude-code.json` change.
-const BUNDLED_CLAUDE_VERSION: &str = "1.6.0";
+const BUNDLED_CLAUDE_VERSION: &str = "1.7.0";
 
 /// The bundled fallback spec for Claude Code. Mirrors what
 /// `hooks/claude-code.json` carries at the same `ymux_hooks_version`
@@ -123,8 +123,10 @@ fn bundled_claude_spec() -> HookSpec {
         },
     );
     // v0.4.4 dropped Notification and SessionStart as observability-only
-    // noise. SessionStart stays dropped; a stale settings.json still
-    // calling `claude-hook session-start` is silent-acked by the CLI.
+    // noise. v1.7.0 (Phase 105.C) registers SessionStart again for ONE job:
+    // the CLI asks the desktop for this session's context and prints it as
+    // `additionalContext` (compact/resume/startup). It still never becomes
+    // a feed item or a toast — see the session-start branch in main.rs.
     //
     // v1.5.0 (Phase 84.B) brings Notification BACK, with a different job.
     // It was noise as a feed item — a card per event that nobody acted on
@@ -139,6 +141,7 @@ fn bundled_claude_spec() -> HookSpec {
     for (ev, sub) in [
         ("Notification", "notification"),
         ("SessionEnd", "session-end"),
+        ("SessionStart", "session-start"),
         ("Stop", "stop"),
         ("UserPromptSubmit", "user-prompt-submit"),
     ] {

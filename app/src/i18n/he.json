@@ -1377,5 +1377,7 @@
   "context.next": "הבא:",
   "context.waiting": "מחכה לך:",
   "context.log.more": "עוד {n}",
-  "context.prompt.original": "הפרומפט המקורי"
+  "context.prompt.original": "הפרומפט המקורי",
+  "settings.brief.injectContext.label": "הזרק הקשר לסשנים",
+  "settings.brief.injectContext.hint": "כשסשן Claude עובר compact או resume, הוא מקבל את הפרומפט הראשון שלו ואת שורות ההתקדמות האחרונות; סשן חדש מקבל את מטרת סביבת העבודה ואת הסשנים האחרים בה. דורש hooks v1.7.0 (הרץ שוב setup-hooks)."
 }

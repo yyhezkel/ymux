@@ -63,6 +63,17 @@ observability-only; it is back with a different job — the CLI filters on
 agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `hooks.claude-code.version` is what tells existing installs to re-sync.
 
+**`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
+new job, and still never a feed card. The `session-start` branch (after the env gate)
+sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
+`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
+nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
+stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":
+"SessionStart","additionalContext":…}}` line, so the text cannot break the JSON. The log
+line carries the source and the byte count, never the text. `manifest.json` is bumped at
+release time, not with the spec.
+
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
 is not hypothetical — a move left an entry pointing at the old absolute path, the hook

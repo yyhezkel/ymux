@@ -1377,5 +1377,7 @@
   "context.next": "Далее:",
   "context.waiting": "Ждёт вас:",
   "context.log.more": "ещё {n}",
-  "context.prompt.original": "исходный промпт"
+  "context.prompt.original": "исходный промпт",
+  "settings.brief.injectContext.label": "Передавать контекст в сессии",
+  "settings.brief.injectContext.hint": "При compact или resume сессия Claude получает свой первый промпт и последние строки прогресса; новая сессия — цель пространства и соседние сессии. Нужны hooks v1.7.0 (перезапустите setup-hooks)."
 }

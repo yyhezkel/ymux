@@ -1377,5 +1377,7 @@
   "context.next": "Next:",
   "context.waiting": "Waiting on you:",
   "context.log.more": "{n} more",
-  "context.prompt.original": "original prompt"
+  "context.prompt.original": "original prompt",
+  "settings.brief.injectContext.label": "Inject context into sessions",
+  "settings.brief.injectContext.hint": "When a Claude session compacts or resumes, hand it its first prompt and latest progress lines; a new session gets the workspace goal and its sibling sessions. Needs hooks v1.7.0 (re-run setup-hooks)."
 }

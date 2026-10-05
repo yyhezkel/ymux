@@ -165,6 +165,37 @@ remote tool can also automate decisions.
 **Result:** `{ "ok": true }`
 **Errors:** `"unknown decision: <x>"`, `"missing request_id"`.
 
+### `context.inject` (Phase 105.C)
+
+Asked by `ymux claude-hook session-start`. The desktop answers with the context
+to hand back to Claude Code as `hookSpecificOutput.additionalContext`. It is a
+separate request/response method, not a `feed.push` reply field. SessionStart
+never creates a feed item or a toast, so it has no reason to go through the
+feed path.
+
+**Params:** `{ "pane_id"?: "<YMUX_PANE_ID>", "tmux_session"?: "<name>",
+"session_id"?: "<claude session id>", "source"?: "startup" | "resume" | "compact" | "clear" }`.
+The pane is resolved with the same `resolve_hook_pane` rule `feed.push` uses.
+
+**Result:** `{ "additional_context": "<text or empty>" }`. The text is empty in
+any of these cases:
+- Settings → General → *Inject context into sessions* is off.
+- The source is `clear` or an unknown value.
+- There is nothing to say.
+
+When there is text, it starts with `[ymux-context]` and is at most 1536 bytes.
+Its content depends on the source:
+- `compact` / `resume`: the same shape as the Context Rail card. The lines are
+  `Goal`, `Done when`, `Now: [status] task` and `Next`. Then come the last 5 ✔
+  deltas, and finally `Original request` (the first prompt, ≤ 400 chars). A
+  missing field is omitted.
+- `startup`: the workspace intent plus one line per other open session in the
+  workspace (task + status, ≤ 8).
+
+The builder is `context_store::build_injection`, and `docs/CONTEXT.md` has the
+details. Unknown to the Go daemon, which answers it with a JSON-RPC error. The
+CLI treats that like a timeout: it fails open.
+
 ## Named Pipe transport (Windows local)
 
 - **Name:** `\\.\pipe\ymux-<USERNAME>`. The user is `$env:USERNAME` if set, else
@@ -244,7 +275,14 @@ and the summary is the JSON-stringified payload (truncated to ~280 chars).
 | Subcommand | `kind` | Blocking? |
 |---|---|---|
 | `tool-permission`, `pre-tool-use` | `permission_request` | yes |
-| anything else (`session-start`, `session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
+| anything else (`session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
+| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
+
+`session-start`'s stdout is either nothing or exactly one line:
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`.
+That line is built with serde, so the text cannot break out of the JSON. Nothing
+else in that branch writes to stdout. The budget is
+`YMUX_CONTEXT_TIMEOUT_MS` (default 300, clamped 100–3000).
 
 ### Decisions and exit codes
 

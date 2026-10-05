@@ -1290,6 +1290,29 @@ async fn dispatch(
         }
 
         // ─── Phase 6.5: agent feed ────────────────────────────────────────
+        // Phase 105.C: the SessionStart hook asks for context to hand back
+        // to Claude Code as `additionalContext`. Request/response, never a
+        // feed item or a toast (SessionStart stays silent). The CLI waits
+        // ~300 ms and fails open, so this must stay cheap: memory + one
+        // workspaces lock, no IO beyond a first-touch cache load.
+        "context.inject" => {
+            fn str_param<'a>(p: &'a Value, k: &str) -> Option<&'a str> {
+                p.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty())
+            }
+            let pane = crate::resolve_hook_pane(
+                state,
+                str_param(&params, "pane_id"),
+                str_param(&params, "tmux_session"),
+            );
+            let text = crate::context_store::injection_for_hook(
+                state,
+                pane.as_deref(),
+                str_param(&params, "session_id"),
+                str_param(&params, "source").unwrap_or(""),
+            );
+            Ok(json!({ "additional_context": text }))
+        }
+
         "feed.push" => {
             let req_id = params
                 .get("request_id")
