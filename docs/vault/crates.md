@@ -47,7 +47,7 @@ The only crate `app` cannot function without. Three files:
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,
   and the map aliases `SessionMap`, `PaneSessionMap`, `ForwardMap`.
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
-- **`pipe_name()` / `pipe_names()` / `pipe_name_legacy()`** — the RPC endpoint paths,
+- **`pipe_name()` / `pipe_names()`** — the RPC endpoint paths,
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
   *list* because macOS caps `sun_path` at 104 bytes.
 

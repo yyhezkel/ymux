@@ -770,35 +770,6 @@ pub fn pipe_name() -> String {
     format!(r"\\.\pipe\ymux-{}", user)
 }
 
-/// Pre-rename endpoint name, kept alive alongside `pipe_name` for one
-/// release.
-///
-/// The Windows installer leaves a `winmux-cli.exe` from an earlier
-/// install on PATH, and MCP host configs point at whatever binary they
-/// were set up with. Those dial `\\.\pipe\winmux-<user>` and have no way
-/// to learn otherwise, so the app answers on both names rather than
-/// letting every pre-rename integration fail at connect.
-///
-/// FOLLOWUPS P1: drop this and its listener once 0.5.0 is the floor.
-#[cfg(windows)]
-pub fn pipe_name_legacy() -> String {
-    let user = std::env::var("USERNAME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| whoami::username());
-    format!(r"\\.\pipe\winmux-{}", user)
-}
-
-/// Unix counterpart of `pipe_name_legacy`.
-#[cfg(not(windows))]
-pub fn pipe_name_legacy() -> String {
-    let user = whoami::username();
-    std::env::temp_dir()
-        .join(format!("winmux-{user}.sock"))
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// Unix equivalent: a per-user Unix domain socket. `temp_dir()` honors
 /// TMPDIR, which on macOS is a per-user private directory — so the
 /// socket gets the same user-isolation the per-user pipe name gives
@@ -841,11 +812,6 @@ pub fn pipe_name_fallback() -> Option<String> {
 /// The socket paths to try, in order. Windows has exactly one name (the
 /// pipe namespace has no length problem), so this is a single-element list
 /// there and callers stay platform-agnostic.
-///
-/// Deliberately excludes `pipe_name_legacy()`: this list is "where THIS
-/// build's endpoint lives", walked by both the server and ymux-tunnel,
-/// which always ship together. The legacy name is a one-release compat
-/// shim for *foreign* pre-rename callers, so only the server binds it.
 pub fn pipe_names() -> Vec<String> {
     #[cfg(windows)]
     {
@@ -1307,13 +1273,6 @@ mod tests {
         assert_eq!(migrate_legacy_config_dir(&base), Ok(false));
         assert!(!base.join("ymux").exists(), "must not create the dir itself");
         let _ = std::fs::remove_dir_all(&base);
-    }
-
-    #[test]
-    fn legacy_pipe_name_differs_from_the_current_one() {
-        // The compat listener is pointless if both resolve to one endpoint.
-        assert_ne!(pipe_name(), pipe_name_legacy());
-        assert!(pipe_name_legacy().contains("winmux"));
     }
 
     // The fs-backed assertions share one test: YMUX_CONFIG_DIR and the

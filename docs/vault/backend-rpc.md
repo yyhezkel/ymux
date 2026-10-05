@@ -24,7 +24,6 @@ there is no auth layer here, and the transport is what provides isolation.
 |---|---|---|
 | Endpoint | named pipe `\\.\pipe\ymux-<user>` | Unix domain socket |
 | Concurrency | **pool of 8 listeners** | one listener per path |
-| Legacy name | pool of 2 on the pre-rename `winmux-` pipe | legacy path in the candidate list |
 
 `pipe_name()` / `pipe_names()` live in `ymux-core` (shared with `ymux-tunnel`, which
 must resolve the same path from the other side).
@@ -232,9 +231,8 @@ helpers.
 
 ## Gotchas
 
-- The legacy `winmux-` pipe/socket names are **load-bearing**, not leftovers — a
-  `winmux-cli` still on someone's PATH, or an MCP host config written against the old
-  name, reaches the app through them. Removal is scheduled as a set (CLAUDE.md § rename).
+- The app no longer listens on the pre-rename `winmux-` pipe/socket: a `winmux-cli` still
+  on someone's PATH, or an MCP host config written against the old name, now fails at connect.
 - A pool slot that fails `make_listener` retries every 500ms forever rather than dying.
   A permanently broken pipe therefore shows up as a repeating `log_warn`, not silence.
 - `dev.get-state` / `build_dev_state` embeds `CARGO_PKG_VERSION` and the optional

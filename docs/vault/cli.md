@@ -173,8 +173,8 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
 - **Rule #8** — the tunnel HMAC token passes through here; never log it.
 - A new verb is: clap subcommand + a `dispatch` arm in `rpc_server.rs` + a line in
   `docs/CLI.md`. Nothing generates one from another.
-- The legacy `winmux-` pipe name is still answered by the app, so an old CLI on a PATH
-  keeps working. Do not "finish the rename" here in isolation.
+- The app no longer answers on the legacy `winmux-` pipe; the CLI's `default_pipe_name_legacy`
+  dial is only a client-side fallback and now finds no listener.
 - `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`
   (`adopt_legacy_env` / `migrate_legacy_home_dir` removed); the `WINMUX_*` read fallbacks stay,
   and the remote `~/.winmux` fold is the bootstrap's `migrate_legacy_remote_dir`.
