@@ -484,6 +484,13 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
      `additionalContext` on compact/resume/startup, capped, toggle in Settings).
   4. The rail shows the current workspace in full, plus a one-line strip for the other
      workspaces that need you.
+- **2026-10-05 follow-up: focused pane only, others strip removed.** Yossi: each window
+  shows only its own context. The rail now renders a single card, for the session of
+  the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
+  pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
+  M other workspaces" strip are gone, together with their UI, i18n keys, model helper
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (103.C) is
+  unchanged.
 - **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, so this is 103 (no reuse).
 - **Outcome / Commit:** Phase 103.A (store + rail) on `claude/phase-103a-context-rail`;
   103.C follows. Spec: `docs/CONTEXT.md`.

@@ -7383,16 +7383,6 @@ body.ymux-dragging .pane-conn {
 }
 .context-rail-strip:hover { background: var(--w-surface-hi, rgba(255, 255, 255, 0.04)); }
 .context-rail-strip:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }
-.context-rail-strip-badge {
-  min-width: 18px;
-  padding-inline: 4px;
-  border-radius: 9px;
-  background: var(--w-warning, #e0af68);
-  color: var(--w-bg, #1a1b26);
-  font-size: 11px;
-  font-weight: 600;
-  text-align: center;
-}
 .context-rail-resizer {
   position: absolute;
   inset-block: 0;
@@ -7417,16 +7407,6 @@ body.ymux-dragging .pane-conn {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.context-others {
-  text-align: start;
-  font-size: 12px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  border: 1px solid var(--w-warning, #e0af68);
-  background: transparent;
-  color: var(--w-text, #e6edf3);
-  cursor: pointer;
 }
 .context-empty, .context-error {
   font-size: 12px;

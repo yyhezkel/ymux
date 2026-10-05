@@ -61,26 +61,41 @@ drawer: there is no backdrop and it never covers the panes.
 
 - **Toggle:** Ctrl+Shift+K (`toggle_context_rail`, rebindable) or the palette
   entry "Context Rail: Toggle".
-- **Collapsed:** a 36 px strip with a badge counting the sessions that need you.
+- **Collapsed:** a 36 px strip.
 - **Width and collapsed state:** stored in `localStorage`. Each access is wrapped
   in try/catch.
 
+**Each window shows only its own context.** The rail follows the **focused pane**:
+App's `activePaneId`, the same signal keyboard and focus routing use. Changing
+focus changes the card. There is no list of the workspace's other sessions and
+no strip for other workspaces. Both were in the first cut and were removed at
+Yossi's call (DECISIONS 2026-10-05 follow-up).
+
 Top to bottom:
 
-1. **Others strip:** "N sessions waiting / stuck in M other workspaces", computed
-   from the existing Queue rows (no extra backend call). Clicking it activates
-   the most urgent of those workspaces.
-2. **🎯 Intent:** the same editor the Briefing card uses (`IntentEditor.tsx`).
-3. **One card per session** of the current workspace:
+1. **🎯 Intent:** the workspace's one-liner. It uses the same editor as the
+   Briefing card (`IntentEditor.tsx`).
+2. **The focused pane's current session:** the session with the newest activity
+   whose `pane_id` is the focused pane. Its card shows:
    - The pane's live Queue row (`QueueRow.tsx`, shared with the Queue panel and
-     the Briefing card). The newest session in a pane owns that pane's row.
+     the Briefing card).
    - 📝 The first prompt, clipped to 180 characters. Click to expand.
    - The log, newest first: `time · icon · ask·rec | delta → next`. Five lines
      are shown, with "show all" for the rest.
+3. **Earlier sessions in this pane (N):** a collapsed toggle listing the pane's
+   older sessions, for example after a restarted `claude` or a `/clear`. It
+   resets whenever focus moves to another pane.
 
-   Closed sessions are listed under "show N closed sessions". An agent pane that
-   has no session record yet (an older CLI, or a non-Claude agent) still gets a
-   plain row.
+**Empty states.** Each is a one-line hint, never the whole workspace:
+- No focused pane: "focus a pane".
+- No session record for the pane: "no Claude session in this pane yet".
+
+An agent pane on an older CLI, which has a live row but no record, still shows
+that row.
+
+The rail fetches `session_context_list(ws_id)` once per workspace and on
+`context:changed`. Picking the focused pane's sessions out of that list is
+client-side (`contextModel.sessionsForPane`), so moving focus costs no IPC.
 
 ## Privacy
 

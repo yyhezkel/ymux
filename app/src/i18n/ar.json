@@ -1363,16 +1363,16 @@
   "context.expand": "إظهار شريط السياق",
   "context.collapse": "طي شريط السياق",
   "context.resize": "اسحب لتغيير العرض",
-  "context.others": "{n} جلسات بانتظارك / عالقة في {m} مساحات عمل أخرى",
   "context.noWorkspace": "لم يتم اختيار مساحة عمل.",
-  "context.noSessions": "لا توجد جلسات وكيل هنا بعد. ستظهر هنا الرسالة الأولى وسجل التقدم لكل جلسة Claude.",
-  "context.showClosed": "إظهار {n} جلسات مغلقة",
-  "context.hideClosed": "إخفاء الجلسات المغلقة",
   "context.prompt.label": "الرسالة الأولى",
   "context.prompt.toggle": "إظهار / إخفاء الرسالة كاملة",
   "context.log.closed": "أُغلقت الجلسة",
   "context.log.all": "إظهار الكل ({n})",
   "context.log.less": "إظهار أقل",
   "cmd.contextRail.toggle": "شريط السياق: إظهار/طي",
-  "settings.shortcuts.toggle_context_rail": "طي / توسيع شريط السياق"
+  "settings.shortcuts.toggle_context_rail": "طي / توسيع شريط السياق",
+  "context.noPane": "ركّز على لوح لرؤية سياقه.",
+  "context.noSession": "لا توجد جلسة Claude في هذا اللوح بعد. ستظهر هنا رسالتها الأولى وسجل تقدمها.",
+  "context.showEarlier": "جلسات سابقة في هذا اللوح ({n})",
+  "context.hideEarlier": "إخفاء الجلسات السابقة"
 }
