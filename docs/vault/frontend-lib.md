@@ -72,9 +72,8 @@ Things it does that are easy to get wrong:
   most 40 times — never an unbounded rAF chain (same for `scheduleInitialFontMeasure`
   waiting for the container to be attached).
 - **Diagnostic log lines on per-frame paths are rate-gated.** `rtl-dirs` speaks when the
-  direction vector changes, at most once per 2 s per pane; `title-seen` only when the
-  match flag or a coarse length bucket changes — Claude animates a spinner in its title,
-  and "every title" was several lines a second per pane.
+  direction vector changes, at most once per 2 s per pane. There is no title log line:
+  the OSC-title Claude detector was removed 2026-10-06 (it never fired in practice).
 - **`fitAndResize`** is rAF-throttled — the `ResizeObserver` fires per pixel during a
   divider drag, and every call sends a SIGWINCH down the SSH channel. tmux cannot keep up
   and the renderer thrashes.
@@ -116,8 +115,9 @@ laid out **right-to-left** — so a multi-run Latin row (a diff's gutter, line
 number, two columns) came out with its fragments mirrored, while a single-run
 shell row merely sat at the right edge, which is why it went unnoticed for three
 weeks. The rule now, per row: Hebrew/Arabic present → `rtl` exactly as before; no
-RTL text and **Claude Code holds the pane** (the detected `foldTuiOwnsBidi` state
-— hook or OSC title — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
+RTL text and **Claude Code holds the pane** (the hook-driven `claudeActive` flag
+set by `setTuiSignal(on: boolean)` from the `YMUX_PANE_ID` Claude hooks, so it works over
+SSH, zellij and tmux — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
 two-column TUI keeps both halves where it drew them; no RTL text in a shell →
 **`ltr-end`**, a third `RowDir` value meaning `dir="ltr"` plus
 `text-align: right` and `data-ymux-align="end"`: reading order kept, the run
@@ -156,8 +156,8 @@ Two traps around `force_rtl`, both of which produce reversed letters if missed:
   own layout.
 
 **It is keyed on the pane class, never on what is running inside the pane.** The vote
-first shipped gated on `tuiOwnsBidi`, and because the OSC title propagates over SSH — that
-is how Claude Code is detected at all — it fired on remote panes and broke them. Yossi's
+first shipped gated on `tuiOwnsBidi`, and because the OSC-title detector (since removed;
+detection is now the Claude hook signal) fired on remote panes and broke them. Yossi's
 instruction afterwards was a total separation between local and remote, so a change aimed
 at local panes cannot reach remote ones. A per-profile field is that separation, and
 `remote_direction_policy_is_the_pre_2026_08_19_rule` in `settings.rs` plus the parity
