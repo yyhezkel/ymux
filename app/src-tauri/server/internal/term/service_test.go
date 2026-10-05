@@ -93,6 +93,11 @@ func TestGateCoversEveryRoute(t *testing.T) {
 		{"POST", "/api/v2/term/sessions/api/rename"},
 		{"DELETE", "/api/v2/term/sessions/api"},
 		{"GET", "/api/v2/term/sessions/api/attach"},
+		// Phase 101: the feed and the live channel carry the same sessions'
+		// prompts and tool input, so they sit behind the same gate.
+		{"POST", "/api/v2/term/sessions/api/policy"},
+		{"GET", "/api/v2/events"},
+		{"POST", "/api/v2/feed/req_1/decide"},
 	}
 	for _, rt := range routes {
 		w := do(s, rt.method, rt.path, "device-all", "")

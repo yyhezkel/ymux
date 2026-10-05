@@ -63,6 +63,11 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/term/sessions/{name}/rename", s.gate(s.handleRename))
 	mux.HandleFunc("DELETE /api/v2/term/sessions/{name}", s.gate(s.handleKill))
 	mux.HandleFunc("GET /api/v2/term/sessions/{name}/attach", s.gate(s.handleAttach))
+	// Phase 101 (WEB-DESIGN B3): the live channel, the feed decision, and a
+	// session's hook policy — same gate (events.go explains why).
+	mux.HandleFunc("POST /api/v2/term/sessions/{name}/policy", s.gate(s.handlePolicy))
+	mux.HandleFunc("GET /api/v2/events", s.gate(s.handleEvents))
+	mux.HandleFunc("POST /api/v2/feed/{request_id}/decide", s.gate(s.handleDecide))
 	// Phase 97: the diagnostic page + its log sink, both public (page.go).
 	s.registerPageRoutes(mux)
 }
@@ -165,10 +170,18 @@ func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
 
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name string `json:"name"`
-		Cwd  string `json:"cwd"`
+		Name   string `json:"name"`
+		Cwd    string `json:"cwd"`
+		Policy string `json:"policy"` // Phase 101: "none" (default) | "gate"
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Policy == "" {
+		body.Policy = policyNone
+	}
+	if !validPolicy(body.Policy) {
+		http.Error(w, `policy must be "none" or "gate"`, http.StatusBadRequest)
+		return
+	}
 	name := strings.TrimSpace(body.Name)
 	if name == "" {
 		name = "ymux-" + uuid.NewString()[:8]
@@ -194,6 +207,8 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 			if entry, env, err = s.hooks.mint(name, addr); err != nil {
 				logger.Error("hook token mint failed; creating without hooks", "err", err)
 				entry, env = nil, nil
+			} else {
+				entry.policy = body.Policy
 			}
 		}
 	}
@@ -204,7 +219,11 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	if entry != nil {
 		s.hooks.add(entry)
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "display": name, "hooks": entry != nil})
+	resp := map[string]any{"name": name, "display": name, "hooks": entry != nil}
+	if entry != nil {
+		resp["policy"] = entry.policy
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) {

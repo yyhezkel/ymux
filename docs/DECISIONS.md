@@ -469,12 +469,21 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
   there is no web UI that can approve anything (the diagnostic page has no feed), so a
   default `gate` would block every `claude` in a browser-created session.
 - **Decided (Yossi):** a browser-created session's policy defaults to **`none`** —
-  observability only: the hook is folded into the traffic light / brief and appears in
-  the feed, the permission request is answered `allow` immediately, nothing blocks.
+  observability only: the hook is folded into the traffic light / brief, the permission
+  request is answered `allow` immediately and makes **no card** (the desktop's Auto does
+  the same — a card per tool call would bury the 50-card feed), nothing blocks. Lifecycle
+  cards (stop, session-end, …) still appear.
   **`gate` is opt-in per session**; when set, a permission request waits for a human
   (browser / desktop / phone) with the desktop's timeout semantics (`wait_timeout_seconds`
   default 120, clamped 1–600, timeout → deny). Revisit the default once Phase C ships a
   feed UI in the browser.
+- **Decided for B3 (Yossi, same day):** (1) the live channel is ONE WebSocket,
+  `GET /api/v2/events`, behind the terminal gate (owner token or an explicit
+  `shell:attach`) — whoever can open the terminal sees its events; (2) the feed history
+  lives in the **browser, in IndexedDB** (Phase C); the daemon keeps only the pending
+  approvals plus the last 50 cards in memory, to hydrate a client that connects;
+  (3) card language is **per subscriber** (`?lang=he|en`), rendered in both languages
+  when the card is made, since the daemon has no settings store to read one from.
 
 ### 2026-10-04 — WEB-DESIGN Phase B split into six PRs; policy and hook-port calls
 - **Context:** Yossi moved on to Phase B of "ymux in the browser". Two code surveys (Go

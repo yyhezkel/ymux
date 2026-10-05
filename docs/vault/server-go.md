@@ -70,7 +70,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 1,540 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), and hook routing for browser-created sessions (100) |
+| `term` | 2,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), and their feed, gate and events socket (101) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -206,11 +206,44 @@ falls back to `last.env` (the desktop) exactly as before.
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
   prompt; `stop` → `RecordTurn` + `BriefFromStop`; `session-end` → run reset (seq+1) +
   `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
-  is denied. **Every permission request is allowed (`policy:"none"`)** until B3 gives the
-  daemon a way to reach a human. `ping` answers; any other method is a JSON-RPC error.
-- `Snapshot()` exposes the state for B3; **no route serves it yet.**
+  is denied. A permission request follows the session's **policy** (Phase 101, below).
+  `ping` answers; any other method is a JSON-RPC error.
+- `Snapshot()` is the test-facing form of the state; the events socket's `hello` is the
+  served one.
 - Rule #8: tokens never logged. Rule #1: hook logs carry pane id, subkind, state and
   seq — never the prompt, the reply or tool input.
+
+**`term/feed.go` + `events.go` (Phase 101, WEB-DESIGN B3) — the feed, the gate, the
+live channel.** `feedPush` now does what the desktop's `feed.push` does after folding:
+- **Policy per session** (`hookEntry.policy`, DECISIONS 2026-10-05): `none` — the default,
+  set at create (`{"policy":"gate"}` to change it) or later with
+  `POST /api/v2/term/sessions/{name}/policy` — answers a permission request `allow` at
+  once and makes **no card**, as the desktop's Auto does. `gate` makes a blocking card and
+  waits for a decision: `wait_timeout_seconds` default 120, clamped 1–600; timeout →
+  `"timeout"` (the CLI denies); killing or losing the session → `deny`. The wait runs
+  with **no lock held** — `feedPush` copies what it needs under `r.mu` and releases it.
+- **Cards** follow the desktop's rules: `user-prompt-submit` and `notification` never make
+  one; the lifecycle subkinds (`stop`, `session-*`, `post-tool-use`, `subagent-stop`,
+  `pre-compact`) are humanized, and a stop with a non-degraded brief shows `ask · rec`
+  (else `delta`), clipped to 160. Text is rendered in **both languages at creation** and
+  each subscriber gets its own (`?lang=he`), because there is no settings store to read
+  one language from. `feedStore` keeps the last 50 in memory; the browser keeps history
+  (IndexedDB, Phase C). First decision wins; a second `decide` returns false.
+- **`GET /api/v2/events`** — one WebSocket for the box, same gate as the terminal
+  (owner token or explicit `shell:attach`). First frame `hello` = the hydration the
+  desktop does with `pane_agent_states` / `pane_briefs` / the feed list, plus each pane's
+  session and policy. Then `feed:item-added`, `feed:item-resolved`, `pane:agent-run`,
+  `pane:brief` — the desktop's event names and JSON, wrapped `{"type","data"}`. Client →
+  server: `{"type":"feed.decide","request_id","decision"}`; the same as REST is
+  `POST /api/v2/feed/{request_id}/decide`. The subscriber is registered before the
+  snapshot is taken (an event can arrive twice, never zero times — clients dedupe by
+  seq / request_id), and one that falls 256 frames behind is **dropped, not waited for**:
+  it reconnects and re-hydrates. Lock order is hub → feed, never the reverse.
+- **`api` `hooks/forward` drops `term_` panes.** The CLI forwards every pre-tool-use to it
+  regardless of where the RPC went; for a browser session that made a second, dead card
+  on the phone (FOLLOWUPS P2, closed).
+- These routes are raw stdlib handlers like the rest of term, so they are not in the
+  OpenAPI spec either (the existing FOLLOWUPS P2 about term routes covers them).
 
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
