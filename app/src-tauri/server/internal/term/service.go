@@ -36,13 +36,21 @@ type Service struct {
 
 	// logBudget bounds the diagnostic page's log sink (page.go).
 	logBudget *logBudget
+
+	// hooks holds the hook tokens of the sessions created here (Phase 100,
+	// hookreg.go). nil disables hook routing entirely.
+	hooks *HookRegistry
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
 // is the user's home directory (where ~/.ymux/session-meta.json lives).
 func NewService(token, home string) *Service {
-	return &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}}
+	return &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}, hooks: NewHookRegistry()}
 }
+
+// Hooks is the registry hooks.Start must be given, so a claude inside a
+// browser-created session reaches the daemon (core.HookResolver + AddrSink).
+func (s *Service) Hooks() *HookRegistry { return s.hooks }
 
 // SetScopeResolver wires per-device scope lookups. Without it only the owner
 // token can reach these routes.
@@ -145,6 +153,9 @@ func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
 		failErr(w, err)
 		return
 	}
+	if s.hooks != nil {
+		s.hooks.Retain(sessions)
+	}
 	meta := LoadMeta(s.home)
 	// Counts only — a session NAME can carry a branch or a client name, and a
 	// meta entry carries user-written labels (Rule #1).
@@ -172,11 +183,28 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session already exists", http.StatusConflict)
 		return
 	}
-	if err := s.tmux.Create(name, body.Cwd); err != nil {
+	// Phase 100: point the session's hooks at the daemon. Without a listener
+	// address, or on a tmux too old for `-e`, the session is created exactly
+	// as before and its hooks go wherever the global environment says.
+	var entry *hookEntry
+	var env map[string]string
+	if s.hooks != nil {
+		if addr := s.hooks.hookAddr(); addr != "" && s.tmux.SupportsSessionEnv() {
+			var err error
+			if entry, env, err = s.hooks.mint(name, addr); err != nil {
+				logger.Error("hook token mint failed; creating without hooks", "err", err)
+				entry, env = nil, nil
+			}
+		}
+	}
+	if err := s.tmux.Create(name, body.Cwd, env); err != nil {
 		failErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "display": name})
+	if entry != nil {
+		s.hooks.add(entry)
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"name": name, "display": name, "hooks": entry != nil})
 }
 
 func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) {
@@ -198,6 +226,9 @@ func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) {
 		failErr(w, err)
 		return
 	}
+	if s.hooks != nil {
+		s.hooks.Rename(from, to)
+	}
 	// The session-meta entry is keyed by NAME, so a rename orphans it. The
 	// CLI's hooks re-key it on the session's next turn and its pruning drops
 	// the stale key, so this is self-healing rather than something to patch up
@@ -207,9 +238,13 @@ func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Service) handleKill(w http.ResponseWriter, r *http.Request) {
-	if err := s.tmux.Kill(r.PathValue("name")); err != nil {
+	name := r.PathValue("name")
+	if err := s.tmux.Kill(name); err != nil {
 		failErr(w, err)
 		return
+	}
+	if s.hooks != nil {
+		s.hooks.Remove(name)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

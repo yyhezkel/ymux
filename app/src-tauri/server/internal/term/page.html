@@ -22,11 +22,18 @@
   browser reaching this page already has a network; if the CDN is blocked the
   page says so instead of showing an empty box.
 
+  The packages are the app's own (@xterm/xterm 6.0.0 + @xterm/addon-fit 0.11.0,
+  app/package.json) from jsdelivr, each pinned with an SRI hash. Until
+  2026-10-05 this pointed at cdnjs xterm/5.3.0 + xterm-addon-fit/0.8.0 — both
+  404 there, so the terminal had never rendered. cdnjs carries no fit addon at
+  all, which is why the origin moved rather than just the version.
+
   Every step reports itself to the daemon log (POST /diag/log) so one log file
   tells the whole story. Rule #1: it reports STEP NAMES and error strings only.
   Terminal bytes never leave the terminal.
 -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/css/xterm.css"
+      integrity="sha384-n2n7twoohnW+d3myBKaUgl7DSiwidw6MkQy9oesGzkPpMjejKRR3XlnD+5yCdtBD" crossorigin="anonymous">
 <style>
   :root {
     --bg: #12141a; --panel: #1a1d26; --line: #2b3040;
@@ -79,7 +86,11 @@
     background: #0e1016; border: 1px solid var(--line); border-radius: 7px;
     padding: 10px; font: 12px/1.5 ui-monospace, Consolas, monospace; color: var(--dim);
   }
-  #termWrap { background: #000; border-radius: 8px; padding: 6px; direction: ltr; }
+  /* overflow + position: xterm parks its char-measure span at left:-9999em, and
+     in this dir=rtl document an overflow to the LEFT is scrollable — the page
+     grew 130,000 px wide. Clipping here contains it. */
+  #termWrap { background: #000; border-radius: 8px; padding: 6px; direction: ltr;
+              overflow: hidden; position: relative; }
   #log {
     direction: ltr; unicode-bidi: isolate; max-height: 220px; overflow-y: auto;
     font: 12px/1.6 ui-monospace, Consolas, monospace;
@@ -162,8 +173,10 @@
   </section>
 </main>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm/5.3.0/xterm.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xterm-addon-fit/0.8.0/xterm-addon-fit.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.0.0/lib/xterm.js"
+        integrity="sha384-f/1U6Z9wM4D71a5eRXEZnyOTMOvjqxr2XLwh+Go1OvIl3L3tOcvUrzudnhbECwl4" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.11.0/lib/addon-fit.js"
+        integrity="sha384-txoiwu4RR2GD3qySbaj+BbzibkLbSJRcfqGYMu6z1EqHil4A2dyBiBW5dlacG6OR" crossorigin="anonymous"></script>
 <script>
 "use strict";
 
@@ -406,7 +419,11 @@ function attach(name) {
   $("termSec").classList.remove("hidden");
   $("termName").textContent = name;
 
+  // An explicit stack: the bare generic `monospace` resolved to a PROPORTIONAL
+  // face in a stock headless Chrome, and xterm measures the cell from it.
   term = new Terminal({ fontSize: 13, cursorBlink: true, convertEol: false,
+                        fontFamily: 'ui-monospace, "Cascadia Mono", Menlo, Consolas, ' +
+                                    '"Liberation Mono", "DejaVu Sans Mono", courier-new, courier, monospace',
                         theme: { background: "#000000" } });
   fit = new FitAddon.FitAddon();
   term.loadAddon(fit);

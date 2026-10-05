@@ -6,8 +6,8 @@
 package core
 
 import (
+	"encoding/json"
 	"io"
-	"net"
 )
 
 // Version is the ymux-server release version. Major 2 marks the API-stability
@@ -45,27 +45,55 @@ import (
 // rest of 2.4.0 testable, so releasing them apart would be releasing a
 // feature and its only client separately.
 //
+// 2.4.1 (Phase 100, WEB-DESIGN B2): hooks from tmux sessions a browser
+// creates reach the daemon (internal/hooks + term's hook registry). Bumped
+// so the add-on offers it — the desktop only offers an update when this
+// string differs, and 2.4.0 had already reached test servers.
+//
+// 2.4.2 (Phase 100 fix, live test 2026-10-05): term List() parsed nothing on
+// a real tmux (its \x1f separator came back escaped), which also wiped every
+// hook token on each list; and the diagnostic page's xterm URLs 404'd. Bumped
+// because 2.4.1 had already reached a test server.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.4.0"
+const Version = "2.4.2"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value
 // must fail loudly rather than silently drift.
 const FrameVersion = 2
 
-// HookConnHandler consumes a freshly-accepted hook-RPC connection and speaks the
-// Phase-66 challenge/response + JSON-RPC protocol on it. It is implemented by
-// chat's SessionManager (which owns the per-session HMAC tokens + pending-hook
-// state) and driven by the thin hooks.Listener. This indirection is the cycle
-// break: hooks → core, chat → core, and cmd wires the concrete handler in.
-type HookConnHandler interface {
-	HandleHookConn(conn net.Conn)
+// HookResolver identifies the caller on a hook-RPC connection. The listener
+// (internal/hooks) owns the Phase-66 challenge/response; after reading the
+// client's HMAC over the nonce it asks each resolver in turn whether one of its
+// per-session tokens produced it. Implemented by chat's SessionManager (claude
+// children it spawned for the phone) and by term's hook registry (tmux
+// sessions the browser created, Phase 100). This indirection is the cycle
+// break: hooks → core, chat → core, term → core, and cmd wires them.
+type HookResolver interface {
+	MatchHookHMAC(nonce, mac []byte) (HookTarget, bool)
 }
 
-// AddrSink receives the hook listener's bound localhost address so the session
-// manager can inject it (as YMUX_SOCKET_ADDR) into spawned claude children.
+// HookTarget is the session a resolver matched. DispatchHook answers the ONE
+// JSON-RPC request the connection carries: a non-nil RPCError becomes a
+// JSON-RPC `error` object, otherwise result becomes `result`. A blocking
+// permission gate may hold the call for up to its wait timeout.
+type HookTarget interface {
+	DispatchHook(method string, params json.RawMessage) (result any, err *RPCError)
+}
+
+// RPCError is a JSON-RPC error object. -32000 is the code the desktop's
+// rpc_server uses for every application error.
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// AddrSink receives the hook listener's bound localhost address so a resolver
+// can inject it (as YMUX_SOCKET_ADDR) into the processes it starts: chat's
+// claude children, term's tmux sessions.
 type AddrSink interface {
 	SetHookAddr(addr string)
 }

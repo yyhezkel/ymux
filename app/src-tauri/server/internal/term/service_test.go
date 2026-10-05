@@ -107,7 +107,7 @@ func TestGateCoversEveryRoute(t *testing.T) {
 }
 
 func TestListReturnsAnnotatedSessions(t *testing.T) {
-	s, _ := testService(ok("api\x1f2\x1f1700000000\x1f0\x1f/srv\n"))
+	s, _ := testService(ok("api\t2\t1700000000\t0\t/srv\n"))
 	w := do(s, "GET", "/api/v2/term/sessions", "owner-token", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", w.Code)

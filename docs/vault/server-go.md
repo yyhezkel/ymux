@@ -48,7 +48,7 @@ api      →  imports subsystems; subsystems NEVER import api
 ```
 
 `internal/core` (110 lines) holds the cross-subsystem interfaces and value types —
-`AddrSink`, `HookConnHandler`, `NotificationSender` and friends. It is a **leaf package
+`AddrSink`, `HookResolver` / `HookTarget` / `RPCError`, `NotificationSender` and friends. It is a **leaf package
 by rule**, and that rule is the concrete fix for the Phase-69 WS↔session↔hookRPC import
 cycle that forced the old daemon into one flat `package main`. Same for `api`: the
 dependency arrow points one way, so there is no cycle to break later.
@@ -65,12 +65,12 @@ dependency arrow points one way, so there is no cycle to break later.
 | `core` | 110 | the leaf interface package |
 | `desktop` | 290 | the daemon's only OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96) |
 | `files` | 682 | the Files API (`/api/v2/files/*`) |
-| `hooks` | 42 | a thin TCP listener — owns none of the protocol |
+| `hooks` | 178 | the hook-RPC endpoint: localhost listener + the Phase-66 challenge/response, asking each `core.HookResolver` (chat, term) whose token signed it (Phase 100) |
 | `insights` | 2,653 | sampler, store, Docker, the hygiene reaper, and the two Phase-84 rollups |
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 1,090 | tmux sessions + a binary WebSocket carrying a real PTY (95), and the embedded diagnostic page (97) |
+| `term` | 1,540 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), and hook routing for browser-created sessions (100) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -115,9 +115,12 @@ For a `claude_chat` session the bridge lazily spawns a Claude process on the fir
 `user_input`, feeds stdin, and republishes its output (assistant text, tool use/result,
 hooks, status) into the substrate.
 
-**`chat/chat_hookrpc.go`** — holds `challengeTag`, the Go half of the tunnel handshake.
-It still speaks the legacy `WINMUX-CHALLENGE` dialect on purpose; the Rust half is
-`CHALLENGE_TAG` in `ymux-tunnel`. **Flip both together.**
+**`chat/chat_hookrpc.go`** — chat's `core.HookResolver`: `MatchHookHMAC` finds the
+mobile session whose token signed the nonce, `dispatchHook` answers its `feed.push`
+(policy `auto`/`block`/`gate`, the phone approves). Since Phase 100 the handshake itself
+lives in `hooks` (below); `hooks.ChallengeTag` still speaks the legacy
+`WINMUX-CHALLENGE` dialect on purpose; the Rust half is `CHALLENGE_TAG` in
+`ymux-tunnel`. **Flip both together.**
 
 **`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
 package that lets a browser have a shell, and the two rules that shape it are worth
@@ -136,6 +139,10 @@ shared state.** Several clients on one session is tmux's own multi-client case, 
 WebSocket simply owns one `tmux attach` process and tmux does the mirroring. The
 `workspace` package's `KindTerminal` constant is reserved and deliberately unimplemented
 — PTY bytes must never enter that package's append-only SQLite event log.
+
+When the PTY ends (the session was killed, or tmux detached this client) `attach.go`
+sends `{"type":"exit"}` **and then a close frame with 1000**. Without that frame the
+browser saw 1006, the same code as a dropped network — found live 2026-10-05.
 
 `/api/v2/term/*` mounts **raw**, not behind `auth.Bearer`, for the same reason `push`
 does: that middleware only knows the shared token, and a paired device's token has to
@@ -173,6 +180,38 @@ Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma 
 they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
 Phase B moves them.
 
+**`term/hookreg.go` + `hookdispatch.go` (Phase 100, WEB-DESIGN B2) — the one piece of
+state, and why it is allowed.** A session created through `POST /api/v2/term/sessions`
+gets three SESSION-scoped variables (`tmux new-session -e`, which beat the desktop's
+`set-environment -g`): `YMUX_SOCKET_ADDR` (the daemon's hook listener),
+`YMUX_TUNNEL_TOKEN` (32 random bytes, the HMAC key) and `YMUX_PANE_ID` (`term_<16 hex>`).
+So `ymux claude-hook` in that session dials the **daemon**, not the desktop. The
+`HookRegistry` remembers token → session (in memory, keyed by name, following
+rename/kill and pruned against every `list`) and is term's `core.HookResolver`. It is
+the only state in a package whose rule is "tmux is the truth", kept as thin as possible:
+a daemon restart starts it empty, which is accepted (DECISIONS 2026-10-04) because under
+systemd a restart kills a daemon-started tmux server anyway, and a surviving session
+falls back to `last.env` (the desktop) exactly as before.
+- **That pruning trusts `Tmux.List()` completely** — an empty list empties the registry.
+  `List()` therefore uses a TAB-separated `-F` template. It used `\x1f` until 2.4.2, and
+  tmux 3.4 escapes a non-printable byte to the literal text `\037`, so on a real box every
+  list was `[]` and each list call (the diagnostic page lists on load) silently cut every
+  browser session's hooks (`auth denied: unknown-session`). A test pins "no control byte
+  but TAB in `listFormat`"; `ValidName` rejects control characters, so a name cannot hold
+  a tab, and `SplitN(…, 5)` keeps a tab inside the path.
+- `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` once.
+  Older, or no listener address → the session is created exactly as before, no hooks.
+- `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
+  folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
+  `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
+  prompt; `stop` → `RecordTurn` + `BriefFromStop`; `session-end` → run reset (seq+1) +
+  `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
+  is denied. **Every permission request is allowed (`policy:"none"`)** until B3 gives the
+  daemon a way to reach a human. `ping` answers; any other method is a JSON-RPC error.
+- `Snapshot()` exposes the state for B3; **no route serves it yet.**
+- Rule #8: tokens never logged. Rule #1: hook logs carry pane id, subkind, state and
+  seq — never the prompt, the reply or tool input.
+
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96
 flow: request access → match the 6-digit code → approve in ymux → list tmux sessions →
@@ -186,10 +225,18 @@ Three decisions in it worth not undoing:
   is one you cannot use when delivery is what broke. This is **not** an answer to Q2
   (how the real web bundle ships) — a few KB of diagnostics and a 3 MB app are different
   questions, and `docs/DECISIONS.md` Q2 stays open.
-- **xterm.js from cdnjs, not embedded.** The committed server blobs are ~13 MB each and
+- **xterm.js from a CDN, not embedded.** The committed server blobs are ~13 MB each and
   every rebake writes both into git history; +600 KB per rebake to save one CDN fetch is
   the wrong trade here. The page says so plainly when the CDN is blocked instead of
-  showing an empty box.
+  showing an empty box. Since 2.4.2 it is the app's own packages (`@xterm/xterm` 6.0.0 +
+  `@xterm/addon-fit` 0.11.0) from **jsdelivr, SRI-pinned**, and `page.go`'s CSP allows
+  exactly `cdn.jsdelivr.net`. The original cdnjs URLs (xterm 5.3.0, xterm-addon-fit 0.8.0)
+  were 404s — cdnjs has no fit addon at all — so before that the page never rendered a
+  terminal. Bumping a package means a new URL **and** a new `integrity` hash.
+  Two layout traps, both fixed in 2.4.2 and commented in place: xterm parks its
+  char-measure span at `left:-9999em`, which in this `dir="rtl"` document made the page
+  scroll 130,000 px sideways (`#termWrap` clips it); and the font is an explicit stack,
+  because a bare `monospace` resolved to a proportional face in a stock headless Chrome.
 - **`GET /{$}`, not `GET /`.** Exact-match for the root, so an unknown path still 404s.
   A catch-all that silently returns HTML is how a typo in an API path becomes an hour of
   confusion. `page_test.go` asserts it.
@@ -269,11 +316,17 @@ global cap on outstanding requests, and it **fails closed with a message** when 
 desktop is reachable — a browser left polling a request no human will ever see is
 worse than a refusal.
 
-**`hooks/hooks.go`** (42 lines) is deliberately tiny: bind a localhost port, report the
-bound address through `core.AddrSink` so spawned claude children can be pointed at it,
-hand each connection to a `core.HookConnHandler` — which is `chat.SessionManager`, the
-thing that actually owns per-session HMAC tokens and pending-hook state. That
-indirection is what breaks the import cycle.
+**`hooks/hooks.go`** — the hook-RPC endpoint. Phase 100 moved the protocol here from
+chat, because two subsystems now mint hook tokens: it binds an ephemeral localhost port,
+reports the address to every resolver that is a `core.AddrSink`, does the challenge
+(`ChallengeTag`, mirroring the client's dialect), asks each `core.HookResolver` in turn
+whose token produced the HMAC (`chat.SessionManager` for phone sessions, term's
+`HookRegistry` for browser-created tmux sessions), and passes the one JSON-RPC request to
+the matched `core.HookTarget`. A non-nil `*core.RPCError` goes out as a JSON-RPC `error`
+object (code -32000, as the desktop's `rpc_server` does). `main.go` starts it after both
+resolvers exist and **no longer only when chat.db opened** — a failed chat store must not
+cost browser sessions their hooks. hooks → core, chat → core, term → core: still no
+cycle.
 
 **`insights/analytics.go`** (424) — `GET /analytics`, the Monitor's Analytics tab. It is a
 separate endpoint from `/history` for two reasons, both of them about the transport.

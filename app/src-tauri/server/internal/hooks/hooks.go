@@ -1,14 +1,35 @@
-// Package hooks is the thin TCP listener for the Phase-66 hook RPC. It owns
-// none of the protocol: it binds a localhost port, reports the bound address to
-// the handler (core.AddrSink) so spawned claude children can be pointed at it,
-// and hands each accepted connection to a core.HookConnHandler — implemented by
-// chat.SessionManager, which owns the per-session HMAC tokens + pending-hook
-// state. This indirection is the concrete break of the Phase-69
-// WS↔session↔hookRPC import cycle: hooks → core, chat → core, cmd wires them.
+// Package hooks is the hook-RPC endpoint: the localhost TCP listener that the
+// ymux CLI's `claude-hook` dials, and the Phase-66 wire protocol spoken on it.
+//
+// Phase 100 (WEB-DESIGN B2) moved the protocol here from chat. Until then
+// chat owned the handshake because its per-session tokens were the only ones;
+// now two subsystems mint tokens — chat for the claude children it spawns for
+// the phone, term for the tmux sessions a browser creates — so the listener
+// does the challenge/response once and asks each core.HookResolver whose token
+// produced the HMAC. The matched core.HookTarget answers the one request.
+// hooks → core, chat → core, term → core; cmd wires them.
+//
+// Wire format (cli/src/main.rs perform_handshake + rpc_via):
+//
+//	S->C  "WINMUX-CHALLENGE <nonce-hex>\n"
+//	C->S  "YMUX-RESPONSE <hmac_sha256(token, nonce_bytes)-hex>\n"   (or WINMUX-)
+//	S->C  "YMUX-OK\n"  |  "YMUX-DENIED <reason>\n"                  (client's dialect)
+//	C->S  {"jsonrpc":"2.0","id":1,"method":"feed.push","params":{…}}\n
+//	S->C  {"jsonrpc":"2.0","id":1,"result":{…}}\n  |  {…,"error":{"code","message"}}\n
+//
+// Rule #8: tokens and MACs are never logged. Rule #1: nor are params — a hook
+// payload carries prompts and tool input.
 package hooks
 
 import (
+	"bufio"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 	"net"
+	"strings"
+	"time"
 
 	"ymux-server/internal/core"
 	"ymux-server/internal/logging"
@@ -17,26 +38,141 @@ import (
 // logger is the hook-RPC listener's component logger (Phase 79.D).
 var logger = logging.New("SRV:HOOKRPC")
 
+// Handshake wire tags (winmux → ymux rename). The challenge we EMIT stays
+// on the legacy tag for one release because a pre-rename `winmux` CLI does
+// a literal prefix match and hangs up on anything else; both ends read
+// either dialect and mirror whatever they were spoken to. Mirrors the same
+// constants in crates/ymux-tunnel/src/lib.rs — flip both together.
+//
+// FOLLOWUPS P1: set ChallengeTag = TagYmux in the release after 0.5.0,
+// once every provisioned remote has been re-bootstrapped.
+const (
+	TagYmux      = "YMUX"
+	TagLegacy    = "WINMUX"
+	ChallengeTag = TagLegacy
+)
+
 // Start binds an ephemeral localhost port and serves hook RPC connections for
-// the life of the process. Best-effort: if the listen fails, hooks simply won't
-// reach mobile (logged) and the rest of the server is unaffected.
-func Start(h core.HookConnHandler) {
+// the life of the process, matching callers against resolvers in order.
+// Every resolver that is also a core.AddrSink learns the bound address.
+// Best-effort: if the listen fails, hooks simply won't reach the daemon
+// (logged) and the rest of the server is unaffected.
+func Start(resolvers ...core.HookResolver) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		logger.Warn("RPC listen failed, hooks won't reach mobile", "err", err)
+		logger.Warn("RPC listen failed, hooks won't reach the daemon", "err", err)
 		return
 	}
-	if sink, ok := h.(core.AddrSink); ok {
-		sink.SetHookAddr(ln.Addr().String())
+	addr := ln.Addr().String()
+	for _, r := range resolvers {
+		if sink, ok := r.(core.AddrSink); ok {
+			sink.SetHookAddr(addr)
+		}
 	}
-	logger.Info("RPC listening", "addr", ln.Addr().String())
+	logger.Info("RPC listening", "addr", addr, "resolvers", len(resolvers))
 	go func() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			go h.HandleHookConn(conn)
+			go handleConn(conn, resolvers)
 		}
 	}()
+}
+
+func handleConn(conn net.Conn, resolvers []core.HookResolver) {
+	defer conn.Close()
+	br := bufio.NewReader(conn)
+
+	// 1. Challenge.
+	nonce := make([]byte, 16)
+	if _, err := rand.Read(nonce); err != nil {
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if _, err := fmt.Fprintf(conn, "%s-CHALLENGE %s\n", ChallengeTag, hex.EncodeToString(nonce)); err != nil {
+		return
+	}
+
+	// 2. Response → whichever resolver's token validates the HMAC.
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	respLine, err := br.ReadString('\n')
+	if err != nil {
+		return
+	}
+	// Accept either dialect and answer in the one we were spoken to, so a
+	// pre-rename `winmux` CLI never sees a verdict tag it can't parse.
+	trimmed := strings.TrimSpace(respLine)
+	replyTag := ChallengeTag
+	respHex := ""
+	switch {
+	case strings.HasPrefix(trimmed, TagYmux+"-RESPONSE "):
+		replyTag = TagYmux
+		respHex = strings.TrimSpace(strings.TrimPrefix(trimmed, TagYmux+"-RESPONSE "))
+	case strings.HasPrefix(trimmed, TagLegacy+"-RESPONSE "):
+		replyTag = TagLegacy
+		respHex = strings.TrimSpace(strings.TrimPrefix(trimmed, TagLegacy+"-RESPONSE "))
+	}
+	respMAC, err := hex.DecodeString(respHex)
+	if err != nil || respHex == "" {
+		_, _ = conn.Write([]byte(replyTag + "-DENIED bad-response\n"))
+		return
+	}
+	target := match(resolvers, nonce, respMAC)
+	if target == nil {
+		_, _ = conn.Write([]byte(replyTag + "-DENIED unknown-session\n"))
+		return
+	}
+	if _, err := conn.Write([]byte(replyTag + "-OK\n")); err != nil {
+		return
+	}
+
+	// 3. One JSON-RPC request.
+	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+	reqLine, err := br.ReadString('\n')
+	if err != nil {
+		return
+	}
+	var req struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	if json.Unmarshal([]byte(strings.TrimSpace(reqLine)), &req) != nil {
+		return
+	}
+
+	result, rpcErr := target.DispatchHook(req.Method, req.Params)
+
+	// 4. Reply. No write deadline beyond the OS — a blocking gate may
+	// legitimately hold for up to wait_timeout_seconds.
+	id := req.ID
+	if len(id) == 0 {
+		id = json.RawMessage("1")
+	}
+	resp := map[string]any{"jsonrpc": "2.0", "id": id}
+	if rpcErr != nil {
+		resp["error"] = rpcErr
+	} else {
+		resp["result"] = result
+	}
+	out, err := json.Marshal(resp)
+	if err != nil {
+		logger.Error("hook reply encode failed", "method", req.Method, "err", err)
+		return
+	}
+	_ = conn.SetWriteDeadline(time.Time{})
+	_, _ = conn.Write(append(out, '\n'))
+}
+
+// match asks each resolver in turn; the first hit wins. Tokens are random
+// 32-byte values, so two resolvers can never both match one MAC.
+func match(resolvers []core.HookResolver, nonce, mac []byte) core.HookTarget {
+	for _, r := range resolvers {
+		if t, ok := r.MatchHookHMAC(nonce, mac); ok {
+			return t
+		}
+	}
+	return nil
 }
