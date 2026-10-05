@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "18b1a59ea41047e5f794b3f553518b69cacf8a8f70177292b7a611a9c27397cd",
+    "app/src-tauri/src/lib.rs": "9961aa5d29df56a9386729f8ba3289991d333c5bfd059ce559f2d41c05fc604e",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "8f76b67d7a62f0b26597398467dd1d1cabfe2c4528951e5163c426d02d483917",

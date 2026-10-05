@@ -83,6 +83,11 @@ put logic there.
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `workspace_secret_env_keys(workspace_id)` returns names only.
+  `pane_connect` runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
+  secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
+  `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
+  in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
+  takes `secret_keys` (names only) and appends them to tmux `update-environment`.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
   in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints
