@@ -190,6 +190,15 @@ pass. If a change genuinely does not affect the explanation (a typo fix, a renam
 page never named), put `[vault-skip]` in the PR title; it is logged as a `::notice::` on
 the run.
 
+### Citing a line
+
+Cite a line as `[symbol@path/to/file.rs:123](relative/link/to/file.rs)`: the symbol the
+line is about, `@`, the path suffix and line, then a link that resolves from the page.
+`vault-check` fails if `symbol` is not a whole word within 3 lines of that line, and
+prints the corrected cite (`symbol@file:<n>`) — copy it in. A bare `file:line` is
+rejected, because with no symbol there is nothing to check; this runs even under
+`[vault-skip]`.
+
 Adding coverage is just adding a path to a `covers:` list — the script needs no changes.
 A file may be covered by exactly one page; test files are deliberately left uncovered.
 Keep a page around 200 lines: if it needs more, the area wants splitting.
