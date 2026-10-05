@@ -169,7 +169,7 @@ character.** The desktop compares a remote's `ymux-server --version` against thi
 constant to decide whether to offer an update, so a mismatch is not cosmetic: the two
 had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote look
 *newer* than the version the desktop ships and silently stopped the update offer.
-Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`. Bump them together, in the same
+Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`. Bump them together, in the same
 commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy

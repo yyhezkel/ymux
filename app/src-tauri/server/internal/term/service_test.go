@@ -104,6 +104,12 @@ func TestGateCoversEveryRoute(t *testing.T) {
 		{"PATCH", "/api/v2/notes/n_1"},
 		{"DELETE", "/api/v2/notes/n_1"},
 		{"DELETE", "/api/v2/notifications"},
+		// Phase 103: browser workspaces.
+		{"GET", "/api/v2/web/workspaces"},
+		{"POST", "/api/v2/web/workspaces"},
+		{"GET", "/api/v2/web/workspaces/w_1"},
+		{"PUT", "/api/v2/web/workspaces/w_1"},
+		{"DELETE", "/api/v2/web/workspaces/w_1"},
 	}
 	for _, rt := range routes {
 		w := do(s, rt.method, rt.path, "device-all", "")

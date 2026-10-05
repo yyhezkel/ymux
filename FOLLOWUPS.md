@@ -10,6 +10,7 @@ Everything below this line is OPEN.
 Format:
 
 ```
+- [ ] P1 | 2026-10-05 | app/src-tauri/server/internal/term/{webws,layout,agentverbs,service,tmux}.go — Phase 103 (WEB-DESIGN B5), daemon 2.7.0 | NOT VERIFIED LIVE (Rule #14). Smoke on a box running 2.7.0, events socket open: (1) `POST /api/v2/web/workspaces {"name":"A"}`, two sessions with `workspace_id` → each create answers `pane_id`; PUT a layout holding both (version 1 → 2), a second PUT with version 1 → 409 + current doc; `workspaces:changed` each time; the file survives a restart; (2) in pane 1 run `ymux tree` → the layout; `ymux split --direction down` → a NEW tmux session exists in the same cwd and the layout has 3 leaves; (3) `ymux send <pane2> "echo hi\r"` → it runs in pane 2; the same to a pane of another workspace → refused; `ymux send-key <pane2> ctrl-c` interrupts; (4) `ymux set-pane-title <pane2> server` → the leaf title; empty clears; (5) `ymux` scrollback → the stub error; (6) insights.log: pane ids + byte counts only, nothing that was typed.
 - [ ] P<0|1|2|3> | <YYYY-MM-DD> | <file>:<line> | <one-line repro/symptom>
 ```
 

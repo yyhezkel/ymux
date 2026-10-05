@@ -49,7 +49,26 @@ type Service struct {
 // NewService wires the terminal API. token is the daemon's shared token; home
 // is the user's home directory (where ~/.ymux/session-meta.json lives).
 func NewService(token, home string) *Service {
-	return &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}, hooks: NewHookRegistry()}
+	s := &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}}
+	s.attachHooks(NewHookRegistry())
+	return s
+}
+
+// attachHooks gives the service its registry and the registry what an
+// agent's split needs from the service (Phase 103): tmux, and spawnSession.
+func (s *Service) attachHooks(r *HookRegistry) {
+	s.hooks = r
+	r.tmux = s.tmux
+	r.spawn = func(name, cwd, policy, workspaceID string) (hookEntry, error) {
+		e, hooks, err := s.spawnSession(name, cwd, policy, workspaceID)
+		if err == nil && !hooks {
+			// A split pane must be addressable by pane id; one without hook
+			// routing (tmux < 3.2, no listener) is not. Undo it.
+			_ = s.tmux.Kill(e.name)
+			return hookEntry{}, errors.New("hook routing unavailable")
+		}
+		return e, err
+	}
 }
 
 // Hooks is the registry hooks.Start must be given, so a claude inside a
@@ -61,6 +80,7 @@ func (s *Service) Hooks() *HookRegistry { return s.hooks }
 func (s *Service) SetDataDir(dir string) {
 	if s.hooks != nil {
 		s.hooks.notes = newNoteStore(filepath.Join(dir, "notes.json"))
+		s.hooks.webws = newWebWSStore(filepath.Join(dir, "web-workspaces.json"))
 	}
 }
 
@@ -107,6 +127,12 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PATCH /api/v2/notes/{id}", s.gate(s.handleNote))
 	mux.HandleFunc("DELETE /api/v2/notes/{id}", s.gate(s.handleNote))
 	mux.HandleFunc("DELETE /api/v2/notifications", s.gate(s.handleClearNotifications))
+	// Phase 103 (B5): the browser's workspaces + layout document (webws.go).
+	mux.HandleFunc("GET /api/v2/web/workspaces", s.gate(s.handleWebWorkspaces))
+	mux.HandleFunc("POST /api/v2/web/workspaces", s.gate(s.handleWebWorkspaces))
+	mux.HandleFunc("GET /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
+	mux.HandleFunc("PUT /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
+	mux.HandleFunc("DELETE /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	// Phase 97: the diagnostic page + its log sink, both public (page.go).
 	s.registerPageRoutes(mux)
 }
@@ -207,11 +233,58 @@ func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, Annotate(sessions, meta))
 }
 
+// errSessionExists is a create whose name tmux already has.
+var errSessionExists = errors.New("session already exists")
+
+// spawnSession creates a tmux session, hook-enabled when it can be (Phase
+// 100), with a policy (101) and a workspace (103). It is the one place a
+// session is born — the create route and an agent's split both use it.
+// hooks is false when the session was created without hook routing.
+func (s *Service) spawnSession(name, cwd, policy, workspaceID string) (entry hookEntry, hooks bool, err error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		name = "ymux-" + uuid.NewString()[:8]
+	}
+	if !ValidName(name) {
+		return hookEntry{}, false, ErrBadName
+	}
+	// Checked rather than left to tmux's "duplicate session" error so the
+	// caller gets a status it can branch on instead of a 500.
+	if s.tmux.Has(name) {
+		return hookEntry{}, false, errSessionExists
+	}
+	// Phase 100: point the session's hooks at the daemon. Without a listener
+	// address, or on a tmux too old for `-e`, the session is created exactly
+	// as before and its hooks go wherever the global environment says.
+	var e *hookEntry
+	var env map[string]string
+	if s.hooks != nil {
+		if addr := s.hooks.hookAddr(); addr != "" && s.tmux.SupportsSessionEnv() {
+			var err error
+			if e, env, err = s.hooks.mint(name, addr); err != nil {
+				logger.Error("hook token mint failed; creating without hooks", "err", err)
+				e, env = nil, nil
+			} else {
+				e.policy, e.workspaceID = policy, workspaceID
+			}
+		}
+	}
+	if err := s.tmux.Create(name, cwd, env); err != nil {
+		return hookEntry{}, false, err
+	}
+	if e == nil {
+		return hookEntry{name: name}, false, nil
+	}
+	s.hooks.add(e)
+	return *e, true, nil
+}
+
 func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Name   string `json:"name"`
-		Cwd    string `json:"cwd"`
-		Policy string `json:"policy"` // Phase 101: "none" (default) | "gate"
+		Name        string `json:"name"`
+		Cwd         string `json:"cwd"`
+		Policy      string `json:"policy"`       // Phase 101: "none" (default) | "gate"
+		WorkspaceID string `json:"workspace_id"` // Phase 103: a browser workspace
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Policy == "" {
@@ -221,46 +294,26 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `policy must be "none" or "gate"`, http.StatusBadRequest)
 		return
 	}
-	name := strings.TrimSpace(body.Name)
-	if name == "" {
-		name = "ymux-" + uuid.NewString()[:8]
-	}
-	if !ValidName(name) {
-		failErr(w, ErrBadName)
+	if body.WorkspaceID != "" && (s.hooks == nil || !s.hooks.webws.exists(body.WorkspaceID)) {
+		http.Error(w, "no such workspace", http.StatusBadRequest)
 		return
 	}
-	// Checked rather than left to tmux's "duplicate session" error so the
-	// caller gets a status it can branch on instead of a 500.
-	if s.tmux.Has(name) {
-		http.Error(w, "session already exists", http.StatusConflict)
+	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID)
+	if errors.Is(err, errSessionExists) {
+		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	// Phase 100: point the session's hooks at the daemon. Without a listener
-	// address, or on a tmux too old for `-e`, the session is created exactly
-	// as before and its hooks go wherever the global environment says.
-	var entry *hookEntry
-	var env map[string]string
-	if s.hooks != nil {
-		if addr := s.hooks.hookAddr(); addr != "" && s.tmux.SupportsSessionEnv() {
-			var err error
-			if entry, env, err = s.hooks.mint(name, addr); err != nil {
-				logger.Error("hook token mint failed; creating without hooks", "err", err)
-				entry, env = nil, nil
-			} else {
-				entry.policy = body.Policy
-			}
-		}
-	}
-	if err := s.tmux.Create(name, body.Cwd, env); err != nil {
+	if err != nil {
 		failErr(w, err)
 		return
 	}
-	if entry != nil {
-		s.hooks.add(entry)
-	}
-	resp := map[string]any{"name": name, "display": name, "hooks": entry != nil}
-	if entry != nil {
-		resp["policy"] = entry.policy
+	resp := map[string]any{"name": e.name, "display": e.name, "hooks": hooks}
+	if hooks {
+		resp["policy"] = e.policy
+		resp["pane_id"] = e.paneID
+		if e.workspaceID != "" {
+			resp["workspace_id"] = e.workspaceID
+		}
 	}
 	writeJSON(w, http.StatusCreated, resp)
 }

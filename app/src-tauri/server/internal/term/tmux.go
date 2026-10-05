@@ -270,6 +270,50 @@ func (t *Tmux) Kill(name string) error {
 	return nil
 }
 
+// paneTarget is an exact-match target for a session's CURRENT pane. A bare
+// "=name" is a session target and pane commands (send-keys, display-message)
+// reject it with "can't find pane" — the trailing colon is what makes it a
+// pane target (verified on tmux 3.4).
+func paneTarget(name string) string { return target(name) + ":" }
+
+// sendChunk bounds one send-keys call: each byte is one argv entry with -H.
+const sendChunk = 1024
+
+// SendBytes types raw bytes into a session's current pane (Phase 103, the
+// agent `send` verbs). `-H` takes each byte as hex, so control bytes and
+// escape sequences arrive exactly as given — no key-name parsing, no shell.
+func (t *Tmux) SendBytes(name string, b []byte) error {
+	if !ValidName(name) {
+		return ErrBadName
+	}
+	for len(b) > 0 {
+		n := min(len(b), sendChunk)
+		args := make([]string, 0, n+4)
+		args = append(args, "send-keys", "-t", paneTarget(name), "-H")
+		for _, c := range b[:n] {
+			args = append(args, strconv.FormatUint(uint64(c), 16))
+		}
+		if _, err := t.exec(args...); err != nil {
+			return err
+		}
+		b = b[n:]
+	}
+	return nil
+}
+
+// CurrentPath is the working directory of a session's current pane — where a
+// split of it starts.
+func (t *Tmux) CurrentPath(name string) string {
+	if !ValidName(name) {
+		return ""
+	}
+	out, err := t.exec("display-message", "-p", "-t", paneTarget(name), "#{pane_current_path}")
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
 // AttachArgs is the argv for attaching to a session, shared by the PTY layer.
 // `-u` forces UTF-8: the daemon runs under systemd with a minimal environment
 // where LANG is often unset, and without it tmux draws box characters as
