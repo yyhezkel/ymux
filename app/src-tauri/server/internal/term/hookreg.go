@@ -49,6 +49,8 @@ type hookEntry struct {
 	// policy is what a permission request from this session gets (Phase
 	// 101): policyNone answers allow at once, policyGate waits for a human.
 	policy string
+	// status is the pane's set-status text (Phase 102).
+	status string
 }
 
 // Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
@@ -73,13 +75,21 @@ type HookRegistry struct {
 	// while mu is held by the same goroutine.
 	feed *feedStore
 	hub  *eventHub
+
+	// B4 (Phase 102): notes (persisted once Service.SetDataDir names a
+	// file), notifications (memory), and the box's listening ports (nil
+	// until Service.StartPortWatch).
+	notes  *noteStore
+	notifs *notifStore
+	ports  *portWatch
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
 // (hooks.Start not run, or its listen failed) sessions are created without
 // hook variables and keep whatever global environment tmux has.
 func NewHookRegistry() *HookRegistry {
-	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub()}
+	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
+		notes: newNoteStore(""), notifs: &notifStore{}}
 }
 
 // SetHookAddr implements core.AddrSink.

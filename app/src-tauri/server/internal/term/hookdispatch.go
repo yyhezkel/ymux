@@ -65,6 +65,9 @@ func (t termHookTarget) DispatchHook(method string, raw json.RawMessage) (any, *
 	case "feed.push":
 		return t.feedPush(raw), nil
 	}
+	if res, err, ok := t.verb(method, raw); ok { // B4 (verbs.go)
+		return res, err
+	}
 	logger.Warn("hook method not handled", "method", method)
 	return nil, errUnknownMethod
 }

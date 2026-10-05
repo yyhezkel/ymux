@@ -464,6 +464,16 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-05 — B4: the daemon detects listening ports itself
+- **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP
+  starts per host. For a browser-created session nobody starts one, and browser v1 does
+  no port forwarding (WEB-DESIGN §10), so it is detection only either way.
+- **Options:** (a) the daemon reads `/proc/net/tcp{,6}` itself; (b) accept the RPC only;
+  (c) defer ports past Phase C.
+- **Decided (Yossi): (a).** `term/ports.go`, a port of `cli/src/port_watch.rs` with its
+  test vectors, announcing `port-detected` / `port-undetected` on the events socket. It is
+  the groundwork for a later "open in a tab" through the daemon.
+
 ### 2026-10-05 — B3 policy: browser sessions default to `none`, `gate` is opt-in
 - **Context:** the 2026-10-04 split left `none` vs `gate` for B3 to settle. Until Phase C
   there is no web UI that can approve anything (the diagnostic page has no feed), so a

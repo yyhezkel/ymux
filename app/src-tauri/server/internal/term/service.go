@@ -12,9 +12,13 @@ package term
 // also accept a paired device's token — the same reason push mounts raw.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -52,6 +56,35 @@ func NewService(token, home string) *Service {
 // browser-created session reaches the daemon (core.HookResolver + AddrSink).
 func (s *Service) Hooks() *HookRegistry { return s.hooks }
 
+// SetDataDir makes notes persistent in <dir>/notes.json (Phase 102). Without
+// it notes live in memory only. Call before serving.
+func (s *Service) SetDataDir(dir string) {
+	if s.hooks != nil {
+		s.hooks.notes = newNoteStore(filepath.Join(dir, "notes.json"))
+	}
+}
+
+// StartPortWatch starts listening-port detection for the box (Phase 102,
+// ports.go) until ctx ends. apiPort is the daemon's own HTTP port, never
+// reported; the hook listener's port is excluded the same way.
+func (s *Service) StartPortWatch(ctx context.Context, apiPort int) {
+	if s.hooks == nil {
+		return
+	}
+	reg := s.hooks
+	reg.ports = newPortWatch(reg.hub, func() []uint16 {
+		own := []uint16{uint16(apiPort)}
+		if _, p, err := net.SplitHostPort(reg.hookAddr()); err == nil {
+			if n, err := strconv.ParseUint(p, 10, 16); err == nil {
+				own = append(own, uint16(n))
+			}
+		}
+		return own
+	})
+	go reg.ports.run(ctx)
+	logger.Info("port detection enabled")
+}
+
 // SetScopeResolver wires per-device scope lookups. Without it only the owner
 // token can reach these routes.
 func (s *Service) SetScopeResolver(fn ScopeResolver) { s.scopes = fn }
@@ -68,6 +101,12 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/term/sessions/{name}/policy", s.gate(s.handlePolicy))
 	mux.HandleFunc("GET /api/v2/events", s.gate(s.handleEvents))
 	mux.HandleFunc("POST /api/v2/feed/{request_id}/decide", s.gate(s.handleDecide))
+	// Phase 102 (B4): notes and notifications for the browser UI (verbs.go).
+	mux.HandleFunc("GET /api/v2/notes", s.gate(s.handleNotes))
+	mux.HandleFunc("POST /api/v2/notes", s.gate(s.handleNotes))
+	mux.HandleFunc("PATCH /api/v2/notes/{id}", s.gate(s.handleNote))
+	mux.HandleFunc("DELETE /api/v2/notes/{id}", s.gate(s.handleNote))
+	mux.HandleFunc("DELETE /api/v2/notifications", s.gate(s.handleClearNotifications))
 	// Phase 97: the diagnostic page + its log sink, both public (page.go).
 	s.registerPageRoutes(mux)
 }

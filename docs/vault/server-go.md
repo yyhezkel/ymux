@@ -70,7 +70,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 2,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), and their feed, gate and events socket (101) |
+| `term` | 3,110 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), and the small verbs, notes and port detection (102) |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -244,6 +244,32 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
   on the phone (FOLLOWUPS P2, closed).
 - These routes are raw stdlib handlers like the rest of term, so they are not in the
   OpenAPI spec either (the existing FOLLOWUPS P2 about term routes covers them).
+
+**`term/verbs.go` + `notes.go` + `ports.go` (Phase 102, WEB-DESIGN B4) — the small
+verbs.** `DispatchHook` falls through to `verb()` for the desktop's `dispatch()` arms a
+CLI inside a browser session can call, each answering the JSON the CLI expects and
+announcing the desktop's event on the events socket:
+- `set-status` → `pane:status` {pane_id, text}; **only for the caller's own pane** (the
+  feed.push defense). The text is in `hello.pane_status`.
+- `notify` → `notification:new` with the desktop's `NotificationItem` plus `session`.
+  In memory, capped at 200 (the desktop's list is unbounded — a leak on a daemon that
+  runs for months). `DELETE /api/v2/notifications` clears → `notifications:cleared`.
+- `note-add/list/update/done/delete` → `notes:changed` (no data; clients re-list). The
+  desktop's `Note` JSON and `n_<hex>_<hex>` ids, in `<data dir>/notes.json`, tmp + fsync
+  + rename (Rule #7); a file that will not parse is **moved aside, never overwritten**.
+  `tag` is a `json.RawMessage` on purpose: `null` must mean "clear", and a pointer field
+  would collapse it into "absent". REST for the UI: `GET/POST /api/v2/notes`,
+  `PATCH/DELETE /api/v2/notes/{id}`.
+- **Ports: the daemon detects them itself** (Yossi, 2026-10-05) — nobody starts a
+  `ymux port-watch` for a browser. `ports.go` is `cli/src/port_watch.rs` ported with its
+  test vectors: `/proc/net/tcp{,6}` once a second, parsed only when the raw bodies
+  changed, LISTEN + loopback/bind-any only, ≥1024, not 22, not `YMUX_PORTFORWARD_EXCLUDE`,
+  and never the daemon's own API or hook-listener port. Events `port-detected` {addr,
+  remote_port, family} / `port-undetected` {remote_port} — the desktop's, minus
+  workspace_id; `hello.ports` is the current set. A `port.opened`/`port.closed` RPC lands
+  in the same set. Detection only — v1 forwards nothing.
+- Wiring: `main.go` calls `SetDataDir` and `StartPortWatch` after `hooks.Start`, so the
+  listener's port is known before the first scan.
 
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96

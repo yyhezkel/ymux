@@ -98,6 +98,12 @@ func TestGateCoversEveryRoute(t *testing.T) {
 		{"POST", "/api/v2/term/sessions/api/policy"},
 		{"GET", "/api/v2/events"},
 		{"POST", "/api/v2/feed/req_1/decide"},
+		// Phase 102: notes and notifications.
+		{"GET", "/api/v2/notes"},
+		{"POST", "/api/v2/notes"},
+		{"PATCH", "/api/v2/notes/n_1"},
+		{"DELETE", "/api/v2/notes/n_1"},
+		{"DELETE", "/api/v2/notifications"},
 	}
 	for _, rt := range routes {
 		w := do(s, rt.method, rt.path, "device-all", "")
