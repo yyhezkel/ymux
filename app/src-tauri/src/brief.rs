@@ -16,7 +16,7 @@
 //! done: installer runs twice in a row without a lock error
 //! ```
 //!
-//! `goal` / `done` (Phase 104 follow-up) are STICKY: the agent writes them
+//! `goal` / `done` (Phase 105 follow-up) are STICKY: the agent writes them
 //! on its first brief and again only when they change, so most briefs
 //! carry neither. The per-session context store keeps the last non-empty
 //! value (`context_store.rs`); the per-pane brief here just carries what
@@ -94,10 +94,10 @@ pub(crate) struct PaneBrief {
     pub(crate) rec: Option<String>,
     pub(crate) next: Option<String>,
     pub(crate) delta: Option<String>,
-    /// Phase 104: the session's overall goal (one imperative line) —
+    /// Phase 105: the session's overall goal (one imperative line) —
     /// sticky, so usually absent; see the module doc.
     pub(crate) goal: Option<String>,
-    /// Phase 104: the finish criterion ("done when …") — sticky too.
+    /// Phase 105: the finish criterion ("done when …") — sticky too.
     pub(crate) done: Option<String>,
     pub(crate) degraded: bool,
     /// Epoch ms of the Stop that produced it. Plain number on the wire —

@@ -1,6 +1,6 @@
-//! Phase 104 — per-Claude-session context: the session's first prompt plus
+//! Phase 105 — per-Claude-session context: the session's first prompt plus
 //! a running "where we stand" log, persisted to disk. The Context Rail
-//! renders it; Phase 104.C injects it back into the agent on
+//! renders it; Phase 105.C injects it back into the agent on
 //! compact/resume (see docs/CONTEXT.md).
 //!
 //! Source: the existing `[ymux-brief]` (no LLM, zero tokens). Every Stop
@@ -85,7 +85,7 @@ pub(crate) struct SessionContext {
     pub(crate) first_prompt: Option<String>,
     #[serde(default)]
     pub(crate) first_prompt_ms: Option<u64>,
-    /// Phase 104: the session's goal / finish criterion from the brief's
+    /// Phase 105: the session's goal / finish criterion from the brief's
     /// sticky `goal` / `done` keys — last non-empty value wins, so a brief
     /// that omits them (the normal case) keeps what an earlier one said.
     #[serde(default)]

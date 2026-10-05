@@ -7353,7 +7353,7 @@ body.ymux-dragging .pane-conn {
 }
 .sessions-head-btn:disabled { opacity: 0.45; cursor: default; }
 
-/* ── Phase 104: Context Rail — the .app grid's third column (inline-end).
+/* ── Phase 105: Context Rail — the .app grid's third column (inline-end).
    Logical properties only: in RTL the grid flips and the rail sits on the
    left with its resizer on its right edge. ─────────────────────────────── */
 .queue-row:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); outline-offset: -2px; }
@@ -7434,7 +7434,7 @@ body.ymux-dragging .pane-conn {
   max-height: 40vh;
   overflow-y: auto;
 }
-/* Phase 104 follow-up: the HITL-style card — fixed labels, one line each. */
+/* Phase 105 follow-up: the HITL-style card — fixed labels, one line each. */
 .context-goal, .context-status { display: flex; flex-direction: column; gap: 3px; }
 .context-field {
   display: flex;

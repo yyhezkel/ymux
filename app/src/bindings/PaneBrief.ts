@@ -3,11 +3,11 @@ import type { BriefStatus } from "./BriefStatus";
 
 export type PaneBrief = { task: string | null, status: BriefStatus, ask: string | null, rec: string | null, next: string | null, delta: string | null, 
 /**
- * Phase 104: the session's overall goal (one imperative line) —
+ * Phase 105: the session's overall goal (one imperative line) —
  * sticky, so usually absent; see the module doc.
  */
 goal: string | null, 
 /**
- * Phase 104: the finish criterion ("done when …") — sticky too.
+ * Phase 105: the finish criterion ("done when …") — sticky too.
  */
 done: string | null, degraded: boolean, updated_ms: number, };

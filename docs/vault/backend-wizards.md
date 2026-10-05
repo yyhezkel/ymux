@@ -50,7 +50,7 @@ incident.
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
 32 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
-Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 104's
+Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 105's
 `toggle_context_rail` Ctrl+Shift+K), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`

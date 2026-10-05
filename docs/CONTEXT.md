@@ -2,7 +2,7 @@
 
 BRIEF (`docs/BRIEF.md`) answers "who needs me right now". CONTEXT answers
 "what is this session about, and where does it stand", and it keeps the answer
-across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 104.
+across restarts. Design history: `docs/DECISIONS.md` § 2026-10-05 — Phase 105.
 Implementation notes: `docs/vault/backend-rpc.md` § Session context and
 `docs/vault/frontend-shell.md` § ContextRail.
 
@@ -33,7 +33,7 @@ LogEntry       { ts_ms, kind: turn | closed, status,
 - **Placement.** `ws_id` / `pane_id` / `cwd` follow the latest hook. `ws_id` is
   the *screen* workspace holding the pane (`find_workspace_for_pane` on the
   resolved pane). A value that is missing never erases a known one.
-- `version` bumps on every write. Phase 104.C uses it.
+- `version` bumps on every write. Phase 105.C uses it.
 
 ## Persistence
 
@@ -132,7 +132,7 @@ Everything is rendered as plain text with `dir="auto"`.
 
 ## Stage C (next PR)
 
-Phase 104.C feeds this context back to the agent. The `SessionStart` hook asks
+Phase 105.C feeds this context back to the agent. The `SessionStart` hook asks
 the desktop for `additional_context`:
 
 - On `compact` / `resume`: the session's first prompt plus its last 8 log lines.

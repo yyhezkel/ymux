@@ -121,7 +121,7 @@ constant.
 
 The data layer behind the Queue panel / Briefing card. An agent may end its final
 assistant message with a plain-text `[ymux-brief]` block (`task:` / `status:` /
-`ask:` / `rec:` / `next:` / `delta:`, one per line, plus the Phase 104 **sticky**
+`ask:` / `rec:` / `next:` / `delta:`, one per line, plus the Phase 105 **sticky**
 `goal:` / `done:` — aliases `done when` / `done-when` / `done_when` — written once
 and repeated only on change; `PaneBrief` carries what this turn said, the session
 store keeps the last non-empty value. The Go port does NOT parse these two yet —
@@ -147,9 +147,9 @@ finished work. A non-degraded brief also rewrites the stop feed card: humanize
 sees the message with the block stripped (`pre_brief_text`), and the summary
 becomes `ask · rec` (else `delta`). Rule #1: brief/prompt content never reaches a
 log line — log lines carry pane id + flags, never text. `BriefStatus` also derives
-`Deserialize` since Phase 104, because the session context files store it.
+`Deserialize` since Phase 105, because the session context files store it.
 
-## Session context (`context_store.rs`, Phase 104)
+## Session context (`context_store.rs`, Phase 105)
 
 The persisted counterpart of `AppState.briefs`: one record per Claude Code
 **session id**, not per pane — `SessionContext { session_id, ws_id, pane_id, cwd,

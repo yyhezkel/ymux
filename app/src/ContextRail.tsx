@@ -24,7 +24,7 @@ import {
   type SessionContext,
 } from "./contextModel";
 
-// Phase 104: the Context Rail — a docked column at the inline-end of the
+// Phase 105: the Context Rail — a docked column at the inline-end of the
 // main layout (a third `.app` grid column, not a SideDrawer: no backdrop,
 // it never covers the panes). It shows ONE thing: the context of the
 // FOCUSED pane's Claude session (App's activePaneId), as a card modeled on
