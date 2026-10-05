@@ -1,6 +1,5 @@
 import { createEffect, createResource, createSignal, For, Show } from "solid-js";
 import { backend } from "./backend";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { t } from "./i18n";
 import { IconBug, IconCheck, IconRefresh, IconTrash, IconFolder } from "./icons";
 import { PanelSurface } from "./PanelSurface";
@@ -201,7 +200,7 @@ export function TicketsPanel(p: Props) {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
       });
-      await revealItemInDir(dir);
+      await backend.host.revealInDir(dir);
     } catch (e) {
       log.warn("reveal tickets dir failed", e);
       setError(String(e));

@@ -508,6 +508,8 @@ are emitted locally as `pty:data` / `pty:exit` with the same payloads Rust sends
 precedes `WebBackend` is therefore C1 + C3.
 
 ##### C3 — capabilities + import-safety (desktop, no behaviour change)
+**Phase 107.** Shipped as `backend.host` (window / dialog / opener / drag-drop) +
+`backend.can(cap)`; the list of gated entry points is in vault frontend-lib.md.
 - `Capability` set (~17): localPanes, ssh, wsl, browserPane, popout, fileManagerLocal,
   fileManagerRemote, diffPane, worktrees, tickets, skills, addons, mobilePairingAdmin,
   updater, fonts, stt, tray, portForward, provisioning, insights.

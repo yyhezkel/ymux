@@ -1,9 +1,7 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
-import { backend, type UnlistenFn } from "./backend";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { backend, type Capability, type UnlistenFn } from "./backend";
 import { Sidebar } from "./Sidebar";
 import { CreateWorkspaceModal } from "./CreateWorkspaceModal";
 import { NotificationCenter, NotifHeaderActions, type NotifItem } from "./NotificationCenter";
@@ -56,7 +54,6 @@ import { TicketModal } from "./TicketModal";
 import { ProjectFolderModal, type ProjectFolderModalMode } from "./ProjectFolderModal";
 import { ConfirmDeleteWorkspace } from "./ConfirmDeleteWorkspace";
 import { DirPicker } from "./DirPicker";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { TicketsPanel } from "./TicketsPanel";
 import { parseCapture, pendingCapture, setPendingCapture } from "./browserDevMode";
 import { FileManagerPane } from "./FileManagerPane";
@@ -138,6 +135,12 @@ import "./tokens.css"; // Design Pass 01 (#2): --wmx-* tokens + dark/light mode 
 import "./themes-redesign.css"; // Claude Design handoff: 4 direction themes (must load after tokens.css)
 
 const log = createLogger("APP");
+
+// Phase 107: palette commands that need a host capability (WEB-DESIGN §4.1).
+const PALETTE_CAPS: Partial<Record<string, Capability>> = {
+  "ssh.provision": "ssh",
+  "pane.openDiff": "diffPane",
+};
 
 type PaneStatus = { msg: string; err: boolean };
 
@@ -605,7 +608,7 @@ function App() {
   const applyZoom = (f: number) => {
     const clamped = Math.max(0.3, Math.min(3, f));
     setZoomFactor(clamped);
-    void getCurrentWebview().setZoom(clamped).catch((e) => log.warn("setZoom failed", e));
+    void backend.host.setZoom(clamped).catch((e) => log.warn("setZoom failed", e));
   };
   // Phase 18: hooks-outdated banners — at most one banner per agent
   // at a time; the user dismisses (skip-this-version persists), defers
@@ -1153,7 +1156,11 @@ function App() {
       { id: "fm.open", label: t("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
         if (ws && pid) void backend.call("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
       } },
-    ];
+    ].filter((c) => {
+      // Phase 107: a command the host cannot serve is not offered at all.
+      const cap = PALETTE_CAPS[c.id];
+      return !cap || backend.can(cap);
+    });
   };
 
   const connectedPanes = (): Set<string> => {
@@ -1409,7 +1416,7 @@ function App() {
       // Phase 65 (bug CC): swallow rejection — needs the
       // core:window:allow-set-title capability; a missing/denied perm
       // shouldn't surface as an unhandled promise rejection.
-      void getCurrentWindow().setTitle("ymux").catch(() => {});
+      void backend.host.setTitle("ymux").catch(() => {});
       return;
     }
     const parts: string[] = [];
@@ -1423,7 +1430,7 @@ function App() {
     parts.push(focusedName ?? ws.name);
     if (waitingWorkspaceIds().has(ws.id)) parts.push("●");
     const title = parts.join(" ") + " — ymux";
-    void getCurrentWindow().setTitle(title).catch(() => {});
+    void backend.host.setTitle(title).catch(() => {});
   });
 
   // Phase 41: when the user activates an SSH workspace and the setting is
@@ -1868,7 +1875,7 @@ function App() {
       return;
     }
     if (conn === null || conn.type === "local") {
-      const picked = await openFileDialog({ directory: true, multiple: false });
+      const picked = await backend.host.pickPaths({ directory: true, multiple: false });
       if (typeof picked === "string") await pinProjectFolder(workspaceId, picked, conn);
       return;
     }
@@ -3504,7 +3511,7 @@ function App() {
     // clash conflictingAccels() now surfaces in Settings.
     { id: "focus_zoom", run: (e) => { e.preventDefault(); toggleMaximize(); } },
     // Phase 91.F: open (or focus) the git-diff pane.
-    { id: "open_diff", when: () => !!activeWs(), run: (e) => { e.preventDefault(); openDiffPane(); } },
+    { id: "open_diff", when: () => !!activeWs() && backend.can("diffPane"), run: (e) => { e.preventDefault(); openDiffPane(); } },
     // v0.4.4-beta.2: reset the active terminal — clears leaked mouse-tracking
     // modes (the escape-text leak from an unclean vim/fzf/less exit) + text
     // attributes.
@@ -4709,14 +4716,16 @@ function App() {
                   in the global sidebar. The i18n keys keep their
                   historical "sidebar." prefix; renaming 8 keys × 4
                   locales for a cosmetic prefix isn't worth the churn. */}
-              <button
-                class="ws-header-btn"
-                title={t("sidebar.browser.tooltip")}
-                onClick={() => void armWorkspaceConnection().then(() => setShowBrowserWindow(true))}
-              >
-                <IconGlobe />
-                <span class="ws-header-btn-label">{t("sidebar.browser.label")}</span>
-              </button>
+              <Show when={backend.can("browserPane")}>
+                <button
+                  class="ws-header-btn"
+                  title={t("sidebar.browser.tooltip")}
+                  onClick={() => void armWorkspaceConnection().then(() => setShowBrowserWindow(true))}
+                >
+                  <IconGlobe />
+                  <span class="ws-header-btn-label">{t("sidebar.browser.label")}</span>
+                </button>
+              </Show>
               <button
                 class="ws-header-btn"
                 title={t("sidebar.files.tooltip")}
@@ -4789,16 +4798,18 @@ function App() {
                         ? t("ws_header.view_mode.split")
                         : t("ws_header.view_mode.tabs")}
                     </button>
-                    <button
-                      title={t("ws_header.split_diff_title")}
-                      onClick={() => {
-                        setWsMenuOpen(false);
-                        openDiffPane();
-                      }}
-                    >
-                      <IconGitCompare />
-                      {t("ws_header.add_diff")}
-                    </button>
+                    <Show when={backend.can("diffPane")}>
+                      <button
+                        title={t("ws_header.split_diff_title")}
+                        onClick={() => {
+                          setWsMenuOpen(false);
+                          openDiffPane();
+                        }}
+                      >
+                        <IconGitCompare />
+                        {t("ws_header.add_diff")}
+                      </button>
+                    </Show>
                     <button
                       title={t("sidebar.insights.tooltip")}
                       onClick={() => {
@@ -4811,16 +4822,18 @@ function App() {
                     </button>
                     {/* Tickets stays openPanel, not openPanelConnected —
                         local files, no connection needed. */}
-                    <button
-                      title={t("sidebar.tickets.tooltip")}
-                      onClick={() => {
-                        setWsMenuOpen(false);
-                        openPanel("tickets");
-                      }}
-                    >
-                      <IconBug />
-                      {t("sidebar.tickets.label")}
-                    </button>
+                    <Show when={backend.can("tickets")}>
+                      <button
+                        title={t("sidebar.tickets.tooltip")}
+                        onClick={() => {
+                          setWsMenuOpen(false);
+                          openPanel("tickets");
+                        }}
+                      >
+                        <IconBug />
+                        {t("sidebar.tickets.label")}
+                      </button>
+                    </Show>
                   </div>
                 </Show>
               </div>

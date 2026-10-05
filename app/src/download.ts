@@ -1,4 +1,3 @@
-import { save } from "@tauri-apps/plugin-dialog";
 import { backend } from "./backend";
 
 // Phase 65 (bug K): "always ask where to save" downloads. Opens a native
@@ -43,7 +42,7 @@ export async function saveRemoteFileAs(
   const defaultPath = dir
     ? `${dir.replace(/[\\/]+$/, "")}/${suggestedName}`
     : suggestedName;
-  const dest = await save({ defaultPath });
+  const dest = await backend.host.savePath({ defaultPath });
   if (!dest) return null; // cancelled
   await backend.call("file_download", {
     workspaceId,

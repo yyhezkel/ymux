@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import { backend } from "./backend";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { t } from "./i18n";
 import { IconClose, IconFolder, IconGitBranch, IconWarning } from "./icons";
 import type { Connection, Workspace, WorktreeEntry } from "./types";
@@ -77,7 +76,7 @@ export function ProjectFolderModal(p: Props) {
   });
 
   const browse = async () => {
-    const picked = await openDialog({ directory: true, multiple: false });
+    const picked = await backend.host.pickPaths({ directory: true, multiple: false });
     if (typeof picked === "string") setPath(picked);
   };
 

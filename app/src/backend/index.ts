@@ -5,6 +5,16 @@
 import { TauriBackend } from "./tauri";
 import type { Backend } from "./types";
 
-export type { Backend, BackendEvent, EventCallback, UnlistenFn } from "./types";
+export { ALL_CAPABILITIES } from "./types";
+export type {
+  Backend,
+  Capability,
+  BackendEvent,
+  DragDropPayload,
+  EventCallback,
+  HostShell,
+  PickPathsOptions,
+  UnlistenFn,
+} from "./types";
 
 export const backend: Backend = new TauriBackend();

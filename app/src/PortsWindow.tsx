@@ -1,6 +1,5 @@
 import { createMemo, createEffect, createSignal, For, Show, onCleanup } from "solid-js";
 import { backend } from "./backend";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import type { ForwardRow, Workspace } from "./types";
 import { t } from "./i18n";
 import { IconClose, IconCheck, IconGlobe } from "./icons";
@@ -124,7 +123,7 @@ export function PortsWindow(p: Props) {
   const browserUrl = (localPort: number) => `http://127.0.0.1:${localPort}`;
 
   const openInBrowser = (localPort: number) => {
-    void openUrl(browserUrl(localPort)).catch((e) => log.warn("openUrl failed", e));
+    void backend.host.openUrl(browserUrl(localPort)).catch((e) => log.warn("openUrl failed", e));
   };
 
   const startAndOpen = async (remotePort: number) => {

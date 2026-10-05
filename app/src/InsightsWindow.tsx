@@ -294,7 +294,7 @@ export function InsightsWindow(p: Props) {
     <div class="ins-tabs" classList={{ compact: tabsNarrow.narrow() }} ref={tabsNarrow.ref}>
       {tab("metrics", <IconActivity />, t("insights.tab.metrics"))}
       {tab("analytics", <IconHistory />, t("insights.tab.analytics"))}
-      {tab("mobile", <IconSmartphone />, t("insights.tab.mobile"))}
+      {backend.can("mobilePairingAdmin") && tab("mobile", <IconSmartphone />, t("insights.tab.mobile"))}
       {tab("logs", <IconFile />, t("insights.tab.logs"))}
       {tab("health", <IconSparkles />, t("insights.tab.health"))}
       {tab("claude", <IconBot />, t("claudeUsage.tab"))}

@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onCleanup } from "solid-js";
 import { backend } from "./backend";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import qrcode from "qrcode-generator";
 import { t } from "./i18n";
 import { IconClose, IconCircle, IconSmartphone } from "./icons";
@@ -345,7 +344,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
             href="https://dash.cloudflare.com/profile/api-tokens"
             onClick={(e) => {
               e.preventDefault();
-              void openUrl("https://dash.cloudflare.com/profile/api-tokens").catch(() => {});
+              void backend.host.openUrl("https://dash.cloudflare.com/profile/api-tokens").catch(() => {});
             }}
           >
             {t("mobile.cf_open_tokens")} →

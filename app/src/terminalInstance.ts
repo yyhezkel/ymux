@@ -9,7 +9,6 @@ import type {
 
 import { visualToLogical, visualToLogicalStream } from "./copyBidi";
 import { backend } from "./backend";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
 
@@ -871,7 +870,7 @@ export class TerminalInstance {
             return;
           }
           if (/^https?:\/\//i.test(uri)) {
-            void openUrl(uri).catch((e) => console.warn("openUrl failed", e));
+            void backend.host.openUrl(uri).catch((e) => console.warn("openUrl failed", e));
           }
         },
         hover: (_event: MouseEvent, uri: string) => {

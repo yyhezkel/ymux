@@ -2,8 +2,8 @@
 // logger.ts must load BEFORE the console monkeypatch below — it captures the
 // original console fns so logger output is never forwarded twice.
 import { enqueueLog } from "./logger";
+import { backend } from "./backend";
 import { render } from "solid-js/web";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 // Global stylesheets live at the entry point so BOTH the main <App> and the
 // #4 pop-out window (which bypasses <App>) get xterm's CSS + our theme.
 // Previously these were imported inside App.tsx, so a popout webview rendered
@@ -60,12 +60,8 @@ import { initPlatform } from "./platform";
 // is a CLEAN `index.html` (no query/fragment) because Tauri's built-app asset
 // protocol serves a blank page for any suffixed path — so the label, not the
 // URL, carries the id.
-let winLabel = "";
-try {
-  winLabel = getCurrentWindow().label;
-} catch {
-  // window metadata not ready — treat as the main window
-}
+// "" when window metadata is not ready — treated as the main window.
+const winLabel = backend.host.windowLabel();
 const popoutSid = winLabel.startsWith("popout-")
   ? winLabel.slice("popout-".length)
   : null;

@@ -1,6 +1,5 @@
 import { onCleanup, onMount } from "solid-js";
 import { backend, type UnlistenFn } from "../backend";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
 
 // Ctrl+wheel font zoom — pop-out windows only (the grid stays Settings-driven).
@@ -110,7 +109,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
           // Let the notice land, then close the window. Rust's Destroyed
           // handler emits popout:closed so the main pane cleans up.
           setTimeout(() => {
-            void getCurrentWindow().close();
+            void backend.host.closeWindow();
           }, 1200);
         }),
       );

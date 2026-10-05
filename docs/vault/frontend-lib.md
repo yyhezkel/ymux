@@ -41,10 +41,24 @@ is a pass-through to Tauri IPC, so the desktop behaves exactly as before. The po
 the second implementation: a browser build (Phase C5) swaps in a `WebBackend` that
 answers the same command names from the daemon's HTTP/WS API.
 
+- **`backend.host`** (Phase 107) — the window / OS affordances the components used to
+  take from `@tauri-apps/api/window|webview|app` and the dialog / opener plugins:
+  `windowLabel()` (index.tsx's popout router; "" when unknown), `setTitle`, `setZoom`,
+  `closeWindow`, `appVersion`, `openUrl`, `revealInDir`, `pickPaths` (native open dialog),
+  `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
+- **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
+  `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
+  host lacks the local-machine ones and the UI hides their entry points rather than
+  failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
+  the Welcome cards, palette `ssh.provision` / `pane.openDiff` (`PALETTE_CAPS` in
+  App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
+  pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
+  Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
 - **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
-  `src/backend/` imports `@tauri-apps/api/core` or `@tauri-apps/api/event`. Other
-  `@tauri-apps/*` modules (window, webview, dialog, opener) are still imported
-  directly; capability gating them is Phase C3.
+  `src/backend/` imports anything from `@tauri-apps/*`.
 - `types.ts` imports nothing from the app — `logger.ts` calls through the backend, so a
   logger import there would be a cycle.
 - `on` stays async on purpose: App.tsx awaits each registration so the "listeners

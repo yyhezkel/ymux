@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
 import { backend } from "./backend";
-import { getVersion } from "@tauri-apps/api/app";
 import { t } from "./i18n";
 import { IconRefresh, IconBadgePlus, IconClose, IconCircle, IconCheck, IconWarning } from "./icons";
 
@@ -74,7 +73,7 @@ export function VersionManager(p: {
 
   onMount(async () => {
     try {
-      setCurrent(await getVersion());
+      setCurrent(await backend.host.appVersion());
     } catch {
       /* ignore */
     }

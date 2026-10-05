@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
 import { backend } from "../backend";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Workspace, WorkspacesFile } from "../types";
 import type { Geometry } from "../floatingWindow";
 import {
@@ -89,7 +88,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
         remotePort,
       }),
     slotRect,
-    windowLabel: getCurrentWindow().label,
+    windowLabel: backend.host.windowLabel(),
   });
 
   onMount(() => {
@@ -108,7 +107,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
           return;
         }
         setWorkspace(ws);
-        void getCurrentWindow().setTitle(`${ws.name} — Browser`).catch(() => {});
+        void backend.host.setTitle(`${ws.name} — Browser`).catch(() => {});
       })
       .catch((e: unknown) => log.error("workspaces_load failed", e));
 

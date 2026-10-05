@@ -1,10 +1,8 @@
 import { createSignal, createEffect, For, Show, onMount, onCleanup, createMemo } from "solid-js";
 import { backend } from "./backend";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { t } from "./i18n";
 import { FileEditor } from "./FileEditor";
 import { TechText } from "./TechText";
-import { open } from "@tauri-apps/plugin-dialog";
 import { saveRemoteFileAs } from "./download";
 import { loadFmPaths, saveFmPaths } from "./fmPaths";
 import { isMac, isWindows, sep } from "./platform";
@@ -111,6 +109,10 @@ export function FileManagerPane(p: Props) {
   // workspaces are unaffected: the column render is guarded by
   // `!p.hasSsh || showLocal()`, so `!hasSsh` still forces it shown.
   const [showLocal, setShowLocal] = createSignal(false);
+  // Phase 107: a host without the local machine (a browser) never shows the
+  // local column, whatever the toggle says.
+  const localVisible = () =>
+    backend.can("fileManagerLocal") && (!p.hasSsh || showLocal());
 
   // Phase 29 (B): per-pane sort control. Directories stay grouped
   // first regardless of field; within each group, sort by the chosen
@@ -398,7 +400,7 @@ export function FileManagerPane(p: Props) {
     // Retina display, so the hit-test missed both columns and the drop was
     // swallowed with no upload and no error.
     try {
-      const unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+      const unlisten = await backend.host.onDragDrop((event) => {
         const payload = event.payload as
           | { type: "enter" | "over"; position: { x: number; y: number } }
           | { type: "drop"; paths: string[]; position: { x: number; y: number } }
@@ -993,7 +995,7 @@ export function FileManagerPane(p: Props) {
       setErr("no remote — cannot upload");
       return;
     }
-    const picked = await open({ multiple: true, directory: false });
+    const picked = await backend.host.pickPaths({ multiple: true, directory: false });
     if (!picked) return; // cancelled
     const paths = Array.isArray(picked) ? picked : [picked];
     for (const src of paths) {
@@ -1150,7 +1152,7 @@ export function FileManagerPane(p: Props) {
           />
           <span>{t("fm.checkbox.hidden")}</span>
         </label>
-        <Show when={p.hasSsh}>
+        <Show when={p.hasSsh && backend.can("fileManagerLocal")}>
           <label class="fm-checkbox">
             <input
               type="checkbox"
@@ -1338,10 +1340,10 @@ export function FileManagerPane(p: Props) {
           <span class="fm-err" title={err()!}><IconWarning size={13} /> {err()}</span>
         </Show>
       </div>
-      <div class={`fm-grid ${p.hasSsh && showLocal() ? "fm-grid-dual" : "fm-grid-single"}`}>
+      <div class={`fm-grid ${p.hasSsh && localVisible() ? "fm-grid-dual" : "fm-grid-single"}`}>
         {/* Local column — hidden when the user untoggles "Show local"
             and we have an SSH workspace to focus on. */}
-        <Show when={!p.hasSsh || showLocal()}>
+        <Show when={localVisible()}>
           <div
             class={`fm-col ${dragOverSide() === "local" ? "drag-over" : ""}`}
             ref={(el) => (localColRef = el)}

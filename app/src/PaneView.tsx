@@ -2,8 +2,6 @@ import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show }
 import type { JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { backend } from "./backend";
-import { open as openNativeDialog } from "@tauri-apps/plugin-dialog";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
 import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
@@ -597,7 +595,7 @@ export function PaneView(p: Props) {
   // the dialog itself is the UI, so no inline browse view is needed.
   const pickLocalFolder = async (): Promise<string | null> => {
     try {
-      const picked = await openNativeDialog({
+      const picked = await backend.host.pickPaths({
         directory: true,
         multiple: false,
         defaultPath: ncDir().trim() || undefined,
@@ -916,7 +914,7 @@ export function PaneView(p: Props) {
     let unlisten: (() => void) | undefined;
     void (async () => {
       try {
-        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        unlisten = await backend.host.onDragDrop((event) => {
           const payload = event.payload as
             | { type: "enter" | "over"; position: { x: number; y: number } }
             | { type: "drop"; paths: string[]; position: { x: number; y: number } }
@@ -1081,7 +1079,7 @@ export function PaneView(p: Props) {
     // session rows. Dropping the buttons also means the overflow fitter
     // never engages in tabs mode.
     if (p.tabsMode) {
-      if (p.isConnected) list.push(popoutAction());
+      if (p.isConnected && backend.can("popout")) list.push(popoutAction());
       return list;
     }
     if (p.pane.annotation) {
@@ -1174,7 +1172,7 @@ export function PaneView(p: Props) {
       icon: () => <IconRows size={14} />,
       run: () => p.onSplit(p.pane.pane_id, "vertical"),
     });
-    if (p.isConnected) list.push(popoutAction());
+    if (p.isConnected && backend.can("popout")) list.push(popoutAction());
     return list;
   });
 
