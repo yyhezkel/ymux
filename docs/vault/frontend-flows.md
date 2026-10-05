@@ -61,11 +61,12 @@ and it no longer hosts the "existing" flows at all.
 
 `provisioningTypes.ts` (38) mirrors the Rust step/progress shapes.
 
-## `CreateWorkspaceModal.tsx` (451) — **edit-only**
+## `CreateWorkspaceModal.tsx` (458) — **edit-only**
 
 Creation moved to `SetupWizard`. This modal is what the sidebar's edit action and the
 palette rename open. The SSH form and the extras block are **shared** with the wizard
-rather than duplicated:
+rather than duplicated. On open it also calls `workspace_secret_env_keys` once and feeds
+the names to `storedSecretKeys` (failure → logged, editor still usable):
 
 - **`SshConnectionFields.tsx` (492)** — the SSH form. **The parent owns the form state**
   (via `createSshFormState`) so it can hydrate from an existing workspace or read the

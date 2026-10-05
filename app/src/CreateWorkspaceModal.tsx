@@ -71,6 +71,8 @@ export function CreateWorkspaceModal(p: Props) {
   const [setupCmd, setSetupCmd] = createSignal("");
   const [teardownCmd, setTeardownCmd] = createSignal("");
   const [envRows, setEnvRows] = createSignal<EnvVar[]>([]);
+  // Secret env keys that already have a stored value backend-side (names only).
+  const [storedSecretKeys, setStoredSecretKeys] = createSignal<string[]>([]);
 
   // Phase 30: presets shown in the identity row. Eight named colors that
   // look distinct on both light and dark surfaces, and nine common
@@ -195,6 +197,10 @@ export function CreateWorkspaceModal(p: Props) {
       setSetupCmd(w.setup_command || "");
       setTeardownCmd(w.teardown_command || "");
       setEnvRows(w.env ? [...w.env] : []);
+      setStoredSecretKeys([]);
+      invoke<string[]>("workspace_secret_env_keys", { workspaceId: w.id })
+        .then(setStoredSecretKeys)
+        .catch((e) => log.error("workspace_secret_env_keys failed", e));
       setAutoPortForward(w.auto_port_forward ?? true);
       // Phase 37: connection fields are now editable (not read-only).
       const c = w.layout?.kind === "pane" ? w.layout.connection : w.connection;
@@ -435,6 +441,7 @@ export function CreateWorkspaceModal(p: Props) {
             setTeardownCmd={setTeardownCmd}
             envRows={envRows}
             setEnvRows={setEnvRows}
+            storedSecretKeys={storedSecretKeys}
           />
 
           </div>
