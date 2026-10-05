@@ -88,6 +88,9 @@ put logic there.
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
   in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
   takes `secret_keys` (names only) and appends them to tmux `update-environment`.
+  `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
+  `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
+  status `environment variable refused by sshd: K` + `log_warn`, connect continues.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
   in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints

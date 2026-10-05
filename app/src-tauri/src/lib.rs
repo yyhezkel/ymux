@@ -4311,6 +4311,9 @@ async fn spawn_ssh(
     // name. Passed through from pane_connect when the picker UI chose
     // a specific orphan session to attach to.
     tmux_session_name: Option<String>,
+    // Secret env rows (resolved values), delivered per channel via
+    // `set_env` and never typed, logged or written to `last.env`.
+    secret_env: &[(String, String)],
 ) -> Result<String, String> {
     log_debug("SSH", &format!(
         "spawn_ssh: entry ws={} pane={} target={}@{}:{}",
@@ -4506,6 +4509,20 @@ async fn spawn_ssh(
         .channel_open_session()
         .await
         .map_err(|e| format!("channel_open_session: {e}"))?;
+
+    // Secret rows go first, with a reply awaited: sshd's AcceptEnv may refuse
+    // them, and the user must learn that. Names only in the status and log
+    // (Rule #2); the connect continues either way.
+    if !secret_env.is_empty() {
+        let refused = secret_env::deliver_ssh(&mut channel, secret_env).await;
+        if !refused.is_empty() {
+            log_warn("SSH", &format!(
+                "spawn_ssh[{pane_id}]: sshd refused secret env: {}",
+                refused.join(", ")
+            ));
+            emit_pane_status_event(app, &pane_id, &secret_env::refused_message(&refused));
+        }
+    }
 
     // Best-effort: try to set env vars on the shell. sshd's AcceptEnv may filter; if so,
     // the env-file fallback covers it.
@@ -9262,6 +9279,7 @@ async fn pane_connect(
                 rows,
                 effective_persistent,
                 effective_tmux_name.clone(),
+                &secret_rows,
             )
             .await?
         }
