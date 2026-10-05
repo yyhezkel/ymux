@@ -92,6 +92,9 @@ type HookRegistry struct {
 	webws *webWSStore
 	tmux  *Tmux
 	spawn func(name, cwd, policy, workspaceID string) (hookEntry, error)
+
+	// C4 (Phase 108): the browser's settings document (settings.go).
+	settings *settingsStore
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
@@ -99,7 +102,8 @@ type HookRegistry struct {
 // hook variables and keep whatever global environment tmux has.
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
-		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore("")}
+		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore(""),
+		settings: newSettingsStore("")}
 }
 
 // SetHookAddr implements core.AddrSink.

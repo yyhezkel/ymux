@@ -67,10 +67,14 @@ import (
 // 2.8.0 (Phase 104, WEB-DESIGN B6): session history — ended rows, their
 // transcript, and resume (`claude --resume` in a new tmux session).
 //
+// 2.9.0 (Phase 108, WEB-DESIGN C4): `/` serves the installed web bundle
+// (<data dir>/www/current) with the diagnostic page kept at /diag, and the
+// browser's settings document (GET/PUT /api/v2/settings, settings:changed).
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.8.0"
+const Version = "2.9.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

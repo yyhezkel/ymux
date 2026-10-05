@@ -176,6 +176,16 @@ jobs:
         working-directory: app
         run: npm run build:frontend
 
+      # Phase 108: the same build is the browser bundle the daemon serves from
+      # ~/.ymux/server/www/current (WEB-DESIGN §7.1 (b)). Until the Phase D
+      # add-on uploads it, a box is loaded by hand from this artifact.
+      - name: Upload the web bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: ymux-web
+          path: app/dist
+          if-no-files-found: error
+
   rust:
     runs-on: windows-latest
     timeout-minutes: 30
