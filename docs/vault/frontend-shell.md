@@ -353,13 +353,15 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
   until they connect — that is its contract. A row's name is fixed at creation.
 
-## `PaneView.tsx` (2,194) — one terminal pane
+## `PaneView.tsx` (2,174) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
 session picker (tmux/zellij sessions, Claude sessions), pane title and annotation
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
-based on its effective connection.
+based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
+(`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
+the directory listing itself no longer lives in `PaneView`.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls

@@ -7880,8 +7880,10 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
 
 2026-10-06 — ticket ymux-app-src-app-tsx-2 t05: documented persisted claude_running (vault: crates, backend-core, frontend-shell, frontend-lib; DECISIONS stale-true entry; FOLLOWUPS status); fixed 2 stale lib.rs cites in backend-core; vault re-stamped. Live smoke pending.
+2026-10-06 — wizard browse view renders DirPicker inline (ticket ymux-app-src-paneview-tsx): DirPicker modal|inline union, PaneView duplicate list/recents removed (-20 lines), vault frontend-flows/frontend-shell updated, FOLLOWUPS P3 (PaneView.tsx:1794) archived. Compiles untested until CI.
 
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-src-7: closed FOLLOWUPS P3 (persisted smart_bidi not re-applied after restart) → archived; pane_connect now seeds bidi_filters via find_pane_smart_bidi + set_pane_enabled (14622c0). Compiles untested until CI; NOT VERIFIED LIVE.
 2026-10-06 — ymux-hooks-claude-code-json: StopFailure hook (v1.8.0) + PaneAgentState::Failed / Go StateFailed + failed light square; FOLLOWUPS 'traffic light one known lie' archived, DECISIONS known-lie bullet marked resolved. Go blobs still need rebake. Compiles untested until CI. NOT VERIFIED LIVE.
 2026-10-06 — ymux-app-src-tauri-src-2: stored is_folder on Workspace; is_header/isHeader read it; pin writes it; flag_pinned_folders load migration; vault (backend-core, crates, frontend-shell) synced, FOLLOWUP 'Pinning a NON-git folder' archived. Compiles untested until CI.
 
