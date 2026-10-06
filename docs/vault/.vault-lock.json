@@ -4,7 +4,8 @@
     "app/src-tauri/src/claude_summary.rs": "52d22f583b83bacd229d11733309a5ac9fcea0dc1231ddcfeb1b3f84612711bc",
     "app/src-tauri/src/claude_usage.rs": "57c87c2c494e783aab50a24fd6b268df110457f2399d3fa457986bd9dc7302b3",
     "app/src-tauri/src/claude_usage_local.rs": "b0f1abecd1e23d0fc8083e940509f70449bb04beefbe2bd98e79056e5b6b304e",
-    "app/src-tauri/src/insights_local.rs": "15b9060bb4675cdf501315d29334101c2850e34a797b24391cbf64b9c7a603ec"
+    "app/src-tauri/src/insights_local.rs": "15b9060bb4675cdf501315d29334101c2850e34a797b24391cbf64b9c7a603ec",
+    "app/src-tauri/src/insights_store.rs": "50144c52bf9baa7ffb9403e6a1eaf7120fd6db82d7d9f0d47076ea074031152b"
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
