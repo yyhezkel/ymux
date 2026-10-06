@@ -93,6 +93,7 @@ put logic there.
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
   `workspace_secret_env_keys(workspace_id)` returns names only.
+  Pinned by `secret_env_persist_tests` (end of lib.rs); the save-failure cases are `cfg(windows)` because `SecretEnvStore::save` is a no-op elsewhere.
   `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
