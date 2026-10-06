@@ -465,6 +465,19 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Phase D: the web add-on ships the embedded frontend, updates on connect; shell:attach is a device checkbox
+- **Decided (Claude, verified in tauri 2.10.3 source):** the `ymux-web` add-on uploads
+  the frontend already embedded in the desktop binary (`AssetResolver::iter` for the list,
+  `get` for the decompressed bytes) — no tarball in `resources/`, no second build, the
+  browser always runs the desktop's own frontend.
+- **Decided (Yossi):** the bundle updates **automatically on connect** when a host has the
+  add-on and its version differs (like the CLI), not by hand from Add-ons.
+- **Decided (Yossi):** `shell:attach` is granted with a **checkbox in the device list**
+  (Web & devices), separate from approving the pairing card — the generic feed card keeps
+  Allow / Deny.
+- **Decided (Claude):** before D, hook routing was made to survive a daemon restart
+  (Phase 111) — every add-on update restarts the daemon.
+
 ### 2026-10-05 — C5 (WebBackend) starts before the C1 + C3 desktop smoke
 - **Decided (Yossi):** "let's move on to the next stage before we do smoke tests" —
   Phase 109 (C5) is built on top of the unmerged C1 + C3 branches instead of waiting

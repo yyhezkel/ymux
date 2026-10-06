@@ -185,7 +185,10 @@ a wide argument list because every connection mode funnels through it: `persiste
   explicit key file (optional passphrase) → default `~/.ssh/id_*` → password. Then
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
-  `request_shell`, channel-pump task.
+  `request_shell`, channel-pump task. Next to the background `check_remote_hooks` it also
+  spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
+  add-on is brought to this desktop's frontend in the background. `setup()` calls
+  `web_addon::init` to read the embedded frontend once.
 - `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

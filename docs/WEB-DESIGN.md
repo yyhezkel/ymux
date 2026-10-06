@@ -591,6 +591,23 @@ desktop), session history UI (none on the desktop either yet), IndexedDB feed hi
 #### Not in Phase C
 Popouts as tabs, the bidi filter, OSC notifications from the web PTY, tickets / skills / diff pane in web mode, the ymux-web add-on (D), PWA (E).
 
+### 8.3 Phase D — plan (2026-10-06)
+
+Decided with Yossi (DECISIONS 2026-10-06). Phase 111 first made hook routing survive a
+daemon restart, since every add-on update restarts it.
+
+- **D1 — Phase 112, the `ymux-web` add-on.** Ships the frontend embedded in the desktop
+  binary (no tarball, no second build); install/update upload it to
+  `~/.ymux/server/www/<ver>-<hash8>/` and swap `current`; **automatic on connect** when
+  a host has the add-on and its label differs. nginx-proxy already proxies `/` to the
+  daemon, so nothing changes there. Vault backend-remote § web_addon.rs.
+- **D2 — Phase 113, Web & devices.** The device list shows each device's scopes and a
+  "Terminal access (shell:attach)" checkbox (default off) → owner
+  `PUT /api/v2/devices/{id}/scopes` through `pairing.rs daemon_curl` (whose path allow-list
+  grows by exactly that route). The daemon's browser-approve endpoint gets the
+  `NormalizeScopes` validation the PUT already has.
+- Then one desktop release carrying C1 + C3 + D, smoked once on Windows + Mac.
+
 ## 9. Questions (tracked in `docs/DECISIONS.md`)
 
 - **Q1 truth model — DECIDED 2026-09-10:** server-native workspaces; tmux

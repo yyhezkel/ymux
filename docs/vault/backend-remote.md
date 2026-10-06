@@ -5,6 +5,7 @@ covers:
   - app/src-tauri/src/bootstrap_guard.rs
   - app/src-tauri/src/provisioning.rs
   - app/src-tauri/src/addons.rs
+  - app/src-tauri/src/web_addon.rs
   - app/src-tauri/src/pairing.rs
 ---
 
@@ -94,6 +95,34 @@ Insights panel — the frontend does not make it. Shared helpers `exec`, `exec_s
 `resources/ymux-server-linux-{x64,arm64}`. **Those blobs are committed and rebaked by
 hand** — a Go change that skips the rebake ships the old server to every remote, which
 is why `ci-windows.yml` has a gate for exactly that.
+
+## `web_addon.rs` — the `ymux-web` add-on (Phase 112, WEB-DESIGN Phase D)
+
+Puts the browser frontend on a server so its daemon (2.9.0+) serves it at `/`. The
+frontend shipped is **the one embedded in this desktop binary** (Tauri `frontendDist`):
+`init()` at app setup takes the file list from `AssetResolver::iter` (whose bytes are
+brotli-compressed — never upload those) and the contents from `AssetResolver::get`
+(decompressed; no CSP is configured, so `index.html` is untouched), keeping `index.html`,
+`assets/`, `fonts/`. Its label `<app version>-<sha256 8 hex>` is the add-on's version —
+`addons.rs registry()` substitutes it for the crate's `"embedded"` placeholder. No
+tarball in `resources/` (a `cargo test` without a fresh vite build would fail on it) and
+no second build: version-aligned by construction. A dev build on `devUrl` has no
+embedded `index.html` and the add-on reports itself unavailable.
+
+- **install / update** (`web_install`): one SFTP session uploads the set into
+  `~/.ymux/server/www/<label>.tmp-<pid>/`, then `mv` to `<label>/`, a fresh symlink
+  `mv -T`'d over `current` (atomic), and every other version but the newest one is
+  removed. Verified by reading `current` back. A failed upload removes the tmp dir.
+- **detect** (`web_detect`): `basename $(readlink current)` when `current/index.html`
+  exists. **uninstall**: `rm -rf ~/.ymux/server/www` — the daemon falls back to its
+  diagnostic page.
+- **Automatic on connect** (Yossi, 2026-10-06): `spawn_ssh` calls `spawn_auto_update`
+  next to `check_remote_hooks` — a background task that re-installs only when the
+  host HAS the add-on and its label differs, once per host + label per run (a failure
+  clears the mark so the next connect retries). It never installs on a host that did
+  not opt in, and never blocks the pane.
+- Paths come from our own build and pass `safe_rel` (no `..`, plain charset) before they
+  reach a remote string.
 
 ## `pairing.rs` (231) — mobile
 

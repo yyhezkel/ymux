@@ -159,7 +159,10 @@ Shared between `ymux serve` and its clients (Android first, web later). Pure dat
 ## `ymux-addons` (311) — add-on manifest schema + registry
 
 An add-on is anything ymux installs on a remote: the CLI binary, the tmux config, the
-Claude hooks, the `ymux-insights` daemon. Before Phase 68 each had a bespoke installer;
+Claude hooks, the `ymux-insights` daemon, and (Phase 112) `ymux-web`, the browser
+frontend — whose manifest version is the placeholder `WEB_VERSION_PLACEHOLDER`
+("embedded"); the app crate fills in the real label at run time (vault backend-remote §
+web_addon.rs). Before Phase 68 each had a bespoke installer;
 this gives them **one shape** so the desktop manager can install/update/remove/detect
 uniformly. Pure data — no IO. The SSH side and the `Builtin` routine dispatch live in
 `app/src/addons.rs`.

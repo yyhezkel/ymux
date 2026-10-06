@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "0fb7f10b73842e53a0945ed2cf5fdb36e44be6a3b680c08f69447148702e657f",
+    "app/src-tauri/src/lib.rs": "58d4da4ac00f08034a67872abb8eb55c2accb22975521169fd8079addd4a009f",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
@@ -29,11 +29,12 @@
     "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
   },
   "backend-remote": {
-    "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
+    "app/src-tauri/src/addons.rs": "c48a281c4fbd412256e42f270fcb4665411e57b343d6d14b5435f0207ddc15f0",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "ff7be6b012d2a73b005158d26e3557b015cee0c6f0dec22dd0a523a6c3d01b69",
     "app/src-tauri/src/provisioning.rs": "4c90c2685815e8cdfd5d9ef204ceabd012eaeba39f597f4209620da1a16f2f87",
-    "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd"
+    "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd",
+    "app/src-tauri/src/web_addon.rs": "b73bd521d5607f0c6dc25d1fd7445d064e02a4fe1ed2c23d8b85b61167ed3a7b"
   },
   "backend-rpc": {
     "app/src-tauri/mcp/Cargo.toml": "5837dfebec492396ba2177a733127fa3edb014effd634ec973800b5eb0ba1b41",
@@ -80,7 +81,7 @@
     "app/src-tauri/cli/src/session_meta.rs": "bdb0ebdafbea7909b183c78299471fad2b37a99d6b218a44fe6b9732ee72adcd"
   },
   "crates": {
-    "app/src-tauri/crates/ymux-addons/src/lib.rs": "852da14c9ee0fdfa04d2a269d5e0d7e893e925976019246dfadd398259d23d6c",
+    "app/src-tauri/crates/ymux-addons/src/lib.rs": "6780594762757689a9041462d7b75935588860e2e3c3700b8fa5c739199a135d",
     "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "404e02208ea32cb11ef3e0b6f90ecc29fc41ab480a5e740f3e3842bd7b88b85c",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "76eb09970d1f1e5eb412e17971e87c6a0255f62a6c8a19db88a77a6d1540f9b4",
