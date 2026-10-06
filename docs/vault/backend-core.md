@@ -219,7 +219,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9131](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9148](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -268,6 +268,10 @@ Zellij verbs are built as argument vectors (`zellij_args_list`,
 than bubbling an `io::Error`. Never build these by string concatenation (Rule #3), and
 check `docs/ZELLIJ.md` for what our pinned 0.44.3 binary actually supports before adding
 a verb — zellij.dev documents a different version.
+
+`list_zellij_sessions` joins `~/.ymux/session-meta.json` (fallback `~/.winmux/`) onto the
+`parse_zellij_sessions` rows via `apply_session_meta`, by session name — same fields as the tmux
+join; bad JSON or an unknown name is a no-op, so the row keeps its raw name.
 
 tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` marker frame
 the listing output so `parse_tmux_sessions` can read it back unambiguously.

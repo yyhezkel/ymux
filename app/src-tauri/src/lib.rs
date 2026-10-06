@@ -3481,8 +3481,8 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             exited: line.contains("(EXITED"),
             label: None,
             claude_title: None,
-            // Phase 81.F: zellij sessions carry no session-meta join yet —
-            // the picker falls back to `name`, same as a pre-rename server.
+            // Filled by `apply_session_meta` in `list_zellij_sessions`; the
+            // picker falls back to `name` when no entry exists.
             auto_name: None,
             claude_session_id: None,
             origin: None,
@@ -3500,6 +3500,23 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
     // Newest first, matching parse_tmux_sessions' ordering contract.
     out.sort_by(|a, b| b.created.cmp(&a.created));
     out
+}
+
+/// 2026-10: join `session-meta.json` onto zellij rows by session name, same
+/// fields as the tmux join in `parse_tmux_sessions`. Garbled or empty JSON is
+/// no metadata, never an error; a session without an entry keeps its raw name.
+fn apply_session_meta(sessions: &mut [TmuxSessionInfo], meta_text: &str) {
+    let meta: SessionMetaFileMirror =
+        serde_json::from_str(meta_text.trim()).unwrap_or_default();
+    for s in sessions.iter_mut() {
+        if let Some(m) = meta.sessions.get(&s.name) {
+            s.label = m.label.clone();
+            s.claude_title = m.claude_title.clone();
+            s.auto_name = m.auto_name.clone();
+            s.claude_session_id = m.claude_session_id.clone();
+            s.origin = m.origin.clone();
+        }
+    }
 }
 
 /// `12m 30s` / `3h 4m 1s` / `5s` / `2days 1h` → seconds. Unknown units are
@@ -9848,7 +9865,16 @@ async fn list_zellij_sessions() -> Vec<TmuxSessionInfo> {
     match tokio::time::timeout(std::time::Duration::from_secs(6), c.output()).await {
         Ok(Ok(out)) => {
             let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            parse_zellij_sessions(&text)
+            let mut sessions = parse_zellij_sessions(&text);
+            // winmux -> ymux rename: current spelling first, pre-rename second.
+            if let Some(meta) = dirs::home_dir().and_then(|h| {
+                std::fs::read_to_string(h.join(".ymux").join("session-meta.json"))
+                    .or_else(|_| std::fs::read_to_string(h.join(".winmux").join("session-meta.json")))
+                    .ok()
+            }) {
+                apply_session_meta(&mut sessions, &meta);
+            }
+            sessions
         }
         Ok(Err(e)) => {
             log_debug("PTY", &format!("list_zellij_sessions: spawn failed: {e}"));
@@ -15117,7 +15143,7 @@ mod zellij_tests {
     // Windows on 2026-08-19, not from the docs — the spike session Yossi left
     // running produced `spike [Created 12m 30s ago]` verbatim.
     use super::{
-        build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
+        apply_session_meta, build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
         pick_zellij_resources, sanitize_tmux_session_name_for_title,
         session_name_char_is_safe, zellij_args_delete_force, zellij_args_list,
         zellij_args_write_chars, zellij_spawn_error_outcome, KillSessionOutcome,
@@ -15318,6 +15344,42 @@ mod zellij_tests {
         );
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["newest", "middle", "older"]);
+    }
+
+    #[test]
+    fn zellij_sessions_join_session_meta() {
+        // Pins the name-keyed join; breaking it blanks zellij picker titles.
+        let mut out = parse_zellij_sessions("ymux-p1 [Created 5s ago]\n");
+        apply_session_meta(
+            &mut out,
+            r#"{"sessions":{"ymux-p1":{"label":"L","claude_title":"T","auto_name":"A","claude_session_id":"S","origin":"O"}}}"#,
+        );
+        assert_eq!(out[0].label.as_deref(), Some("L"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_session_id.as_deref(), Some("S"));
+        assert_eq!(out[0].origin.as_deref(), Some("O"));
+    }
+
+    #[test]
+    fn zellij_meta_fields_follow_picker_precedence() {
+        // Partial entries must stay partial so the frontend's
+        // label > auto_name > claude_title > name chain sees real gaps.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, r#"{"sessions":{"a":{"auto_name":"A","claude_title":"T"}}}"#);
+        assert!(out[0].label.is_none());
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn zellij_session_without_meta_keeps_raw_name() {
+        // Bad JSON and unknown names are no-ops, never errors.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, "{not json");
+        apply_session_meta(&mut out, r#"{"sessions":{"other":{"label":"X"}}}"#);
+        assert_eq!(out[0].name, "a");
+        assert!(out[0].label.is_none() && out[0].auto_name.is_none() && out[0].origin.is_none());
     }
 
     #[test]
