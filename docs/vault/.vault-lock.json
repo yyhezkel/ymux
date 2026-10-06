@@ -14,7 +14,7 @@
     "app/src-tauri/src/lib.rs": "a2445901fb34ef18d53a584224d05c4d40243569c1b4a4eccd97e37b281cd99e",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
-    "app/src-tauri/src/secret_env.rs": "c603422947e0aeed687a97b6dab1632abbc924c9154a84c62a002ca8ec2f6a87",
+    "app/src-tauri/src/secret_env.rs": "0573706746a75de5f2f4eb531d7c69e22481af48b70178d935e21810be8863bd",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
   "backend-panes": {
@@ -36,7 +36,7 @@
     "app/src-tauri/src/addons.rs": "01bf29c3c0618f926151ad45828fb527604a059904e5db5a417c3a9e84781a29",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "ff7be6b012d2a73b005158d26e3557b015cee0c6f0dec22dd0a523a6c3d01b69",
-    "app/src-tauri/src/provisioning.rs": "717f3975a46b8e82e2a0c2b0db2d0a7156393e3fda393dde5538c0cfa6a747d5",
+    "app/src-tauri/src/provisioning.rs": "b145e020a73b9cda1022182662cdb05a8396bff2825ff2a6f56c3ba6ace4383f",
     "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd"
   },
   "backend-rpc": {
@@ -55,11 +55,11 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
-    "app/src-tauri/src/local_setup.rs": "58528b30cc113f6d10102e9d4d5a0b284c4feecc8112d921a4415066300d87cc",
+    "app/src-tauri/src/local_setup.rs": "9b098658a98d218bcf31d77a682919ca004ec20e3461f6e6a62b3bae9590b08d",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "9919c0bbaca44f1d67e712b1a33cb536d7d21e223aab863ced5a9c94741c3336",
-    "app/src-tauri/src/updater.rs": "8bd3ae38f8c876702e1980ca45b54d46b6c6f9f6a9c94a7cafcb54c4d311985c",
-    "app/src-tauri/src/updater/macos.rs": "6953bbb78bae4571686a1eef6c3efbe38ae14f6fcf04a130b21e1fc21ceac6d5"
+    "app/src-tauri/src/settings.rs": "ea475fc5c4e34cf742d46b72b9bfc6456e4658b1a732f22281738fb34f6e2a1c",
+    "app/src-tauri/src/updater.rs": "5e32ee0804d8762b214409d2ec8e0e46471c2716925266f664f5b9c76e13ef71",
+    "app/src-tauri/src/updater/macos.rs": "de1d85244406fd99d9d4786a82f81b0dae94cb05f2c116c43716a7167086e45a"
   },
   "build-glue": {
     "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
@@ -103,8 +103,8 @@
     "app/src/ConfirmDeleteWorkspace.tsx": "c1c406ea66b2c0344dfe9fe84a0657e3aca1b71d5a6e1f091a792f5251e83779",
     "app/src/ConnectExistingFlow.tsx": "bb821445a7ad661fcb74faeaa280b24a7bb716490bdc574ef221557372f4fda4",
     "app/src/CreateWorkspaceModal.tsx": "23e7e97c10367c0a95d5c1301f3f09cd3df7032eccbd892bba2410d59d1fbf4d",
-    "app/src/DirPicker.tsx": "9e51f33bd4d764a2041f5a4ca787f5117242d8d0fff386975664cb14b1267d2c",
-    "app/src/LocalSetupFlow.tsx": "8e1209ee2651b40754586b65bb371b8f4f45a950cfa9b1e5fb376c5c0beb81d4",
+    "app/src/DirPicker.tsx": "51075cd5da4153ee9e5ad70cde017a1c7316f6ed3caf0a12b87a863ea33063ac",
+    "app/src/LocalSetupFlow.tsx": "e782c039ed19de6ebc349710f44933eb0b9bade59ed5814e344a3c0bca781992",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
     "app/src/ProjectFolderModal.tsx": "017a431e50b533ba339c627ba130fdc1e17566e4232acc00c35f97664479f36c",
     "app/src/ProvisionNewServerFlow.tsx": "54ec1b424c9eaf05c586840e2a4345eb9f7d696ffc19dab09d72733e4ad98c5f",
@@ -115,7 +115,7 @@
     "app/src/SshConnectionFields.tsx": "14bb9a89e7edd60ca0d896b45034ab3ea9ee6aa7000511ab64f1ed05a8b2c57d",
     "app/src/SshKeyOfferModal.tsx": "4e12b7032d69bfdc248e6f9c4a8f74fcde0202fcd9f7fafc59b2fb32dd3dd9a6",
     "app/src/VersionManager.tsx": "8b182fc23e54f11c21b2759349fdc6b95567e0eab876545b1c09959c00a2d0c6",
-    "app/src/WorkspaceExtrasFields.tsx": "fab806329870e9e6653dfb27fe307da06bcde6fb96459f3b86f1a2fee357d8e6",
+    "app/src/WorkspaceExtrasFields.tsx": "52232811c755ab8ef4cb70672b8dd83ecee28d5fef6b95ffb228a96fe2ca25eb",
     "app/src/provisioningTypes.ts": "ef3996374e93e130185e743b0da00159cc72df07eb2b22c4672b026de44aa022"
   },
   "frontend-lib": {
@@ -136,9 +136,9 @@
     "app/src/popoutProfile.ts": "494746e8a1df2abc19234913cf2ef1885b3029dd45b95866e929b74b4a732f51",
     "app/src/sessionRestore.ts": "2a0d8510e07835167777dd833f9e10025fe07b1f29aac31a4eb4c748603259f3",
     "app/src/settings.ts": "2fe5a3425270c73da4c31f27cf661ca3fb3b2e8f0d48bed303cd6335c0aff7dd",
-    "app/src/shortcuts.ts": "cdb7ca75c09769a29ccb2e98a0977667486f77f3385324d789ec9b62a9b98dd4",
+    "app/src/shortcuts.ts": "020e14da8b0185e4ef5b17f73a8b7b4a37eb8ee75e72c54cd81506e4a0e7ac03",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
-    "app/src/terminalInstance.ts": "54a45c557522685183cfdd48f9b910859ab7e2c5fb0d1aefbdcfba149d74696f",
+    "app/src/terminalInstance.ts": "13d311f859b0855e06aae8cd4fc1d099bbda2dd55c4dee6fb73f2b0b0e4aea2f",
     "app/src/textDirection.ts": "a15d1af75e5967b52c401c95733dc9bd2daf2e18f396bdc8968cc7c6e1c51ef0",
     "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
@@ -182,7 +182,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "cd906a7ddce5e29388fe52001a27d63fe54d4e0b2329b2a1c84f4ca5b4713b8e",
-    "app/src/App.tsx": "7b558d9dcb242d226d740beb913ef9a70dd5e0c753a6e57bceb7436af64f5496",
+    "app/src/App.tsx": "71e79aad11727cfb58dcd4ebddc165b4e72a46f9e59564622c1eac3205300c01",
     "app/src/BriefingCard.tsx": "74ddaa2fe32a3d7904eb3db62ecf77184ca4f4871d4d6d28168241d376f8523a",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/ContextRail.tsx": "8f9b73396f3b00236a5edd5f36599ea18b04b4b654adfa5c832ed246821b5a79",
@@ -210,6 +210,7 @@
     "app/src/panels.ts": "4422e55ca152e8b0e4984607ebee5e7b7a64960a9b96c8b1d6c0b93de57f87ed",
     "app/src/queueModel.ts": "358956abae45960035c68c4ed2651883b59f4fe15e4cf05ff742a48389eef6ef",
     "app/src/useNarrow.ts": "778590346d2ea176aa7dca92bbbb4b5bfb832de8227c54488884e08999e9402a",
+    "app/src/windowPaneName.ts": "c34351f9c7255c9f6c63a8e2491a53c93d2c6cf7b600d688e23ea7abd48da0cd",
     "app/src/wsTree.ts": "be741faf888894894b256bed369a3a0a49ab03d147d116f8a77ebca9305470f1"
   },
   "server-go": {

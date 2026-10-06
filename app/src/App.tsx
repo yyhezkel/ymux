@@ -20,6 +20,7 @@ import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
 import { RAIL_COLLAPSED_W } from "./contextModel";
 import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
+import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
@@ -1484,9 +1485,7 @@ function App() {
     const focused = pid && ws.layout ? findPane(ws.layout, pid) : null;
     const ident = effectiveIdentity(focused ?? undefined, ws);
     if (ident.emoji) parts.push(ident.emoji);
-    const focusedName =
-      focused?.title ||
-      (focused?.connection ? describeConnection(focused.connection) : null);
+    const focusedName = focused ? windowPaneName(focused, describeConnection) : null;
     parts.push(focusedName ?? ws.name);
     if (waitingWorkspaceIds().has(ws.id)) parts.push("●");
     const title = parts.join(" ") + " — ymux";
@@ -3658,6 +3657,13 @@ function App() {
         if (text) pasteIntoActiveTerminal(text);
       }).catch((err) => log.warn("paste failed", err));
     } },
+    { id: "select_all",
+      when: (e) => inTerminal(e) && hasActivePane(),
+      run: (e) => {
+        e.preventDefault();
+        const pid = activePaneId();
+        if (pid) terms.get(pid)?.term.selectAll();
+      } },
     // Phase 17: Claude session summary.
     { id: "summarize_claude", run: (e) => { e.preventDefault(); void summarizeActivePane(); } },
 

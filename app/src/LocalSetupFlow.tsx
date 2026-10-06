@@ -90,7 +90,7 @@ export function LocalSetupFlow(p: Props) {
   const [installLocalHooks, setInstallLocalHooks] = createSignal(true);
   // The persistence group. Windows gets persistence from the zellij tool
   // row instead, so this is the macOS tmux chain only.
-  const [wslGroup, setWslGroup] = createSignal(true);
+  const [persistenceGroup, setPersistenceGroup] = createSignal(true);
   // 2026-08-19: the wizard finishes by creating a native local workspace
   // (it used to create a WSL one). Zellij gives it the persistence that was
   // the only reason to put a local pane inside a distro; on macOS that is
@@ -154,7 +154,7 @@ export function LocalSetupFlow(p: Props) {
       // mac: tmux comes from Homebrew, so without brew AND without tmux
       // the chain is guaranteed to fail — start it unchecked (and the
       // group checkbox is disabled below) instead of failing mid-run.
-      if (mac && !r.winget.present && !r.mac?.tmux.present) setWslGroup(false);
+      if (mac && !r.winget.present && !r.mac?.tmux.present) setPersistenceGroup(false);
     } catch (e) {
       setInspectErr(String(e));
     } finally {
@@ -178,7 +178,7 @@ export function LocalSetupFlow(p: Props) {
       if (checkedTools().has(row.step)) steps.push(row.step);
     }
     if (installLocalHooks()) steps.push("InstallLocalHooks");
-    if (wslGroup() && r && mac) {
+    if (persistenceGroup() && r && mac) {
       for (const s of MAC_CHAIN) {
         if (s === "InstallTmuxLocal" && r.mac?.tmux.present) continue;
         if (s === "DeployTmuxConfLocal" && r.mac?.tmux_conf_ok) continue;
@@ -191,7 +191,7 @@ export function LocalSetupFlow(p: Props) {
   // mac: a machine that already has tmux + conf leaves the step list empty,
   // yet the checked group still asks for the workspace — let that run go
   // through (the backend then only creates the workspace).
-  const canStart = () => buildSteps().length > 0 || (mac && wslGroup());
+  const canStart = () => buildSteps().length > 0 || (mac && persistenceGroup());
 
   const startRun = async () => {
     const steps = buildSteps();
@@ -343,7 +343,7 @@ export function LocalSetupFlow(p: Props) {
               </div>
 
               {/* 2026-08-19: the wizard finishes by creating a workspace to
-                  land in. This block replaces the WSL group's name/cwd
+                  land in. This block replaces the old persistence-group name/cwd
                   inputs — same job, native local target. */}
               <h4 class="provisioning-h4">{t("localSetup.workspace.title")}</h4>
               <label class="provisioning-step-row">
@@ -373,9 +373,9 @@ export function LocalSetupFlow(p: Props) {
                 <label class="provisioning-step-row">
                   <input
                     type="checkbox"
-                    checked={wslGroup()}
+                    checked={persistenceGroup()}
                     disabled={!r().winget.present && !r().mac?.tmux.present}
-                    onChange={() => setWslGroup(!wslGroup())}
+                    onChange={() => setPersistenceGroup(!persistenceGroup())}
                   />
                   <span>
                     {t("localSetup.mac.tmux.group")}
