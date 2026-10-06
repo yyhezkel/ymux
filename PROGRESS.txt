@@ -7883,3 +7883,5 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — rename-shim retirement (ticket ymux-crates-ymux-tunnel-src): emitted handshake tag flipped to YMUX-CHALLENGE (Rust + Go), WINMUX_* env dual-writes, CLI adopt_legacy_env/migrate_legacy_home_dir, legacy pipe listener, X-Winmux-Truncated and use_winmux_tmux_config alias dropped; read arms + folder migrations kept. CLAUDE.md rename section updated, FOLLOWUPS P1 archived, new P1 for server rebake + live smoke. Compiles untested until CI.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
+
+2026-10-06 — popout RTL profile (ticket ymux-app-src-components-popoutterminal-2): popoutProfile.ts key/parse helper; App.tsx writes ti.profile to localStorage before popout_pane and removes it on popout:closed; PopoutTerminal loads settings → setRtlProfiles before constructing TerminalInstance with the origin profile. Vault pages + lock restamped. Compiles untested until CI.
