@@ -2,10 +2,14 @@
 vault: backend-core
 covers:
   - app/src-tauri/src/lib.rs
+  - app/src-tauri/src/agent_runs_store.rs
   - app/src-tauri/src/ipc_meter.rs
+  - app/src-tauri/src/ipc_guard.rs
   - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
+  - app/src-tauri/src/secret_env.rs
+  - app/src-tauri/src/config_lock.rs
 ---
 
 # Backend core — `lib.rs`
@@ -24,7 +28,7 @@ not covered by `popout-*`.
 
 `teardown_workspace_runtime` is the single place a workspace's runtime state dies: the
 Browser child Webview, its pop-out OS window (`close_popout_window` — otherwise the
-window outlives the workspace), the browser session dir, the bootstrap verdict, and the
+window outlives the workspace), its Browser login state (`cleanup_workspace_sessions(app, ws)`: tunnel cookies, macOS per-workspace data store, legacy session dir), the bootstrap verdict, and the
 reverse-tunnel state.
 
 **13,966 lines, and about 1,700 of them are `#[cfg(test)]` at the bottom.** It is the
@@ -53,7 +57,7 @@ put logic there.
 
 ## Key types
 
-- **`AppState`** ([lib.rs:146](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
+- **`AppState`** ([AppState@lib.rs:151](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
   state, `Clone` because every field is an `Arc<Mutex<…>>` and the RPC server task needs
   its own handle. It **wraps** `ymux_core::CoreState` at `state.core`: `sessions`,
   `pane_sessions`, `forwards`, `port_watchers`, `detected_ports`, `port_watcher_tasks`,
@@ -62,10 +66,13 @@ put logic there.
   is the *owner*, siblings are *subscribers*, and the owner slot is released when the
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
-  `pane_status`, `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
+  command, in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
+  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`).
+  `schedule_status_clear(app, pane_id, expected, secs)` clears only if the slot still holds `expected` (`clear_if_current`), so a late timer cannot wipe a newer status.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
 - **`Connection`, `LayoutNode`, `Workspace`** — `ymux-types`. `LayoutNode::Pane` carries
@@ -73,25 +80,55 @@ put logic there.
   also carries `diff_source` and (Phase 91.F) `diff_cwd` — which worktree a Diff pane is
   looking at, `None` = the workspace's own cwd. `diff_cwd` is view state, so it did **not**
   bump `WORKSPACES_SCHEMA_VERSION` (a bump makes an older build refuse to save).
+  `claude_running: Option<bool>` follows the same pattern; `pane_set_claude_running`
+  (clone of `pane_set_smart_bidi` minus the bidi-filter call) writes it via `persist()` and
+  emits `workspaces:changed`.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
+- **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
+  runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
+  keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
+  changed, and a store failure returns `Err("secret env not saved: ..")` after
+  `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
+  `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
+  `workspace_secret_env_keys(workspace_id)` returns names only.
+  `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
+  secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
+  `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
+  in workspace settings)`; WSL panes get a status, no delivery. The `Connection::Wsl` arm first runs `local_setup::wsl_pane_problem` (missing wsl.exe / no distro / wanted distro absent) → `log_warn`, status text, `Err` before `spawn_wsl_pty`; a probe error fails open. `build_tmux_attach_script`
+  takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
+  `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
+  `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
+  status `environment variable refused by sshd: K` + `log_warn`, connect continues.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
   in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints
-  what it is handed. `NEEDS_INPUT_NOTIFICATIONS` and `RESUMED_NOTIFICATIONS` list the
+  what it is handed. `Failed` (`"failed"`) is entered by subkind `stop-failure` (turn died
+  on an API error) and exits like any state, e.g. the next `user-prompt-submit` → Running.
+  `NEEDS_INPUT_NOTIFICATIONS` and `RESUMED_NOTIFICATIONS` list the
   `notification_type` values that mean "blocked on the user" and "unblocked". A `stop`
   arriving after a notification still wins, an unmapped notification changes nothing,
   and a long turn does not keep resetting its own clock — all of that is pinned by unit
   tests in the same file (and ported, with the same test names, to the daemon's
   `server/internal/agent/state.go` in Phase 99 — change both). Transitions reach the UI as the **`pane:agent-run`** event via
   `emit_agent_run_event`, which carries `(started, avg, state, since, seq)`; `seq` bumps
-  only on an applied transition, so a no-op skips the emit. In-memory and
-  session-scoped — never persisted. Its sibling store is
+  only on an applied transition, so a no-op skips the emit. Persisted
+  across restarts by `agent_runs_store.rs`: `<config>/agent-runs.json` (v1) is written on
+  `RunEvent::Exit` and restored in `setup` right after `load_from_disk()`, each run keeping
+  its state timestamp. Restore drops Unknown state, entries without a timestamp, entries
+  `>= STALE_AFTER` (6h, same cutoff as `STALE_AFTER_MS` in `paneAgentState.ts`) old, and
+  pane ids not in the loaded workspaces; a future stamp counts as age 0. Corrupt file or
+  unknown version → `log_warn` + empty. Unit tests live in that file; the first hook after
+  restore corrects any stale-but-kept state. Its sibling store is
   **`AppState.briefs`** (`HashMap<pane_id, PaneBriefEntry>` from `brief.rs`, covered in
   `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
   rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
-  `pane_briefs` command — the `pane_agent_states` pattern verbatim.
+  `pane_briefs` command — the `pane_agent_states` pattern verbatim. Phase 105
+  added **`AppState.context`** (`context_store::ContextState`, also in
+  `backend-rpc.md`): the per-Claude-session first prompt + brief log, the one
+  piece of brief state that IS persisted (`<config>/context/sessions/`); setup
+  calls `context_store::startup` right after loading notes.
 - **`workspace_set_intent`** (BRIEF) — sets/clears `Workspace.intent` (trimmed;
   empty clears), persists atomically, emits `workspaces:changed`, returns the
   updated `Workspace`. The log line carries the intent's LENGTH only — it is user
@@ -121,14 +158,17 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([lib.rs:838](../../app/src-tauri/src/lib.rs)).
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1012](../../app/src-tauri/src/lib.rs)), which hands the
+gate + merge + write to `write_workspaces_text(path, ours, last_known)`
+([write_workspaces_text@lib.rs:953](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
    holds the file text as this process last read or wrote it. `save_to_disk` re-reads
    the file and hands `(ours, base, theirs)` to `workspaces_merge::reconcile`. Reason:
    a stable build and a dev build share `%APPDATA%` unless someone sets
-   `WINMUX_CONFIG_DIR`, and a plain dump is last-write-wins across the whole document —
+   `YMUX_CONFIG_DIR` (or the pre-rename `WINMUX_CONFIG_DIR`), and a plain dump is last-write-wins across the whole document —
    the older binary silently drops every field its structs don't know.
 3. **The schema gate**, between reading the file and merging onto it.
    `WORKSPACES_SCHEMA_VERSION` (currently 4: v2 nesting, v3 `intent`, v4 Phase 91's
@@ -153,11 +193,28 @@ put logic there.
 6. Log line records `N workspaces: R root / N-R nested / P repo` — the tree *shape*,
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
+7. **Config-dir lock (diagnostics only).** `setup()` calls `config_lock::hold_for_process(dir)`
+   ([hold_for_process@config_lock.rs:114](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
+   file lock (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the
+   process lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
+   `<dir>/ymux.owner.json` (tmp + rename) because Windows locks block other handles from reading
+   the locked file. A second instance logs `[CONFIG_LOCK]` WARN naming the holder pid and the
+   `YMUX_CONFIG_DIR` remedy and **carries on** — it never refuses to start; the merge in step 2
+   is what keeps concurrent saves safe. A free lock with a leftover owner file (crash/kill; the
+   OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }` carries the
+   dead holder's record and logs a WARN with its pid + version. `started_at` is an RFC 3339 string. Any lock failure is fail-open
+   (`Unavailable`, WARN). A background thread also scans processes for a pre-rename image name
+   (case-insensitive `winmux`) and WARNs per hit with pid + image name — the older build that
+   the schema gate cannot stop. Logs carry pid/version/exe file name only, no full paths.
 
 `load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
 connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
-`normalize_parents`, **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
-backfills, `backfill_sort_orders`. Since Phase 92 the legacy "no layout → single pane"
+`normalize_parents`, **`flag_pinned_folders`** (sets `is_folder` on any row that has
+children but neither header flag — heals folders the old derived rule called screens;
+idempotent, logged per id), **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
+backfills, `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
+out of `load_from_disk` so tests can run it on a parsed file; it saves only if it changed
+something. Since Phase 92 the legacy "no layout → single pane"
 backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
 header is paneless by design, and either one would have re-grown or deleted it on the next
 load. Other files in the same dir, each with the same
@@ -165,9 +222,15 @@ tmp+rename discipline: `machine-id` (stable per-install id, deliberately **not**
 settings.json so "Reset all settings" can't change this machine's identity),
 tmux labels, session owners.
 
+## Local Insights sampler spawn
+
+`setup()` calls `insights_local::spawn_sampler((*state).clone())` right after the
+rpc_server spawn, and `lib.rs` declares `mod insights_store;`. The sampler is a detached
+task that idles unless a Local workspace exists; details in `backend-claude.md`.
+
 ## Spawning a shell
 
-`pane_connect` ([lib.rs:7949](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9229](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -190,8 +253,9 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
-  it buffers a partial multibyte sequence rather than emitting a broken string. Do not
+- `emit_data` ([emit_data@lib.rs:2584](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+  it buffers a partial multibyte sequence rather than emitting a broken string, and it
+  decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke
   echo is immediate), then at most every 33 ms per session, early at 1 MB pending, and
@@ -205,7 +269,13 @@ a wide argument list because every connection mode funnels through it: `persiste
   live* could land `cd … && claude …` in a running agent — it therefore skips injection
   (`target_was_live`) and emits `pane-connect-notice` so the UI can toast (`had_command` /
   `had_cwd`). It probes liveness with `workspace_sessions_reachable` + `list_workspace_tmux_sessions`;
-  an unreachable host falls back to "not live" (a first SSH connect has no session yet).
+  a cold SSH host (no live handle) while injection is pending is asked anyway by
+  `probe_ssh_session_live`: temp `connect_and_authenticate` with the pane's creds, one
+  `list_tmux_sessions_via_handle`, handle dropped, verdict via pure `attach_guard_verdict`
+  (exact name match; list error → live, fail-closed, logged by kind). A handshake error is
+  returned from `pane_connect` BEFORE the prior-session kill, so App.tsx's passphrase /
+  password / unknown-host prompts fire and retry. `pane_connect` has no RPC caller — only
+  App.tsx `connectPane` invokes it.
   **Phase 91.G**: an explicit `tmux_session_name` runs the SAME probe — it used to be
   assumed live because the only source was the picker, but Phase 91.C's `+` new-session row
   and `sessionForPane` name a session *before* it exists, and assuming live dropped the
@@ -219,6 +289,10 @@ Zellij verbs are built as argument vectors (`zellij_args_list`,
 than bubbling an `io::Error`. Never build these by string concatenation (Rule #3), and
 check `docs/ZELLIJ.md` for what our pinned 0.44.3 binary actually supports before adding
 a verb — zellij.dev documents a different version.
+
+`list_zellij_sessions` joins `~/.ymux/session-meta.json` (fallback `~/.winmux/`) onto the
+`parse_zellij_sessions` rows via `apply_session_meta`, by session name — same fields as the tmux
+join; bad JSON or an unknown name is a no-op, so the row keeps its raw name.
 
 tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` marker frame
 the listing output so `parse_tmux_sessions` can read it back unambiguously.
@@ -356,10 +430,12 @@ list command. The module owns what the picker never needed:
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
 - **Headers vs screens (Phase 92).** `is_header(w)` = `parent_id.is_none() ||
-  is_project_root`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
+  is_project_root || is_folder`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
   never panes (`layout: None`); every other workspace is a SCREEN, the only kind with a
-  layout and the only kind that can be active. Derived, never stored (mirror:
-  `isHeader` in `app/src/wsTree.ts`). What follows from it, all in lib.rs next to
+  layout and the only kind that can be active. `is_folder` is STORED, set by every
+  `workspace_pin_project_folder` (git or not) — a non-git folder has a parent and no
+  `is_project_root`, so a purely derived rule called it a screen and the backfill grew a
+  pane onto it (mirror: `isHeader` in `app/src/wsTree.ts`). What follows from it, all in lib.rs next to
   `root_workspace_of`: `screen_or_self` (a header hands activation to `first_screen_of` —
   its first non-header child in sidebar order — or errs when it has none) is applied by
   `workspace_set_active` AND the RPC `select-workspace` / `action.connect`;
@@ -418,14 +494,20 @@ list command. The module owns what the picker never needed:
 
 - **Rule #7** — every config write is tmp + fsync + rename. No exceptions in this file.
 - **Rule #6** — every `#[tauri::command]` returns `Result<_, String>`; no `panic!`.
-- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path. The
-  `state.workspaces.lock().unwrap()` calls are the known exception and predate the rule.
+- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path; no
+  exceptions left (the old `state.workspaces.lock().unwrap()` carve-out is gone). State
+  mutex locks take one of three forms by enclosing return type: `Result<_, String>` (and
+  the `.setup()` closure) → `.lock().map_err(|e| e.to_string())?`; `Option<_>` →
+  `.lock().ok()?`; anything else (`()`/value returns, spawned tasks, iterator closures)
+  → `lock_or_recover(&mutex)`, defined right after `run()`, which logs a `STATE` warning
+  and returns the poisoned guard's inner value.
 - **Rule #1** — PTY bytes are never logged. `log_debug` lines carry byte counts and
   pane ids only. It is also why every terminal-bearing window is built `.devtools(false)`
   — see Gotchas.
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
-- **Every invoke is counted** — `invoke_handler(ipc_meter::metered(generate_handler![…]))`.
+- **Every invoke is guarded, then counted** — `invoke_handler(ipc_guard::guarded(ipc_meter::metered(generate_handler![…])))`.
+  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser).
   `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
   `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
   `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and

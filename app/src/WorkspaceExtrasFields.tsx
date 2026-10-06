@@ -14,6 +14,8 @@ interface Props {
   setTeardownCmd: (v: string) => void;
   envRows: () => EnvVar[];
   setEnvRows: (v: EnvVar[]) => void;
+  // Keys whose secret value is already stored backend-side (edit mode).
+  storedSecretKeys?: () => string[];
 }
 
 export function WorkspaceExtrasFields(p: Props) {
@@ -44,7 +46,7 @@ export function WorkspaceExtrasFields(p: Props) {
           <span>{t("ws.create.field.env")}</span>
           <button
             class="env-add"
-            onClick={() => p.setEnvRows([...p.envRows(), { key: "", value: "" }])}
+            onClick={() => p.setEnvRows([...p.envRows(), { key: "", value: "", secret: false }])}
           >
             {t("ws.create.btn.add_env")}
           </button>
@@ -63,7 +65,15 @@ export function WorkspaceExtrasFields(p: Props) {
               />
               <span class="env-eq">=</span>
               <input
-                placeholder={t("ws.create.env.value.placeholder")}
+                type={row.secret ? "password" : "text"}
+                autocomplete="off"
+                placeholder={
+                  row.secret
+                    ? row.key && p.storedSecretKeys?.().includes(row.key)
+                      ? t("ws.create.env.secret.stored")
+                      : t("ws.create.env.secret.placeholder")
+                    : t("ws.create.env.value.placeholder")
+                }
                 value={row.value}
                 onInput={(e) => {
                   const next = [...p.envRows()];
@@ -71,6 +81,19 @@ export function WorkspaceExtrasFields(p: Props) {
                   p.setEnvRows(next);
                 }}
               />
+              <label class="env-secret">
+                <input
+                  type="checkbox"
+                  checked={row.secret}
+                  onChange={(e) => {
+                    const next = [...p.envRows()];
+                    // ticking secret keeps the typed value; unchecking drops it so a secret never lingers as plain text
+                    next[i()] = { ...next[i()], secret: e.currentTarget.checked, value: e.currentTarget.checked ? row.value : "" };
+                    p.setEnvRows(next);
+                  }}
+                />
+                <span>{t("ws.create.env.secret")}</span>
+              </label>
               <button
                 class="env-remove"
                 title={t("ws.create.env.remove")}

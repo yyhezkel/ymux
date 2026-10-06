@@ -166,21 +166,53 @@ fn valid_ws_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
-/// First tmux session name recorded for this workspace, if any. Headless
-/// sessions (the ones `workspace_ensure_connected` makes to back the file
-/// manager) carry `None`; only pane-backed ones name a session.
-fn tmux_session_for_workspace(state: &crate::AppState, workspace_id: &str) -> Option<String> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for sess in sessions.values() {
-        if let crate::Session::Ssh(s) = sess {
-            if s.workspace_id == workspace_id {
-                if let Some(t) = s.tmux_session.as_ref() {
-                    return Some(t.clone());
-                }
-            }
+/// Choose the tmux session for the pane-cwd rung. `candidates` are
+/// `(session_id, tmux_session)` pairs; the active pane's session wins,
+/// otherwise the smallest tmux name so the choice never depends on map order.
+fn pick_tmux_session(
+    candidates: &[(String, String)],
+    active_session_id: Option<&str>,
+) -> Option<String> {
+    if let Some(active) = active_session_id {
+        if let Some((_, t)) = candidates.iter().find(|(sid, _)| sid == active) {
+            return Some(t.clone());
         }
     }
-    None
+    candidates.iter().map(|(_, t)| t).min().cloned()
+}
+
+/// tmux session for this workspace's pane-cwd lookup: the active pane's
+/// session when known, else the smallest name. Headless sessions (the ones
+/// `workspace_ensure_connected` makes to back the file manager) carry
+/// `None`; only pane-backed ones name a session. One lock at a time.
+fn tmux_session_for_workspace(state: &crate::AppState, workspace_id: &str) -> Option<String> {
+    let active_pane = state
+        .active_panes
+        .lock()
+        .ok()
+        .and_then(|m| m.get(workspace_id).cloned());
+    let active_session = active_pane.and_then(|pane| {
+        state
+            .core
+            .pane_sessions
+            .lock()
+            .ok()
+            .and_then(|m| m.get(&pane).cloned())
+    });
+    let candidates: Vec<(String, String)> = {
+        let sessions = state.core.sessions.lock().ok()?;
+        sessions
+            .iter()
+            .filter_map(|(sid, sess)| match sess {
+                crate::Session::Ssh(s) if s.workspace_id == workspace_id => s
+                    .tmux_session
+                    .as_ref()
+                    .map(|t| (sid.clone(), t.clone())),
+                _ => None,
+            })
+            .collect()
+    };
+    pick_tmux_session(&candidates, active_session.as_deref())
 }
 
 /// App-local fallback: `<config_dir>/tickets/<workspace_id>/`.
@@ -1439,6 +1471,53 @@ pub async fn tickets_delete(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // WHY: pick_tmux_session tests pin active-pane preference + determinism.
+    fn cands() -> Vec<(String, String)> {
+        vec![
+            ("s2".into(), "ymux-b".into()),
+            ("s1".into(), "ymux-a".into()),
+            ("s3".into(), "ymux-c".into()),
+        ]
+    }
+
+    #[test]
+    fn pick_tmux_session_prefers_active_pane_session() {
+        // breaking it: ticket follows a non-active pane's directory
+        assert_eq!(pick_tmux_session(&cands(), Some("s3")), Some("ymux-c".into()));
+    }
+
+    #[test]
+    fn pick_tmux_session_follows_active_pane_change() {
+        // breaking it: active switch ignored
+        assert_eq!(pick_tmux_session(&cands(), Some("s2")), Some("ymux-b".into()));
+        assert_eq!(pick_tmux_session(&cands(), Some("s3")), Some("ymux-c".into()));
+    }
+
+    #[test]
+    fn pick_tmux_session_is_deterministic_without_active() {
+        // breaking it: choice depends on map iteration order
+        let mut rev = cands();
+        rev.reverse();
+        assert_eq!(pick_tmux_session(&cands(), None), Some("ymux-a".into()));
+        assert_eq!(pick_tmux_session(&rev, None), Some("ymux-a".into()));
+        assert_eq!(pick_tmux_session(&cands(), Some("gone")), Some("ymux-a".into()));
+    }
+
+    #[test]
+    fn pick_tmux_session_single_session_unchanged() {
+        // breaking it: single-pane workspaces regress
+        let one = vec![("s1".to_string(), "ymux-a".to_string())];
+        assert_eq!(pick_tmux_session(&one, None), Some("ymux-a".into()));
+        assert_eq!(pick_tmux_session(&one, Some("s1")), Some("ymux-a".into()));
+    }
+
+    #[test]
+    fn pick_tmux_session_empty_is_none() {
+        // breaking it: headless-only workspace yields a bogus session
+        assert_eq!(pick_tmux_session(&[], None), None);
+        assert_eq!(pick_tmux_session(&[], Some("s1")), None);
+    }
 
     #[test]
     fn base64_roundtrip_small() {

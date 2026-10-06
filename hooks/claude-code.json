@@ -1,9 +1,23 @@
 {
-  "ymux_hooks_version": "1.6.0",
+  "ymux_hooks_version": "1.8.0",
   "agent": "claude-code",
   "min_ymux_version": "0.1.0",
   "settings_file": "~/.claude/settings.json",
   "_notes": [
+    "v1.8.0 (2026-10): StopFailure is registered. Claude Code fires it when",
+    "  a turn ends on an API error (rate limit, auth, overloaded...) instead",
+    "  of Stop. The CLI pushes the error TYPE alone - never error_details or",
+    "  last_assistant_message - and the desktop turns it into the pane light",
+    "  `failed`. State only: never a feed item or a toast. Existing machines",
+    "  must re-run setup-hooks to get it.",
+    "v1.7.0 (2026-10, Phase 105.C): SessionStart is registered again, with one",
+    "  job: the CLI asks the desktop (RPC context.inject, ~300 ms budget,",
+    "  fail-open) for this session's context and prints it on stdout as",
+    "  hookSpecificOutput.additionalContext - on compact/resume the session's",
+    "  goal / done-when / now / next + last 5 deltas + original request, on startup the workspace intent +",
+    "  sibling sessions. Never a feed item or a toast. Off switch: Settings ->",
+    "  General -> Inject context into sessions. Existing machines must re-run",
+    "  setup-hooks to get it; an older CLI that sees the entry silent-acks it.",
     "v1.6.0 (2026-08, Phase 86): PreToolUse carries `timeout: 600` (Claude",
     "  Code's per-hook timeout, seconds). Its default is 60s, while the",
     "  desktop Gate waits up to 120s (600 clamp) for the human - so Claude",
@@ -85,6 +99,14 @@
     "SessionEnd": {
       "matcher": "",
       "command": "${YMUX_BIN} claude-hook session-end"
+    },
+    "SessionStart": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook session-start"
+    },
+    "StopFailure": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook stop-failure"
     },
     "Stop": {
       "matcher": "",

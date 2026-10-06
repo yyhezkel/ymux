@@ -136,8 +136,8 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 
 	passive := map[string]any{"request_id": p.RequestID, "decision": "passive"}
 	// The desktop's early returns: a prompt is turn bookkeeping, a
-	// notification is a state signal only — neither ever makes a card.
-	if p.Subkind == "user-prompt-submit" || p.Subkind == "notification" {
+	// notification or stop-failure is a state signal only — none ever makes a card.
+	if p.Subkind == "user-prompt-submit" || p.Subkind == "notification" || p.Subkind == "stop-failure" {
 		return passive
 	}
 	blocking := p.Kind == "permission_request"
@@ -256,6 +256,11 @@ func (r *HookRegistry) applyLocked(e *hookEntry, subkind string, pl hookPayload,
 		e.brief.Brief = &b
 		e.brief.SessionEnded = false
 		e.brief.Seq++
+	case "stop-failure":
+		// Rust: turn_started_at.take() without record_turn — a failed turn
+		// must not skew the average.
+		e.run.TurnStartedAt = time.Time{}
+		e.run.ApplyHook(subkind, "", now)
 	case "session-end":
 		// The desktop drops the pane's run and emits Unknown at seq+1; keep
 		// that seq so a later frontend still sees the reset as newer.

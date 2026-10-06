@@ -6,6 +6,21 @@ import kotlinx.serialization.*
 import kotlinx.serialization.json.*
 
 @Serializable
+data class Annotated(
+    val attached: Long,
+    @SerialName("auto_name") val autoName: String? = null,
+    @SerialName("claude_session_id") val claudeSessionId: String? = null,
+    @SerialName("claude_title") val claudeTitle: String? = null,
+    val created: Long,
+    val display: String,
+    val label: String? = null,
+    val name: String,
+    val origin: String? = null,
+    val path: String,
+    val windows: Long
+)
+
+@Serializable
 data class ClientInfo(
     @SerialName("client_id") val clientId: String,
     @SerialName("device_name") val deviceName: String,
@@ -167,6 +182,39 @@ data class Session(
 data class SessionCreated(
     val kind: String,
     @SerialName("session_id") val sessionId: String
+)
+
+@Serializable
+data class TermCreateRequest(
+    val cwd: String? = null,
+    val name: String? = null,
+    val policy: String? = null,
+    @SerialName("workspace_id") val workspaceId: String? = null
+)
+
+@Serializable
+data class TermCreated(
+    val display: String,
+    val hooks: Boolean,
+    val name: String,
+    @SerialName("pane_id") val paneId: String? = null,
+    val policy: String? = null,
+    @SerialName("workspace_id") val workspaceId: String? = null
+)
+
+@Serializable
+data class TermKilled(
+    val ok: Boolean
+)
+
+@Serializable
+data class TermRenameRequest(
+    @SerialName("new_name") val newName: String? = null
+)
+
+@Serializable
+data class TermRenamed(
+    val name: String
 )
 
 @Serializable
