@@ -230,7 +230,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9232](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9224](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -490,8 +490,13 @@ list command. The module owns what the picker never needed:
 
 - **Rule #7** — every config write is tmp + fsync + rename. No exceptions in this file.
 - **Rule #6** — every `#[tauri::command]` returns `Result<_, String>`; no `panic!`.
-- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path. The
-  `state.workspaces.lock().unwrap()` calls are the known exception and predate the rule.
+- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path; no
+  exceptions left (the old `state.workspaces.lock().unwrap()` carve-out is gone). State
+  mutex locks take one of three forms by enclosing return type: `Result<_, String>` (and
+  the `.setup()` closure) → `.lock().map_err(|e| e.to_string())?`; `Option<_>` →
+  `.lock().ok()?`; anything else (`()`/value returns, spawned tasks, iterator closures)
+  → `lock_or_recover(&mutex)`, defined right after `run()`, which logs a `STATE` warning
+  and returns the poisoned guard's inner value.
 - **Rule #1** — PTY bytes are never logged. `log_debug` lines carry byte counts and
   pane ids only. It is also why every terminal-bearing window is built `.devtools(false)`
   — see Gotchas.
