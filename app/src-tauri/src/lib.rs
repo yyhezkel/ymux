@@ -9,6 +9,7 @@ mod workspace_browser;
 mod claude_log;
 mod claude_summary;
 mod claude_usage;
+mod config_lock;
 mod connect_wizard;
 mod context_store;
 mod dev;
@@ -12319,6 +12320,11 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
+            // Advisory lock + owner record so a second build on this dir
+            // names the first in the log. Never blocks boot.
+            if let Some(dir) = &cfg_dir {
+                config_lock::hold_for_process(dir);
+            }
 
             // Phase 53.G: was Phase 8.F.1 — the iframe-bridge
             // initialization script was the parent-side companion to
