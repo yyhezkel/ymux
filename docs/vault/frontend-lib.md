@@ -13,6 +13,7 @@ covers:
   - app/src/bidi.ts
   - app/src/copyBidi.ts
   - app/src/mouseRtl.ts
+  - app/src/popoutProfile.ts
   - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
   - app/src/claudeRunning.ts
@@ -23,6 +24,10 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+unowned:
+  - app/src/bindings/*.ts   # ts-rs generated
+  - app/src/*.test.ts   # tests are the spec, deliberately uncovered
+  - app/src/vite-env.d.ts   # vite type shim
 ---
 
 # Frontend library modules
@@ -242,8 +247,11 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window that never loads settings still
+  again — the backend is authoritative, so a popout window (which loads settings only for the RTL profiles) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
+- **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
+  `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
+  hand-off of the origin pane's RTL profile to its popout window.
 - **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
   `dir` react together. A missing key returns the key itself.
