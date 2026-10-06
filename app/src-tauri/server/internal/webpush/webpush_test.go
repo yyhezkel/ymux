@@ -129,6 +129,7 @@ func TestSendHeadersAndStatus(t *testing.T) {
 		got = r.Header.Clone()
 		n = r.ContentLength
 		w.WriteHeader(http.StatusGone)
+		_, _ = w.Write([]byte("push subscription has unsubscribed or expired. " + strings.Repeat("x", 60) + "\nsecond line"))
 	}))
 	defer srv.Close()
 	k, err := LoadOrCreateKeys(filepath.Join(t.TempDir(), "k.pem"))
@@ -142,8 +143,10 @@ func TestSendHeadersAndStatus(t *testing.T) {
 	}
 	code, err := k.Send(context.Background(), srv.Client(), sub, []byte(`{"t":1}`),
 		Options{TTL: time.Minute, Urgency: "high", Topic: "req1"})
-	if err != nil {
-		t.Fatal(err)
+	// A non-2xx carries the service's reason: first line only, a token-shaped
+	// run masked.
+	if err == nil || err.Error() != "push service 410: push subscription has unsubscribed or expired. …" {
+		t.Fatalf("err = %v", err)
 	}
 	if code != http.StatusGone {
 		t.Fatalf("status %d", code)

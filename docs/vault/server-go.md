@@ -418,7 +418,9 @@ own WebSocket) is untouched.
   0600 — a new key orphans every subscription), `encrypt` (RFC 8291 key schedule over
   `crypto/hkdf`, one aes128gcm record, pinned to the RFC's Appendix A vector byte for
   byte), `authorization` (an ES256 JWT for the endpoint's origin, 12 h), `Send` (TTL /
-  Urgency / Topic headers, returns the service's status). `MaxPayload` is 3993 bytes.
+  Urgency / Topic headers, returns the service's status; a non-2xx also returns an error
+  carrying the service's own reason — first line, printable ASCII, 160 bytes, any 40+ char
+  run masked so nothing token-shaped is logged). `MaxPayload` is 3993 bytes.
 - `store.go` is `<data>/webpush.json`: `{device_id, lang, subscription, created_ms}`,
   upsert by endpoint, at most 64 records, tmp + rename, 0600.
 - Routes (behind `term.gate`, so `shell:attach`): `GET /api/v2/webpush/key`,
@@ -437,8 +439,9 @@ own WebSocket) is untouched.
   (`chat.ActiveDeviceScopes`); otherwise, or on a 404/410 from the push service, the
   record is dropped. `main.go` wires it with `SetWebPush` **before** `hooks.Start`, so
   `notify` is set before any hook can read it.
-- Logs: kind, device, status and the push service's HOST — never the endpoint or the
-  card text (Rule #1).
+- Logs: kind, device, status, the push service's HOST and its `reason` — never the endpoint
+  or the card text (Rule #1). The status decides the branch; `err` with code 0 is a
+  transport failure.
 
 **`term/settings.go` (Phase 108, WEB-DESIGN C4) — the browser's settings.** Decided
 2026-10-05: one document on the daemon, shared by every browser. `GET /api/v2/settings` →

@@ -6,6 +6,7 @@ package term
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"sync"
@@ -38,7 +39,8 @@ func (f *fakePusher) send(_ context.Context, sub webpush.Subscription, p []byte,
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, sentPush{sub.Endpoint, m, o})
 	if c, ok := f.status[sub.Endpoint]; ok {
-		return c, nil
+		// Like webpush.Send: a non-2xx comes with the service's reason.
+		return c, errors.New("push service: refused")
 	}
 	return http.StatusCreated, nil
 }

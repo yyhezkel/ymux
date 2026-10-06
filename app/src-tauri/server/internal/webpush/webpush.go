@@ -135,7 +135,9 @@ type Options struct {
 
 // Send encrypts payload for sub and POSTs it. It returns the push service's
 // status: 201 is delivered-to-the-service; 404/410 mean the subscription is
-// gone and should be dropped (the caller decides).
+// gone and should be dropped (the caller decides). A non-2xx status comes
+// back WITH an error carrying the service's own reason (clipped, see reason),
+// so a refusal is diagnosable from the log; a nil error means 2xx.
 func (k *Keys) Send(ctx context.Context, c *http.Client, sub Subscription, payload []byte, o Options) (int, error) {
 	if len(payload) > MaxPayload {
 		return 0, fmt.Errorf("payload %d bytes > %d", len(payload), MaxPayload)
@@ -179,8 +181,41 @@ func (k *Keys) Send(ctx context.Context, c *http.Client, sub Subscription, paylo
 		return 0, err
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return resp.StatusCode, fmt.Errorf("push service %d: %s", resp.StatusCode, reason(raw))
+	}
 	return resp.StatusCode, nil
+}
+
+// reason is the first line of a push service's error body, clipped to 160
+// bytes and stripped to printable ASCII. FCM and autopush answer with prose
+// ("push subscription has unsubscribed or expired."), never the endpoint, but
+// any run of 40+ chars without a space is masked anyway so a token-shaped
+// string cannot reach the log.
+func reason(body []byte) string {
+	line, _, _ := strings.Cut(string(body), "\n")
+	var b strings.Builder
+	for _, r := range line {
+		if r >= 0x20 && r < 0x7f {
+			b.WriteRune(r)
+		}
+	}
+	out := b.String()
+	words := strings.Fields(out)
+	for i, w := range words {
+		if len(w) >= 40 {
+			words[i] = "…"
+		}
+	}
+	out = strings.Join(words, " ")
+	if len(out) > 160 {
+		out = out[:160]
+	}
+	if out == "" {
+		return "(no body)"
+	}
+	return out
 }
 
 // encrypt is RFC 8291 §3–4 with a single aes128gcm record (RFC 8188):

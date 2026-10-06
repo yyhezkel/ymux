@@ -245,17 +245,19 @@ func (wp *webPusher) deliver(n webNote, onlyDevice string) int {
 		code, err := wp.send(ctx, rec.Sub, payload, n.options())
 		cancel()
 		host := endpointHost(rec.Sub.Endpoint)
+		// The status decides; err is either a transport failure (code 0) or
+		// the service's own reason for a non-2xx, logged for diagnosis.
 		switch {
-		case err != nil:
-			logger.Warn("web push send failed", "kind", n.Kind, "device", rec.DeviceID, "service", host, "err", err)
 		case code == http.StatusNotFound || code == http.StatusGone:
 			_, _ = wp.store.Remove(rec.Sub.Endpoint, "")
-			logger.Info("web push: subscription expired, dropped", "device", rec.DeviceID, "service", host, "status", code)
+			logger.Info("web push: subscription expired, dropped", "device", rec.DeviceID, "service", host, "status", code, "reason", err)
 		case code >= 200 && code < 300:
 			sent++
 			logger.Debug("web push sent", "kind", n.Kind, "device", rec.DeviceID, "service", host)
+		case code == 0:
+			logger.Warn("web push send failed", "kind", n.Kind, "device", rec.DeviceID, "service", host, "err", err)
 		default:
-			logger.Warn("web push refused", "kind", n.Kind, "device", rec.DeviceID, "service", host, "status", code)
+			logger.Warn("web push refused", "kind", n.Kind, "device", rec.DeviceID, "service", host, "status", code, "reason", err)
 		}
 	}
 	return sent

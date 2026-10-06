@@ -42,6 +42,7 @@ import {
 import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { startPwa } from "./web/pwa";
+import { installHebrewMono } from "./web/fonts";
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
 import { splitArgs } from "./web/argv";
@@ -169,12 +170,14 @@ export class WebBackend implements Backend {
    */
   async init(): Promise<void> {
     if (!getToken()) throw new ApiError(401, "not signed in");
+    const font = installHebrewMono(); // in parallel; awaited before the first pane
     const v = await fetch("/api/version").then((r) => r.json() as Promise<{ version?: string }>);
     this.version = v.version ?? "";
     await this.loadSettings();
     await this.reloadWorkspaces();
     await this.events.start();
     await this.seedRestoreHints();
+    await font;
     // Phase 114: the PWA side — never blocks the boot.
     void startPwa({
       lang: () => (this.settingsCache.i18n?.language === "he" ? "he" : "en"),

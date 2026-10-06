@@ -129,6 +129,13 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   binary), write and create (upload), delete, and download — which in a browser goes to
   the browser's own download (`download.ts` calls `web_download`; there is no Save
   dialog or local path). Rename / mkdir / copy / zip have no daemon op yet and reject.
+- **Hebrew in the terminal** (`web/fonts.ts`) — the font stacks (`quoteFamily` in
+  `settings.ts`, the default in `terminalInstance.ts`) name Windows fonts; on Android /
+  Linux `monospace` has no Hebrew, so Hebrew came from a proportional system font and the
+  columns drifted ("spaces in the wrong places"). `init()` declares `"YMUX Hebrew Mono"`
+  (unmodified Liberation Mono, OFL, `app/public/fonts/liberation-mono-{400,700}.ttf`,
+  `unicode-range` Hebrew only) and awaits its load before the first pane. Both stacks end
+  with that family; the desktop never declares it, so it resolves to nothing there.
 - **PWA + notifications** (Phase 114, WEB-DESIGN E) — `web/pwa.ts`. `init()` ends with
   `startPwa` (never awaited): registers `/sw.js` (`app/public/sw.js`, served as-is — not a
   vite module), posts the device token + language to the worker (it cannot read
