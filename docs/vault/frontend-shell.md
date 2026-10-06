@@ -87,6 +87,9 @@ to break:
   `copyTerminalSelection()` resolves true, so a native text-selection copy still works
   in a non-terminal pane. A central `preventDefault` in the loop would kill that.
 
+`select_all` (Ctrl+Shift+A) sits after `paste` in the table: it fires only in a terminal
+with an active pane and calls the active terminal's `selectAll()`.
+
 Accelerators come from `settings.shortcuts` via `shortcutTable()`, rebuilt on every
 `settings:changed`, so a rebind in Settings takes effect without a relaunch. Before
 Phase 87 roughly twenty of these were hardcoded `if` branches with no UI at all.
