@@ -154,9 +154,8 @@ the `Authorization` header only — no query-string token on these ops (that sta
 raw attach/events WebSockets, which are out of OpenAPI; WS is described by `asyncapi.json`).
 **Body caveat:** huma rejects unknown fields and a missing body by default, but the old raw
 handlers ignored both (the browser also sends `pane_id`/`cmd`). So the create/rename bodies
-are pointer fields (`Body *T`; huma v2.38 ignores `required:"false"` on a non-pointer Body and
-always demands it — a nil pointer means optional, handlers fall back to a zero struct; an empty
-rename body then fails name validation with 400) with `additionalProperties:"true"` — do not
+are **pointer** `Body` fields (nil = defaults; huma v2.38 ignores `required:"false"` on a
+non-pointer Body and 400s an empty POST) with `additionalProperties:"true"` — do not
 tighten them, 422s would break the page and web clients. The other term routes (feed, events, history, webapp, ...)
 are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a Service with
 neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
