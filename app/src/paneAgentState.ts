@@ -93,6 +93,23 @@ export function trafficLightKey(
   }
 }
 
+/** The focused pane's light, reduced to what the live region needs. */
+export interface AnnounceSnapshot {
+  paneId: string | null;
+  key: string | null;
+}
+
+/** i18n key to speak, or null for silence. Speaks only when the SAME focused
+ *  pane's key changed: focus moves and first sight of a pane stay quiet. */
+export function agentAnnounceKey(
+  prev: AnnounceSnapshot,
+  next: AnnounceSnapshot,
+): string | null {
+  if (next.paneId === null || next.key === null) return null;
+  if (prev.paneId !== next.paneId) return null;
+  return prev.key === next.key ? null : next.key;
+}
+
 /** M:SS, zero-padded seconds. Shared with the pane header's turn ticker. */
 export function clockMMSS(sec: number): string {
   return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
