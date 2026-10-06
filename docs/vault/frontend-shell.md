@@ -353,13 +353,15 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
   until they connect — that is its contract. A row's name is fixed at creation.
 
-## `PaneView.tsx` (2,194) — one terminal pane
+## `PaneView.tsx` (2,174) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
 session picker (tmux/zellij sessions, Claude sessions), pane title and annotation
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
-based on its effective connection.
+based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
+(`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
+the directory listing itself no longer lives in `PaneView`.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls
@@ -406,15 +408,16 @@ and the tab's X land on the same neighbour.
 
 **`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
-disagree about what colour a pane is. Unit-tested in `paneAgentState.test.ts`. It only
+disagree about what colour a pane is. `failed` (StopFailure, API-error turn) is a fourth
+light, painted as a red square; `queueStatus` maps it to `stuck`. Unit-tested in `paneAgentState.test.ts`. It only
 decides how to *paint* a state; the transition table is owned by the backend
 (`PaneAgentState::apply_hook` in `lib.rs`, arriving as the `pane:agent-run` event) — see
 `backend-core.md`.
 
 **`AgentLight.tsx` (45)** — paints it. Green = Claude is working, yellow = it finished and
-it is your move, red = it is blocked on you, **nothing at all = unknown**, which is the
+it is your move, red = it is blocked on you, a filled square (red, no pulse) = the turn died on an API error (`failed`), **nothing at all = unknown**, which is the
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
-untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
+untrustworthy. It uses **shape as well as hue** (disc / ring / triangle / square) so it survives
 greyscale, 8px, and red-green deficiency.
 
 **`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
