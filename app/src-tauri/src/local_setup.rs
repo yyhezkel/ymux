@@ -1230,8 +1230,6 @@ pub(crate) struct LocalSetupInput {
     #[serde(default)]
     pub distro: Option<String>,
     #[serde(default)]
-    pub wsl_username: Option<String>,
-    #[serde(default)]
     pub workspace_name: Option<String>,
     #[serde(default)]
     pub create_workspace: bool,
@@ -1869,14 +1867,8 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                 // uid-1000 user as root + set it as the wsl.conf default,
                 // then terminate the distro so the default applies.
                 let user = sanitize_linux_username(
-                    input
-                        .wsl_username
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            std::env::var("USERNAME").unwrap_or_else(|_| "ymux".into())
-                        })
+                    std::env::var("USERNAME")
+                        .unwrap_or_else(|_| "ymux".into())
                         .as_str(),
                 );
                 // Two things this script must NOT do, both learned the hard
