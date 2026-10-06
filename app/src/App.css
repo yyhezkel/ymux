@@ -1057,6 +1057,12 @@ body {
   clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
   animation: ymux-agent-light-pulse 1.6s ease-in-out infinite;
 }
+/* Failed: filled square — the turn died on an API error. No pulse:
+   nothing is pending, the user just needs to know it stopped. */
+.pane-agent-light[data-light="failed"] {
+  background: var(--w-error, #f7768e);
+  border-radius: 0;
+}
 @keyframes ymux-agent-light-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
@@ -7487,3 +7493,16 @@ body.ymux-dragging .pane-conn {
   padding-inline: 4px;
 }
 .context-link:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); }
+
+/* Visually hidden, still read by screen readers (display:none would not be). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

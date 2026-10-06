@@ -49,8 +49,10 @@ and it no longer hosts the "existing" flows at all.
   platform's multiplexer, offers to install what is missing (winget / Homebrew /
   official installers / `npm -g`), installs ymux hooks for local Claude Code, and
   finishes by creating a local workspace to land in. Progress arrives as
-  `local-setup:progress` events from `local_setup.rs`. The macOS tmux chain is toggled by
-  the `persistenceGroup` signal (default on; off when brew and tmux are both absent).
+  `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
+  `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
+  The macOS tmux chain is toggled by the `persistenceGroup` signal (default on; off when
+  brew and tmux are both absent).
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
   `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
@@ -93,10 +95,13 @@ the names to `storedSecretKeys` (failure → logged, editor still usable):
   `sessionNames` and names the tmux/zellij sessions behind the subtree's session rows
   (every row with `tmux_session`) — those are KILLED on the host, the one thing the
   dialog does that reaches the host; App's `commitDelete` does the kill before the delete.
-- **`DirPicker.tsx` (176)** — remote directory browser over the workspace's live SSH
-  session. Its markup, CSS classes (`dir-picker-*`), i18n keys (`connect.dirPicker.*`)
-  and localStorage recents were lifted out of `PaneView`, where the dialog had been
-  sitting unreachable.
+- **`DirPicker.tsx` (232)** — remote directory browser over the workspace's live SSH
+  session, one list body in two variants. `modal` (App's pin-folder dialog) keeps the
+  `dir-picker-*` classes, `connect.dirPicker.*` i18n keys and localStorage recents.
+  `inline` (the `PaneView` wizard's browse view) renders the wizard's `nc-*` markup,
+  reports each navigation through `onPathChange`, and is the only remaining caller of
+  `file_home_remote` / `file_list_remote`. The props are a discriminated union, so an
+  inline picker without `onPathChange` is a type error.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
 ## `SettingsModal.tsx` (1,869)
@@ -159,6 +164,7 @@ typed, and a typo produced a hotkey that silently never fired), and it is passed
 
 **`VersionManager.tsx` (228)** is the Updates tab's list: every published release,
 install any of them (including a downgrade, with a warning), and pick a release channel.
+The Install button is enabled by `dmg_url` on macOS and `nsis_url` elsewhere.
 Backed by `updater_list_versions` / `updater_install_version`.
 
 ## Invariants

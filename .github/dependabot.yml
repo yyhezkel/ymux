@@ -15,7 +15,7 @@ updates:
     # That pin is the SHA of the `stable` BRANCH. The only tag in the repo,
     # v1, points at `master`, where `toolchain` is a required input with no
     # default -- so a bump onto it silently switches branches. Every call site
-    # passes `toolchain: stable` explicitly to survive that, but check the
+    # passes `toolchain: 1.95.0` explicitly (equal to rust-toolchain.toml) to survive that, but check the
     # proposed SHA is still on `stable` rather than trusting the diff.
     #
     # npm and cargo are deliberately NOT enabled here yet: turning them on
