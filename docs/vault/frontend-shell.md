@@ -166,7 +166,7 @@ notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 **Headers + cards (Phase 91.E — the cmux look).** Every row is still one
 `.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
 is shared), but there are two bodies. **Phase 92 made the split structural:** `isHeaderRow(w)`
-is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder, full stop; it
+is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder (`is_project_root || is_folder`), full stop; it
 holds rows and never panes, and it is never the active workspace. A header renders the
 pre-91.E row as a slim `.ws-header`: a chevron on EVERY header (it may hold zero screens
 right after a create), glyph, dim small-caps-weight name, worktree chip, the `+`, and a
@@ -443,7 +443,7 @@ Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
 
 **`wsTree.ts`** (Phase 92) — the header / screen rule and the tree walks, shared by the
 Sidebar and App and mirrored by `is_header` in lib.rs: `isHeader(w)` (`!parent_id ||
-is_project_root`), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
+is_project_root || is_folder` — stored, not derived), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
 (`sort_order` asc, null last, insertion order — the same sort as the Sidebar's `childrenOf`
 and lib.rs's `children_in_order`), `firstScreenOf` (skips a root's folder children — they
 are headers too), `screenOrSelf` (a screen is itself, a header hands over, an empty header
