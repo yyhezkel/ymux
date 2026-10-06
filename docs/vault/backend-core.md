@@ -235,6 +235,10 @@ than bubbling an `io::Error`. Never build these by string concatenation (Rule #3
 check `docs/ZELLIJ.md` for what our pinned 0.44.3 binary actually supports before adding
 a verb — zellij.dev documents a different version.
 
+`list_zellij_sessions` joins `~/.ymux/session-meta.json` (fallback `~/.winmux/`) onto the
+`parse_zellij_sessions` rows via `apply_session_meta`, by session name — same fields as the tmux
+join; bad JSON or an unknown name is a no-op, so the row keeps its raw name.
+
 tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` marker frame
 the listing output so `parse_tmux_sessions` can read it back unambiguously.
 `session-meta` labels cross the wire **hex-encoded** (`hex_utf8`) so Hebrew/RTL labels
