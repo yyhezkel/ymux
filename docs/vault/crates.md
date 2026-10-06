@@ -82,6 +82,11 @@ the terminal glyph from, and the fallback that lets the row's first pane re-atta
 restart on a machine whose localStorage never saw it. `parent_id`'s comment now names three
 create paths, not two.
 
+**`Workspace.is_folder: bool`** marks a pinned folder, git or not, so it stays a header
+(`is_header` in lib.rs). Stored because a non-git folder has a `parent_id` but no
+`is_project_root`. Serde-default false and skipped when false; no schema bump — an older
+build that drops it is re-healed by `flag_pinned_folders` on the next load.
+
 **`Workspace.tabs_mode: bool`** is worth reading the comment on. It renders the
 workspace's panes as a tab strip instead of a split grid — and it is a **flag, not a
 `LayoutNode::Tabs` variant**, deliberately. The `layout` tree is untouched by the mode:
