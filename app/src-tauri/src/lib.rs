@@ -8643,6 +8643,58 @@ fn pane_set_smart_bidi(
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
+// Persist "Claude is running in this pane" so a reattach to a persistent
+// session starts in the right bidi state before the first hook arrives.
+fn set_pane_claude_running_in_layout(node: &mut LayoutNode, target: &str, running: bool) -> bool {
+    match node {
+        LayoutNode::Pane {
+            pane_id,
+            claude_running,
+            ..
+        } if pane_id == target => {
+            *claude_running = Some(running);
+            true
+        }
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { first, second, .. } => {
+            set_pane_claude_running_in_layout(first, target, running)
+                || set_pane_claude_running_in_layout(second, target, running)
+        }
+    }
+}
+
+#[tauri::command]
+fn pane_set_claude_running(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    pane_id: String,
+    running: bool,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state.workspaces.lock().unwrap();
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        let layout = ws
+            .layout
+            .as_mut()
+            .ok_or_else(|| format!("workspace {workspace_id} has no layout"))?;
+        if !set_pane_claude_running_in_layout(layout, &pane_id, running) {
+            return Err(format!("no pane {pane_id} in workspace {workspace_id}"));
+        }
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_debug("PTY", &format!(
+        "[bidi] pane_set_claude_running: ws={} pane={} running={}",
+        workspace_id, pane_id, running
+    ));
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 #[tauri::command]
 fn pane_set_title(
     state: State<'_, AppState>,
@@ -12636,6 +12688,7 @@ pub fn run() {
             clear_debug_log_cmd,
             pane_set_identity,
             pane_set_smart_bidi,
+            pane_set_claude_running,
             workspace_browser::workspace_browser_show,
             workspace_browser::workspace_browser_hide,
             workspace_browser::workspace_browser_navigate,
