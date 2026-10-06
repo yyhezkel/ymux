@@ -159,8 +159,8 @@ back) surfaced as the user-facing error message.
 `cfg(target_os)`; every error is an `Err(String)` returned before any exit is scheduled:
 
 - **Windows** — NSIS installer download, sha256 check, spawn, exit. Unchanged.
-- **macOS** — `Manifest::dmg_for_arch(mac_dmg_arch_tag(ARCH))` yields the per-arch
-  `dmg_x64_*` / `dmg_aarch64_*` url + sha256. No url → "falling back to manual download";
+- **macOS** — `Manifest::dmg_for_install(mac_dmg_arch_tag(ARCH))` (wraps `dmg_for_arch`)
+  yields the per-arch `dmg_x64_*` / `dmg_aarch64_*` url + sha256 or the refusal `Err`. No url → "falling back to manual download";
   no sha (manifest path) → refuses unverified. `updater_install_version` uses
   `ReleaseInfo.dmg_url` (sha optional, settings backup kept). Both call
   `macos::install_dmg_and_relaunch`.
