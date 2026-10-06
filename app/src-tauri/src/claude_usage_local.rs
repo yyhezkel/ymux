@@ -396,7 +396,11 @@ fn scan_file(
                     continue;
                 }
             },
-            None => continue,
+            // Missing or non-string timestamp: same parse error as Go (D6).
+            None => {
+                rep.parse_errors += 1;
+                continue;
+            }
         };
         if ts < since || ts > until {
             continue;
@@ -716,6 +720,24 @@ mod tests {
         write_transcript(&tmp, "p", "s1", &lines);
         let rep = scan(&tmp, now - 3600, now);
         assert_eq!((rep.totals.calls, rep.parse_errors), (0, 0));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D6 parity with Go: an assistant line with a missing or non-string
+    // timestamp is one parse error, not a silent skip.
+    #[test]
+    fn missing_timestamp_is_parse_error() {
+        let now = chrono::Utc::now().timestamp();
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let usage = r#""usage":{"input_tokens":1,"output_tokens":2}"#;
+        let lines = [
+            format!(r#"{{"type":"assistant","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5",{usage}}}}}"#),
+            format!(r#"{{"type":"assistant","timestamp":123,"sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5",{usage}}}}}"#),
+        ];
+        write_transcript(&tmp, "p", "s1", &lines);
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!((rep.parse_errors, rep.totals.calls), (2, 0));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }
