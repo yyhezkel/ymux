@@ -108,11 +108,12 @@ jobs:
       # works while the prose is true — docs/MODULES.md claimed lib.rs was
       # ~1760 lines long after it had grown to 12,475, and nothing said so.
       #
-      # Two checks, both in scripts/vault-check.mjs: sha256 of every covered
+      # Checks in scripts/vault-check.mjs: sha256 of every covered
       # file against docs/vault/.vault-lock.json (catches drift that arrived
-      # via a merge or another worktree, not just via this PR), plus "if you
+      # via a merge or another worktree, not just via this PR), "if you
       # touched covered code, the vault file must have moved too" (which
-      # `--write` alone cannot satisfy).
+      # `--write` alone cannot satisfy), and the ownership check: every
+      # tracked code file is covered by a vault or listed in an `unowned:`.
       #
       # It needs nothing but node + git and runs in under a second. The PR
       # title and commit message go through `env:` rather than `${{ }}`
@@ -150,12 +151,11 @@ jobs:
             node scripts/vault-check.mjs --diff-base "$base"
           fi
 
-      # The cite checker the gate above calls (scripts/vault-cites.mjs) has
-      # its own unit tests; nothing else would ever run them. Node only, a
-      # few seconds.
-      - name: Vault cite checker tests
+      # The cite checker and the gate above have their own tests; nothing
+      # else would ever run them. Node only, a few seconds.
+      - name: Vault checker tests
         shell: bash
-        run: node --test scripts/vault-cites.test.mjs
+        run: node --test scripts/vault-cites.test.mjs scripts/vault-check.test.mjs
 
       - name: Install frontend deps
         working-directory: app

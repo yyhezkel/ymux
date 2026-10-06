@@ -73,7 +73,7 @@ against a 5-minute write's 1.25x, and collapsing them understates a long session
 **Rule #1 by construction:** it reads `message.model`, `message.usage`, the timestamp,
 the session id and the cwd. It never reads message content, and it logs only counts.
 
-## `claude_log.rs` (600) — alive on purpose, unused on purpose
+## `claude_log.rs` (693) — alive on purpose, unused on purpose
 
 Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
 competing 'talk to claude' UIs felt fragmented"). Yossi asked to keep the backend for a
@@ -85,7 +85,9 @@ resulting warning cascade.
   mtime-gated, full-file fetch (no byte diffing).
 - `claude_log_list(workspace_id)` — local directory scan + per-file summary.
 - `claude_log_read(workspace_id, session_id)` — parse the local JSONL into a structured
-  `ClaudeLogEntry` stream.
+  `ClaudeLogEntry` stream. `user`/`assistant` entries carry an optional `usage`
+  (`ClaudeLogUsage`: input / output / cache_read_input / cache_creation_input tokens,
+  key names as in `claude_usage_local.rs`; missing key → 0, non-object → omitted).
 
 **Do not delete this as dead code.** It is deliberate, and the header says so.
 
