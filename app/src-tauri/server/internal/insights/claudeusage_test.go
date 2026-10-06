@@ -486,3 +486,22 @@ func TestScanWalkFollowsSymlinksAndDotJsonl(t *testing.T) {
 		t.Fatalf("scanned=%d calls=%d skipped=%d, want 6/6/2", rep.ScannedFiles, rep.Totals.Calls, rep.SkippedFiles)
 	}
 }
+
+// TestScanUnreadableRootIsAnError pins D9: an existing but unreadable root is an
+// error, not an empty report; only a missing root is empty.
+func TestScanUnreadableRootIsAnError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "projects")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(root, 0o000); err != nil {
+		t.Skipf("chmod unsupported: %v", err)
+	}
+	defer os.Chmod(root, 0o755)
+	if _, err := os.ReadDir(root); err == nil {
+		t.Skip("root still readable (running as root?)")
+	}
+	if _, err := scanClaudeUsage(root, 0, 1); err == nil {
+		t.Fatal("expected error for unreadable root")
+	}
+}

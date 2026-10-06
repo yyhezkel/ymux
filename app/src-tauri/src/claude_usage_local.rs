@@ -161,8 +161,9 @@ impl Agg {
     }
 }
 
-/// Scan the transcript tree for one window.
-pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
+/// Scan the transcript tree for one window. A missing root is an empty report;
+/// any other failure to read it is an error (same policy as the Go scanner).
+pub fn scan(root: &Path, since: i64, until: i64) -> Result<ClaudeUsageReport, String> {
     let t0 = std::time::Instant::now();
     let mut rep = ClaudeUsageReport {
         since,
@@ -193,7 +194,10 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
     // is an empty report, not an error.
     let dirs_iter = match std::fs::read_dir(root) {
         Ok(d) => d,
-        Err(_) => return finish(rep, buckets, &by_model, &by_project, &by_session, t0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0));
+        }
+        Err(e) => return Err(format!("read claude projects dir: {e}")),
     };
 
     for dir in dirs_iter.flatten() {
@@ -250,7 +254,7 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
         }
     }
 
-    finish(rep, buckets, &by_model, &by_project, &by_session, t0)
+    Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0))
 }
 
 fn finish(
@@ -500,8 +504,8 @@ pub fn route(query: &str) -> Result<String, String> {
     }
 
     let rep = match projects_dir() {
-        Some(root) => scan(&root, since, until),
-        None => scan(Path::new(""), since, until),
+        Some(root) => scan(&root, since, until)?,
+        None => scan(Path::new(""), since, until)?,
     };
     crate::log_debug(
         "MONITOR",
@@ -598,7 +602,7 @@ mod tests {
                 line(now - 300, "s1", "/home/y/a", "claude-opus-5", 10, 20, 40, 0),
             ],
         );
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.totals.calls, 2);
         assert_eq!(rep.totals.in_tokens, 110);
         assert_eq!(rep.totals.out_tokens, 220);
@@ -616,7 +620,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let now = chrono::Utc::now().timestamp();
         write_transcript(&tmp, "p", "s", &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.by_model.len(), 1);
         assert_eq!(rep.by_model[0].key, "claude-opus-5");
         assert_eq!(rep.by_model[0].speed, "standard");
@@ -625,13 +629,34 @@ mod tests {
 
     #[test]
     fn missing_root_is_an_empty_report_not_a_panic() {
-        let rep = scan(Path::new("/definitely/not/here"), 0, 1);
+        let rep = scan(Path::new("/definitely/not/here"), 0, 1).expect("scan");
         assert_eq!(rep.totals.calls, 0);
         assert!(rep.series.is_empty());
         // Empty vectors must serialize as [] so the client can map without a guard.
         let json = serde_json::to_string(&rep).expect("serialize");
         assert!(json.contains(r#""series":[]"#), "{json}");
         assert!(json.contains(r#""by_model":[]"#), "{json}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_root_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        // Pins Go parity (D9): a root that exists but cannot be read is an error, not an empty report.
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-unread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        // Running as root still reads the dir; nothing to pin then.
+        if std::fs::read_dir(&tmp).is_ok() {
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            let _ = std::fs::remove_dir_all(&tmp);
+            return;
+        }
+        let res = scan(&tmp, 0, 1);
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(res.is_err());
     }
 
     #[test]
@@ -666,7 +691,7 @@ mod tests {
         for i in 0..2001 {
             write_transcript(&tmp, "p", &format!("s{i}"), &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
         }
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.scanned_files, 2001);
         assert_eq!(rep.totals.calls, 2001);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -685,7 +710,7 @@ mod tests {
                 File::options().write(true).open(&p).expect("open").set_modified(old).expect("mtime");
             }
         }
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.scanned_files, 1001);
         assert_eq!(rep.skipped_files, 1000);
         assert_eq!(rep.totals.calls, 1001);
@@ -700,7 +725,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp();
         let big = format!(r#"{{"type":"user","content":"{}"}}"#, "x".repeat(9 * 1024 * 1024));
         write_transcript(&tmp, "p", "s1", &[big, line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)]);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.totals.calls, 1);
         assert_eq!(rep.totals.in_tokens, 5);
         assert_eq!(rep.parse_errors, 0);
@@ -719,7 +744,7 @@ mod tests {
         f.write_all(b"{\"type\":\"assistant\",\"usage\":\"\xff\xfe\"}\n").expect("write");
         writeln!(f, "{}", line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)).expect("write");
         drop(f);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.parse_errors, 1);
         assert_eq!(rep.totals.calls, 1);
         let _ = std::fs::remove_dir_all(&tmp);
@@ -749,7 +774,7 @@ mod tests {
             let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-{}-{n}", std::process::id()));
             let _ = std::fs::remove_dir_all(&tmp);
             write_transcript(&tmp, "p", "s1", &[mk(u)]);
-            let rep = scan(&tmp, now - 3600, now);
+            let rep = scan(&tmp, now - 3600, now).expect("scan");
             assert_eq!((rep.parse_errors, rep.totals.calls), (1, 0), "{u}");
             let _ = std::fs::remove_dir_all(&tmp);
         }
@@ -761,7 +786,7 @@ mod tests {
             "s1",
             &[mk(r#"{"input_tokens":null,"cache_creation":null}"#), mk(r#"{"output_tokens":4}"#)],
         );
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!((rep.parse_errors, rep.totals.calls, rep.totals.out_tokens), (0, 2, 4));
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -779,7 +804,7 @@ mod tests {
             format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","content":"mentions \"usage\""}}}}"#),
         ];
         write_transcript(&tmp, "p", "s1", &lines);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!((rep.totals.calls, rep.parse_errors), (0, 0));
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -797,7 +822,7 @@ mod tests {
             format!(r#"{{"type":"assistant","timestamp":123,"sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5",{usage}}}}}"#),
         ];
         write_transcript(&tmp, "p", "s1", &lines);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!((rep.parse_errors, rep.totals.calls), (2, 0));
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -823,7 +848,7 @@ mod tests {
         assert!(std::fs::create_dir(real.join("x.jsonl")).is_ok());
         assert!(symlink(&real, root.join("link")).is_ok());
         assert!(symlink(outside.join("gone"), root.join("deaddir")).is_ok());
-        let rep = scan(&root, now - 3600, now);
+        let rep = scan(&root, now - 3600, now).expect("scan");
         assert_eq!(
             (rep.scanned_files, rep.totals.calls, rep.skipped_files),
             (6, 6, 2)
