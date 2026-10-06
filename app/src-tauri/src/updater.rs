@@ -33,6 +33,9 @@ fn is_placeholder_host(url: &str) -> bool {
 }
 
 use crate::{log_debug, log_info, log_warn, AppState};
+
+#[cfg(target_os = "macos")]
+mod macos;
 use ymux_core::http::get_with_retry;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
