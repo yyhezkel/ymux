@@ -206,16 +206,29 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
         };
         for f in files.flatten() {
             let path = f.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
+            // ends_with, not extension(): a file named exactly `.jsonl` has no
+            // extension in Rust's eyes but counts on the Go side.
+            if !f.file_name().to_string_lossy().ends_with(".jsonl") {
                 continue;
             }
             // The mtime prune: a transcript's mtime is its LAST append, so a
             // file older than the window cannot hold an in-window line and is
             // never opened. This is what keeps a 240 MB tree affordable.
-            let fresh = f
-                .metadata()
+            // fs::metadata follows symlinks (target's mtime); a dangling link
+            // errors and counts as skipped. A dir named x.jsonl is no transcript.
+            let meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => {
+                    rep.skipped_files += 1;
+                    continue;
+                }
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let fresh = meta
+                .modified()
                 .ok()
-                .and_then(|m| m.modified().ok())
                 .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64 >= since)
                 .unwrap_or(false);
@@ -739,5 +752,34 @@ mod tests {
         let rep = scan(&tmp, now - 3600, now);
         assert_eq!((rep.parse_errors, rep.totals.calls), (2, 0));
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D7 parity with Go: symlinked dirs/files are followed, a file named
+    // exactly `.jsonl` counts, a dir named x.jsonl and a dangling link do not.
+    #[cfg(unix)]
+    #[test]
+    fn walk_follows_symlinks_and_dot_jsonl() {
+        use std::os::unix::fs::symlink;
+        let now = chrono::Utc::now().timestamp();
+        let base = std::env::temp_dir().join(format!("ymux-cu-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let outside = base.join("outside");
+        let l = line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0);
+        write_transcript(&root, "real", "a", &[l.clone()]);
+        write_transcript(&root, "real", "", &[l.clone()]); // ".jsonl"
+        let target = write_transcript(&outside, "o", "t", &[l]);
+        let real = root.join("real");
+        assert!(symlink(&target, real.join("ln.jsonl")).is_ok());
+        assert!(symlink(outside.join("gone"), real.join("dead.jsonl")).is_ok());
+        assert!(std::fs::create_dir(real.join("x.jsonl")).is_ok());
+        assert!(symlink(&real, root.join("link")).is_ok());
+        assert!(symlink(outside.join("gone"), root.join("deaddir")).is_ok());
+        let rep = scan(&root, now - 3600, now);
+        assert_eq!(
+            (rep.scanned_files, rep.totals.calls, rep.skipped_files),
+            (6, 6, 2)
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

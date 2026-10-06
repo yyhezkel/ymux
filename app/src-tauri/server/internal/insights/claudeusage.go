@@ -274,7 +274,9 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 	bySession := newAgg()
 
 	for _, dir := range entries {
-		if !dir.IsDir() {
+		// os.Stat follows a symlinked project dir; a dangling one is skipped
+		// silently (same as Rust's is_dir()).
+		if st, err := os.Stat(filepath.Join(root, dir.Name())); err != nil || !st.IsDir() {
 			continue
 		}
 		files, err := os.ReadDir(filepath.Join(root, dir.Name()))
@@ -282,12 +284,18 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 			continue
 		}
 		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			if !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
-			info, err := f.Info()
+			// Stat (not Lstat) so a symlinked transcript counts with its
+			// target's mtime; a dangling link is a skipped file. A dir named
+			// x.jsonl is not a transcript.
+			info, err := os.Stat(filepath.Join(root, dir.Name(), f.Name()))
 			if err != nil {
 				rep.SkippedFiles++
+				continue
+			}
+			if !info.Mode().IsRegular() {
 				continue
 			}
 			// The prune. Last write before the window ⇒ nothing in it.

@@ -451,3 +451,38 @@ func TestScanSkipsAssistantWithoutUsage(t *testing.T) {
 		t.Fatalf("calls=%d parse_errors=%d, want 0/0", rep.Totals.Calls, rep.ParseErrors)
 	}
 }
+
+// D7: symlinked dirs/files are followed, a file named exactly ".jsonl" counts,
+// a dir named x.jsonl and a dangling link do not — mirrors the Rust walk.
+func TestScanWalkFollowsSymlinksAndDotJsonl(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	now := time.Now()
+	l := assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard")
+	writeTranscript(t, root, "real", "a", []string{l}, now)
+	writeTranscript(t, root, "real", "", []string{l}, now) // ".jsonl"
+	writeTranscript(t, outside, "o", "t", []string{l}, now)
+	real := filepath.Join(root, "real")
+	if err := os.Symlink(filepath.Join(outside, "o", "t.jsonl"), filepath.Join(real, "ln.jsonl")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "gone"), filepath.Join(real, "dead.jsonl")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(real, "x.jsonl"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "gone"), filepath.Join(root, "deaddir")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != 6 || rep.Totals.Calls != 6 || rep.SkippedFiles != 2 {
+		t.Fatalf("scanned=%d calls=%d skipped=%d, want 6/6/2", rep.ScannedFiles, rep.Totals.Calls, rep.SkippedFiles)
+	}
+}
