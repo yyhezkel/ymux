@@ -185,6 +185,8 @@ modules the tests *are* the specification.
 matcher so the visual→logical pass protects escapes **exactly** the way this file does —
 one definition of "what an escape looks like".
 
+**Known limit (DEFERRED):** `bidi_reorder` has the terminal-wg "cursed cursor" — caret stays pinned right and a partial repaint can leave a line half-reordered, because the transform runs per rAF chunk while the TUI addresses untransformed columns. Fix needs whole-line reassembly + cursor tracking; see `docs/DECISIONS.md` and `docs/RTL-TEST.md` § `bidi_reorder` — known limits.
+
 **`copyBidi.ts` (185)** — visual→logical for text on its way to the **clipboard**.
 Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on screen but
 pastes correctly, while Claude Code renders correctly and pastes reversed — exactly

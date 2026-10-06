@@ -470,6 +470,15 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Trade-off (stale-true):** Claude died while the app was closed → persisted true → shell Hebrew renders reversed after reattach. Corrected by a `session-end` hook or a fresh non-restoring connect. The title detector is gone (ticket -ts-4); do not re-add one.
 - **Limitation (O4):** when `claude_running` is never written because the ymux Claude hooks are not installed, nothing corrects it — hooks are not installed → no signal beyond the wizard's `mode=claude`.
 
+### 2026-10-06 — `bidi_reorder`: caret pinned right + half-reordered repaints are the cursed cursor — DEFERRED, documented as a known limit
+- **Context:** Under `rtl_mode="bidi_reorder"` the caret stays pinned to the right instead of tracking the text, and a partial repaint can leave a line half-reordered. Cause: `flushPending` runs `reorderRtlForDisplay` (`app/src/bidi.ts`) on each rAF chunk of the byte stream, while the TUI positions its cursor and repaints regions in columns of the UNtransformed text — two coordinate systems that diverge. `normaliseIncomingToLogical` has the same fragment limit (it sees runs between ANSI escapes, not whole lines).
+- **Precedent:** terminal-wg's BiDi proposal (https://terminal-wg.pages.freedesktop.org/bidi/) names this problem "the cursed cursor". Root cause first written up in `PROGRESS.txt`, 2026-08-19 entry (the DECISIONS entry it promised never landed; `bidi.ts` points at it — this closes that dangling pointer). NOT VERIFIED LIVE.
+- **Options:** A) schedule whole-line reassembly + cursor tracking now / B) defer, document as a known limit / C) workaround, e.g. hide the caret under `bidi_reorder` — rejected: hides one symptom, the repaint glitch remains.
+- **Decision:** B — DEFERRED. No profile defaults to `bidi_reorder` any more (see the `settings.rs` comments on the local/remote defaults), so the cost lands only on users who opt in. A real fix is its own piece of work, not an RTL bugfix rider.
+- **Requirements for a real fix:** whole-line reassembly before reordering (buffer to a full visual line, not an ANSI-escape run), and cursor tracking through the transform (map original columns to reordered columns for every cursor-position sequence).
+- **Revisit when:** a profile default returns to `bidi_reorder`; a user needs it; or xterm.js gains native BiDi.
+- **Outcome:** docs only, no source change. Known limits listed in `docs/RTL-TEST.md` § `bidi_reorder` — known limits. FOLLOWUPS entry annotated.
+
 ### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
 - **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
 - **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.
