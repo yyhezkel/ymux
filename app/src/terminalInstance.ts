@@ -410,7 +410,7 @@ function swapArrowSeq(data: string): string {
  * `navigator.clipboard.readText()` is not usable here: WebView2 permits
  * clipboard WRITE but gates READ behind a permission the host never grants,
  * so it rejects. That is why terminal Copy worked and Paste did nothing —
- * and why it was invisible: the only handler was a `console.warn`.
+ * and why it was invisible: the only handler was a browser-console warning.
  *
  * Try the web API first anyway (it is synchronous-ish and works if a future
  * runtime does allow it), then fall back to the host-side command.
@@ -513,7 +513,7 @@ function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): vo
         // the terminal so the caret stays at the paste site.
         ti.term.focus();
       })
-      // Rule #9: this used to be console.warn, so the one failure that
+      // Rule #9: this used to be a browser-console warning, so the one failure that
       // mattered — clipboard read being denied — left no trace anywhere a
       // user or a maintainer would look.
       .catch((err) => termLog.warn("terminal paste failed", err));
