@@ -383,9 +383,10 @@ fn scan_file(
             Some(m) if !m.is_empty() => m.to_string(),
             _ => continue,
         };
+        // Absent or null usage: nothing to count, not an error (Go parity).
         let usage = match msg.get("usage") {
-            Some(u) => u,
-            None => continue,
+            Some(u) if !u.is_null() => u,
+            _ => continue,
         };
         let ts = match v.get("timestamp").and_then(|t| t.as_str()) {
             Some(s) => match chrono::DateTime::parse_from_rfc3339(s) {
@@ -697,6 +698,24 @@ mod tests {
         );
         let rep = scan(&tmp, now - 3600, now);
         assert_eq!((rep.parse_errors, rep.totals.calls, rep.totals.out_tokens), (0, 2, 4));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D5 parity with Go: an assistant line whose usage is null (or only
+    // mentioned in content) is skipped silently, not counted and not an error.
+    #[test]
+    fn skips_assistant_without_usage() {
+        let now = chrono::Utc::now().timestamp();
+        let iso = chrono::DateTime::from_timestamp(now - 60, 0).expect("ts").to_rfc3339();
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nousage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let lines = [
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","usage":null}}}}"#),
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","content":"mentions \"usage\""}}}}"#),
+        ];
+        write_transcript(&tmp, "p", "s1", &lines);
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!((rep.totals.calls, rep.parse_errors), (0, 0));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

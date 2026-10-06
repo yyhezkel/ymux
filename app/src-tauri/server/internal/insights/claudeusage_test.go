@@ -432,3 +432,22 @@ func TestScanRejectsNonUintTokenFields(t *testing.T) {
 		t.Fatalf("parse_errors=%d calls=%d out=%d, want 0/2/4", rep.ParseErrors, rep.Totals.Calls, rep.Totals.Out)
 	}
 }
+
+// D5 parity with Rust: an assistant line whose usage is null (or only named in
+// content) is skipped silently — no call, no parse error.
+func TestScanSkipsAssistantWithoutUsage(t *testing.T) {
+	now := time.Now()
+	ts := now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	root := t.TempDir()
+	writeTranscript(t, root, "proj", "s1", []string{
+		`{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","usage":null}}`,
+		`{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","content":"mentions \"usage\""}}`,
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.Totals.Calls != 0 || rep.ParseErrors != 0 {
+		t.Fatalf("calls=%d parse_errors=%d, want 0/0", rep.Totals.Calls, rep.ParseErrors)
+	}
+}

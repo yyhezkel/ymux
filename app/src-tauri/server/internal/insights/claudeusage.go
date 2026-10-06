@@ -139,6 +139,20 @@ func (t *tokenCount) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// claudeUsage is one message.usage block. claudeLine holds it by pointer so an
+// absent or null block (nil) is distinguishable from an all-zero one.
+type claudeUsage struct {
+	InputTokens         tokenCount `json:"input_tokens"`
+	OutputTokens        tokenCount `json:"output_tokens"`
+	CacheReadTokens     tokenCount `json:"cache_read_input_tokens"`
+	CacheCreationTokens tokenCount `json:"cache_creation_input_tokens"`
+	CacheCreation       struct {
+		Ephemeral5m tokenCount `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1h tokenCount `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	Speed string `json:"speed"`
+}
+
 type claudeLine struct {
 	Type        string `json:"type"`
 	Timestamp   string `json:"timestamp"`
@@ -147,17 +161,7 @@ type claudeLine struct {
 	IsSidechain bool   `json:"isSidechain"`
 	Message     struct {
 		Model string `json:"model"`
-		Usage struct {
-			InputTokens         tokenCount `json:"input_tokens"`
-			OutputTokens        tokenCount `json:"output_tokens"`
-			CacheReadTokens     tokenCount `json:"cache_read_input_tokens"`
-			CacheCreationTokens tokenCount `json:"cache_creation_input_tokens"`
-			CacheCreation       struct {
-				Ephemeral5m tokenCount `json:"ephemeral_5m_input_tokens"`
-				Ephemeral1h tokenCount `json:"ephemeral_1h_input_tokens"`
-			} `json:"cache_creation"`
-			Speed string `json:"speed"`
-		} `json:"usage"`
+		Usage *claudeUsage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -366,6 +370,10 @@ func scanClaudeFile(
 		if l.Type != "assistant" || l.Message.Model == "" {
 			continue
 		}
+		// No usage object (absent or null): nothing to count, not an error.
+		if l.Message.Usage == nil {
+			continue
+		}
 		ts, err := time.Parse(time.RFC3339, l.Timestamp)
 		if err != nil {
 			rep.ParseErrors++
@@ -376,7 +384,7 @@ func scanClaudeFile(
 			continue
 		}
 
-		u := l.Message.Usage
+		u := l.Message.Usage // non-nil: checked above
 		w5, w1h := int64(u.CacheCreation.Ephemeral5m), int64(u.CacheCreation.Ephemeral1h)
 		// Older transcripts have only the flat total. Attribute it to the
 		// 5-minute bucket — the cheaper of the two, so an unknown split
