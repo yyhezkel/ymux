@@ -917,8 +917,6 @@
   "insights.an.copy_intro": "Below is a metrics report from my Linux server, collected by ymux. Tell me what actually happened over this window: how loaded the machine was, anything that spiked or is trending the wrong way, whether a disk is on course to fill up, and whether any container looks unhealthy. Point at the specific timestamps and numbers you are reasoning from. If something in here is too thin to support a conclusion, say so instead of guessing.",
   "insights.an.empty": "No history for this range yet. The daemon samples every 5s and keeps 7 days — check back in a few minutes.",
   "insights.an.old_daemon": "This server runs an Insights daemon from before the Analytics endpoint. Reinstall it from Settings → Add-ons to update.",
-  "insights.an.local_title": "Analytics needs the Insights daemon",
-  "insights.an.local_hint": "A local workspace is sampled on demand and nothing is stored, so there is no history to roll up. The Metrics tab still shows the live snapshot.",
   "insights.an.tile.cpu": "CPU average",
   "insights.an.tile.cpu_sub": "peak {peak}",
   "insights.an.tile.busy": "Time busy",
