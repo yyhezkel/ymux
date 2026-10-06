@@ -95,7 +95,7 @@ to break:
   in a non-terminal pane. A central `preventDefault` in the loop would kill that.
 
 `select_all` (Ctrl+Shift+A) sits after `paste` in the table: it fires only in a terminal
-with an active pane and calls the active terminal's `selectAll()`.
+with an active pane and calls the active terminal's `selectAll()`; the binding is inline in `App.tsx` (literal `term.selectAll()`, pinned by the ymux-app-src-shortcuts-ts O1 registry check); only `inTerminal` is imported from `selectAllShortcut.ts` (see frontend-lib.md).
 
 Accelerators come from `settings.shortcuts` via `shortcutTable()`, rebuilt on every
 `settings:changed`, so a rebind in Settings takes effect without a relaunch. Before
