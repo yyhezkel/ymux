@@ -200,7 +200,9 @@ rejected, because with no symbol there is nothing to check; this runs even under
 `[vault-skip]`.
 
 Adding coverage is just adding a path to a `covers:` list — the script needs no changes.
-A file may be covered by exactly one page; test files are deliberately left uncovered.
+A file may be covered by exactly one page. Every tracked code file (`.rs`/`.ts`/`.tsx`/`.go`/`.mjs`)
+must be covered or listed in a page's `unowned:` frontmatter (block list, globs allowed, a `#`
+reason on each entry) — an unclaimed file fails the gate. Tests and generated output go in `unowned:`.
 Keep a page around 200 lines: if it needs more, the area wants splitting.
 
 ## Logging conventions

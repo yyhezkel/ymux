@@ -7881,6 +7881,7 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 
 2026-10-06 — popout RTL profile (ticket ymux-app-src-components-popoutterminal-2): popoutProfile.ts key/parse helper; App.tsx writes ti.profile to localStorage before popout_pane and removes it on popout:closed; PopoutTerminal loads settings → setRtlProfiles before constructing TerminalInstance with the origin profile. Vault pages + lock restamped. Compiles untested until CI.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-scripts-vault-check-mjs: vault gate now fails on unclaimed code; 87 files allowlisted via `unowned:`, build-glue/INDEX/CONTRIBUTING updated, FOLLOWUP archived. Gate run locally (node only); CI not yet run.
 
 2026-10-06 — ymux-app-src-tauri-cargo: log_writer.rs cross-process rotation (File::lock on debug.log.lock, per-batch stale-handle check, 2 new tests); crates.md + vault lock updated; FOLLOWUPS "TWO ymux.exe INSTANCES" archived. Compiles untested until CI (Rule #17).
 

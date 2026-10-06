@@ -23,6 +23,10 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+unowned:
+  - app/src/bindings/*.ts   # ts-rs generated
+  - app/src/*.test.ts   # tests are the spec, deliberately uncovered
+  - app/src/vite-env.d.ts   # vite type shim
 ---
 
 # Frontend library modules

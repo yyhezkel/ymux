@@ -31,6 +31,8 @@ covers:
   - app/src/useNarrow.ts
   - app/src/icons.tsx
   - app/src/TechText.tsx
+unowned:
+  - app/src/tabsHarness.tsx   # Phase 84.F CSS harness, not part of the app
 ---
 
 # Frontend shell — App, sidebar, layout, panes, panel chrome
