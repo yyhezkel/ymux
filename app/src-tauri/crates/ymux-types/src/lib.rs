@@ -400,6 +400,14 @@ pub struct Workspace {
     // per row, per render, against the rule that scans are lazy.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_project_root: bool,
+    // This workspace is a pinned folder (a header, never a screen),
+    // whether or not it is a git repo. Stored because a pinned non-git
+    // folder has a parent but is not a project root, so neither
+    // `parent_id.is_none()` nor `is_project_root` identifies it and it
+    // would be read as a screen on the next load. Written by the pin
+    // command; healed for older files by `load_from_disk`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_folder: bool,
     // Persisted collapse state of this workspace's subtree.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_collapsed: bool,
@@ -890,6 +898,7 @@ mod tests {
         assert!(w.git_worktree.is_none());
         assert!(w.parent_id.is_none());
         assert!(!w.is_project_root);
+        assert!(!w.is_folder);
         assert!(!w.is_collapsed);
         assert!(!w.tabs_mode);
         assert!(w.known_sessions.is_empty());
@@ -921,6 +930,7 @@ mod tests {
         for key in [
             "parent_id",
             "is_project_root",
+            "is_folder",
             "is_collapsed",
             "tabs_mode",
             "tmux_session",

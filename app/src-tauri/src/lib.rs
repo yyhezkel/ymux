@@ -9,6 +9,7 @@ mod workspace_browser;
 mod claude_log;
 mod claude_summary;
 mod claude_usage;
+mod config_lock;
 mod connect_wizard;
 mod context_store;
 mod dev;
@@ -195,8 +196,9 @@ pub(crate) struct AppState {
     /// floating Browser window. At most one Webview per workspace
     /// keyed by `workspace_id`. Lives only at runtime — never
     /// persisted to workspaces.json. `workspace_delete` also calls
-    /// `workspace_browser::cleanup_workspace_sessions` to remove the
-    /// matching `browser-sessions/<workspace_id>/` directory.
+    /// `workspace_browser::cleanup_workspace_sessions` to clear its
+    /// Browser state (tunnel cookies, macOS per-workspace data store,
+    /// legacy `browser-sessions/<workspace_id>/` directory).
     pub(crate) workspace_browsers: workspace_browser::WorkspaceBrowserMap,
     /// Phase 62.A (item D): serializes native Browser Webview creation.
     /// WebView2's `add_child` intermittently returns 0x8007139F
@@ -875,31 +877,33 @@ pub(crate) fn remember_file_text(text: &str) {
     }
 }
 
-fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+/// Gate + reconcile + atomic write + base update for one workspaces.json
+/// save, with the file path and the three-way-merge base passed in so a
+/// test can run two "instances" (two bases) against one tempdir without
+/// touching `YMUX_CONFIG_DIR`. Returns the text that landed on disk.
+///
+/// `Refuse` returns `Err` before the tmp file is opened: a newer build owns
+/// the file and nothing of ours may touch it.
+fn write_workspaces_text(
+    path: &std::path::Path,
+    ours: &str,
+    last_known: &std::sync::Mutex<Option<String>>,
+) -> Result<String, String> {
     use std::io::Write as _;
 
-    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
-        log_warn("WORKSPACE", &format!(
-            "save_to_disk: writing empty state (workspaces=0). version={}",
-            file.version
-        ));
-    }
-
-    let path = config_path()?;
     let dir = path
         .parent()
         .ok_or_else(|| "no parent dir".to_string())?
         .to_path_buf();
     let tmp = dir.join(format!("workspaces.{}.tmp", std::process::id()));
-    let mut text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
 
     // Re-read before writing. The fast path — nobody else touched the
     // file — is the overwhelmingly common one and costs a single read.
     // The decision itself lives in `workspaces_merge::reconcile` so it is
     // testable without a GUI: an idle app never saves, so the interesting
     // path cannot be reached by launching one and waiting.
-    let base_text = LAST_KNOWN.lock().ok().and_then(|g| g.clone());
-    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    let base_text = last_known.lock().ok().and_then(|g| g.clone());
+    let on_disk = std::fs::read_to_string(path).unwrap_or_default();
 
     // The schema gate, in both directions. See WORKSPACES_SCHEMA_VERSION for
     // what this does and does not cover.
@@ -927,7 +931,8 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
                     "save_to_disk: workspaces.json was rewritten by an OLDER build \
                      (on disk v{}, we last wrote v{}). Fields that build does not \
                      know may have been dropped; the three-way merge below \
-                     restores what it can.",
+                     restores what it can. To stop two builds sharing one config \
+                     dir, start the older one with YMUX_CONFIG_DIR set to its own folder.",
                     disk_version.unwrap_or_default(),
                     WORKSPACES_SCHEMA_VERSION
                 ),
@@ -935,12 +940,19 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         }
     }
 
-    let (reconciled, notes) =
-        workspaces_merge::reconcile(&text, base_text.as_deref(), &on_disk);
+    let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
     for n in &notes {
         log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
     }
-    text = reconciled;
+    if !notes.is_empty() {
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "save_to_disk: merged another writer's edits ({} note(s) above)",
+                notes.len()
+            ),
+        );
+    }
 
     {
         let mut f = std::fs::OpenOptions::new()
@@ -954,8 +966,24 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync tmp: {e}"))?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    remember_file_text(&text);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    if let Ok(mut g) = last_known.lock() {
+        *g = Some(text.clone());
+    }
+    Ok(text)
+}
+
+fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
+        log_warn("WORKSPACE", &format!(
+            "save_to_disk: writing empty state (workspaces=0). version={}",
+            file.version
+        ));
+    }
+
+    let path = config_path()?;
+    let ours = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    let text = write_workspaces_text(&path, &ours, &LAST_KNOWN)?;
     // The tree shape goes in the line, not just the count. Two pinned
     // folders lost `parent_id` and `is_project_root` with nothing in the
     // log to say when or why — every writer mutates in place, serde
@@ -1071,25 +1099,45 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
         ));
     }
 
+    if migrate_loaded(&mut file, &text) {
+        log_info("WORKSPACE", "load_from_disk: migration ran — saving migrated layout");
+        match save_to_disk(&file) {
+            Ok(()) => log_info("WORKSPACE", "load_from_disk: migration save OK"),
+            Err(e) => log_warn("WORKSPACE", &format!("load_from_disk: migration save FAILED: {e}")),
+        }
+    }
+    Ok(file)
+}
+
+/// Every in-memory load migration, in order. Returns true when anything
+/// changed so the caller saves. Split out of `load_from_disk` so tests can
+/// drive the whole chain without a config dir.
+fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
     let mut migrated = false;
     // 2026-08-19: WSL workspaces become plain local ones. Runs FIRST so no
     // later pass has to know about a connection kind that no longer has a
     // spawn path behind it.
-    if migrate_wsl_workspaces(&mut file) > 0 {
+    if migrate_wsl_workspaces(file) > 0 {
         migrated = true;
     }
     // v2/v3 project folders become real workspaces before anything else
     // touches the tree, so the repair pass below sees the final shape.
-    if migrate_legacy_project_folders(&mut file, &text) > 0 {
+    if migrate_legacy_project_folders(file, text) > 0 {
         migrated = true;
     }
-    if normalize_parents(&mut file) > 0 {
+    if normalize_parents(file) > 0 {
+        migrated = true;
+    }
+    // A pinned non-git folder has a parent but neither other header marker,
+    // so the rule would read it as a screen: flag it from its children
+    // before anything classifies rows.
+    if flag_pinned_folders(file) > 0 {
         migrated = true;
     }
     // Phase 92: headers (roots, pinned folders) stop holding panes. After
     // the parent repair so `is_header` sees the final tree, before the
     // per-workspace loop so the backfill below sees the moved layouts.
-    if migrate_headers_to_screens(&mut file) > 0 {
+    if migrate_headers_to_screens(file) > 0 {
         migrated = true;
     }
     for ws in file.workspaces.iter_mut() {
@@ -1166,17 +1214,10 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
     // we crystallize into consecutive 0..N-1 keys — per group_id scope
     // for workspaces, and across the group list for groups. Idempotent:
     // if every entry already has Some(_) this branch is a no-op.
-    if backfill_sort_orders(&mut file) {
+    if backfill_sort_orders(file) {
         migrated = true;
     }
-    if migrated {
-        log_info("WORKSPACE", "load_from_disk: migration ran — saving migrated layout");
-        match save_to_disk(&file) {
-            Ok(()) => log_info("WORKSPACE", "load_from_disk: migration save OK"),
-            Err(e) => log_warn("WORKSPACE", &format!("load_from_disk: migration save FAILED: {e}")),
-        }
-    }
-    Ok(file)
+    migrated
 }
 
 // beta.3 (ws-dragdrop): fill in any missing `sort_order` values with a
@@ -6049,7 +6090,8 @@ fn ancestors_of(file: &WorkspacesFile, id: &str) -> Vec<String> {
 /// command only persists. `is_project_root` is the probe's answer: true
 /// pins a git repo (worktrees listed beneath it), false pins a plain
 /// folder in the demoted state, with the sidebar's "Check for a git
-/// repository" as the promotion path after a later `git init`. The
+/// repository" as the promotion path after a later `git init`. Either way
+/// the row is stored `is_folder`, so it stays a header across reloads. The
 /// child inherits a CLONE of the parent's connection: the folder must
 /// keep working when the parent is disconnected, and the SSH handle is
 /// resolved per call by user@host:port anyway.
@@ -6117,6 +6159,7 @@ fn workspace_pin_project_folder(
             layout: None,
             parent_id: Some(parent_workspace_id.clone()),
             is_project_root,
+            is_folder: true,
             ..Default::default()
         };
         file.workspaces.push(folder.clone());
@@ -6245,12 +6288,34 @@ fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
 // is a SCREEN — the only kind with a layout, the only kind that can be
 // active. Before this, the machine row was itself a screen, so a terminal
 // could be opened "on the server" directly OR as a row under it — two
-// ways to do one thing (Yossi, 2026-09-14). Derived, not stored:
-// `parent_id` and `is_project_root` already say everything.
+// ways to do one thing (Yossi, 2026-09-14). Derived from `parent_id` and
+// `is_project_root`, plus the stored `is_folder`: a pinned NON-git folder
+// has a parent and is not a project root, so only the flag identifies it.
 
 /// The one rule. Keep it in sync with `isHeader` in `app/src/wsTree.ts`.
 pub(crate) fn is_header(w: &Workspace) -> bool {
-    w.parent_id.is_none() || w.is_project_root
+    w.parent_id.is_none() || w.is_project_root || w.is_folder
+}
+
+/// Heal files written before `is_folder` existed: a row with a parent, no
+/// header flag, that is some row's parent can only be a pinned non-git
+/// folder (screens never have children). Idempotent — flagged rows are
+/// skipped, so a second run returns 0. O(n) via one set of parent ids.
+fn flag_pinned_folders(file: &mut WorkspacesFile) -> usize {
+    let parents: std::collections::HashSet<String> = file
+        .workspaces
+        .iter()
+        .filter_map(|w| w.parent_id.clone())
+        .collect();
+    let mut flagged = 0;
+    for w in file.workspaces.iter_mut() {
+        if w.parent_id.is_some() && !w.is_project_root && !w.is_folder && parents.contains(&w.id) {
+            w.is_folder = true;
+            flagged += 1;
+            log_info("WORKSPACE", &format!("migrate: ws={} is a pinned folder → is_folder", w.id));
+        }
+    }
+    flagged
 }
 
 const HEADER_HAS_NO_PANES: &str = "a header has no panes — open a screen under it";
@@ -6716,7 +6781,8 @@ fn workspace_open_session(
 /// and re-scans on every expand and every restart, asking a question
 /// whose answer will not change. Clearing the flag makes it an ordinary
 /// workspace that still opens panes in that directory — nothing is
-/// deleted, and re-pinning is how you undo it.
+/// deleted, and re-pinning is how you undo it. A pinned folder stays a
+/// header (`is_folder`); only the repo affordances go.
 #[tauri::command]
 fn workspace_set_project_root(
     state: State<'_, AppState>,
@@ -8105,9 +8171,9 @@ fn teardown_workspace_runtime(
 ) {
     // Phase 53 (rebased): drop the workspace-level Browser Webview
     // (at most one per workspace, keyed by workspace_id) and delete
-    // the per-workspace browser-sessions directory (cookies /
-    // localStorage / cache). Sessions DO survive transient hide/show
-    // cycles; this is the only cleanup path that should wipe them.
+    // its login state (tunnel cookies, macOS per-workspace data store,
+    // legacy browser-sessions dir). State DOES survive transient
+    // hide/show cycles; this is the only cleanup path that wipes it.
     let webview = state.workspace_browsers.lock().unwrap().remove(workspace_id);
     if let Some(w) = webview {
         let _ = w.close();
@@ -8116,7 +8182,7 @@ fn teardown_workspace_runtime(
     // which would otherwise outlive the workspace it belongs to. Its
     // `Destroyed` handler does the rest of the cleanup.
     workspace_browser::close_popout_window(app, workspace_id);
-    workspace_browser::cleanup_workspace_sessions(workspace_id);
+    workspace_browser::cleanup_workspace_sessions(app, workspace_id);
     // Drop the CLI-alignment verdict with the workspace it described.
     // Deliberately NOT dropped on mere disconnect: an unresolved skew should
     // outlive the connection, so the features it gates stay off until a
@@ -12293,6 +12359,11 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
+            // Advisory lock + owner record so a second build on this dir
+            // names the first in the log. Never blocks boot.
+            if let Some(dir) = &cfg_dir {
+                config_lock::hold_for_process(dir);
+            }
 
             // Phase 53.G: was Phase 8.F.1 — the iframe-bridge
             // initialization script was the parent-side companion to
@@ -13284,8 +13355,8 @@ mod header_screen_tests {
     // panes. The migration, the activation rule and the create shape.
     use super::{
         active_after_delete, create_root_with_screen, first_screen_of, is_header,
-        migrate_headers_to_screens, screen_or_self, unique_sibling_name, Connection,
-        CreateInput, LayoutNode, WorkspacesFile,
+        flag_pinned_folders, migrate_headers_to_screens, migrate_loaded, screen_or_self,
+        unique_sibling_name, Connection, CreateInput, LayoutNode, WorkspacesFile,
     };
 
     /// A pre-92 file: a root with panes (active), a pinned folder with a
@@ -13372,6 +13443,82 @@ mod header_screen_tests {
         assert_eq!(pane_id_of(shell.layout.as_ref().unwrap()), "p_app");
         // The worktree child carried sort_order 0, so the shell sorts below it.
         assert_eq!(shell.sort_order, Some(-1));
+    }
+
+    /// A srv root with a pinned NON-git folder (no is_project_root) that has a
+    /// shell child, as the pin command wrote it before `is_folder` existed.
+    fn non_git_folder_file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{ "version": 4, "workspaces": [
+              { "id": "srv", "name": "runner", "sort_order": 0 },
+              { "id": "docs", "name": "docs", "parent_id": "srv", "cwd": "/srv/docs", "sort_order": 1 },
+              { "id": "sh", "name": "shell", "parent_id": "docs", "sort_order": 0,
+                "layout": { "kind": "pane", "pane_id": "p_sh" } }
+            ] }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_non_git_pinned_folder_stays_a_header_across_reload() {
+        // Pins the bug: before is_folder, a reload read this folder as a screen.
+        let mut f = non_git_folder_file();
+        assert!(migrate_loaded(&mut f, "{}"));
+        assert!(by_id(&f, "docs").is_folder && is_header(by_id(&f, "docs")));
+        // Serialize + reload: the flag is stored, so nothing heals twice.
+        let text = serde_json::to_string(&f).unwrap();
+        let mut g: WorkspacesFile = serde_json::from_str(&text).unwrap();
+        assert!(is_header(by_id(&g, "docs")));
+        assert_eq!(flag_pinned_folders(&mut g), 0, "idempotent");
+        assert!(!migrate_loaded(&mut g, &text), "a healed file migrates nothing");
+    }
+
+    #[test]
+    fn load_backfill_never_grows_panes_on_a_non_git_folder() {
+        // The legacy "no layout → one pane" backfill must skip the folder.
+        let mut f = non_git_folder_file();
+        migrate_loaded(&mut f, "{}");
+        assert!(by_id(&f, "docs").layout.is_none());
+    }
+
+    #[test]
+    fn a_folder_the_old_backfill_grew_a_pane_onto_gets_it_moved() {
+        // Files already damaged by the bug: the folder holds a pane; it
+        // moves onto a screen under the folder and keeps its pane id.
+        let mut f = non_git_folder_file();
+        f.workspaces[1].layout = Some(LayoutNode::Pane {
+            pane_id: "p_grown".into(),
+            pane_kind: super::PaneKind::Terminal,
+            connection: None,
+            browser: None,
+            title: None,
+            auto_title: None,
+            annotation: None,
+            color: None,
+            emoji: None,
+            help_topic: None,
+            diff_source: None,
+            smart_bidi: None,
+            diff_cwd: None,
+        });
+        migrate_loaded(&mut f, "{}");
+        assert!(by_id(&f, "docs").layout.is_none());
+        let moved = f
+            .workspaces
+            .iter()
+            .filter(|w| w.parent_id.as_deref() == Some("docs") && w.layout.is_some())
+            .any(|w| pane_id_of(w.layout.as_ref().unwrap()) == "p_grown");
+        assert!(moved, "the grown pane now lives on a screen under the folder");
+    }
+
+    #[test]
+    fn a_childless_plain_screen_is_not_promoted() {
+        // A screen has a parent but no children: it must stay a screen, or
+        // every session row would turn into a header.
+        let mut f = non_git_folder_file();
+        assert_eq!(flag_pinned_folders(&mut f), 1, "only the folder with a child");
+        assert!(!by_id(&f, "sh").is_folder && !is_header(by_id(&f, "sh")));
+        assert!(!by_id(&f, "srv").is_folder, "roots are not flagged");
     }
 
     #[test]
@@ -15598,5 +15745,116 @@ mod wsl_migration_tests {
             serde_json::from_str(json).expect("a wsl connection must still parse");
         assert_eq!(f.workspaces.len(), 1);
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
+    }
+}
+
+#[cfg(test)]
+mod two_instance_save_tests {
+    // Two "instances" are two independent `Mutex<Option<String>>` bases
+    // (each process owns one `LAST_KNOWN`) over ONE file in a tempdir.
+    // No YMUX_CONFIG_DIR: it is process-global and parallel tests would race.
+    use super::{write_workspaces_text, WORKSPACES_SCHEMA_VERSION};
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    fn doc(version: u32, workspaces: Value) -> String {
+        serde_json::to_string_pretty(&json!({
+            "version": version,
+            "active_workspace_id": null,
+            "workspaces": workspaces,
+        }))
+        .expect("json serializes")
+    }
+
+    fn ids(text: &str) -> Vec<String> {
+        let v: Value = serde_json::from_str(text).expect("file is json");
+        v["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn two_instances_sharing_one_file_keep_both_edits() {
+        // Pins the merge path through the real writer: if the second save
+        // flattened the first, instance A's workspace would vanish.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let (a, b) = (Mutex::new(None), Mutex::new(None));
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let shared = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        write_workspaces_text(&path, &shared, &a).expect("A first save");
+        // B starts from the same file, as if launched after A's save.
+        *b.lock().expect("lock") = Some(shared.clone());
+
+        let a_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-a", "name": "a" }]));
+        write_workspaces_text(&path, &a_ours, &a).expect("A save");
+        let b_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-b", "name": "b" }]));
+        let landed = write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let on_disk = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(on_disk, landed, "return value is what landed on disk");
+        let got = ids(&on_disk);
+        for want in ["shared", "from-a", "from-b"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
+        // The original P1: an older build rewrote the file without
+        // `parent_id`; our next save must put the nesting back.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let base = Mutex::new(None);
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let nested = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &nested, &base).expect("first save");
+
+        // Older build: lower schema version, nesting keys never written.
+        let older = doc(1, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app" },
+        ]));
+        std::fs::write(&path, older).expect("older build write");
+
+        let ours = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app-renamed", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &ours, &base).expect("downgrade is a warning, not a refusal");
+
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        let app = &after["workspaces"][1];
+        assert_eq!(app["parent_id"], "srv", "nesting stripped: {app}");
+        assert_eq!(app["is_project_root"], true);
+        assert_eq!(app["name"], "app-renamed", "our edit still applies");
+    }
+
+    #[test]
+    fn a_newer_schema_on_disk_refuses_the_write() {
+        // A newer build owns the file: Err, and not one byte of it changes
+        // (nor a tmp file left behind).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let newer = doc(WORKSPACES_SCHEMA_VERSION + 1, json!([{ "id": "x", "name": "x", "future_field": 1 }]));
+        std::fs::write(&path, &newer).expect("seed");
+        let base = Mutex::new(None);
+
+        let ours = doc(WORKSPACES_SCHEMA_VERSION, json!([{ "id": "x", "name": "ours" }]));
+        let err = write_workspaces_text(&path, &ours, &base).expect_err("must refuse");
+
+        assert!(err.contains("YMUX_CONFIG_DIR"), "remedy missing: {err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), newer, "file changed");
+        assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
+        let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
+        assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
     }
 }
