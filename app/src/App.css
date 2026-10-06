@@ -7487,3 +7487,16 @@ body.ymux-dragging .pane-conn {
   padding-inline: 4px;
 }
 .context-link:focus-visible { outline: 2px solid var(--w-accent, #7aa2f7); }
+
+/* Visually hidden, still read by screen readers (display:none would not be). */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
