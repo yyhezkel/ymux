@@ -70,7 +70,7 @@ the proxy.
 
 **`selectAllShortcut.ts`** (pure, zero-import, unit-tested): `inTerminal(e)` (target inside `.terminal-container`, also used by `toggle_sidebar_soft`) and `makeSelectAllBinding({ activePaneId, termFor })`, whose `when` is `inTerminal && active pane` and whose `run` does `preventDefault` then `termFor(pid)?.selectAll()`.
 
-**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (`lastOsc52`, set in the write-only provider) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
+**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (private `lastOsc52`, set in the write-only provider, read via `getLastOsc52()`) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
 
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
