@@ -70,6 +70,8 @@ put logic there.
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
+  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`).
+  `schedule_status_clear(app, pane_id, expected, secs)` clears only if the slot still holds `expected` (`clear_if_current`), so a late timer cannot wipe a newer status.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
 - **`Connection`, `LayoutNode`, `Workspace`** — `ymux-types`. `LayoutNode::Pane` carries
