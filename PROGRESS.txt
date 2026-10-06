@@ -7884,3 +7884,4 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-insightsclaudecost-tsx: audited Claude Cost panel. Remote scan 1d 0.88s / 30d 0.55s (no timeout) but 30d hits the 2000-file cap (undercount, P1). Go vs Rust parity: 9 divergences filed. 24h cross-check endpoint 11539 vs /usage 6427 requests. Pricing re-checked, Opus 5.5 / Sonnet 5.5 rows added (9d24274). Archived the "never been run" FOLLOWUPS entry; re-filed live local-vs-remote run + stale daemon. Docs only, NOT VERIFIED LIVE in the panel.
