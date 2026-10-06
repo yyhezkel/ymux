@@ -35,7 +35,9 @@ unowned:
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
 
-## `terminalInstance.ts` (2,018) — the xterm.js wrapper
+## `terminalInstance.ts` (1,954) — the xterm.js wrapper
+
+**Logging:** every failure/diagnostic site uses the file's `termLog = createLogger("TERM")` (Rule #9) — zero raw `console.*`; never log PTY content (Rule #1).
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
