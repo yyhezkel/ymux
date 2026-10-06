@@ -232,6 +232,7 @@ workspace — the point is handing one to Claude Code inside the right repo — 
 written to `<project>/.ymux-tickets/` when the project is reachable from this machine,
 and fall back to `<config_dir>/tickets/<workspace_id>/` while still recording the project
 path, so nothing is orphaned.
+For SSH workspaces the pane-cwd rung asks tmux for one session's cwd: `tmux_session_for_workspace` prefers the session of the pane the frontend last reported via `pane_set_active` (`AppState.active_panes`), else the smallest tmux name (`pick_tmux_session`, pure), so the choice never depends on map order.
 
 **`skills.rs` (288)** — installs a skill folder (`SKILL.md` + scripts) from the local
 registry at `config_dir()/ymux-tools/skills/<name>/` onto a workspace's
@@ -254,7 +255,10 @@ files land in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and register under HKCU, 
 needs no elevation on Windows 10 1809+. `settings::list_system_fonts` reads that same
 hive, so an install is visible in the picker immediately. Exists because flagging
 unavailable families with ⚠️ was only half an answer — the user still had to go find a
-`.ttf`.
+`.ttf`. Catalog assets pin upstream release tags plus sha256, never a moving branch;
+MesloLGS NF uses the powerlevel10k-media tag `v2.3.3`. Pins (tag + sha256 + bytes) are refreshed
+by hand; the procedure and last-checked date (2026-10-06, FiraCode NF at nerd-fonts v3.5.1) are
+in the CATALOG header comment.
 
 **`font_uninstall` is the mirror, and how it finds the files is the interesting part.**
 Which files belong to a catalog entry is derived from the CATALOG, not recorded at
