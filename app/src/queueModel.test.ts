@@ -27,6 +27,8 @@ const brief = (over: Partial<PaneBrief> = {}): PaneBrief => ({
   rec: null,
   next: null,
   delta: null,
+  goal: null,
+  done: null,
   degraded: false,
   updated_ms: NOW - 60_000,
   ...over,
@@ -63,6 +65,12 @@ test("permission card outranks everything, including a calm brief", () => {
   const r = withBrief({ status: "done" }, { waitingOnPermission: true });
   assert.equal(queueStatus(r), "needs-input");
   assert.equal(QUEUE_BUCKET[queueStatus(r)], 0);
+});
+
+test("a failed pane is stuck, not done", () => {
+  // An API-error turn must land in the stuck bucket, not look finished.
+  const r = withBrief({ status: "done" }, { state: "failed" });
+  assert.equal(queueStatus(r), "stuck");
 });
 
 test("a running pane sorts as running no matter what the old brief said", () => {

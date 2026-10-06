@@ -11,7 +11,7 @@
 //
 // Wire format (cli/src/main.rs perform_handshake + rpc_via):
 //
-//	S->C  "WINMUX-CHALLENGE <nonce-hex>\n"
+//	S->C  "YMUX-CHALLENGE <nonce-hex>\n"
 //	C->S  "YMUX-RESPONSE <hmac_sha256(token, nonce_bytes)-hex>\n"   (or WINMUX-)
 //	S->C  "YMUX-OK\n"  |  "YMUX-DENIED <reason>\n"                  (client's dialect)
 //	C->S  {"jsonrpc":"2.0","id":1,"method":"feed.push","params":{…}}\n
@@ -40,18 +40,14 @@ import (
 // logger is the hook-RPC listener's component logger (Phase 79.D).
 var logger = logging.New("SRV:HOOKRPC")
 
-// Handshake wire tags (winmux → ymux rename). The challenge we EMIT stays
-// on the legacy tag for one release because a pre-rename `winmux` CLI does
-// a literal prefix match and hangs up on anything else; both ends read
-// either dialect and mirror whatever they were spoken to. Mirrors the same
+// Handshake wire tags (winmux → ymux rename). The challenge we EMIT is YMUX;
+// both ends still read either dialect and mirror whatever they were spoken
+// to, so a pre-rename WINMUX client response is accepted. Mirrors the same
 // constants in crates/ymux-tunnel/src/lib.rs — flip both together.
-//
-// FOLLOWUPS P1: set ChallengeTag = TagYmux in the release after 0.5.0,
-// once every provisioned remote has been re-bootstrapped.
 const (
 	TagYmux      = "YMUX"
 	TagLegacy    = "WINMUX"
-	ChallengeTag = TagLegacy
+	ChallengeTag = TagYmux
 )
 
 // Start binds a localhost port and serves hook RPC connections for the life

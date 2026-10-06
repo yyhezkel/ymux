@@ -1241,6 +1241,35 @@ fn render_dev_state_text(v: &Value) -> String {
     out
 }
 
+/// Phase 105.C: how long `claude-hook session-start` waits for the
+/// desktop's `context.inject`. ~300 ms by default, so a session start never
+/// stalls; `YMUX_CONTEXT_TIMEOUT_MS` overrides it (clamped 100..=3000) for a
+/// remote whose tunnel round trips are slower than that.
+fn context_timeout_ms() -> u64 {
+    std::env::var("YMUX_CONTEXT_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .map(|v| v.clamp(100, 3000))
+        .unwrap_or(300)
+}
+
+/// Phase 105.C: the one stdout line a SessionStart hook prints — Claude
+/// Code's documented `hookSpecificOutput.additionalContext` shape — or
+/// `None` for blank context (print nothing at all). serde does the
+/// escaping, so the text cannot break out of the JSON.
+fn session_start_output(context: &str) -> Option<String> {
+    if context.trim().is_empty() {
+        return None;
+    }
+    let out = json!({
+        "hookSpecificOutput": {
+            "hookEventName": "SessionStart",
+            "additionalContext": context,
+        }
+    });
+    serde_json::to_string(&out).ok()
+}
+
 async fn rpc_call(method: &str, params: Value) -> Result<Value, String> {
     rpc_call_with(method, params, true).await
 }
@@ -1639,93 +1668,7 @@ fn build_connection(
 // with tokio's runtime + serde — overflows that 1 MB during arg parsing on
 // some invocations. Spawn the real work on a worker thread with an 8 MB
 // stack and join.
-/// winmux → ymux rename bridge. For every `WINMUX_*` variable in the
-/// environment, set the matching `YMUX_*` name when it isn't already
-/// set.
-///
-/// The desktop writes both spellings, but a pane can outlive the app
-/// that opened it: a long-lived tmux session carries whatever
-/// `set-environment -g` put there when it was first created, and a
-/// pre-rename desktop only ever set `WINMUX_*`. Promoting once here
-/// means every read site downstream (`YMUX_SOCKET_ADDR`,
-/// `YMUX_TUNNEL_TOKEN`, `YMUX_PANE_ID`, `YMUX_PIPE_PATH`,
-/// `YMUX_HOOK_VERBOSE`, `YMUX_PORTFORWARD_EXCLUDE`) works unchanged,
-/// instead of thirteen fallbacks that have to stay in sync.
-///
-/// Runs before any thread is spawned — `set_var` is only sound
-/// single-threaded. Drop this once every deployed desktop is ≥0.5.0.
-fn adopt_legacy_env() {
-    let legacy: Vec<(String, std::ffi::OsString)> = std::env::vars_os()
-        .filter_map(|(k, v)| {
-            let name = k.to_str()?;
-            let suffix = name.strip_prefix("WINMUX_")?;
-            Some((format!("YMUX_{suffix}"), v))
-        })
-        .collect();
-    for (new_name, value) in legacy {
-        if std::env::var_os(&new_name).is_none() {
-            std::env::set_var(&new_name, &value);
-        }
-    }
-}
-
-/// winmux → ymux rename: fold a pre-rename `~/.winmux` into `~/.ymux`.
-///
-/// Sibling of the desktop bootstrap's `migrate_legacy_remote_dir`, for
-/// the hosts the bootstrap never touches — WSL local setup, and remotes
-/// where the daemon spawns `claude` children directly. Whichever runs
-/// first wins; both leave the same marker so the other becomes a no-op.
-///
-/// Copy-then-mark rather than rename: both directories can already
-/// exist, and anything already written under the new name stays
-/// authoritative. Best-effort — this is a convenience, not a
-/// precondition, so every failure is swallowed rather than blocking a
-/// hook the user is waiting on.
-fn migrate_legacy_home_dir() {
-    let home = match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        Some(h) => std::path::PathBuf::from(h),
-        None => return,
-    };
-    let legacy = home.join(".winmux");
-    if !legacy.is_dir() || legacy.join(".migrated-to-ymux").exists() {
-        return;
-    }
-    let target = home.join(".ymux");
-    if std::fs::create_dir_all(&target).is_err() {
-        return;
-    }
-    copy_tree_no_clobber(&legacy, &target);
-    let _ = std::fs::write(legacy.join(".migrated-to-ymux"), b"");
-}
-
-/// Recursive copy that never overwrites an existing destination entry.
-fn copy_tree_no_clobber(from: &std::path::Path, to: &std::path::Path) {
-    let entries = match std::fs::read_dir(from) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let src = entry.path();
-        let dst = to.join(entry.file_name());
-        match entry.file_type() {
-            Ok(ft) if ft.is_dir() => {
-                if std::fs::create_dir_all(&dst).is_ok() {
-                    copy_tree_no_clobber(&src, &dst);
-                }
-            }
-            Ok(_) => {
-                if !dst.exists() {
-                    let _ = std::fs::copy(&src, &dst);
-                }
-            }
-            Err(_) => {}
-        }
-    }
-}
-
 fn main() -> ExitCode {
-    adopt_legacy_env();
-    migrate_legacy_home_dir();
     match std::thread::Builder::new()
         .stack_size(8 * 1024 * 1024)
         .spawn(real_main)
@@ -2470,15 +2413,63 @@ async fn real_main() -> ExitCode {
                 }
             }
 
-            // v0.4.4: drop pure-noise passive hooks entirely. SessionStart and
-            // Notification are observability-only — they filled the feed and
-            // hook-debug.log without anyone acting on them (Notification in
-            // particular: the agent is driven by the main session, not by these
-            // alerts). Silent-ack with NO feed.push and NO log line. The
-            // meaningful lifecycle signals (Stop = "your turn", SessionEnd =
-            // "session closed") still dispatch below. errors/timeouts are on
-            // the pre-tool-use path and are unaffected.
-            if matches!(subcommand.as_str(), "session-start") {
+            // v0.4.4 dropped SessionStart as feed noise, and it stays OFF the
+            // feed: no feed.push, no card, no toast. Phase 105.C gives it one
+            // job instead — ask the desktop for this session's context
+            // (`context.inject`) and hand it to Claude Code as
+            // `additionalContext`. Budget ~300 ms, FAIL-OPEN: any error,
+            // timeout or empty answer prints nothing and exits 0, so a
+            // missing desktop never slows or breaks a session start.
+            //
+            // stdout is the protocol here: the ONLY thing this branch ever
+            // writes to it is the single JSON line from
+            // `session_start_output`. Diagnostics go to the hook log file.
+            if subcommand == "session-start" {
+                let s = |k: &str| {
+                    payload
+                        .get(k)
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                };
+                let mut req = json!({
+                    "pane_id": std::env::var("YMUX_PANE_ID").ok(),
+                    "session_id": s("session_id"),
+                    "source": s("source"),
+                });
+                if let Some(t) = session_meta::resolve_session_name() {
+                    req["tmux_session"] = json!(t);
+                }
+                let budget = std::time::Duration::from_millis(context_timeout_ms());
+                let answer =
+                    tokio::time::timeout(budget, rpc_call("context.inject", req)).await;
+                let text = match answer {
+                    Ok(Ok(v)) => v
+                        .get("additional_context")
+                        .and_then(|x| x.as_str())
+                        .unwrap_or("")
+                        .to_string(),
+                    Ok(Err(e)) => {
+                        hook_vlog(&format!("session-start context.inject failed: {e}"));
+                        String::new()
+                    }
+                    Err(_) => {
+                        hook_vlog(&format!(
+                            "session-start context.inject timed out after {} ms",
+                            budget.as_millis()
+                        ));
+                        String::new()
+                    }
+                };
+                // Rule #1: the byte count, never the text.
+                hook_dlog(&format!(
+                    "session-start pane={pane_id_log} session={session_id_log} \
+                     source={} context_bytes={}",
+                    payload.get("source").and_then(|v| v.as_str()).unwrap_or("(absent)"),
+                    text.len()
+                ));
+                if let Some(line) = session_start_output(&text) {
+                    println!("{line}");
+                }
                 return ExitCode::SUCCESS;
             }
 
@@ -2557,6 +2548,49 @@ async fn real_main() -> ExitCode {
                 // 81.G). Send the multiplexer session name so the desktop
                 // can recover the real pane — otherwise the light lands on
                 // whichever pane connected last.
+                if let Some(s) = session_meta::resolve_session_name() {
+                    push["tmux_session"] = json!(s);
+                }
+                let _ = rpc_call("feed.push", push).await;
+                return ExitCode::SUCCESS;
+            }
+
+            // ── StopFailure: the turn died on an API error — pane STATE only ──
+            //
+            // Same shape as the notification branch and for the same reason:
+            // it must never reach the feed-item dispatch below. Rule #1: the
+            // push carries the error TYPE (rate_limit, authentication_failed…)
+            // and nothing else — never error_details or
+            // last_assistant_message, which are prose.
+            if subcommand == "stop-failure" {
+                let error = payload
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("unknown");
+                let request_id = format!(
+                    "req_{:x}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                );
+                let pane_id = std::env::var("YMUX_PANE_ID").ok();
+                hook_dlog(&format!(
+                    "stop-failure type={error} pane={} req_id={request_id}",
+                    pane_id.as_deref().unwrap_or("(none)")
+                ));
+                let mut push = json!({
+                    "request_id": request_id,
+                    "kind": "passive",
+                    "subkind": "stop-failure",
+                    "pane_id": pane_id,
+                    "title": format!("claude stop-failure: {error}"),
+                    "summary": "",
+                    "payload": { "error": error },
+                    "wait_timeout_seconds": 5,
+                });
+                // Stale-prone pane id (Phase 81.G): send the session name too.
                 if let Some(s) = session_meta::resolve_session_name() {
                     push["tmux_session"] = json!(s);
                 }
@@ -2984,6 +3018,27 @@ async fn real_main() -> ExitCode {
             eprintln!("error: {}", e);
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod session_start_tests {
+    use super::*;
+
+    #[test]
+    fn blank_context_prints_nothing() {
+        assert_eq!(session_start_output(""), None);
+        assert_eq!(session_start_output("  \n "), None);
+    }
+
+    #[test]
+    fn output_is_one_line_of_valid_hook_json() {
+        let ctx = "[ymux-context]\nfirst \"quoted\" line\n- שלום";
+        let line = session_start_output(ctx).expect("some");
+        assert!(!line.contains('\n'), "a single stdout line");
+        let v: Value = serde_json::from_str(&line).expect("valid json");
+        assert_eq!(v["hookSpecificOutput"]["hookEventName"], "SessionStart");
+        assert_eq!(v["hookSpecificOutput"]["additionalContext"], ctx);
     }
 }
 
