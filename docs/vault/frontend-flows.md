@@ -51,6 +51,8 @@ and it no longer hosts the "existing" flows at all.
   finishes by creating a local workspace to land in. Progress arrives as
   `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
   `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
+  The macOS tmux chain is toggled by the `persistenceGroup` signal (default on; off when
+  brew and tmux are both absent).
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
   `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
@@ -99,7 +101,8 @@ the names to `storedSecretKeys` (failure → logged, editor still usable):
   `inline` (the `PaneView` wizard's browse view) renders the wizard's `nc-*` markup,
   reports each navigation through `onPathChange`, and is the only remaining caller of
   `file_home_remote` / `file_list_remote`. The props are a discriminated union, so an
-  inline picker without `onPathChange` is a type error.
+  inline picker without `onPathChange` is a type error. The modal picker writes recents
+  itself in `choose`; the inline consumer (`PaneView.chooseDir`) owns them.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
 ## `SettingsModal.tsx` (1,869)
