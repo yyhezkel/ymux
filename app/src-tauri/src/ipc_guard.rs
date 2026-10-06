@@ -63,3 +63,50 @@ where
         }
     }
 }
+
+#[cfg(test)]
+mod ipc_guard_tests {
+    use super::deny_reason;
+
+    // Pins the deny: breaking it re-exposes every app command to the tunneled page.
+    #[test]
+    fn rejects_workspace_browser_webview() {
+        let msg = deny_reason("workspace-browser-w_1", "pty_write").expect("denied");
+        assert!(msg.contains("pty_write"));
+        assert!(deny_reason("workspace-browser-", "x").is_some());
+    }
+
+    // Pins no over-blocking: first-party windows (and look-alike prefixes) must keep working.
+    #[test]
+    fn allows_trusted_webviews() {
+        for label in ["main", "popout-w_1", "browser-popout-w_1", "my-workspace-browser-w_1", ""] {
+            assert!(deny_reason(label, "pty_write").is_none(), "{label}");
+        }
+    }
+
+    // Pins that no capability file grants a remote context or covers the child webview label.
+    #[test]
+    fn no_capability_grants_remote_context() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let mut found = 0;
+        for entry in std::fs::read_dir(&dir).expect("capabilities dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            found += 1;
+            let v: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+            assert!(v.get("remote").is_none(), "{path:?} grants a remote context");
+            let windows = v["windows"].as_array().expect("windows array");
+            for w in windows.iter().filter_map(|w| w.as_str()) {
+                let pat = w.trim_end_matches('*');
+                assert!(
+                    !"workspace-browser-w_1".starts_with(pat),
+                    "{path:?} window glob {w} matches the workspace Browser webview"
+                );
+            }
+        }
+        assert!(found >= 1, "no capability json found");
+    }
+}
