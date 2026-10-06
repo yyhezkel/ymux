@@ -962,6 +962,61 @@ fn parse_wsl_list_verbose(text: &str) -> (Vec<String>, Option<String>) {
     (distros, default)
 }
 
+/// Pane-header text for a WSL problem that would make the spawn fail
+/// silently; `None` = nothing known to be wrong. `distros=None` means the
+/// list could not be read (fail open).
+pub(crate) fn wsl_problem_message(
+    wsl_present: bool,
+    distros: Option<&[String]>,
+    wanted: Option<&str>,
+) -> Option<String> {
+    if !wsl_present {
+        return Some(
+            "WSL is not available on this machine \u{2014} edit this workspace to use a local shell"
+                .to_string(),
+        );
+    }
+    let distros = distros?;
+    if distros.is_empty() {
+        return Some(
+            "no WSL distro installed \u{2014} run wsl --install or edit this workspace".to_string(),
+        );
+    }
+    let wanted = wanted?;
+    if distros.iter().any(|d| d.eq_ignore_ascii_case(wanted)) {
+        None
+    } else {
+        Some(format!(
+            "WSL distro '{wanted}' is not installed \u{2014} edit this workspace's distro"
+        ))
+    }
+}
+
+/// Probe WSL before a WSL pane spawns. Windows: wsl.exe lookup + `wsl -l -v`.
+#[cfg(target_os = "windows")]
+pub(crate) async fn wsl_pane_problem(distro: Option<&str>) -> Option<String> {
+    if crate::local_wizard::which("wsl.exe").is_none() {
+        return wsl_problem_message(false, None, distro);
+    }
+    let mut c = wsl_cmd();
+    c.arg("-l").arg("-v");
+    // AI-NOTE: probe failure fails open — a flaky wsl.exe must not block a pane that might spawn fine.
+    let list = match run_capture(c, "wsl -l -v", 5).await {
+        Ok((0, out)) => {
+            let (d, _) = parse_wsl_list_verbose(&out);
+            Some(d)
+        }
+        _ => None,
+    };
+    wsl_problem_message(true, list.as_deref(), distro)
+}
+
+/// Non-Windows: WSL cannot exist.
+#[cfg(not(target_os = "windows"))]
+pub(crate) async fn wsl_pane_problem(distro: Option<&str>) -> Option<String> {
+    wsl_problem_message(false, None, distro)
+}
+
 #[cfg(target_os = "windows")]
 async fn inspect_wsl(distro_override: Option<&str>) -> WslInspect {
     let mut w = WslInspect::absent();
@@ -2305,6 +2360,20 @@ fn finalize_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_problem_message_cases() {
+        // Pins the six classifier outcomes the pane header relies on.
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let msg = wsl_problem_message(false, None, None).unwrap();
+        assert!(msg.starts_with("WSL is not available"));
+        assert!(wsl_problem_message(true, Some(&[]), None).unwrap().starts_with("no WSL distro installed"));
+        let d = l(&["Ubuntu"]);
+        assert!(wsl_problem_message(true, Some(&d), Some("Debian")).unwrap().contains("'Debian' is not installed"));
+        assert_eq!(wsl_problem_message(true, Some(&d), Some("ubuntu")), None);
+        assert_eq!(wsl_problem_message(true, Some(&d), None), None);
+        assert_eq!(wsl_problem_message(true, None, Some("Debian")), None);
+    }
 
     #[test]
     fn persistence_chain_is_exactly_the_mac_tmux_steps() {

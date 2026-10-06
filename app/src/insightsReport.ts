@@ -68,8 +68,6 @@ export interface AnContainer {
 }
 export interface AnReport {
   bucketed?: boolean;
-  /** Set by the local-workspace shim: there is no metrics store to roll up. */
-  unavailable?: string;
   since: number;
   until: number;
   bucket_s: number;

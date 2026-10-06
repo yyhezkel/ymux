@@ -6,13 +6,14 @@ covers:
   - app/src-tauri/src/claude_usage.rs
   - app/src-tauri/src/claude_usage_local.rs
   - app/src-tauri/src/insights_local.rs
+  - app/src-tauri/src/insights_store.rs
   - app/src-tauri/src/claude_usage_local.rs
 ---
 
 # Claude integration + local Insights
 
-Five modules, ~2,650 lines. Three of them read or drive the `claude` CLI **on the machine
-that hosts the transcripts** — usually the remote, not the desktop. The other two are the
+Six modules, ~3,500 lines. Three of them read or drive the `claude` CLI **on the machine
+that hosts the transcripts** — usually the remote, not the desktop. The other three are the
 local-machine half of the Insights panel.
 
 ## `claude_summary.rs` (375) — session auto-summary
@@ -96,7 +97,110 @@ resulting warning cascade.
 
 **Do not delete this as dead code.** It is deliberate, and the header says so.
 
-## `insights_local.rs` (755) — Insights for Local workspaces
+## `insights_local.rs` (1037) — Insights for Local workspaces
+
+Speaks the **same JSON shape** as the remote `ymux-server` HTTP API, so
+`InsightsWindow.tsx` shares its parsing code. The only routing decision is
+remote-vs-local, and `addons.rs::insights_fetch` makes it transparently — the frontend
+never chooses.
+
+- CPU / memory / disks / network / processes come from `sysinfo` — cross-platform, no
+  WMI plumbing.
+- Docker on Windows via `bollard` over `\\.\pipe\docker_engine` (Docker Desktop). If
+  Docker is not running it returns an **empty container list rather than an error**; the
+  panel already renders a friendly "no docker" state.
+- Log tag: `[INSIGHTS-LOCAL]`.
+- **Two routes the remote daemon gained in Phase 84.C/E are answered here too.**
+  `/analytics` (the Monitor's Analytics tab) is served from the local SQLite store
+  (`insights_store.rs`, below), which a background sampler fills; the payload has the
+  remote `AnalyticsReport` shape, so the tab renders it with no local marker. An empty
+  store returns `samples: 0` and empty arrays, not an error. `/claude-usage` is delegated
+  to `claude_usage_local.rs`, a Rust mirror of the Go `claudeusage.go` walk over
+  `~/.claude/projects/**/*.jsonl` — the duplication is deliberate, since the alternative
+  was SFTP-pulling hundreds of MB of transcripts to the desktop each time the tab opens.
+  Both halves count tokens only; pricing lives in one place, `app/src/claudePricing.ts`.
+
+`/analytics` parses its query with the pure `parse_analytics_query(query, now)` using the
+Go clamps: `until` ≤ 0 or in the future → now; `since` ≤ 0 → `until − 24h`; `since`
+clamped to `[until − 7d, until − 5min]`; `points` default 120, clamped to `[20, 400]`;
+garbage → treated as absent. The query is clamped before any SQL, and the store runs on
+`spawn_blocking`. Errors: `local metrics store unavailable: <reason>`,
+`local analytics query failed: <reason>`, `insights_local analytics: join: <e>`.
+
+### The sampler — `spawn_sampler(state)`
+
+Started from `setup()` in `lib.rs` right after the rpc_server spawn. Opens the store on
+`spawn_blocking` (failure → WARN and the sampler never runs; the route then reports the
+store as unavailable), sweeps once at boot, then ticks every 5 s. A tick is **skipped
+unless some workspace has `connection: None` or `Connection::Local`** — no local
+workspace, no sampling. Each sample is unix seconds, CPU %, `load[0]`, memory used/total,
+swap, the sum of non-loopback network bytes/s (skips `lo` and any name containing
+"loopback", case-insensitive) and disks. `snapshot(include_top=false)` skips the process
+refresh. Docker is polled every 6th tick (`DOCKER_EVERY`), carried forward between polls
+and empty on error. Insert runs on `spawn_blocking`; a sweep runs hourly. Logs are metadata
+only under `[INSIGHTS-LOCAL]`.
+
+## `insights_store.rs` (570) — the local metric history
+
+A Rust port of `server/internal/insights/store.go` + `analytics.go`. Schema is verbatim
+from `store.go`; JSON field names are verbatim from `analytics.go`, so the remote and
+local payloads stay interchangeable.
+
+- `Store::open(path)` — SQLite via `rusqlite` (`bundled`, so C is compiled by `cc` on
+  every target), WAL, `synchronous=NORMAL`, `busy_timeout=3000`. `open_default()` is
+  `config_dir()/insights-local.db`.
+- `insert(&Sample)` — one transaction across `samples` / `disk_samples` /
+  `docker_samples`.
+- `sweep(now)` — deletes rows older than 7 days from all three tables, then
+  `wal_checkpoint(TRUNCATE)`.
+- `analytics(since, until, points)` — period is 3600 s, or 86400 s when the span is ≥ 48 h;
+  busy means CPU ≥ 80; `mem_pct` is guarded by a `CASE` against `mem_total = 0`; rx bytes
+  are an estimate from bps × interval; floats are rounded to 2 decimals (`nz`);
+  `by_period` is `DESC LIMIT 24`, `by_container` `LIMIT 20`. All SQL values are bound
+  parameters.
+- Every fallible path returns `Result<_, String>` (Rule #6); no `unwrap` outside tests.
+
+`Cargo.lock` was not refreshed locally for the `rusqlite` dep (no cargo on the dev box,
+Rule #17) — CI resolves it.
+
+## `claude_usage_local.rs` (549) — token history, local half
+
+Phase 84.E. A deliberate mirror of `server/internal/insights/claudeusage.go`: same scan,
+same JSON field names, same clamping — the pattern `insights_local` already set for
+`/current`, with `insights_fetch` routing remote-vs-local so the frontend never branches.
+
+**Two implementations of one aggregation is real duplication, and it is the cheaper
+option.** `~/.claude/projects` runs to 240 MB across ~170 transcripts on a working box;
+the alternative — SFTP-mirroring the remote tree to the desktop and parsing it once, in
+Rust — would pull hundreds of megabytes over the wire every time the tab opens. The cost
+of the choice is the one that setup always has: **the two can drift apart silently**, so
+compare their output on the same window when you touch either.
+
+Counts tokens, does not price them — the table is `app/src/claudePricing.ts`, in one
+place, so a rate change is a one-file edit and not a server rebake plus a Rust edit.
+Cache writes are split 5-minute vs 1-hour because a 1-hour write costs 2x base input
+against a 5-minute write's 1.25x, and collapsing them understates a long session.
+
+**Rule #1 by construction:** it reads `message.model`, `message.usage`, the timestamp,
+the session id and the cwd. It never reads message content, and it logs only counts.
+
+## `claude_log.rs` (600) — alive on purpose, unused on purpose
+
+Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
+competing 'talk to claude' UIs felt fragmented"). Yossi asked to keep the backend for a
+future unified view, so the three commands stay registered in `invoke_handler!` with
+**no frontend caller**. The `#![allow(dead_code)]` at the top is what silences the
+resulting warning cascade.
+
+- `claude_log_sync(workspace_id, session_id?)` — SFTP-mirror new/changed files,
+  mtime-gated, full-file fetch (no byte diffing).
+- `claude_log_list(workspace_id)` — local directory scan + per-file summary.
+- `claude_log_read(workspace_id, session_id)` — parse the local JSONL into a structured
+  `ClaudeLogEntry` stream.
+
+**Do not delete this as dead code.** It is deliberate, and the header says so.
+
+## `insights_local.rs` (1037) — Insights for Local workspaces
 
 Speaks the **same JSON shape** as the remote `ymux-server` HTTP API, so
 `InsightsWindow.tsx` shares its parsing code. The only routing decision is
@@ -161,6 +265,8 @@ session id and the cwd — never message *content* — and logs nothing but coun
 
 - **Rule #1** — transcript *content* never reaches `debug.log`. Summaries are written to
   notes (a user-visible store), which is a different thing from logging.
+- The sampler only runs while a Local workspace exists, and the store is the one place
+  local metrics are persisted (7-day retention, swept hourly).
 - Everything here is best-effort: a missing `claude` binary, a Docker daemon that is
   down, or an unparseable transcript degrades the feature, never the app.
 - The local and remote Insights payloads must stay shape-compatible. Changing one
