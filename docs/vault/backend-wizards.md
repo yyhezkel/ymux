@@ -186,6 +186,13 @@ Absolute tool paths, `.arg()` only (Rule #3). Rerun after a crash is safe: stale
 and old bundles are removed first. Compiles only in `build-macos-intel.yml`; **not run
 live** (Rule #14) — bundles are ad-hoc signed, not notarized.
 
+Test seams: `swap_with(mnt, bundle, parent, copy, rename)` (prod passes `ditto` + `fs::rename`),
+`ensure_writable(parent)`, `verify_dmg_sha(dmg, Option<&str>)` and
+`mount_swap_detach(mnt, dmg, attach, swap, detach)` (prod: `hdiutil_attach`,
+`swap_from_mount`, `detach`). Tests are hermetic (tempdir, injected closures, no
+hdiutil/ditto/network) and cover swap success/restore/both-fail, probe cleanup,
+sha match/mismatch, attach-failure cleanup, single detach, stale-mount reset.
+
 ## Invariants
 
 - **Rule #7** — `settings.json` is written tmp + fsync + rename, like every other

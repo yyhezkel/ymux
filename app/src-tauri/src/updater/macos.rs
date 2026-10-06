@@ -105,6 +105,78 @@ fn swap_with(
     Ok(())
 }
 
+/// Writable precheck: create + drop a probe dir in the parent.
+fn ensure_writable(parent: &Path) -> Result<(), String> {
+    let probe = parent.join(".ymux-update-probe");
+    remove_any(&probe);
+    std::fs::create_dir(&probe)
+        .map_err(|_| format!("cannot write {} — download the .dmg manually", parent.display()))?;
+    let _ = std::fs::remove_dir(&probe);
+    Ok(())
+}
+
+/// Compare the dmg's sha256 with `expected`; a mismatch deletes the dmg.
+fn verify_dmg_sha(dmg: &Path, expected: Option<&str>) -> Result<(), String> {
+    match expected {
+        Some(expected) => {
+            let actual = sha256_file(dmg)?;
+            if !actual.eq_ignore_ascii_case(expected.trim()) {
+                let _ = std::fs::remove_file(dmg);
+                return Err(format!(
+                    "downloaded dmg failed integrity check — expected {expected}, got {actual}"
+                ));
+            }
+            log_info("UPDATER", &format!("updater: dmg sha256 verified ({actual})"));
+        }
+        None => log_warn("UPDATER", "updater: no dmg sha256 given — installing unverified"),
+    }
+    Ok(())
+}
+
+fn hdiutil_attach(mnt: &Path, dmg: &Path) -> Result<(), String> {
+    let attach = Command::new(HDIUTIL)
+        .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"])
+        .arg(mnt)
+        .arg(dmg)
+        .output()
+        .map_err(|e| format!("{HDIUTIL}: {e}"));
+    match attach {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => Err(format!(
+            "hdiutil attach failed ({}): {}",
+            o.status,
+            String::from_utf8_lossy(&o.stderr).trim()
+        )),
+        Err(e) => Err(e),
+    }
+}
+
+/// Mount `dmg` at `mnt`, run `swap`, detach. attach/swap/detach injected (test seam).
+fn mount_swap_detach(
+    mnt: &Path,
+    dmg: &Path,
+    attach: impl Fn(&Path, &Path) -> Result<(), String>,
+    swap: impl Fn(&Path) -> Result<(), String>,
+    detach: impl Fn(&Path),
+) -> Result<(), String> {
+    // Stale mount from a crashed earlier run: detach, then reuse the path.
+    if mnt.exists() {
+        detach(mnt);
+        remove_any(mnt);
+    }
+    std::fs::create_dir(mnt).map_err(|e| format!("create {}: {e}", mnt.display()))?;
+
+    if let Err(e) = attach(mnt, dmg) {
+        let _ = std::fs::remove_dir(mnt);
+        return Err(e);
+    }
+
+    // Every path after attach goes through this single detach.
+    let swapped = swap(mnt);
+    detach(mnt);
+    swapped
+}
+
 pub(super) async fn install_dmg_and_relaunch(
     app: AppHandle,
     url: String,
@@ -118,64 +190,23 @@ pub(super) async fn install_dmg_and_relaunch(
         .ok_or_else(|| "not running from an .app bundle".to_string())?
         .to_path_buf();
 
-    // Writable precheck: create + drop a probe dir in the parent.
-    let probe = parent.join(".ymux-update-probe");
-    remove_any(&probe);
-    std::fs::create_dir(&probe)
-        .map_err(|_| format!("cannot write {} — download the .dmg manually", parent.display()))?;
-    let _ = std::fs::remove_dir(&probe);
+    ensure_writable(&parent)?;
 
     let tmp = std::env::temp_dir();
     let dmg = tmp.join(format!("ymux-update-{label}.dmg"));
     log_info("UPDATER", &format!("updater: downloading dmg {url}"));
     http_download_to_file(&url, &dmg).await?;
 
-    match expected_sha {
-        Some(expected) => {
-            let actual = sha256_file(&dmg)?;
-            if !actual.eq_ignore_ascii_case(expected.trim()) {
-                let _ = std::fs::remove_file(&dmg);
-                return Err(format!(
-                    "downloaded dmg failed integrity check — expected {expected}, got {actual}"
-                ));
-            }
-            log_info("UPDATER", &format!("updater: dmg sha256 verified ({actual})"));
-        }
-        None => log_warn("UPDATER", "updater: no dmg sha256 given — installing unverified"),
-    }
+    verify_dmg_sha(&dmg, expected_sha.as_deref())?;
 
-    // Stale mount from a crashed earlier run: detach, then reuse the path.
     let mnt = tmp.join(format!("ymux-update-mnt-{label}"));
-    if mnt.exists() {
-        detach(&mnt);
-        remove_any(&mnt);
-    }
-    std::fs::create_dir(&mnt).map_err(|e| format!("create {}: {e}", mnt.display()))?;
-
-    let attach = Command::new(HDIUTIL)
-        .args(["attach", "-nobrowse", "-readonly", "-noautoopen", "-mountpoint"])
-        .arg(&mnt)
-        .arg(&dmg)
-        .output()
-        .map_err(|e| format!("{HDIUTIL}: {e}"));
-    let attach = match attach {
-        Ok(o) if o.status.success() => Ok(()),
-        Ok(o) => Err(format!(
-            "hdiutil attach failed ({}): {}",
-            o.status,
-            String::from_utf8_lossy(&o.stderr).trim()
-        )),
-        Err(e) => Err(e),
-    };
-    if let Err(e) = attach {
-        let _ = std::fs::remove_dir(&mnt);
-        return Err(e);
-    }
-
-    // Every path after attach goes through this single detach.
-    let swapped = swap_from_mount(&mnt, &bundle, &parent);
-    detach(&mnt);
-    swapped?;
+    mount_swap_detach(
+        &mnt,
+        &dmg,
+        hdiutil_attach,
+        |m| swap_from_mount(m, &bundle, &parent),
+        detach,
+    )?;
 
     // AI-NOTE: best-effort — a quarantined copy only costs a Gatekeeper prompt.
     if let Err(e) = run(XATTR, &[Path::new("-dr"), Path::new("com.apple.quarantine"), &bundle]) {
@@ -343,5 +374,136 @@ mod tests {
         let (_t, mnt, bundle, parent) = fixture(1);
         let e = swap_with(&mnt, &bundle, &parent, fake_copy, failing_rename(&[2, 3])).unwrap_err();
         assert_eq!(e, "swap failed: boom2; restoring old app also failed: boom3");
+    }
+
+    #[test]
+    fn ensure_writable_ok_leaves_no_probe() {
+        // probe must be cleaned up or the next run's create_dir would see it
+        let t = tempfile::tempdir().expect("tempdir");
+        ensure_writable(t.path()).expect("writable");
+        assert!(!t.path().join(".ymux-update-probe").exists());
+    }
+
+    #[test]
+    fn ensure_writable_errors_on_readonly_dir() {
+        // read-only /Applications must give the manual-download hint, not a swap failure
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().expect("tempdir");
+        let ro = t.path().join("ro");
+        fs::create_dir(&ro).expect("ro");
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o555)).expect("chmod");
+        let r = ensure_writable(&ro);
+        fs::set_permissions(&ro, fs::Permissions::from_mode(0o755)).expect("reset");
+        // root ignores mode bits; only assert the message when the probe was refused
+        if let Err(e) = r {
+            assert_eq!(e, format!("cannot write {} — download the .dmg manually", ro.display()));
+        }
+    }
+
+    fn dmg_with(t: &tempfile::TempDir) -> (PathBuf, String) {
+        let dmg = t.path().join("u.dmg");
+        fs::write(&dmg, "payload").expect("dmg");
+        let sha = sha256_file(&dmg).expect("sha");
+        (dmg, sha)
+    }
+
+    #[test]
+    fn verify_sha_match_keeps_dmg() {
+        // matching hash (any case, padded) must not delete the download
+        let t = tempfile::tempdir().expect("tempdir");
+        let (dmg, sha) = dmg_with(&t);
+        verify_dmg_sha(&dmg, Some(&format!(" {} ", sha.to_uppercase()))).expect("match");
+        assert!(dmg.exists());
+        verify_dmg_sha(&dmg, None).expect("none is ok");
+        assert!(dmg.exists());
+    }
+
+    #[test]
+    fn verify_sha_mismatch_deletes_dmg() {
+        // a tampered dmg must be removed and reported with both hashes
+        let t = tempfile::tempdir().expect("tempdir");
+        let (dmg, sha) = dmg_with(&t);
+        let e = verify_dmg_sha(&dmg, Some("deadbeef")).unwrap_err();
+        assert_eq!(
+            e,
+            format!("downloaded dmg failed integrity check — expected deadbeef, got {sha}")
+        );
+        assert!(!dmg.exists());
+    }
+
+    #[test]
+    fn mount_attach_failure_removes_mnt() {
+        // failed attach: no swap, no detach, mount dir cleaned up
+        let t = tempfile::tempdir().expect("tempdir");
+        let mnt = t.path().join("mnt");
+        let (swaps, detaches) = (Cell::new(0), Cell::new(0));
+        let e = mount_swap_detach(
+            &mnt,
+            &t.path().join("u.dmg"),
+            |_, _| Err("attach boom".into()),
+            |_| {
+                swaps.set(swaps.get() + 1);
+                Ok(())
+            },
+            |_| detaches.set(detaches.get() + 1),
+        )
+        .unwrap_err();
+        assert_eq!(e, "attach boom");
+        assert!(!mnt.exists());
+        assert_eq!((swaps.get(), detaches.get()), (0, 0));
+    }
+
+    #[test]
+    fn mount_swap_failure_still_detaches() {
+        // a failed swap must not leave the dmg mounted
+        let t = tempfile::tempdir().expect("tempdir");
+        let mnt = t.path().join("mnt");
+        let detaches = Cell::new(0);
+        let e = mount_swap_detach(
+            &mnt,
+            &t.path().join("u.dmg"),
+            |_, _| Ok(()),
+            |_| Err("swap boom".into()),
+            |_| detaches.set(detaches.get() + 1),
+        )
+        .unwrap_err();
+        assert_eq!(e, "swap boom");
+        assert_eq!(detaches.get(), 1);
+    }
+
+    #[test]
+    fn mount_success_detaches_once() {
+        // happy path: swap sees the mount, exactly one detach
+        let t = tempfile::tempdir().expect("tempdir");
+        let mnt = t.path().join("mnt");
+        let detaches = Cell::new(0);
+        mount_swap_detach(
+            &mnt,
+            &t.path().join("u.dmg"),
+            |_, _| Ok(()),
+            |m| if m.is_dir() { Ok(()) } else { Err("no mnt".into()) },
+            |_| detaches.set(detaches.get() + 1),
+        )
+        .expect("ok");
+        assert_eq!(detaches.get(), 1);
+    }
+
+    #[test]
+    fn mount_stale_mnt_detached_and_recreated() {
+        // leftover mount dir from a crash: detach it, wipe it, start fresh
+        let t = tempfile::tempdir().expect("tempdir");
+        let mnt = t.path().join("mnt");
+        fs::create_dir(&mnt).expect("mnt");
+        fs::write(mnt.join("stale"), "x").expect("stale");
+        let detaches = Cell::new(0);
+        mount_swap_detach(
+            &mnt,
+            &t.path().join("u.dmg"),
+            |_, _| Ok(()),
+            |m| if m.join("stale").exists() { Err("stale survived".into()) } else { Ok(()) },
+            |_| detaches.set(detaches.get() + 1),
+        )
+        .expect("ok");
+        assert_eq!(detaches.get(), 2);
     }
 }
