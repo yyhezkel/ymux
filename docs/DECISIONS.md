@@ -470,6 +470,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decision:** A. `list_zellij_sessions` reads `~/.ymux/session-meta.json` (fallback `~/.winmux/`) and `apply_session_meta` joins by session name (`ymux-<pane>`), same precedence as tmux; frontend already ranks label > auto_name > claude_title > name. C rejected: renaming sessions is out of scope and breaks attach-by-name.
 - **Outcome:** reader in lib.rs, vault `backend-core.md` updated. Compiles untested until CI. Open P3 in FOLLOWUPS: CLI writer for Windows-local zellij panes and prune-vs-`tmux ls` unverified.
 
+### 2026-10-06 — Claude-running flag persisted per pane (`claude_running`); stale-true accepted
+- **Context:** FOLLOWUPS P2 (reattach to a persistent session starts in the wrong bidi state until the first hook).
+- **Decision:** persist `LayoutNode::Pane.claude_running` in workspaces.json; a restoring connect seeds the TUI signal from it. Written only on transitions (connect, any Claude hook, `session-end`).
+- **Trade-off (stale-true):** Claude died while the app was closed → persisted true → shell Hebrew renders reversed after reattach. Corrected by a `session-end` hook or a fresh non-restoring connect. The title detector is gone (ticket -ts-4); do not re-add one.
+- **Limitation (O4):** when `claude_running` is never written because the ymux Claude hooks are not installed, nothing corrects it — hooks are not installed → no signal beyond the wizard's `mode=claude`.
+
 ### 2026-10-06 — `bidi_reorder`: caret pinned right + half-reordered repaints are the cursed cursor — DEFERRED, documented as a known limit
 - **Context:** Under `rtl_mode="bidi_reorder"` the caret stays pinned to the right instead of tracking the text, and a partial repaint can leave a line half-reordered. Cause: `flushPending` runs `reorderRtlForDisplay` (`app/src/bidi.ts`) on each rAF chunk of the byte stream, while the TUI positions its cursor and repaints regions in columns of the UNtransformed text — two coordinate systems that diverge. `normaliseIncomingToLogical` has the same fragment limit (it sees runs between ANSI escapes, not whole lines).
 - **Precedent:** terminal-wg's BiDi proposal (https://terminal-wg.pages.freedesktop.org/bidi/) names this problem "the cursed cursor". Root cause first written up in `PROGRESS.txt`, 2026-08-19 entry (the DECISIONS entry it promised never landed; `bidi.ts` points at it — this closes that dangling pointer). NOT VERIFIED LIVE.
