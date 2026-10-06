@@ -31,6 +31,8 @@ covers:
   - app/src/useNarrow.ts
   - app/src/icons.tsx
   - app/src/TechText.tsx
+unowned:
+  - app/src/tabsHarness.tsx   # Phase 84.F CSS harness, not part of the app
 ---
 
 # Frontend shell — App, sidebar, layout, panes, panel chrome
@@ -45,13 +47,15 @@ workspace/settings bootstrap runs in those windows:
 
 | label | renders | id |
 |---|---|---|
-| `popout-<sid>` | `<PopoutTerminal>` | terminal session |
+| `popout-<sid>` | `<PopoutTerminal>` | terminal session (origin profile via `ymux.popout.profile.<sid>`) |
 | `browser-popout-<ws>` | `<PopoutBrowser>` | workspace |
 
 The browser prefix deliberately does NOT start with `popout-`, so the two checks cannot
 collide — and neither can their capability globs, which are prefix-anchored too. The
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
+`App.tsx` `popOutPane` writes `ti.profile` under `popoutProfileKey(sid)` before `popout_pane`;
+the `popout:closed` listener removes it first.
 
 ## `App.tsx` (5,566) — one component, ~50 signals
 
@@ -166,7 +170,7 @@ notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 **Headers + cards (Phase 91.E — the cmux look).** Every row is still one
 `.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
 is shared), but there are two bodies. **Phase 92 made the split structural:** `isHeaderRow(w)`
-is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder, full stop; it
+is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder (`is_project_root || is_folder`), full stop; it
 holds rows and never panes, and it is never the active workspace. A header renders the
 pre-91.E row as a slim `.ws-header`: a chevron on EVERY header (it may hold zero screens
 right after a create), glyph, dim small-caps-weight name, worktree chip, the `+`, and a
@@ -349,13 +353,15 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
   until they connect — that is its contract. A row's name is fixed at creation.
 
-## `PaneView.tsx` (2,194) — one terminal pane
+## `PaneView.tsx` (2,174) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
 session picker (tmux/zellij sessions, Claude sessions), pane title and annotation
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
-based on its effective connection.
+based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
+(`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
+the directory listing itself no longer lives in `PaneView`.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls
@@ -402,15 +408,16 @@ and the tab's X land on the same neighbour.
 
 **`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
-disagree about what colour a pane is. Unit-tested in `paneAgentState.test.ts`. It only
+disagree about what colour a pane is. `failed` (StopFailure, API-error turn) is a fourth
+light, painted as a red square; `queueStatus` maps it to `stuck`. Unit-tested in `paneAgentState.test.ts`. It only
 decides how to *paint* a state; the transition table is owned by the backend
 (`PaneAgentState::apply_hook` in `lib.rs`, arriving as the `pane:agent-run` event) — see
 `backend-core.md`.
 
 **`AgentLight.tsx` (45)** — paints it. Green = Claude is working, yellow = it finished and
-it is your move, red = it is blocked on you, **nothing at all = unknown**, which is the
+it is your move, red = it is blocked on you, a filled square (red, no pulse) = the turn died on an API error (`failed`), **nothing at all = unknown**, which is the
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
-untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
+untrustworthy. It uses **shape as well as hue** (disc / ring / triangle / square) so it survives
 greyscale, 8px, and red-green deficiency.
 
 **`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
@@ -443,7 +450,7 @@ Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
 
 **`wsTree.ts`** (Phase 92) — the header / screen rule and the tree walks, shared by the
 Sidebar and App and mirrored by `is_header` in lib.rs: `isHeader(w)` (`!parent_id ||
-is_project_root`), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
+is_project_root || is_folder` — stored, not derived), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
 (`sort_order` asc, null last, insertion order — the same sort as the Sidebar's `childrenOf`
 and lib.rs's `children_in_order`), `firstScreenOf` (skips a root's folder children — they
 are headers too), `screenOrSelf` (a screen is itself, a header hands over, an empty header

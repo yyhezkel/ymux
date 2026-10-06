@@ -230,7 +230,7 @@ pub(crate) async fn deliver_ssh(
 }
 
 #[cfg(windows)]
-fn protect_b64(plain: &str) -> Result<String, String> {
+pub(crate) fn protect_b64(plain: &str) -> Result<String, String> {
     use base64::Engine;
     let blob = dpapi(plain.as_bytes(), true)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(blob))
@@ -247,7 +247,7 @@ fn unprotect_b64(b64: &str) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn protect_b64(_plain: &str) -> Result<String, String> {
+pub(crate) fn protect_b64(_plain: &str) -> Result<String, String> {
     Err("secret env is memory-only on this platform".to_string())
 }
 
