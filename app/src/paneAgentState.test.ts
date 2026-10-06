@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   trafficLight,
   trafficLightKey,
+  agentAnnounceKey,
   elapsedLabel,
   STALE_AFTER_MS,
   type AgentLightInput,
@@ -106,4 +107,43 @@ test("elapsed renders M:SS and never counts backwards", () => {
   // Clock skew between the backend's stamp and the frontend's tick must
   // not produce "-1:-1".
   assert.equal(elapsedLabel(NOW + 5_000, NOW), "0:00");
+});
+
+// Phase 84.C: focused-pane announcement rule. Breaking any of these means a
+// screen reader either misses the focused pane's transition or chatters about
+// panes/focus changes the user did not cause.
+const snap = (paneId: string | null, key: string | null) => ({ paneId, key });
+
+test("O1: same focused pane, key changed -> announce the new key", () => {
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p1", "pane.agent.state.done")),
+    "pane.agent.state.done",
+  );
+});
+
+test("O2: focus moved to another pane -> silent even though keys differ", () => {
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p2", "pane.agent.state.done")),
+    null,
+  );
+});
+
+test("O3: same pane, same key -> silent (no repeat on unrelated ticks)", () => {
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.done"), snap("p1", "pane.agent.state.done")),
+    null,
+  );
+});
+
+test("O4: first snapshot from no focus -> silent (mount speaks nothing)", () => {
+  assert.equal(
+    agentAnnounceKey(snap(null, null), snap("p1", "pane.agent.state.running")),
+    null,
+  );
+});
+
+test("a null next key or null next pane never announces", () => {
+  // Light vanished (agent gone) or nothing focused: nothing to say.
+  assert.equal(agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p1", null)), null);
+  assert.equal(agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap(null, null)), null);
 });
