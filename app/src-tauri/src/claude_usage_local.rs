@@ -591,4 +591,22 @@ mod tests {
         assert_eq!(rep.parse_errors, 0);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    // Parity pin with Go: an invalid-UTF-8 line is one parse error, dropped;
+    // the usage line after it still counts.
+    #[test]
+    fn invalid_utf8_line_is_one_parse_error() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-utf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        let p = write_transcript(&tmp, "p", "s1", &[]);
+        let mut f = File::options().append(true).open(&p).expect("open");
+        f.write_all(b"{\"type\":\"assistant\",\"usage\":\"\xff\xfe\"}\n").expect("write");
+        writeln!(f, "{}", line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)).expect("write");
+        drop(f);
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!(rep.parse_errors, 1);
+        assert_eq!(rep.totals.calls, 1);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

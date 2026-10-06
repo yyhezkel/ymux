@@ -368,3 +368,21 @@ func TestScanKeepsLinesAfterOversizedLine(t *testing.T) {
 		t.Fatalf("calls=%d in=%d parse_errors=%d, want 1/5/0", rep.Totals.Calls, rep.Totals.In, rep.ParseErrors)
 	}
 }
+
+// A line with invalid UTF-8 is one parse error and is dropped, matching Rust's
+// lines(); the usage line after it must still count.
+func TestScanInvalidUTF8LineIsOneParseError(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	writeTranscript(t, root, "proj", "s1", []string{
+		"{\"type\":\"assistant\",\"usage\":\"\xff\xfe\"}",
+		assistantLine(now.Add(-time.Minute), "s1", "/p", "claude-opus-5", 5, 6, 0, 0, 0, false, "standard"),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 1 || rep.Totals.Calls != 1 {
+		t.Fatalf("parse_errors=%d calls=%d, want 1/1", rep.ParseErrors, rep.Totals.Calls)
+	}
+}

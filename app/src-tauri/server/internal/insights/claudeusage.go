@@ -32,6 +32,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Guard rails for a directory nobody else controls the size of. On a working
@@ -320,6 +321,12 @@ func scanClaudeFile(
 		raw = bytes.TrimSuffix(raw, []byte("\r"))
 		if rerr == io.EOF && len(raw) == 0 {
 			return
+		}
+		// Rust's lines() errors on invalid UTF-8 for every line, marker or not,
+		// so check before the marker reject to count the same one parse error.
+		if !utf8.Valid(raw) {
+			rep.ParseErrors++
+			continue
 		}
 		// Cheap reject before the JSON decoder. Most lines in a transcript are
 		// user turns, attachments and tool results with no usage block at all,
