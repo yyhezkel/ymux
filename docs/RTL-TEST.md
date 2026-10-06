@@ -195,3 +195,31 @@ screenshot:
    The override paints bytes verbatim, which is right only while the buffer is
    still visual. Paired with `dir="rtl"` over a logical buffer it reverses every
    Hebrew word.
+
+## `bidi_reorder` — known limits (the cursed cursor)
+
+DEFERRED, not a bug to chase in an RTL bugfix. Decision:
+`docs/DECISIONS.md` → "`bidi_reorder`: caret pinned right + half-reordered
+repaints are the cursed cursor". terminal-wg calls the problem "the cursed
+cursor": https://terminal-wg.pages.freedesktop.org/bidi/
+
+Why: `flushPending` reorders each rAF chunk of the byte stream
+(`reorderRtlForDisplay`, `app/src/bidi.ts`), while a TUI positions its cursor
+and repaints regions in columns of the UNtransformed text. Two coordinate
+systems; they diverge.
+
+Known limits under `rtl_mode="bidi_reorder"`:
+1. **Caret pinned right.** The caret does not track the reordered text.
+2. **Half-reordered repaint.** A partial repaint can leave a line part
+   rewritten correctly and part reordered again.
+3. **Fragment-only view.** `normaliseIncomingToLogical` sees runs between ANSI
+   escapes, not whole lines (same root cause).
+
+Repro (**NOT VERIFIED LIVE** — taken from the 2026-08-19 PROGRESS.txt entry,
+not re-run):
+1. Set `rtl_mode=bidi_reorder`, open a pane running Claude Code.
+2. Type Hebrew in the prompt → caret stays at the right edge.
+3. Let the TUI repaint part of a Hebrew line → line shows mixed order.
+
+Workaround: use `auto_per_line` (or `force_rtl`). A real fix needs whole-line
+reassembly plus cursor tracking through the transform.
