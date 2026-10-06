@@ -88,11 +88,7 @@ export function WorkspaceExtrasFields(p: Props) {
                   onChange={(e) => {
                     const next = [...p.envRows()];
                     // ticking secret keeps the typed value; unchecking drops it so a secret never lingers as plain text
-                    next[i()] = {
-                      ...next[i()],
-                      secret: e.currentTarget.checked,
-                      value: e.currentTarget.checked ? next[i()].value : "",
-                    };
+                    next[i()] = { ...next[i()], secret: e.currentTarget.checked, value: e.currentTarget.checked ? row.value : "" };
                     p.setEnvRows(next);
                   }}
                 />
