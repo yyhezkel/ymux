@@ -94,6 +94,10 @@ put logic there.
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
+  The body is `persist_parts(workspaces, load_state, secret_env)` and
+  `reconcile_secret_env(workspaces, secret_env)` — the bare fields, not `&AppState`, so
+  `secret_env_persist_tests` build them without `AppState::default()` (which drags tauri
+  into the test binary: STATUS_ENTRYPOINT_NOT_FOUND on Windows before any test runs).
   `workspace_secret_env_keys(workspace_id)` returns names only.
   Pinned by `secret_env_persist_tests` (end of lib.rs); the save-failure cases are `cfg(windows)` because `SecretEnvStore::save` is a no-op elsewhere.
   `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
@@ -233,7 +237,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9231](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9246](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -252,7 +256,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2584](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2600](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

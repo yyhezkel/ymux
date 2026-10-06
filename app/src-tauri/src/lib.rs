@@ -1436,12 +1436,24 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     // workspaces.json stopped saving.
     let caller = std::panic::Location::caller();
     tracing::debug!("persist: called from {}:{}", caller.file(), caller.line());
+    persist_parts(&state.workspaces, &state.load_state, &state.secret_env)
+}
+
+/// `persist` over just the three fields it touches. Split out so tests build
+/// those directly: naming `AppState::default()` from test code drags tauri's
+/// webview runtime into the test binary, which then dies with
+/// STATUS_ENTRYPOINT_NOT_FOUND before any test runs (see tunnel_lease_tests).
+fn persist_parts(
+    workspaces: &Mutex<WorkspacesFile>,
+    load_state: &Mutex<Option<LoadState>>,
+    secret_env: &Mutex<secret_env::SecretEnvStore>,
+) -> Result<(), String> {
     // Secret env rows: move values into the store BEFORE the load-state gate so
     // no path (including a refused persist) leaves a value in `workspaces`.
-    let secret_err = reconcile_secret_env(state).err();
+    let secret_err = reconcile_secret_env(workspaces, secret_env).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
-    let load_state = *state.load_state.lock().map_err(|e| e.to_string())?;
+    let load_state = *load_state.lock().map_err(|e| e.to_string())?;
     match load_state {
         Some(LoadState::Loaded) => {}
         Some(LoadState::Failed) => {
@@ -1457,7 +1469,7 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
             return Err("persistence not yet initialized".into());
         }
     }
-    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
+    let file = workspaces.lock().map_err(|e| e.to_string())?.clone();
     save_to_disk(&file)?;
     match secret_err {
         Some(e) => Err(format!("secret env not saved: {e}")),
@@ -1474,9 +1486,12 @@ fn secret_env_path() -> Result<std::path::PathBuf, String> {
 
 /// Run `secret_env::reconcile` over the live workspaces; save the store when
 /// it changed. Error text never carries a value.
-fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
-    let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
-    let mut store = state.secret_env.lock().map_err(|e| e.to_string())?;
+fn reconcile_secret_env(
+    workspaces: &Mutex<WorkspacesFile>,
+    secret_env: &Mutex<secret_env::SecretEnvStore>,
+) -> Result<(), String> {
+    let mut file = workspaces.lock().map_err(|e| e.to_string())?;
+    let mut store = secret_env.lock().map_err(|e| e.to_string())?;
     if store.reconcile(&mut file.workspaces) {
         store.save(&secret_env_path()?)?;
     }
@@ -12710,7 +12725,7 @@ pub fn run() {
                 Ok(file) => {
                     *state.workspaces.lock().map_err(|e| e.to_string())? = file;
                     // Plaintext secret values from a pre-flag file move into the store.
-                    if let Err(e) = reconcile_secret_env(&state) {
+                    if let Err(e) = reconcile_secret_env(&state.workspaces, &state.secret_env) {
                         log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
                     }
                     *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Loaded);
@@ -16389,8 +16404,26 @@ mod secret_env_persist_tests {
         }
     }
 
-    fn state_with(workspaces: Vec<Workspace>, load: Option<LoadState>) -> AppState {
-        let state = AppState::default();
+    /// The three fields `persist_parts` touches — NOT `AppState::default()`,
+    /// which drags tauri into the test binary (STATUS_ENTRYPOINT_NOT_FOUND).
+    #[derive(Default)]
+    struct Parts {
+        workspaces: Mutex<WorkspacesFile>,
+        load_state: Mutex<Option<LoadState>>,
+        secret_env: Mutex<secret_env::SecretEnvStore>,
+    }
+
+    impl Parts {
+        fn reconcile(&self) -> Result<(), String> {
+            reconcile_secret_env(&self.workspaces, &self.secret_env)
+        }
+        fn persist(&self) -> Result<(), String> {
+            persist_parts(&self.workspaces, &self.load_state, &self.secret_env)
+        }
+    }
+
+    fn state_with(workspaces: Vec<Workspace>, load: Option<LoadState>) -> Parts {
+        let state = Parts::default();
         state.workspaces.lock().unwrap().workspaces = workspaces;
         *state.load_state.lock().unwrap() = load;
         state
@@ -16418,7 +16451,7 @@ mod secret_env_persist_tests {
             vec![ws("h", None, vec![ev("TOKEN", "abc", true), ev("A", "1", false)])],
             Some(LoadState::Loaded),
         );
-        assert!(reconcile_secret_env(&state).is_ok());
+        assert!(state.reconcile().is_ok());
         let file = state.workspaces.lock().unwrap();
         assert_eq!(file.workspaces[0].env[0].value, "");
         assert_eq!(file.workspaces[0].env[1].value, "1");
@@ -16439,11 +16472,11 @@ mod secret_env_persist_tests {
         clean(&p);
         std::fs::create_dir(&p).expect("blocker dir");
         let state = state_with(vec![ws("h", None, vec![ev("A", "1", false)])], Some(LoadState::Loaded));
-        assert!(reconcile_secret_env(&state).is_ok());
+        assert!(state.reconcile().is_ok());
         state.workspaces.lock().unwrap().workspaces[0]
             .env
             .push(ev("TOKEN", "abc", true));
-        let err = reconcile_secret_env(&state).expect_err("save must fail");
+        let err = state.reconcile().expect_err("save must fail");
         assert!(err.contains("secret-env.json"), "path missing: {err}");
         assert!(!err.contains("abc"), "value leaked in error");
         clean(&p);
@@ -16456,7 +16489,7 @@ mod secret_env_persist_tests {
         let p = secret_path();
         clean(&p);
         let state = state_with(vec![ws("h", None, vec![ev("TOKEN", "abc", true)])], None);
-        let err = persist(&state).expect_err("gate must refuse");
+        let err = state.persist().expect_err("gate must refuse");
         assert_eq!(err, "persistence not yet initialized");
         assert_eq!(state.workspaces.lock().unwrap().workspaces[0].env[0].value, "");
         clean(&p);
@@ -16474,7 +16507,7 @@ mod secret_env_persist_tests {
             vec![ws("persist-order-ws", None, vec![ev("TOKEN", "abc", true)])],
             Some(LoadState::Loaded),
         );
-        let err = persist(&state).expect_err("store save must fail");
+        let err = state.persist().expect_err("store save must fail");
         assert!(err.starts_with("secret env not saved: "), "got: {err}");
         assert!(!err.contains("abc"), "value leaked in error");
         // LAST_KNOWN three-way merge → containment, never equality.
@@ -16494,7 +16527,7 @@ mod secret_env_persist_tests {
             vec![ws("h", None, vec![ev("TOKEN", "abc", true)])],
             Some(LoadState::Loaded),
         );
-        assert_eq!(persist(&state), Ok(()));
+        assert_eq!(state.persist(), Ok(()));
         clean(&p);
     }
 }
