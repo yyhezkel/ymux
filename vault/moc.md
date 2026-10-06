@@ -15,4 +15,5 @@
 - [howto/run-committed-server-blob.md](howto/run-committed-server-blob.md): query the committed Go daemon on a side port without building (Rule #17)
 
 ## Notes
+- [phase92-headers-screens](phase92-headers-screens.md) — Phase 92 header/screen symbols, RPC select, delete landing: file:line anchors
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
