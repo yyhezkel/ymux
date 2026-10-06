@@ -7050,6 +7050,18 @@ body.ymux-dragging .pane-conn {
   background-size: 12px 12px;
   background-position: 0 0, 0 6px, 6px -6px, -6px 0;
 }
+/* Missing-snapshot notice: plain box, no checkerboard. */
+.ticket-modal-shot-missing,
+.ticket-modal-shot-note {
+  font-size: 12px;
+  color: var(--w-text-dim, #7d8590);
+}
+.ticket-modal-shot-missing {
+  padding: 8px 10px;
+  border: 1px dashed var(--w-border, #21262d);
+  border-radius: 4px;
+}
+.ticket-modal-shot-note { margin-top: 4px; }
 .ticket-modal-check {
   display: inline-flex;
   align-items: center;
