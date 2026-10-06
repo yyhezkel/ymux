@@ -8803,15 +8803,55 @@ pub(crate) fn pane_set_active(
     workspace_id: String,
     pane_id: String,
 ) -> Result<(), String> {
+    set_active_pane(&state.active_panes, workspace_id, pane_id)
+}
+
+/// Records the active pane of a workspace; empty ids are rejected.
+fn set_active_pane(
+    map: &Mutex<HashMap<String, String>>,
+    workspace_id: String,
+    pane_id: String,
+) -> Result<(), String> {
     if workspace_id.is_empty() || pane_id.is_empty() {
         return Err("pane_set_active: empty workspace or pane id".into());
     }
-    let mut map = state
-        .active_panes
-        .lock()
-        .map_err(|e| format!("pane_set_active: {e}"))?;
+    let mut map = map.lock().map_err(|e| format!("pane_set_active: {e}"))?;
     map.insert(workspace_id, pane_id);
     Ok(())
+}
+
+#[cfg(test)]
+mod pane_set_active_tests {
+    use super::*;
+
+    const EMPTY_ID_ERR: &str = "pane_set_active: empty workspace or pane id";
+
+    // pins: empty workspace id is refused and leaves the map untouched
+    #[test]
+    fn pane_set_active_rejects_empty_workspace_id() {
+        let map = Mutex::new(HashMap::new());
+        let r = set_active_pane(&map, String::new(), "p1".to_string());
+        assert_eq!(r, Err(EMPTY_ID_ERR.to_string()));
+        assert!(map.lock().unwrap().is_empty());
+    }
+
+    // pins: empty pane id is refused and leaves the map untouched
+    #[test]
+    fn pane_set_active_rejects_empty_pane_id() {
+        let map = Mutex::new(HashMap::new());
+        let r = set_active_pane(&map, "w1".to_string(), String::new());
+        assert_eq!(r, Err(EMPTY_ID_ERR.to_string()));
+        assert!(map.lock().unwrap().is_empty());
+    }
+
+    // pins: valid ids still insert, last write wins
+    #[test]
+    fn pane_set_active_inserts_valid_ids() {
+        let map = Mutex::new(HashMap::new());
+        assert_eq!(set_active_pane(&map, "w1".to_string(), "p1".to_string()), Ok(()));
+        assert_eq!(set_active_pane(&map, "w1".to_string(), "p2".to_string()), Ok(()));
+        assert_eq!(map.lock().unwrap().get("w1").map(String::as_str), Some("p2"));
+    }
 }
 
 #[tauri::command]
