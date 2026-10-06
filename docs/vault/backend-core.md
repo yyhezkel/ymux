@@ -223,7 +223,8 @@ a wide argument list because every connection mode funnels through it: `persiste
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
 - `emit_data` ([emit_data@lib.rs:2494](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
-  it buffers a partial multibyte sequence rather than emitting a broken string. Do not
+  it buffers a partial multibyte sequence rather than emitting a broken string, and it
+  decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke
   echo is immediate), then at most every 33 ms per session, early at 1 MB pending, and
