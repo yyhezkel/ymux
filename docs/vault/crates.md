@@ -149,7 +149,8 @@ counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
 together or not at all.** Rule #8: the token never reaches a log.
 
 `render_env_file` (the `~/.ymux/run/last.env` body) writes `YMUX_*` lines only; the `WINMUX_*`
-dual-write was dropped, the CLI still reads the legacy names as a fallback.
+dual-write was dropped, the CLI still reads the legacy names as a fallback. So the file is
+3 lines with a pane id, 2 without (`env_file_terminates_every_line_including_the_last`).
 
 ## `ymux-policy` (542) — the 3-state permission engine
 

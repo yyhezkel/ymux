@@ -67,11 +67,13 @@ put logic there.
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
   `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
-  command, in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  command, in-memory, last write wins, taken alone; the command is a private `fn` — a
+  `pub(crate)` `#[tauri::command]` at the crate root is E0255, its `__cmd__` macro
+  defined twice), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
-  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`).
+  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`; the guard is bound to a local first — as an `if let` tail-expression temporary it would outlive `state`, E0597).
   `schedule_status_clear(app, pane_id, expected, secs)` clears only if the slot still holds `expected` (`clear_if_current`), so a late timer cannot wipe a newer status.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
@@ -92,7 +94,12 @@ put logic there.
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
+  The body is `persist_parts(workspaces, load_state, secret_env)` and
+  `reconcile_secret_env(workspaces, secret_env)` — the bare fields, not `&AppState`, so
+  `secret_env_persist_tests` build them without `AppState::default()` (which drags tauri
+  into the test binary: STATUS_ENTRYPOINT_NOT_FOUND on Windows before any test runs).
   `workspace_secret_env_keys(workspace_id)` returns names only.
+  Pinned by `secret_env_persist_tests` (end of lib.rs); the save-failure cases are `cfg(windows)` because `SecretEnvStore::save` is a no-op elsewhere.
   `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
@@ -214,7 +221,9 @@ children but neither header flag — heals folders the old derived rule called s
 idempotent, logged per id), **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
 backfills, `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
 out of `load_from_disk` so tests can run it on a parsed file; it saves only if it changed
-something. Since Phase 92 the legacy "no layout → single pane"
+something, and a second run over its own output must change nothing — so when neither the
+workspace nor any pane had a connection, the workspace takes the `Local` the pane backfill
+just gave its panes in the SAME pass (otherwise the next load "migrated" again). Since Phase 92 the legacy "no layout → single pane"
 backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
 header is paneless by design, and either one would have re-grown or deleted it on the next
 load. Other files in the same dir, each with the same
@@ -230,7 +239,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9229](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9262](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -253,7 +262,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([emit_data@lib.rs:2584](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2612](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

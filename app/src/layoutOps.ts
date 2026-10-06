@@ -39,6 +39,7 @@ export function makeLeaf(paneId: string, kind: PaneKind = "terminal"): PaneLeaf 
     diff_source: kind === "diff" ? { kind: "head" } : null,
     smart_bidi: null,
     diff_cwd: null,
+    claude_running: null,
   };
 }
 

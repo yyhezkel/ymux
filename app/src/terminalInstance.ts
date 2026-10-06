@@ -491,7 +491,7 @@ function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): vo
   const sel = menuCopyText(
     ti.term.getSelection(),
     ti.term.modes.mouseTrackingMode !== "none",
-    ti.lastOsc52,
+    ti.getLastOsc52(),
   );
   const menu = document.createElement("div");
   menu.className = "term-ctx-menu";
@@ -636,7 +636,11 @@ export class TerminalInstance {
   /** Sub-notch wheel remainder between events (Phase 98, see wheelSteps.ts). */
   private wheelCarry = 0;
   // Last raw OSC 52 write; read by the right-click Copy fallback. Never logged.
-  lastOsc52 = "";
+  private lastOsc52 = "";
+
+  getLastOsc52(): string {
+    return this.lastOsc52;
+  }
 
   setTmuxScroll(on: boolean): void {
     if (this.tmuxScroll === on) return;

@@ -18,7 +18,7 @@ import {
 } from "./claudePricing.ts";
 
 const NOW = Math.floor(Date.UTC(2026, 8, 15) / 1000); // after every intro window
-const INTRO = Math.floor(Date.UTC(2026, 7, 1) / 1000); // inside Sonnet 5's intro
+const EARLY = Math.floor(Date.UTC(2026, 7, 1) / 1000); // before 2026-08-31, Sonnet 5's old intro end
 
 const zero: TokenCounts = {
   in_tokens: 0,
@@ -63,13 +63,28 @@ test("a dated snapshot id resolves to its family by longest prefix", () => {
   assert.equal(priceFor("claude-opus-5")?.out, 25);
 });
 
-test("Sonnet 5's intro rate applies by WHEN the tokens were spent", () => {
+test("Sonnet 5 is a flat $2/$10 before and after 2026-08-31", () => {
+  // The published page lists no expiry; a 3/15 post-intro rate would overstate by 50%.
   const spend = t({ in_tokens: 1_000_000, out_tokens: 1_000_000 });
-  const during = costOf(spend, "claude-sonnet-5", "standard", INTRO);
-  const after = costOf(spend, "claude-sonnet-5", "standard", NOW);
-  assert.equal(during.usd, 12); // $2 + $10
-  assert.equal(after.usd, 18); // $3 + $15
-  assert.ok(during.usd < after.usd);
+  assert.equal(costOf(spend, "claude-sonnet-5", "standard", EARLY).usd, 12);
+  assert.equal(costOf(spend, "claude-sonnet-5", "standard", NOW).usd, 12);
+});
+
+test("cache reads use the per-model multiple where the page publishes one", () => {
+  // 1M cache-read tokens: the page's Hits column per model. A flat 0.1x would
+  // overstate Fable/Mythos 5.1 by 4x and Opus 5.5 by 2x.
+  const read = t({ cache_read: 1_000_000 });
+  const usd = (m: string) => costOf(read, m, "standard", NOW).usd;
+  assert.equal(usd("claude-opus-5"), 0.5);
+  assert.equal(usd("claude-opus-5-5"), 0.2);
+  assert.equal(usd("claude-fable-5-1"), 0.25);
+  assert.equal(usd("claude-mythos-5-1"), 0.25);
+  // Prefix guard: Fable 5 must not pick up the 5.1 multiple.
+  assert.equal(usd("claude-fable-5"), 1);
+});
+
+test("a dated Fable 5.1 id resolves to the 5.1 row, not Fable 5", () => {
+  assert.equal(priceFor("claude-fable-5-1-20261001"), PRICES["claude-fable-5-1"]);
 });
 
 test("fast mode is its own rate where one is published", () => {
@@ -130,6 +145,9 @@ test("every table entry has both rates and any intro window is well-formed", () 
       assert.ok(p.intro.in <= p.in, `${id}: intro input rate is not a discount`);
       assert.ok(p.intro.out <= p.out, `${id}: intro output rate is not a discount`);
       assert.ok(Number.isFinite(p.intro.until), `${id}: intro window has no end`);
+    }
+    if (p.cacheReadMult !== undefined) {
+      assert.ok(p.cacheReadMult > 0 && p.cacheReadMult <= 0.1, `${id}: cache-read multiple out of range`);
     }
     if (p.fast) {
       assert.ok(p.fast.in >= p.in, `${id}: fast mode should not be cheaper`);
