@@ -19,6 +19,8 @@ export interface ShortcutsSettings {
   copy: string;
   paste: string;
   select_all: string;
+  /** @deprecated No SearchAddon is wired, so nothing dispatches this. Kept
+   *  in the schema so existing settings.json files still load. */
   find: string;
   new_workspace: string;
   toggle_notes: string;
@@ -92,23 +94,36 @@ export const DEFAULT_SHORTCUTS: ShortcutsSettings = {
   copy_on_select_with_ctrl_c: true,
 };
 
+/** Schema fields that still load and keep their default but dispatch nothing,
+ *  so they get no Settings row, no table entry and no conflict check. */
+export const DEPRECATED_SHORTCUT_IDS = ["find"] as const;
+
 /** Every configurable accelerator, i.e. every ShortcutsSettings field
- *  except the one boolean. */
-export type ShortcutActionId = Exclude<keyof ShortcutsSettings, "copy_on_select_with_ctrl_c">;
+ *  except the one boolean and the deprecated ids. */
+export type ShortcutActionId = Exclude<
+  keyof ShortcutsSettings,
+  "copy_on_select_with_ctrl_c" | (typeof DEPRECATED_SHORTCUT_IDS)[number]
+>;
 
-/** Every accelerator field, in display order — i.e. DEFAULT_SHORTCUTS minus
- *  the one boolean. Used by the parser, the conflict check and the UI so a
- *  new binding only has to be added to the interface above. */
+/** Every live accelerator field, in display order — i.e. DEFAULT_SHORTCUTS
+ *  minus the one boolean and the deprecated ids. Used by the parser, the
+ *  conflict check and the UI so a new binding only has to be added to the
+ *  interface above. */
 export const SHORTCUT_ACTION_IDS = (Object.keys(DEFAULT_SHORTCUTS) as (keyof ShortcutsSettings)[])
-  .filter((k) => typeof DEFAULT_SHORTCUTS[k] === "string") as ShortcutActionId[];
+  .filter(
+    (k) =>
+      typeof DEFAULT_SHORTCUTS[k] === "string" &&
+      !(DEPRECATED_SHORTCUT_IDS as readonly string[]).includes(k),
+  ) as ShortcutActionId[];
 
-/** How the Settings tab groups the 29 rows. Labels come from
+/** How the Settings tab groups the live rows. Labels come from
  *  `settings.shortcuts.group.<key>`; each row's own label is
  *  `settings.shortcuts.<id>`, derived mechanically so a new binding needs
  *  no pair list. A unit test asserts this covers SHORTCUT_ACTION_IDS
  *  exactly — that is the guard against a field existing in the schema but
  *  never appearing in the UI, which is how `find` and `select_all` came to
- *  be editable rows that dispatch nothing. */
+ *  be editable rows that dispatch nothing. `find` is now deprecated and
+ *  hidden; `select_all` is wired in App.tsx. */
 export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
   {
     key: "general",
@@ -125,7 +140,7 @@ export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
       "toggle_context_rail",
     ],
   },
-  { key: "clipboard", ids: ["copy", "paste", "select_all", "find"] },
+  { key: "clipboard", ids: ["copy", "paste", "select_all"] },
   {
     key: "panes",
     ids: [
