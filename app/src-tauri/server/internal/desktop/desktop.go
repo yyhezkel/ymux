@@ -137,10 +137,9 @@ func Discover(home string) (Endpoint, bool) {
 //
 // TAG is YMUX or WINMUX. We MIRROR whichever the server opened with, and then
 // accept either in the verdict — a mixed-version server may answer on the tag
-// it prefers rather than the one it was addressed in. The desktop still opens
-// with the legacy tag on purpose (`CHALLENGE_TAG` in ymux-tunnel), so in
-// practice this speaks WINMUX today and will speak YMUX the day that flips,
-// with no change here.
+// it prefers rather than the one it was addressed in. The desktop now opens
+// with YMUX (`CHALLENGE_TAG` in ymux-tunnel), so in practice this speaks
+// YMUX; the WINMUX mirror covers a pre-flip desktop.
 func handshake(rw *bufio.ReadWriter, token string) error {
 	line, err := rw.ReadString('\n')
 	if err != nil {

@@ -119,11 +119,6 @@ fn make_listener(name: &str) -> Result<NamedPipeServer, String> {
 #[cfg(windows)]
 const LISTENER_POOL_SIZE: usize = 8;
 
-/// Listeners kept on the pre-rename pipe name. Two, not eight: this is a
-/// compatibility path for stragglers, not the hot route.
-#[cfg(windows)]
-const LEGACY_LISTENER_POOL_SIZE: usize = 2;
-
 #[cfg(windows)]
 pub async fn run(state: AppState, app: AppHandle) {
     let name = pipe_name();
@@ -132,25 +127,14 @@ pub async fn run(state: AppState, app: AppHandle) {
         name,
         LISTENER_POOL_SIZE
     );
-    spawn_listener_pool(name, LISTENER_POOL_SIZE, state.clone(), app.clone());
-
-    // winmux → ymux rename: answer on the old pipe too, so a `winmux-cli`
-    // left on PATH by a previous install — or an MCP host config written
-    // against it — still reaches this app instead of failing at connect.
-    let legacy = ymux_core::pipe_name_legacy();
-    tracing::info!(
-        "rpc: also listening on legacy {} (pool of {})",
-        legacy,
-        LEGACY_LISTENER_POOL_SIZE
-    );
-    spawn_listener_pool(legacy, LEGACY_LISTENER_POOL_SIZE, state, app);
+    spawn_listener_pool(name, LISTENER_POOL_SIZE, state, app);
 }
 
 /// Unix/macOS: Unix-domain-socket listeners replace the whole named-pipe
 /// pool — one listener per path is enough, because the kernel backlog
 /// absorbs concurrent connects, so none of the 254-instance / ERROR 231
 /// machinery applies. There is more than one path only because of the
-/// `sun_path` cap and the rename shim, not for throughput.
+/// `sun_path` cap, not for throughput.
 #[cfg(not(windows))]
 pub async fn run(state: AppState, app: AppHandle) {
     // Bind EVERY candidate path, not just the first that works.
@@ -160,13 +144,9 @@ pub async fn run(state: AppState, app: AppHandle) {
     // `ymux_core::pipe_names`). ymux-tunnel walks the same list in the same
     // order, so binding all of them means the two ends can never split:
     // whichever path the client reaches first, somebody is listening there.
-    // The legacy name rides along for a pre-rename `winmux-cli` left on PATH.
     let mut errors: Vec<String> = Vec::new();
     let mut bound = 0usize;
-    let names = pipe_names()
-        .into_iter()
-        .chain(std::iter::once(ymux_core::pipe_name_legacy()));
-    for name in names {
+    for name in pipe_names() {
         match spawn_unix_listener(name.clone(), state.clone(), app.clone()) {
             Ok(()) => bound += 1,
             Err(e) => errors.push(format!("{name}: {e}")),
