@@ -1275,6 +1275,17 @@ fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
                 ));
             }
         }
+        // When neither the workspace nor any pane had a connection, the
+        // canonical-connection block above found nothing and the backfill
+        // just gave the panes `Local`. Take it now, or the NEXT load finds it
+        // and reports a migration again (a_non_git_pinned_folder_stays_a_
+        // header_across_reload: "a healed file migrates nothing").
+        if ws.connection.is_none() {
+            if let Some(conn) = ws.layout.as_ref().and_then(first_terminal_connection) {
+                ws.connection = Some(conn);
+                migrated = true;
+            }
+        }
     }
     // beta.3 (ws-dragdrop): backfill `sort_order` on any workspace or
     // group that never went through the reorder path. The pre-beta.3

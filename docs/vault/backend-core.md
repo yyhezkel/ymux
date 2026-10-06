@@ -221,7 +221,9 @@ children but neither header flag — heals folders the old derived rule called s
 idempotent, logged per id), **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
 backfills, `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
 out of `load_from_disk` so tests can run it on a parsed file; it saves only if it changed
-something. Since Phase 92 the legacy "no layout → single pane"
+something, and a second run over its own output must change nothing — so when neither the
+workspace nor any pane had a connection, the workspace takes the `Local` the pane backfill
+just gave its panes in the SAME pass (otherwise the next load "migrated" again). Since Phase 92 the legacy "no layout → single pane"
 backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
 header is paneless by design, and either one would have re-grown or deleted it on the next
 load. Other files in the same dir, each with the same
@@ -237,7 +239,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9246](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9257](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -256,7 +258,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2600](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2611](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
