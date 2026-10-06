@@ -30,6 +30,7 @@ import {
   rememberPaneSession,
 } from "./sessionRestore";
 import { pruneFmPaths } from "./fmPaths";
+import { popoutProfileKey } from "./popoutProfile";
 import { FeedPanel } from "./FeedPanel";
 import { NotesModal } from "./NotesModal";
 import { SetupWizard } from "./SetupWizard";
@@ -982,6 +983,8 @@ function App() {
         String(settings()?.font.terminal_size_pt ?? 13),
       );
     }
+    // Hand the origin pane's RTL profile to the popout webview (same origin).
+    localStorage.setItem(popoutProfileKey(sid), ti.profile);
     try {
       await invoke("popout_pane", {
         sessionId: sid,
@@ -3969,6 +3972,7 @@ function App() {
     unlistens.push(
       await listen<string>("popout:closed", (e) => {
         const sid = e.payload;
+        localStorage.removeItem(popoutProfileKey(sid));
         const pid = sessionToPane.get(sid);
         // pty:exit-driven close already cleared the maps AND un-pruned the
         // pane (see the pty:exit handler); nothing left to do here.

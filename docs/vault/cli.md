@@ -63,6 +63,13 @@ observability-only; it is back with a different job — the CLI filters on
 agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `hooks.claude-code.version` is what tells existing installs to re-sync.
 
+**`StopFailure` is registered as of hooks v1.8.0.** The `stop-failure` branch (right after
+`notification`, before the feed-item dispatch) reads `payload["error"]` (absent/empty →
+`"unknown"`), logs and pushes the type alone — never `error_details` /
+`last_assistant_message` — as a passive `feed.push` subkind `stop-failure` with
+`tmux_session`, ignores the RPC result and exits 0. The desktop paints the pane light
+`failed`; never a card or toast.
+
 **`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
 new job, and still never a feed card. The `session-start` branch (after the env gate)
 sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
