@@ -108,6 +108,12 @@ inside `"..."` they are a build-breaker. `ci-windows.yml` parse-checks these scr
 seconds, under `shell: powershell` (5.1) specifically because that is the shell whose
 encoding behaviour causes the bug.
 
+All three scripts (`build-linux-cli.ps1`, `build-release.ps1`, `reset-local-setup.ps1`)
+now start with a UTF-8 BOM (commit e4f8cbd), which is what 5.1 needs to read them as
+UTF-8; the parse-check stays as the guard. Keep CRLF and the BOM when editing. Risk: the
+`#!/usr/bin/env pwsh` shebang now follows the BOM, so executing a script directly on
+Unix (kernel reads `#!` at byte 0) fails; run them as `pwsh -File <script>`.
+
 ### The rustc pin (`rust-toolchain.toml`)
 
 Repo-root `rust-toolchain.toml` pins `channel = "1.95.0"`, the rustc that built the
