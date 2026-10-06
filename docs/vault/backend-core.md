@@ -67,11 +67,13 @@ put logic there.
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
   `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
-  command, in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  command, in-memory, last write wins, taken alone; the command is a private `fn` — a
+  `pub(crate)` `#[tauri::command]` at the crate root is E0255, its `__cmd__` macro
+  defined twice), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
-  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`).
+  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`; the guard is bound to a local first — as an `if let` tail-expression temporary it would outlive `state`, E0597).
   `schedule_status_clear(app, pane_id, expected, secs)` clears only if the slot still holds `expected` (`clear_if_current`), so a late timer cannot wipe a newer status.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
@@ -231,7 +233,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9224](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9231](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.

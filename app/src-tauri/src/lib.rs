@@ -2669,7 +2669,11 @@ pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str)
     {
         let state = app.state::<AppState>();
         // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
-        if let Ok(mut map) = state.pane_status.lock() {
+        // The guard is bound before the `if let` so it drops before `state`:
+        // as the block's tail expression, the scrutinee temporary would
+        // outlive it (E0597).
+        let guard = state.pane_status.lock();
+        if let Ok(mut map) = guard {
             if text.is_empty() {
                 map.remove(pane_id);
             } else {
@@ -8797,8 +8801,11 @@ fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
     }
 }
 
+// Not `pub(crate)`: a command at the crate root with a visibility makes
+// `#[tauri::command]` re-export its `__cmd__` macro beside the macro itself
+// (E0255, "defined multiple times").
 #[tauri::command]
-pub(crate) fn pane_set_active(
+fn pane_set_active(
     state: State<'_, AppState>,
     workspace_id: String,
     pane_id: String,
@@ -13822,6 +13829,7 @@ mod header_screen_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
         migrate_loaded(&mut f, "{}");
         assert!(by_id(&f, "docs").layout.is_none());
@@ -16163,6 +16171,7 @@ mod smart_bidi_seed_tests {
             diff_source: None,
             smart_bidi,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -16219,6 +16228,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: Some(true),
                 diff_cwd: None,
+                claude_running: None,
             }),
             second: Box::new(LayoutNode::Pane {
                 pane_id: "off".to_string(),
@@ -16234,6 +16244,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             }),
         };
         assert!(find_pane_smart_bidi(&t, "on"));
