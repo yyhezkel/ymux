@@ -34,8 +34,9 @@ writes on its own, add it to that carry list.
 
 `HookType` is the canonical enum of Claude Code hook types, serialized in the settings
 file, and it is what `rpc_server`'s `hook_toast_enabled` / `hook_toast_should_sound`
-consult per hook. `list_system_fonts` reads the HKCU font hive — the same hive
-`fonts.rs` installs into, so a font install shows up in the picker immediately.
+consult per hook. `list_system_fonts` reads the HKLM then HKCU font hives in-process via
+`winreg` (no PowerShell; both unreadable → `None`, baseline assumed installed) — HKCU is the
+hive `fonts.rs` installs into, so a font install shows up in the picker immediately.
 
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.
@@ -54,7 +55,8 @@ incident.
 32 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
 Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 105's
-`toggle_context_rail` Ctrl+Shift+K), and per-field
+`toggle_context_rail` Ctrl+Shift+K; `find` is deprecated — nothing dispatches it, it stays
+for old files), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
 the single source of truth instead, so a `settings.json` written by an older build
@@ -117,6 +119,7 @@ wizard: the `winget` slot describes Homebrew, and the WSL chain is replaced by t
 persistence chain (`InstallTmuxLocal` → `DeployTmuxConfLocal`). The wizard shows a
 persistence group **only on macOS** — on Windows zellij is an ordinary tool row, so a
 group would offer the same install twice.
+`LocalSetupResult.persistence_chain_ok` (was `wsl_chain_ok`) reports whether that chain succeeded; the ts-rs binding mirrors the name.
 
 ## `local_wizard.rs` (439) — the two small local affordances
 
@@ -159,8 +162,8 @@ back) surfaced as the user-facing error message.
 `cfg(target_os)`; every error is an `Err(String)` returned before any exit is scheduled:
 
 - **Windows** — NSIS installer download, sha256 check, spawn, exit. Unchanged.
-- **macOS** — `Manifest::dmg_for_arch(mac_dmg_arch_tag(ARCH))` yields the per-arch
-  `dmg_x64_*` / `dmg_aarch64_*` url + sha256. No url → "falling back to manual download";
+- **macOS** — `Manifest::dmg_for_install(mac_dmg_arch_tag(ARCH))` (wraps `dmg_for_arch`)
+  yields the per-arch `dmg_x64_*` / `dmg_aarch64_*` url + sha256 or the refusal `Err`. No url → "falling back to manual download";
   no sha (manifest path) → refuses unverified. `updater_install_version` uses
   `ReleaseInfo.dmg_url` (sha optional, settings backup kept). Both call
   `macos::install_dmg_and_relaunch`.
@@ -168,6 +171,11 @@ back) surfaced as the user-facing error message.
 
 `parse_releases_for_arch(body, arch)` picks the dmg asset by arch; `parse_releases`
 delegates with `std::env::consts::ARCH`.
+
+- **Manifest size keys absent** — `struct Manifest` has no `msi_size` / `nsis_size`; the
+  sha256 check already rejects any altered download.
+- **`ManifestHook.min_ymux_version` is intentionally unused** — parsed for forward-compat,
+  read nowhere; enforcing it would be a separate decision.
 
 ## `updater/macos.rs` — dmg mount, swap, relaunch
 
@@ -185,6 +193,13 @@ com.apple.quarantine` → best-effort cleanup → detached `/bin/sh` script (con
 Absolute tool paths, `.arg()` only (Rule #3). Rerun after a crash is safe: stale staging
 and old bundles are removed first. Compiles only in `build-macos-intel.yml`; **not run
 live** (Rule #14) — bundles are ad-hoc signed, not notarized.
+
+Test seams: `swap_with(mnt, bundle, parent, copy, rename)` (prod passes `ditto` + `fs::rename`),
+`ensure_writable(parent)`, `verify_dmg_sha(dmg, Option<&str>)` and
+`mount_swap_detach(mnt, dmg, attach, swap, detach)` (prod: `hdiutil_attach`,
+`swap_from_mount`, `detach`). Tests are hermetic (tempdir, injected closures, no
+hdiutil/ditto/network) and cover swap success/restore/both-fail, probe cleanup,
+sha match/mismatch, attach-failure cleanup, single detach, stale-mount reset.
 
 ## Invariants
 

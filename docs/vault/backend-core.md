@@ -4,6 +4,7 @@ covers:
   - app/src-tauri/src/lib.rs
   - app/src-tauri/src/agent_runs_store.rs
   - app/src-tauri/src/ipc_meter.rs
+  - app/src-tauri/src/ipc_guard.rs
   - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
@@ -87,6 +88,7 @@ put logic there.
   keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
+  `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
   `workspace_secret_env_keys(workspace_id)` returns names only.
   `pane_connect` runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
@@ -480,7 +482,8 @@ list command. The module owns what the picker never needed:
   — see Gotchas.
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
-- **Every invoke is counted** — `invoke_handler(ipc_meter::metered(generate_handler![…]))`.
+- **Every invoke is guarded, then counted** — `invoke_handler(ipc_guard::guarded(ipc_meter::metered(generate_handler![…])))`.
+  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser).
   `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
   `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
   `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and
