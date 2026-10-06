@@ -1049,6 +1049,7 @@ fn finalize_workspace(
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     };
     let ws = Workspace {
         id: new_workspace_id(),
