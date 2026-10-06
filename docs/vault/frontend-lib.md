@@ -252,7 +252,7 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window (which loads settings only for the RTL profiles) still
+  again — the backend is authoritative, so a popout window (which loads settings and runs `applyTheme`) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
 - **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
   `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
@@ -321,13 +321,13 @@ Four pure modules behind the Monitor's Analytics and Claude tabs
 already-translated strings in — which is what makes `insightsReport.test.ts` and
 `claudePricing.test.ts` runnable as plain node tests.
 
-- **`claudePricing.ts` (247)** — **the one place ymux knows what Claude costs.** Both
+- **`claudePricing.ts` (245)** — **the one place ymux knows what Claude costs.** Both
   backends count tokens and refuse to price them, because token counts are facts and
   prices are a table that goes stale; keeping the table here makes a price change a
   one-file edit instead of a server rebake plus a matching edit in the Rust mirror.
-  `PRICING_AS_OF` records when it was last checked. Rates are **Anthropic first-party API
+  `PRICING_AS_OF` records when it was last checked (2026-10-06). Opus 5.5 and Sonnet 5.5 have their own rows because the `claude-opus-5` / `claude-sonnet-5` prefixes misprice them. The cache-read multiple is per model: `ModelPrice.cacheReadMult` (0.025x Fable 5.1 / Mythos 5.1, 0.05x Opus 5.5), absent = flat `CACHE_READ_MULT` 0.1x. Sonnet 5 is a flat $2/$10. Rates are **Anthropic first-party API
   list prices** (Bedrock and Vertex are partner-priced and not modelled), and
-  `ModelPrice.promo`/`until` exists so a launch rate expires instead of silently
+  `ModelPrice.intro` (`{in,out,until}`) is the generic launch-rate mechanism (no row uses it now), so a launch rate expires instead of silently
   under-reporting forever. ⚠️ **Claude Code on a Pro/Max subscription is not billed per
   token.** Everything here is the API-*equivalent* cost — right for "where is my quota
   going, in money terms", wrong for "what will my card be charged". **The UI must never
