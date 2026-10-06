@@ -9,6 +9,7 @@ mod workspace_browser;
 mod claude_log;
 mod claude_summary;
 mod claude_usage;
+mod config_lock;
 mod connect_wizard;
 mod context_store;
 mod dev;
@@ -876,31 +877,33 @@ pub(crate) fn remember_file_text(text: &str) {
     }
 }
 
-fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+/// Gate + reconcile + atomic write + base update for one workspaces.json
+/// save, with the file path and the three-way-merge base passed in so a
+/// test can run two "instances" (two bases) against one tempdir without
+/// touching `YMUX_CONFIG_DIR`. Returns the text that landed on disk.
+///
+/// `Refuse` returns `Err` before the tmp file is opened: a newer build owns
+/// the file and nothing of ours may touch it.
+fn write_workspaces_text(
+    path: &std::path::Path,
+    ours: &str,
+    last_known: &std::sync::Mutex<Option<String>>,
+) -> Result<String, String> {
     use std::io::Write as _;
 
-    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
-        log_warn("WORKSPACE", &format!(
-            "save_to_disk: writing empty state (workspaces=0). version={}",
-            file.version
-        ));
-    }
-
-    let path = config_path()?;
     let dir = path
         .parent()
         .ok_or_else(|| "no parent dir".to_string())?
         .to_path_buf();
     let tmp = dir.join(format!("workspaces.{}.tmp", std::process::id()));
-    let mut text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
 
     // Re-read before writing. The fast path — nobody else touched the
     // file — is the overwhelmingly common one and costs a single read.
     // The decision itself lives in `workspaces_merge::reconcile` so it is
     // testable without a GUI: an idle app never saves, so the interesting
     // path cannot be reached by launching one and waiting.
-    let base_text = LAST_KNOWN.lock().ok().and_then(|g| g.clone());
-    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    let base_text = last_known.lock().ok().and_then(|g| g.clone());
+    let on_disk = std::fs::read_to_string(path).unwrap_or_default();
 
     // The schema gate, in both directions. See WORKSPACES_SCHEMA_VERSION for
     // what this does and does not cover.
@@ -928,7 +931,8 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
                     "save_to_disk: workspaces.json was rewritten by an OLDER build \
                      (on disk v{}, we last wrote v{}). Fields that build does not \
                      know may have been dropped; the three-way merge below \
-                     restores what it can.",
+                     restores what it can. To stop two builds sharing one config \
+                     dir, start the older one with YMUX_CONFIG_DIR set to its own folder.",
                     disk_version.unwrap_or_default(),
                     WORKSPACES_SCHEMA_VERSION
                 ),
@@ -936,12 +940,19 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         }
     }
 
-    let (reconciled, notes) =
-        workspaces_merge::reconcile(&text, base_text.as_deref(), &on_disk);
+    let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
     for n in &notes {
         log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
     }
-    text = reconciled;
+    if !notes.is_empty() {
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "save_to_disk: merged another writer's edits ({} note(s) above)",
+                notes.len()
+            ),
+        );
+    }
 
     {
         let mut f = std::fs::OpenOptions::new()
@@ -955,8 +966,24 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync tmp: {e}"))?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    remember_file_text(&text);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    if let Ok(mut g) = last_known.lock() {
+        *g = Some(text.clone());
+    }
+    Ok(text)
+}
+
+fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
+        log_warn("WORKSPACE", &format!(
+            "save_to_disk: writing empty state (workspaces=0). version={}",
+            file.version
+        ));
+    }
+
+    let path = config_path()?;
+    let ours = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    let text = write_workspaces_text(&path, &ours, &LAST_KNOWN)?;
     // The tree shape goes in the line, not just the count. Two pinned
     // folders lost `parent_id` and `is_project_root` with nothing in the
     // log to say when or why — every writer mutates in place, serde
@@ -12332,6 +12359,11 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
+            // Advisory lock + owner record so a second build on this dir
+            // names the first in the log. Never blocks boot.
+            if let Some(dir) = &cfg_dir {
+                config_lock::hold_for_process(dir);
+            }
 
             // Phase 53.G: was Phase 8.F.1 — the iframe-bridge
             // initialization script was the parent-side companion to
@@ -15713,5 +15745,116 @@ mod wsl_migration_tests {
             serde_json::from_str(json).expect("a wsl connection must still parse");
         assert_eq!(f.workspaces.len(), 1);
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
+    }
+}
+
+#[cfg(test)]
+mod two_instance_save_tests {
+    // Two "instances" are two independent `Mutex<Option<String>>` bases
+    // (each process owns one `LAST_KNOWN`) over ONE file in a tempdir.
+    // No YMUX_CONFIG_DIR: it is process-global and parallel tests would race.
+    use super::{write_workspaces_text, WORKSPACES_SCHEMA_VERSION};
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    fn doc(version: u32, workspaces: Value) -> String {
+        serde_json::to_string_pretty(&json!({
+            "version": version,
+            "active_workspace_id": null,
+            "workspaces": workspaces,
+        }))
+        .expect("json serializes")
+    }
+
+    fn ids(text: &str) -> Vec<String> {
+        let v: Value = serde_json::from_str(text).expect("file is json");
+        v["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn two_instances_sharing_one_file_keep_both_edits() {
+        // Pins the merge path through the real writer: if the second save
+        // flattened the first, instance A's workspace would vanish.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let (a, b) = (Mutex::new(None), Mutex::new(None));
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let shared = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        write_workspaces_text(&path, &shared, &a).expect("A first save");
+        // B starts from the same file, as if launched after A's save.
+        *b.lock().expect("lock") = Some(shared.clone());
+
+        let a_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-a", "name": "a" }]));
+        write_workspaces_text(&path, &a_ours, &a).expect("A save");
+        let b_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-b", "name": "b" }]));
+        let landed = write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let on_disk = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(on_disk, landed, "return value is what landed on disk");
+        let got = ids(&on_disk);
+        for want in ["shared", "from-a", "from-b"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
+        // The original P1: an older build rewrote the file without
+        // `parent_id`; our next save must put the nesting back.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let base = Mutex::new(None);
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let nested = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &nested, &base).expect("first save");
+
+        // Older build: lower schema version, nesting keys never written.
+        let older = doc(1, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app" },
+        ]));
+        std::fs::write(&path, older).expect("older build write");
+
+        let ours = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app-renamed", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &ours, &base).expect("downgrade is a warning, not a refusal");
+
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        let app = &after["workspaces"][1];
+        assert_eq!(app["parent_id"], "srv", "nesting stripped: {app}");
+        assert_eq!(app["is_project_root"], true);
+        assert_eq!(app["name"], "app-renamed", "our edit still applies");
+    }
+
+    #[test]
+    fn a_newer_schema_on_disk_refuses_the_write() {
+        // A newer build owns the file: Err, and not one byte of it changes
+        // (nor a tmp file left behind).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let newer = doc(WORKSPACES_SCHEMA_VERSION + 1, json!([{ "id": "x", "name": "x", "future_field": 1 }]));
+        std::fs::write(&path, &newer).expect("seed");
+        let base = Mutex::new(None);
+
+        let ours = doc(WORKSPACES_SCHEMA_VERSION, json!([{ "id": "x", "name": "ours" }]));
+        let err = write_workspaces_text(&path, &ours, &base).expect_err("must refuse");
+
+        assert!(err.contains("YMUX_CONFIG_DIR"), "remedy missing: {err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), newer, "file changed");
+        assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
+        let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
+        assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
     }
 }

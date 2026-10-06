@@ -7,6 +7,7 @@ covers:
   - app/src-tauri/src/main.rs
   - app/src-tauri/src/sessions_overview.rs
   - app/src-tauri/src/secret_env.rs
+  - app/src-tauri/src/config_lock.rs
 ---
 
 # Backend core — `lib.rs`
@@ -140,14 +141,17 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:878](../../app/src-tauri/src/lib.rs)).
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:975](../../app/src-tauri/src/lib.rs)), which hands the
+gate + merge + write to `write_workspaces_text(path, ours, last_known)`
+([write_workspaces_text@lib.rs:886](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
    holds the file text as this process last read or wrote it. `save_to_disk` re-reads
    the file and hands `(ours, base, theirs)` to `workspaces_merge::reconcile`. Reason:
    a stable build and a dev build share `%APPDATA%` unless someone sets
-   `WINMUX_CONFIG_DIR`, and a plain dump is last-write-wins across the whole document —
+   `YMUX_CONFIG_DIR` (or the pre-rename `WINMUX_CONFIG_DIR`), and a plain dump is last-write-wins across the whole document —
    the older binary silently drops every field its structs don't know.
 3. **The schema gate**, between reading the file and merging onto it.
    `WORKSPACES_SCHEMA_VERSION` (currently 4: v2 nesting, v3 `intent`, v4 Phase 91's
@@ -172,6 +176,19 @@ put logic there.
 6. Log line records `N workspaces: R root / N-R nested / P repo` — the tree *shape*,
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
+7. **Config-dir lock (diagnostics only).** `setup()` calls `config_lock::hold_for_process(dir)`
+   ([hold_for_process@config_lock.rs:114](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
+   file lock (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the
+   process lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
+   `<dir>/ymux.owner.json` (tmp + rename) because Windows locks block other handles from reading
+   the locked file. A second instance logs `[CONFIG_LOCK]` WARN naming the holder pid and the
+   `YMUX_CONFIG_DIR` remedy and **carries on** — it never refuses to start; the merge in step 2
+   is what keeps concurrent saves safe. A free lock with a leftover owner file (crash/kill; the
+   OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }` carries the
+   dead holder's record and logs a WARN with its pid + version. `started_at` is an RFC 3339 string. Any lock failure is fail-open
+   (`Unavailable`, WARN). A background thread also scans processes for a pre-rename image name
+   (case-insensitive `winmux`) and WARNs per hit with pid + image name — the older build that
+   the schema gate cannot stop. Logs carry pid/version/exe file name only, no full paths.
 
 `load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
 connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
@@ -190,7 +207,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:8991](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9018](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -209,7 +226,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2480](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2507](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
