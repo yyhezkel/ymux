@@ -59,7 +59,7 @@
   },
   "build-glue": {
     "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
-    "app/scripts/build-linux-cli.ps1": "f315ca76cc2fbc98016ab80b7d1ee8bb9f96a64c9b21e7703e0f62049b31d490",
+    "app/scripts/build-linux-cli.ps1": "611152c2d34194859f02390416ddca6deef65ee6637ca30eae7fed0d6abd720e",
     "app/scripts/build-release.ps1": "94f393bbeb1fca76bf581f4722700de94a9a9c441a7343788b6dddb3b44b4964",
     "app/scripts/reset-local-setup.ps1": "347e044d783487badb372a67a6faa3043ba676b0bc01857cac6090f9ff59ca09",
     "app/src-tauri/Cargo.toml": "70a59cb058bdc93e909091251ea4b5a85a3eaf32fb012e8dfaf64fd6e400132f",
