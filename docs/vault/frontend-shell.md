@@ -11,6 +11,7 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/windowPaneName.ts
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
@@ -58,6 +59,8 @@ them rendered unstyled, which read as a blank white window.
 the `popout:closed` listener removes it first. It also seeds
 `localStorage["ymux.popout.pane.<sid>"]=paneId`, since the popout
 window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy.
+Every one of those `localStorage` writes (font-size seed, pane id, profile) is individually
+try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from running.
 
 ## `App.tsx` (5,808) — one component, ~50 signals
 
@@ -67,6 +70,10 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `notes`, `paneStatus`, `agentRuns`, `portForwards`, `detectedPorts`, `sidebarWidth`,
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
+
+A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
+(`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
+focus sends nothing. The backend uses it to pick the ticket pane-cwd tmux session.
 
 **`refreshPersistence()` is the one place the wheel proxy is armed (Phase 91.D).** Every
 refresh of `pane_persistence_list` fans out `ti.setTmuxScroll(!!m[pid])` over `terms`,
@@ -456,6 +463,8 @@ and hydrated by `pane_briefs`.
 shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
+The OS window title uses a separate helper, `windowPaneName.ts` (`title → auto_title →
+described connection`, no workspace-name step; `App.tsx` falls back to `ws.name` on null).
 
 **`cwdShort.ts`** (Phase 91.E) — `shortenCwd(path, sshUser, maxLen = 34)` for the card's path
 line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an

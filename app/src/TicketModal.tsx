@@ -34,6 +34,15 @@ export function TicketModal(p: Props) {
   // The snapshot is taken at right-click time, before this modal exists,
   // so the choice here is whether to KEEP it — not whether to take it.
   const [includeShot, setIncludeShot] = createSignal(true);
+  // Reason text for a missing snapshot; null (legacy script) → generic.
+  const shotReason = () =>
+    t(`tickets.modal.shot.reason.${p.capture.shot_error ?? "unknown"}`);
+  // A transparent element renders light text invisible on the checkerboard.
+  const shotIsTransparent = () => {
+    const raw = p.capture.style.background;
+    const bg = typeof raw === "string" ? raw.replace(/\s+/g, "") : "";
+    return bg === "transparent" || /^rgba\(.*,0\)$/.test(bg);
+  };
   const [copied, setCopied] = createSignal(false);
   const [editingDest, setEditingDest] = createSignal(false);
   const [overrideDraft, setOverrideDraft] = createSignal(
@@ -154,7 +163,16 @@ export function TicketModal(p: Props) {
             </code>
           </div>
 
-          <Show when={p.capture.shot}>
+          <Show
+            when={p.capture.shot}
+            fallback={
+              <div class="ticket-modal-field">
+                <div class="ticket-modal-shot-missing" role="status">
+                  {t("tickets.modal.shot.failed", { reason: shotReason() })}
+                </div>
+              </div>
+            }
+          >
             {(shot) => (
               <div class="ticket-modal-field">
                 <label class="ticket-modal-check">
@@ -173,6 +191,11 @@ export function TicketModal(p: Props) {
                     src={shot()}
                     alt={t("tickets.modal.shot.alt")}
                   />
+                  <Show when={shotIsTransparent()}>
+                    <div class="ticket-modal-shot-note">
+                      {t("tickets.modal.shot.transparent")}
+                    </div>
+                  </Show>
                 </Show>
               </div>
             )}
