@@ -177,14 +177,15 @@ parameters so a test can run two "instances" (two bases) over one tempdir.
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
 7. **Config-dir lock (diagnostics only).** `setup()` calls `config_lock::hold_for_process(dir)`
-   ([hold_for_process@config_lock.rs:118](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
+   ([hold_for_process@config_lock.rs:114](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
    file lock (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the
    process lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
    `<dir>/ymux.owner.json` (tmp + rename) because Windows locks block other handles from reading
    the locked file. A second instance logs `[CONFIG_LOCK]` WARN naming the holder pid and the
    `YMUX_CONFIG_DIR` remedy and **carries on** — it never refuses to start; the merge in step 2
    is what keeps concurrent saves safe. A free lock with a leftover owner file (crash/kill; the
-   OS drops the lock) is a `stale` replace, not an error. Any lock failure is fail-open
+   OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }` carries the
+   dead holder's record and logs a WARN with its pid + version. `started_at` is an RFC 3339 string. Any lock failure is fail-open
    (`Unavailable`, WARN). A background thread also scans processes for a pre-rename image name
    (case-insensitive `winmux`) and WARNs per hit with pid + image name — the older build that
    the schema gate cannot stop. Logs carry pid/version/exe file name only, no full paths.
