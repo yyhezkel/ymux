@@ -9,7 +9,8 @@
 // had grown to 12,475, and nothing anywhere said so.
 //
 // So each vault file declares, in its frontmatter, which source files it
-// covers. This script does two independent things with that:
+// covers (or, for code that needs no explanation, lists it under `unowned:`).
+// This script does four independent things with that:
 //
 //   1. HASH CHECK — sha256 every covered file, compare against
 //      docs/vault/.vault-lock.json. Catches drift no matter how it arrived:
@@ -19,6 +20,13 @@
 //   2. DIFF CHECK (--diff-base <sha>) — if a covered file moved in this
 //      change, the vault file that owns it must have moved too. Without this,
 //      `--write` alone would re-stamp the lock and the gate would be theatre.
+//
+//   3. CITE CHECK — every `[symbol@file:line]` cite in a vault page still
+//      points at what it names (vault-cites.mjs).
+//
+//   4. OWNERSHIP CHECK — every tracked code file is claimed by some vault's
+//      `covers:` or allowlisted in some `unowned:`. Without it, new code
+//      nobody claimed would sit outside the gate forever, unseen.
 //
 // Modes:
 //   node scripts/vault-check.mjs                     verify (exit 1 on drift)
@@ -37,8 +45,9 @@ import { checkCites } from './vault-cites.mjs'
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const LOCK_PATH = join(REPO, 'docs', 'vault', '.vault-lock.json')
 const LOCK_REL = 'docs/vault/.vault-lock.json'
-// Extensions that count as "code an agent would otherwise have to read", for
-// the coverage notice. Not a gate — just a number worth seeing drift in.
+// Extensions that count as "code an agent would otherwise have to read": the
+// ownership check fails on any tracked match claimed by no vault, and the
+// coverage notice reports it as a line count.
 const CODE_EXT = /\.(rs|ts|tsx|go|mjs)$/
 
 const IN_CI = !!process.env.GITHUB_ACTIONS
@@ -57,7 +66,7 @@ function notice(msg) {
 }
 
 // --- frontmatter -----------------------------------------------------------
-// Deliberately not a YAML parser. The frontmatter is two keys and a list; a
+// Deliberately not a YAML parser. The frontmatter is a name and two lists; a
 // dependency for that would be the tail wagging the dog. Anything the vault
 // files are not allowed to contain is a hard error rather than a silent
 // mis-parse — a `covers:` entry that quietly vanishes is the one failure mode
@@ -69,24 +78,24 @@ function parseFrontmatter(text, relPath) {
   const end = text.indexOf('\n---', 3)
   if (end === -1) throw new Error(`${relPath}: frontmatter is never closed with '---'`)
   const body = text.slice(text.indexOf('\n') + 1, end)
-  const out = { vault: null, covers: [] }
-  let inCovers = false
+  const out = { vault: null, covers: [], unowned: [] }
+  let listKey = null // list key the next '  - item' belongs to
   for (const raw of body.split('\n')) {
     const line = raw.replace(/\r$/, '')
     if (!line.trim() || line.trim().startsWith('#')) continue
     const item = line.match(/^\s+-\s+(.+?)\s*$/)
     if (item) {
-      if (!inCovers) throw new Error(`${relPath}: list item outside 'covers:' — ${line.trim()}`)
-      out.covers.push(item[1].replace(/^["']|["']$/g, ''))
+      if (!listKey) throw new Error(`${relPath}: list item outside 'covers:'/'unowned:' — ${line.trim()}`)
+      out[listKey].push(item[1].replace(/^["']|["']$/g, ''))
       continue
     }
     const kv = line.match(/^([a-z_]+):\s*(.*)$/)
     if (!kv) throw new Error(`${relPath}: cannot parse frontmatter line — ${line.trim()}`)
     const [, key, value] = kv
-    inCovers = key === 'covers'
+    listKey = key === 'covers' || key === 'unowned' ? key : null
     if (key === 'vault') out.vault = value.trim()
-    else if (key === 'covers') {
-      if (value.trim()) throw new Error(`${relPath}: 'covers:' must be a block list, one '  - path' per line`)
+    else if (listKey) {
+      if (value.trim()) throw new Error(`${relPath}: '${key}:' must be a block list, one '  - path' per line`)
     } else throw new Error(`${relPath}: unknown frontmatter key '${key}'`)
   }
   if (!out.vault) throw new Error(`${relPath}: frontmatter has no 'vault:' name`)
@@ -102,6 +111,7 @@ function sha256(absPath) {
 const vaultFiles = gitZ('ls-files', '-z', '--', 'docs/vault/*.md')
 const vaults = []
 const owner = new Map() // source path -> vault name (single owner, enforced below)
+const unowned = new Map() // source path -> vault name that allowlists it (duplicates across vaults are harmless)
 const problems = []
 
 for (const rel of vaultFiles) {
@@ -122,7 +132,16 @@ for (const rel of vaultFiles) {
     if (prev) problems.push(`${f} is covered by both '${prev}' and '${fm.vault}' — pick one`)
     else owner.set(f, fm.vault)
   }
+  const free = fm.unowned.length ? gitZ('ls-files', '-z', '--', ...fm.unowned) : []
+  for (const p of fm.unowned.filter((p) => !p.includes('*') && !free.includes(p))) {
+    problems.push(`${rel}: unowned '${p}', which git does not track`)
+  }
+  for (const f of free) if (!unowned.has(f)) unowned.set(f, fm.vault)
   vaults.push({ name: fm.vault, path: rel, files: files.sort() })
+}
+// Both lists are known only now. Covered AND unowned says two things at once.
+for (const [f, name] of owner) {
+  if (unowned.has(f)) problems.push(`${f} is both covered by '${name}' and unowned in '${unowned.get(f)}' — pick one`)
 }
 
 if (problems.length) {
@@ -181,8 +200,8 @@ for (const name of new Set([...Object.keys(fresh), ...Object.keys(lock)])) {
 // --- cite check ------------------------------------------------------------
 // The hash check proves a page was re-stamped, not that its line cites still
 // point at what they name. Runs on every vault page, in every mode but --write.
+const tracked = new Set(gitZ('ls-files', '-z'))
 {
-  const tracked = new Set(gitZ('ls-files', '-z'))
   const readSource = (p) => (tracked.has(p) ? readFileSync(join(REPO, p), 'utf8') : null)
   let checked = 0
   for (const v of vaults) {
@@ -192,6 +211,18 @@ for (const name of new Set([...Object.keys(fresh), ...Object.keys(lock)])) {
     if (r.errors.length) stale = true
   }
   console.log(`cites: ${checked} checked`)
+}
+
+// --- ownership check -------------------------------------------------------
+// Code that no vault covers and none allowlists is invisible to every check
+// above. Runs in verify and --diff-base modes; --write exits before reaching it.
+{
+  const unclaimed = [...tracked].filter((f) => CODE_EXT.test(f) && !owner.has(f) && !unowned.has(f)).sort()
+  for (const f of unclaimed) {
+    err(`${f} is code (matches ${CODE_EXT}) but no vault covers it — add it to a vault's 'covers:' or, if it genuinely needs no explanation, to 'unowned:'`)
+  }
+  if (unclaimed.length) stale = true
+  console.log(`ownership: ${owner.size} covered, ${unowned.size} unowned, ${unclaimed.length} unclaimed`)
 }
 
 // --- diff check ------------------------------------------------------------

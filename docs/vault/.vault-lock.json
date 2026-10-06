@@ -66,7 +66,7 @@
     "app/src-tauri/build.rs": "2737f787c88687e8a8b301e1873bef0305c55d8f038f907c61add76b30e4e999",
     "app/src-tauri/tauri.conf.json": "2e172c601a00a353dc71543cbc9dd30255d9c0f2e11078f34869abe84208fb33",
     "app/vite.config.ts": "8390a35f6f21304b51c20dc42f153bb50e4e37ca8bf0d4ebfcf8fd954ff10c8f",
-    "scripts/vault-check.mjs": "57b73623cb5d1f44065635e3f729290f9569cdf0971f5f8b41467a060ea990bc",
+    "scripts/vault-check.mjs": "fdadae885df652f22cb8ddabdf55a62b8f41f4060e60b46dde79ac01dea2c877",
     "scripts/vault-cites.mjs": "f1391c324882fae1d2d8ee281f7f4ec8a3cb42fbba2118a59b7f383de68712fa",
     "sdk-gen/ci-check.mjs": "b72c0705d9b4a8838c1675afa82c33ee80055e1672f879631a6c2e9e15b783f9",
     "sdk-gen/emit-specs.mjs": "73e784bc8d507cb58902afa75f4ec2374dda626e5074a61760ace547a7a32ab5",
