@@ -37,6 +37,8 @@ file, and it is what `rpc_server`'s `hook_toast_enabled` / `hook_toast_should_so
 consult per hook. `list_system_fonts` reads the HKLM then HKCU font hives in-process via
 `winreg` (no PowerShell; both unreadable → `None`, baseline assumed installed) — HKCU is the
 hive `fonts.rs` installs into, so a font install shows up in the picker immediately.
+`is_bitmap_fon_entry` drops bitmap `.fon` value names (res tag like `(VGA res)`/`(120)`, or a
+point-size list like `Courier 10,12,15`) before tag-strip; TTC `&` names still split.
 
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.
@@ -215,7 +217,8 @@ sha match/mismatch, attach-failure cleanup, single detach, stale-mount reset.
 - WSL left the wizard on 2026-08-19. Existing `Connection::Wsl` workspaces still load
   and run (and `lib.rs::migrate_wsl_workspaces` rewrites them to `Local` on load), but
   nothing creates new ones. `wsl_exec` survives because `worktrees.rs` still dispatches
-  on it.
+  on it. `wsl_pane_problem` (pane_connect preflight; `wsl -l -v` ≤5 s, fails open) feeds the pure
+  `wsl_problem_message`; non-Windows always reports WSL unavailable.
 - `LocalSetupInput` no longer has `wsl_username`; the `CreateWslUser` step handler
   (kept for compat) derives the name from `$USERNAME` (fallback `ymux`). Old payloads that
   still send the key deserialize fine (no `deny_unknown_fields`).

@@ -2272,9 +2272,31 @@ pub(crate) fn list_system_fonts() -> Result<FontFamilies, String> {
     })
 }
 
+/// Bitmap `.fon` registry value: a resolution tag ("(VGA res)", "(120)") or a
+/// point-size list in any `&` part ("Courier 10,12,15"). Never a terminal font.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn is_bitmap_fon_entry(raw: &str) -> bool {
+    let raw = raw.trim();
+    if let Some(open) = raw.rfind(" (") {
+        let tag = &raw[open + 2..];
+        if let Some(inner) = tag.strip_suffix(')') {
+            if inner.ends_with(" res") || (!inner.is_empty() && inner.bytes().all(|b| b.is_ascii_digit())) {
+                return true;
+            }
+        }
+    }
+    raw.split('&').any(|part| {
+        let part = part.trim();
+        let part = part.rsplit_once(" (").map_or(part, |(head, _)| head);
+        part.rsplit(' ').next().is_some_and(|w| {
+            w.contains(',') && w.split(',').all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+        })
+    })
+}
+
 /// Registry value names → font families: strips the format tag the registry
 /// appends ("Cascadia Code (TrueType)"), splits packed bitmap entries
-/// ("MS Sans Serif 8,10,12 & MS Serif"), and adds the bare family for every
+/// ("Cambria & Cambria Math"), skips bitmap `.fon` entries, and adds the bare family for every
 /// variant face ("Cascadia Code Regular" → "Cascadia Code") so the picker can
 /// show one row per family. The suffixed form is kept too: it is what
 /// `family_is_installed` matches against for a family whose regular face
@@ -2283,6 +2305,9 @@ pub(crate) fn list_system_fonts() -> Result<FontFamilies, String> {
 fn font_families_from_value_names(names: &[String]) -> Vec<String> {
     let mut families: Vec<String> = Vec::new();
     for line in names {
+        if is_bitmap_fon_entry(line) {
+            continue;
+        }
         let mut name = line.trim();
         for tag in [
             " (TrueType)",
@@ -2548,7 +2573,7 @@ mod font_tests {
         extends_family, family_is_installed, list_system_fonts, looks_monospace,
         strip_style_suffix,
     };
-    use super::{font_families_from_value_names, merge_hive_reads};
+    use super::{font_families_from_value_names, is_bitmap_fon_entry, merge_hive_reads};
 
     fn installed() -> Vec<String> {
         vec![
@@ -2564,7 +2589,7 @@ mod font_tests {
         // Pins tag stripping, '&' split and bare-family expansion; breaking it hides fonts.
         let names: Vec<String> = [
             "Cascadia Code Regular (TrueType)",
-            "MS Sans Serif 8,10,12 & MS Serif (VGA res)",
+            "Cambria & Cambria Math (TrueType)",
             " (TrueType)",
         ]
         .iter()
@@ -2573,9 +2598,31 @@ mod font_tests {
         let got = font_families_from_value_names(&names);
         assert!(got.contains(&"Cascadia Code Regular".to_string()));
         assert!(got.contains(&"Cascadia Code".to_string()));
-        assert!(got.contains(&"MS Sans Serif 8,10,12".to_string()));
-        assert!(got.contains(&"MS Serif".to_string()));
+        assert!(got.contains(&"Cambria".to_string()));
+        assert!(got.contains(&"Cambria Math".to_string()));
         assert!(got.iter().all(|n| !n.is_empty()));
+    }
+
+    #[test]
+    fn bitmap_fon_entries_are_filtered() {
+        // Pins .fon exclusion; breaking it lists unusable bitmap fonts in the picker.
+        for raw in [
+            "Courier 10,12,15 (120)",
+            "MS Sans Serif 8,10,12 & MS Serif (VGA res)",
+            "Small Fonts (8514/a res)",
+            "Terminal (All res)",
+        ] {
+            assert!(is_bitmap_fon_entry(raw), "{raw}");
+        }
+        for raw in [
+            "Cambria & Cambria Math (TrueType)",
+            "Cascadia Code Regular (TrueType)",
+            "Source Code Pro (OpenType)",
+        ] {
+            assert!(!is_bitmap_fon_entry(raw), "{raw}");
+        }
+        let names = vec!["Courier 10,12,15 (120)".to_string()];
+        assert!(font_families_from_value_names(&names).is_empty());
     }
 
     #[test]
