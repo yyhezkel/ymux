@@ -121,7 +121,7 @@
   },
   "frontend-lib": {
     "app/src/bidi.ts": "5b4085a91e52eba4197602919978224c2cee57424fa3133e2566283e7153ff1f",
-    "app/src/claudePricing.ts": "c650c4416d7e37ccc2b14faff785244263125959d35410e6335d5ef21be380af",
+    "app/src/claudePricing.ts": "a83e3968d1fc0687f0f83af3947db44da3bd6db29c8452e5be90650d5fecc83d",
     "app/src/claudeRunning.ts": "97a644b08c096351e9dea945518bf3396112a44a54cfbeea7fa72afa1f26d6de",
     "app/src/clipboardText.ts": "8f6fdfe74bc46cf164e577b0b97fdb791d587b6ff88b8c7ce75036565717e682",
     "app/src/copyBidi.ts": "662eb7dedc786417e5921a69a5119a6b0b821fc5d9b3d3107eed386bad02ce8e",
@@ -177,7 +177,7 @@
     "app/src/browserDevMode.ts": "0761d33440b15463b69e8ed80b672484a95a275d1d912458732f1dc4ff80fdfc",
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
-    "app/src/components/PopoutTerminal.tsx": "58d8b94a041e5d3e0d4816a17bd38db1f84e6731c434b2ecf820b87dbda7cdc8",
+    "app/src/components/PopoutTerminal.tsx": "c9673e4b866fe81972906c0273ece7f82ff92cae522d0b0b0038910f1f9ed406",
     "app/src/diffModel.ts": "7c06189aaf325fba90aca553ebb2b6d9b0dfc66c905d4776346a2f03b5970516",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
