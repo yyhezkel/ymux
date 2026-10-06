@@ -2675,7 +2675,7 @@ pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str)
             } else {
                 map.insert(pane_id.to_string(), text.to_string());
             }
-        }
+        };
     }
     let _ = app.emit(
         "pane:status",
@@ -8798,7 +8798,7 @@ fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
 }
 
 #[tauri::command]
-pub(crate) fn pane_set_active(
+fn pane_set_active(
     state: State<'_, AppState>,
     workspace_id: String,
     pane_id: String,
@@ -13822,6 +13822,7 @@ mod header_screen_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
         migrate_loaded(&mut f, "{}");
         assert!(by_id(&f, "docs").layout.is_none());
@@ -16163,6 +16164,7 @@ mod smart_bidi_seed_tests {
             diff_source: None,
             smart_bidi,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -16219,6 +16221,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: Some(true),
                 diff_cwd: None,
+                claude_running: None,
             }),
             second: Box::new(LayoutNode::Pane {
                 pane_id: "off".to_string(),
@@ -16234,6 +16237,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             }),
         };
         assert!(find_pane_smart_bidi(&t, "on"));

@@ -67,7 +67,7 @@ put logic there.
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
   `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
-  command, in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  command, in-memory, last write wins, taken alone; the command is private on purpose — a `pub(crate)` `#[tauri::command]` at the crate root re-exports its `__cmd__` macro and fails E0255), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
