@@ -1632,11 +1632,24 @@ async fn dispatch(
                             crate::context_store::HookEvent::End(reason),
                         );
                     }
+                    "stop-failure" => {
+                        // The turn died on an API error: drop the timer
+                        // WITHOUT record_turn (a failed turn must not skew
+                        // the average) and paint the light `failed`.
+                        let (avg, st, since, seq) = {
+                            let mut runs = state.agent_runs.lock().unwrap();
+                            let e = runs.entry(pane.to_string()).or_default();
+                            e.turn_started_at.take();
+                            e.apply_hook(&subkind, None);
+                            (e.avg_ms(), e.state, e.state_since_ms(), e.seq)
+                        };
+                        crate::emit_agent_run_event(app, pane, None, avg, st, since, seq);
+                    }
                     _ => {}
                 }
             }
 
-            // A notification is a state signal ONLY, and this return is
+            // A notification or stop-failure is a state signal ONLY, and this return is
             // load-bearing rather than tidiness: fall through and it builds
             // a FeedItem, lands in the FeedStore, emits feed:item-added and
             // can reach a toast — exactly the noise v0.4.4 removed
@@ -1647,8 +1660,9 @@ async fn dispatch(
             // session for the id, no multiplexer name to recover it from —
             // would skip the return and reinstate the noise on exactly the
             // path nobody would think to test. There is nothing useful to do
-            // with an unattributable notification anyway.
-            if subkind == "notification" {
+            // with an unattributable notification anyway. Same for
+            // stop-failure: state only, never a card or toast.
+            if matches!(subkind.as_str(), "notification" | "stop-failure") {
                 return Ok(json!({ "request_id": req_id, "decision": "passive" }));
             }
 
