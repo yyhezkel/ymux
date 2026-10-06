@@ -35,7 +35,9 @@ unowned:
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
 
-## `terminalInstance.ts` (2,018) — the xterm.js wrapper
+## `terminalInstance.ts` (1,954) — the xterm.js wrapper
+
+**Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
@@ -274,7 +276,10 @@ past installs), `fontInstall`, and `fontUninstall`.
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
   Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
   `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), parses
+  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  kept in the schema and defaults so old `settings.json` loads, but filtered out of
+  `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
+  entry or conflict check), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,
