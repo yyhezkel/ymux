@@ -37,6 +37,8 @@ file, and it is what `rpc_server`'s `hook_toast_enabled` / `hook_toast_should_so
 consult per hook. `list_system_fonts` reads the HKLM then HKCU font hives in-process via
 `winreg` (no PowerShell; both unreadable → `None`, baseline assumed installed) — HKCU is the
 hive `fonts.rs` installs into, so a font install shows up in the picker immediately.
+`is_bitmap_fon_entry` drops bitmap `.fon` value names (res tag like `(VGA res)`/`(120)`, or a
+point-size list like `Courier 10,12,15`) before tag-strip; TTC `&` names still split.
 
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.

@@ -57,7 +57,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "9c99740d18d66bc91f548e2323a283a91d705694172940d274f5b8deed367111",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "ea475fc5c4e34cf742d46b72b9bfc6456e4658b1a732f22281738fb34f6e2a1c",
+    "app/src-tauri/src/settings.rs": "053665ac863e2f5be4a76a6ee4b7c958f284c6587e3b42140cb212df6c3079a9",
     "app/src-tauri/src/updater.rs": "5e32ee0804d8762b214409d2ec8e0e46471c2716925266f664f5b9c76e13ef71",
     "app/src-tauri/src/updater/macos.rs": "de1d85244406fd99d9d4786a82f81b0dae94cb05f2c116c43716a7167086e45a"
   },
