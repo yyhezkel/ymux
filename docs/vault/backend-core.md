@@ -213,7 +213,9 @@ connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
 `normalize_parents`, **`flag_pinned_folders`** (sets `is_folder` on any row that has
 children but neither header flag — heals folders the old derived rule called screens;
 idempotent, logged per id), **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
-backfills, `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
+backfills (when a workspace has no connection anywhere, the Terminal-pane backfill defaults
+its panes to Local and the same pass mirrors that up to `ws.connection` — otherwise the
+mirror only happened on the NEXT load and every reload reported a migration once more), `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
 out of `load_from_disk` so tests can run it on a parsed file; it saves only if it changed
 something. Since Phase 92 the legacy "no layout → single pane"
 backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
@@ -231,7 +233,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9224](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9231](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -250,7 +252,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2584](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2592](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

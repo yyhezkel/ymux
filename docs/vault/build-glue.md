@@ -168,6 +168,14 @@ either `ymux-cli.exe` (Windows) or `ymux-cli` (macOS). If neither exists it prin
 from `app/`") to stderr and exits 1, so a fresh worktree fails with an actionable message
 rather than tauri's opaque resource error. Both paths are `rerun-if-changed`.
 
+On a windows-msvc target `build.rs` also switches tauri-build's own app manifest off
+(`WindowsAttributes::new_without_app_manifest`) and embeds `windows-app-manifest.xml` — a
+verbatim copy of tauri-build's default, Common-Controls v6 — through the linker
+(`/MANIFEST:EMBED /MANIFESTINPUT`). tauri-build only manifests the bin, so the lib's
+`cargo test` exe loaded comctl32 v5, which lacks `TaskDialogIndirect`, and died before
+`main` with 0xc0000139 (`STATUS_ENTRYPOINT_NOT_FOUND`). The linker path covers bin and
+test exe alike. Errors from `tauri_build::try_build` are printed and exit 1 (Rule #4).
+
 The workspace also contains the eight `crates/ymux-*` members, the `cli` and `mcp`
 binaries.
 

@@ -1265,6 +1265,13 @@ fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
         if let Some(layout) = ws.layout.take() {
             let (new_layout, changed) =
                 backfill_terminal_connections(layout, &ws.connection);
+            // A workspace with no connection anywhere just had its panes
+            // defaulted to Local; mirror that up now, or the 23.D block
+            // above would only do it on the NEXT load and every reload
+            // would report a migration once more.
+            if ws.connection.is_none() {
+                ws.connection = first_terminal_connection(&new_layout);
+            }
             ws.layout = Some(new_layout);
             if changed {
                 migrated = true;

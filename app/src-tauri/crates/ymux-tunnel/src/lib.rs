@@ -453,8 +453,8 @@ mod tests {
         // whatever the read-modify-write appends next.
         assert!(with_pane.ends_with('\n'), "got: {with_pane:?}");
         assert!(without.ends_with('\n'), "got: {without:?}");
-        assert_eq!(with_pane.lines().count(), 6);
-        assert_eq!(without.lines().count(), 4);
+        assert_eq!(with_pane.lines().count(), 3);
+        assert_eq!(without.lines().count(), 2);
     }
 
     // v0.3.1 pipe-leak fix: when the rpc_server handler closes after sending

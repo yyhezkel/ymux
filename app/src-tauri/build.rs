@@ -8,7 +8,35 @@ fn main() {
     // was build #5 shipping stale JS (the new wheel diagnostics never
     // appeared). Belt-and-suspenders over tauri_build's own watching.
     println!("cargo:rerun-if-changed=../dist");
-    tauri_build::build()
+    let mut attributes = tauri_build::Attributes::new();
+    if embed_common_controls_manifest() {
+        attributes = attributes
+            .windows_attributes(tauri_build::WindowsAttributes::new_without_app_manifest());
+    }
+    if let Err(e) = tauri_build::try_build(attributes) {
+        eprintln!("error: tauri_build failed: {e:#}");
+        std::process::exit(1);
+    }
+}
+
+// tauri-build embeds its Common-Controls-v6 manifest into the BIN only, so
+// the `cargo test` exe of the lib loads comctl32 v5, which has no
+// TaskDialogIndirect, and dies before main with 0xc0000139
+// (STATUS_ENTRYPOINT_NOT_FOUND). Embedding the same manifest through the
+// linker covers every target — the bin and the test exe alike — and the
+// default one is switched off above so the bin does not get two.
+// windows-app-manifest.xml is a verbatim copy of tauri-build's default.
+fn embed_common_controls_manifest() -> bool {
+    let target_os = std::env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_env = std::env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    if target_os != "windows" || target_env != "msvc" {
+        return false;
+    }
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-app-manifest.xml");
+    println!("cargo:rerun-if-changed={}", manifest.display());
+    println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
+    println!("cargo:rustc-link-arg=/MANIFESTINPUT:{}", manifest.display());
+    true
 }
 
 // Fail fast when the gitignored staged CLI is absent (fresh checkout or
