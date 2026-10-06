@@ -37,6 +37,12 @@ use crate::{log_info, log_warn};
 // never checked — refreshing the catalog is a deliberate maintenance task,
 // not something that drifts silently.
 //
+// Refresh procedure: for each entry, read the latest upstream tag, download
+// the asset, run `sha256sum` + `wc -c` on it, then update url / sha256 /
+// bytes together. Confirm a nerd-fonts zip still holds the entries matched
+// by `name_prefix` (`unzip -l`). Last checked 2026-10-06: JetBrainsMono
+// v2.304 and FiraCode 6.2 current, MesloLGS unchanged, nerd-fonts v3.5.1.
+//
 // Sizes drove which fonts are here at all. Deliberately excluded:
 //   - Cascadia Code   upstream release is 150 MB, and it already ships with
 //                     Windows 11 and with Windows Terminal on 10.
@@ -160,9 +166,9 @@ const CATALOG: &[CatalogEntry] = &[
         homepage: "https://github.com/ryanoasis/nerd-fonts",
         license: "SIL Open Font License 1.1",
         assets: &[FontAsset {
-            url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.0/FiraCode.zip",
-            sha256: "8ad2834d8ea1945d8ab042538e608f6370573a29913aa94b5e6bbc92ffacbab5",
-            bytes: 28_061_509,
+            url: "https://github.com/ryanoasis/nerd-fonts/releases/download/v3.5.1/FiraCode.zip",
+            sha256: "239395baf60c89b2eaf4862b6b09db0ef95605cd3e8eef51c00345822a81a665",
+            bytes: 28_602_426,
             zip: Some(ZipFilter {
                 dir: "",
                 name_prefix: "FiraCodeNerdFontMono-",

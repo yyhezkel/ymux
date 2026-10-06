@@ -254,7 +254,8 @@ files land in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and register under HKCU, 
 needs no elevation on Windows 10 1809+. `settings::list_system_fonts` reads that same
 hive, so an install is visible in the picker immediately. Exists because flagging
 unavailable families with ⚠️ was only half an answer — the user still had to go find a
-`.ttf`.
+`.ttf`. Catalog pins (tag + sha256 + bytes) are refreshed by hand; the procedure and
+last-checked date (2026-10-06, FiraCode NF at nerd-fonts v3.5.1) are in the CATALOG header comment.
 
 **`font_uninstall` is the mirror, and how it finds the files is the interesting part.**
 Which files belong to a catalog entry is derived from the CATALOG, not recorded at
