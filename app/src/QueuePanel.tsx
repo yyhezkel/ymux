@@ -5,14 +5,8 @@ import { createLogger } from "./logger";
 import { PanelSurface } from "./PanelSurface";
 import type { Geometry } from "./floatingWindow";
 import type { Surface } from "./panels";
-import {
-  groupQueueRows,
-  queueStatus,
-  rowSinceMs,
-  whatsHappening,
-  type QueueRow,
-  type QueueStatus,
-} from "./queueModel";
+import { groupQueueRows, type QueueRow } from "./queueModel";
+import { QueueRowView } from "./QueueRow";
 
 // BRIEF: the Queue — every agent pane across every workspace, sorted by
 // who needs the user. Grouped by workspace (the reference table's "CRM —
@@ -33,15 +27,6 @@ interface Props {
   onFullscreen: () => void;
 }
 
-export const STATUS_EMOJI: Record<QueueStatus, string> = {
-  "needs-input": "⏸️",
-  stuck: "⚠️",
-  waiting: "⏸️",
-  working: "🔄",
-  done: "💤",
-  ended: "✅",
-};
-
 const log = createLogger("QUEUE");
 
 // The adoption snippet — what the user pastes into a project's CLAUDE.md
@@ -60,20 +45,13 @@ ask: one closed question — only when you need my decision
 rec: your recommendation for that question, in one sentence
 next: the immediate next step
 delta: what changed since your previous brief
+goal: the session's overall goal, one imperative line
+done: when this session counts as done, one line
 
-Rules: \`ask\` never appears without \`rec\`; no history — only this
-turn's facts; omit a field rather than leaving it empty.`;
-
-export function relAge(ms: number | null, now: number): string {
-  if (ms == null) return "";
-  const s = Math.max(0, Math.round((now - ms) / 1000));
-  if (s < 60) return t("notif.time.now");
-  const m = Math.round(s / 60);
-  if (m < 60) return t("notif.time.min").replace("{n}", String(m));
-  const h = Math.round(m / 60);
-  if (h < 24) return t("notif.time.hour").replace("{n}", String(h));
-  return t("notif.time.day").replace("{n}", String(Math.round(h / 24)));
-}
+Rules: every value ≤ 80 chars, imperative, one line. Write \`goal\` and
+\`done\` in your FIRST brief and repeat them only when they change.
+\`ask\` never appears without \`rec\`; no history — only this turn's
+facts; omit a field rather than leaving it empty.`;
 
 export function QueuePanel(p: Props) {
   const groups = () => groupQueueRows(p.rows);
@@ -134,43 +112,13 @@ export function QueuePanel(p: Props) {
                   </Show>
                 </div>
                 <For each={g.rows}>
-                  {(r) => {
-                    const status = queueStatus(r);
-                    const h = whatsHappening(r);
-                    return (
-                      <div
-                        class="queue-row"
-                        data-status={status}
-                        onClick={() => p.onJump(r.wsId, r.paneId)}
-                        title={t("queue.jump")}
-                      >
-                        <span class="queue-row-status" title={t(`queue.status.${status}`)}>
-                          {STATUS_EMOJI[status]}
-                        </span>
-                        <div class="queue-row-main">
-                          <div class="queue-row-top">
-                            <span class="queue-row-title" dir="auto">{r.title}</span>
-                            <span class="queue-row-age">
-                              {relAge(rowSinceMs(r), p.nowMs)}
-                            </span>
-                          </div>
-                          <Show when={h}>
-                            {(hh) => (
-                              <div
-                                class="queue-row-happening"
-                                classList={{ "queue-dim": hh().dim }}
-                                dir="auto"
-                              >
-                                {hh().kind === "prompt"
-                                  ? t("queue.gotFromYou", { text: hh().text })
-                                  : hh().text}
-                              </div>
-                            )}
-                          </Show>
-                        </div>
-                      </div>
-                    );
-                  }}
+                  {(r) => (
+                    <QueueRowView
+                      row={r}
+                      nowMs={p.nowMs}
+                      onClick={() => p.onJump(r.wsId, r.paneId)}
+                    />
+                  )}
                 </For>
               </div>
             )}

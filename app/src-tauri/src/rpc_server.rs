@@ -119,11 +119,6 @@ fn make_listener(name: &str) -> Result<NamedPipeServer, String> {
 #[cfg(windows)]
 const LISTENER_POOL_SIZE: usize = 8;
 
-/// Listeners kept on the pre-rename pipe name. Two, not eight: this is a
-/// compatibility path for stragglers, not the hot route.
-#[cfg(windows)]
-const LEGACY_LISTENER_POOL_SIZE: usize = 2;
-
 #[cfg(windows)]
 pub async fn run(state: AppState, app: AppHandle) {
     let name = pipe_name();
@@ -132,25 +127,14 @@ pub async fn run(state: AppState, app: AppHandle) {
         name,
         LISTENER_POOL_SIZE
     );
-    spawn_listener_pool(name, LISTENER_POOL_SIZE, state.clone(), app.clone());
-
-    // winmux → ymux rename: answer on the old pipe too, so a `winmux-cli`
-    // left on PATH by a previous install — or an MCP host config written
-    // against it — still reaches this app instead of failing at connect.
-    let legacy = ymux_core::pipe_name_legacy();
-    tracing::info!(
-        "rpc: also listening on legacy {} (pool of {})",
-        legacy,
-        LEGACY_LISTENER_POOL_SIZE
-    );
-    spawn_listener_pool(legacy, LEGACY_LISTENER_POOL_SIZE, state, app);
+    spawn_listener_pool(name, LISTENER_POOL_SIZE, state, app);
 }
 
 /// Unix/macOS: Unix-domain-socket listeners replace the whole named-pipe
 /// pool — one listener per path is enough, because the kernel backlog
 /// absorbs concurrent connects, so none of the 254-instance / ERROR 231
 /// machinery applies. There is more than one path only because of the
-/// `sun_path` cap and the rename shim, not for throughput.
+/// `sun_path` cap, not for throughput.
 #[cfg(not(windows))]
 pub async fn run(state: AppState, app: AppHandle) {
     // Bind EVERY candidate path, not just the first that works.
@@ -160,13 +144,9 @@ pub async fn run(state: AppState, app: AppHandle) {
     // `ymux_core::pipe_names`). ymux-tunnel walks the same list in the same
     // order, so binding all of them means the two ends can never split:
     // whichever path the client reaches first, somebody is listening there.
-    // The legacy name rides along for a pre-rename `winmux-cli` left on PATH.
     let mut errors: Vec<String> = Vec::new();
     let mut bound = 0usize;
-    let names = pipe_names()
-        .into_iter()
-        .chain(std::iter::once(ymux_core::pipe_name_legacy()));
-    for name in names {
+    for name in pipe_names() {
         match spawn_unix_listener(name.clone(), state.clone(), app.clone()) {
             Ok(()) => bound += 1,
             Err(e) => errors.push(format!("{name}: {e}")),
@@ -665,7 +645,12 @@ async fn dispatch(
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
         "list-workspaces" => {
-            let file = state.workspaces.lock().unwrap().clone();
+            let mut file = state.workspaces.lock().unwrap().clone();
+            // AI-NOTE: second layer — persist() already blanks secret values,
+            // but RPC is agent-reachable over the tunnel, so never trust it.
+            for w in file.workspaces.iter_mut() {
+                crate::secret_env::redact(&mut w.env);
+            }
             serde_json::to_value(&file).map_err(|e| e.to_string())
         }
 
@@ -705,6 +690,9 @@ async fn dispatch(
             };
             persist(state)?;
             let _ = app.emit("workspaces:changed", ());
+            // AI-NOTE: `cloned` was taken BEFORE persist(), so it can still
+            // hold the typed secret values; redact the agent-reachable reply.
+            let cloned = crate::secret_env::redact_workspace(&cloned);
             serde_json::to_value(&cloned).map_err(|e| e.to_string())
         }
 
@@ -777,7 +765,9 @@ async fn dispatch(
                 .find(|w| w.id == workspace_id)
                 .cloned();
             match ws {
-                Some(w) => serde_json::to_value(&w).map_err(|e| e.to_string()),
+                // AI-NOTE: second layer, agent-reachable reply.
+                Some(w) => serde_json::to_value(crate::secret_env::redact_workspace(&w))
+                    .map_err(|e| e.to_string()),
                 None => Ok(json!({ "ok": true })),
             }
         }
@@ -1290,6 +1280,29 @@ async fn dispatch(
         }
 
         // ─── Phase 6.5: agent feed ────────────────────────────────────────
+        // Phase 105.C: the SessionStart hook asks for context to hand back
+        // to Claude Code as `additionalContext`. Request/response, never a
+        // feed item or a toast (SessionStart stays silent). The CLI waits
+        // ~300 ms and fails open, so this must stay cheap: memory + one
+        // workspaces lock, no IO beyond a first-touch cache load.
+        "context.inject" => {
+            fn str_param<'a>(p: &'a Value, k: &str) -> Option<&'a str> {
+                p.get(k).and_then(|v| v.as_str()).filter(|v| !v.is_empty())
+            }
+            let pane = crate::resolve_hook_pane(
+                state,
+                str_param(&params, "pane_id"),
+                str_param(&params, "tmux_session"),
+            );
+            let text = crate::context_store::injection_for_hook(
+                state,
+                pane.as_deref(),
+                str_param(&params, "session_id"),
+                str_param(&params, "source").unwrap_or(""),
+            );
+            Ok(json!({ "additional_context": text }))
+        }
+
         "feed.push" => {
             let req_id = params
                 .get("request_id")
@@ -1415,6 +1428,35 @@ async fn dispatch(
                     };
                     crate::emit_agent_run_event(app, pane, snap.0, snap.1, snap.2, snap.3, snap.4);
                 }
+                // Phase 105: where this hook's Claude session lives, for the
+                // persisted per-session context (context_store.rs). The CLI
+                // forwards the hook payload verbatim, so `session_id` and
+                // `cwd` are Claude Code's own fields. Only the three arms
+                // that write the context need it.
+                let ctx_payload = params.get("payload");
+                let ctx_session_id = ctx_payload
+                    .and_then(|p| p.get("session_id"))
+                    .and_then(|v| v.as_str());
+                let ctx_cwd = ctx_payload
+                    .and_then(|p| p.get("cwd"))
+                    .and_then(|v| v.as_str());
+                let ctx_ws: Option<String> =
+                    if matches!(subkind.as_str(), "user-prompt-submit" | "stop" | "session-end") {
+                        state
+                            .workspaces
+                            .lock()
+                            .ok()
+                            .and_then(|f| find_workspace_for_pane(&f, pane))
+                    } else {
+                        None
+                    };
+                let ctx_ws_ref = ctx_ws.as_deref();
+                let ctx_origin = || crate::context_store::HookOrigin {
+                    session_id: ctx_session_id,
+                    ws_id: ctx_ws_ref,
+                    pane_id: Some(pane),
+                    cwd: ctx_cwd,
+                };
                 match subkind.as_str() {
                     "user-prompt-submit" => {
                         let (started, avg, st, since, seq) = {
@@ -1453,6 +1495,14 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
+                            // Phase 105: the session's FIRST prompt, kept
+                            // (clipped to 2000) in its context file.
+                            crate::context_store::on_hook(
+                                state,
+                                app,
+                                ctx_origin(),
+                                crate::context_store::HookEvent::Prompt(prompt),
+                            );
                         }
                         // Session auto-name: the CLI derives it from the
                         // first prompt and sends it under the existing
@@ -1520,6 +1570,14 @@ async fn dispatch(
                                 e.clone()
                             };
                             crate::emit_brief_event(app, pane, &entry);
+                            // Phase 105: one "where we stand" line per turn,
+                            // degraded briefs included.
+                            crate::context_store::on_hook(
+                                state,
+                                app,
+                                ctx_origin(),
+                                crate::context_store::HookEvent::Stop(&b),
+                            );
                             stop_brief = Some(b);
                         }
                     }
@@ -1562,12 +1620,36 @@ async fn dispatch(
                         } {
                             crate::emit_brief_event(app, pane, &entry);
                         }
+                        // Phase 105: close the session's context log.
+                        // `reason` is Claude Code's fixed enum, not prose.
+                        let reason = ctx_payload
+                            .and_then(|p| p.get("reason"))
+                            .and_then(|v| v.as_str());
+                        crate::context_store::on_hook(
+                            state,
+                            app,
+                            ctx_origin(),
+                            crate::context_store::HookEvent::End(reason),
+                        );
+                    }
+                    "stop-failure" => {
+                        // The turn died on an API error: drop the timer
+                        // WITHOUT record_turn (a failed turn must not skew
+                        // the average) and paint the light `failed`.
+                        let (avg, st, since, seq) = {
+                            let mut runs = state.agent_runs.lock().unwrap();
+                            let e = runs.entry(pane.to_string()).or_default();
+                            e.turn_started_at.take();
+                            e.apply_hook(&subkind, None);
+                            (e.avg_ms(), e.state, e.state_since_ms(), e.seq)
+                        };
+                        crate::emit_agent_run_event(app, pane, None, avg, st, since, seq);
                     }
                     _ => {}
                 }
             }
 
-            // A notification is a state signal ONLY, and this return is
+            // A notification or stop-failure is a state signal ONLY, and this return is
             // load-bearing rather than tidiness: fall through and it builds
             // a FeedItem, lands in the FeedStore, emits feed:item-added and
             // can reach a toast — exactly the noise v0.4.4 removed
@@ -1578,8 +1660,9 @@ async fn dispatch(
             // session for the id, no multiplexer name to recover it from —
             // would skip the return and reinstate the noise on exactly the
             // path nobody would think to test. There is nothing useful to do
-            // with an unattributable notification anyway.
-            if subkind == "notification" {
+            // with an unattributable notification anyway. Same for
+            // stop-failure: state only, never a card or toast.
+            if matches!(subkind.as_str(), "notification" | "stop-failure") {
                 return Ok(json!({ "request_id": req_id, "decision": "passive" }));
             }
 
@@ -2268,6 +2351,7 @@ async fn dispatch(
                     diff_source: None,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 });
             }
             persist(state)?;

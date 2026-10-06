@@ -93,7 +93,23 @@ export interface ElementCapture {
    *  taken (tainted canvas, zero-size element, too large, timeout). A
    *  missing screenshot never blocks the capture. */
   shot: string | null;
+  /** Why `shot` is null; null when a shot exists (or the capture came
+   *  from a script predating this field). */
+  shot_error: ShotError | null;
 }
+
+/** Reasons a snapshot can be missing. Mirrored by the injected script
+ *  and by the `tickets.modal.shot.reason.*` i18n keys. */
+export const SHOT_ERRORS = [
+  "zero-size",
+  "timeout",
+  "tainted",
+  "load-failed",
+  "too-large",
+  "blank",
+  "error",
+] as const;
+export type ShotError = (typeof SHOT_ERRORS)[number];
 
 /** Payload of the `browser:ticket-captured` Tauri event. */
 export interface TicketCaptureEvent {
@@ -122,7 +138,9 @@ export function parseCapture(value: unknown): ElementCapture | null {
   // this string ends up in an <img src>.
   const rawShot = typeof o.shot === "string" ? o.shot : "";
   const shot = rawShot.startsWith("data:image/png;base64,") ? rawShot : null;
-  return { url: str("url"), xpath, selector, html: str("html"), style, shot };
+  // Allowlist: the reason picks an i18n key, so anything unknown is null.
+  const shotError = SHOT_ERRORS.find((e) => e === o.shot_error) ?? null;
+  return { url: str("url"), xpath, selector, html: str("html"), style, shot, shot_error: shotError };
 }
 
 /** The capture awaiting a description, or null when no ticket modal is
@@ -288,8 +306,9 @@ export function inspectScript(): string {
   // be inlined by hand — without that the snapshot is unstyled black
   // text on transparent, which is worse than no snapshot.
   //
-  // Known limits, all of which degrade to null rather than to a wrong
-  // ticket: cross-origin images/fonts taint the canvas and toDataURL
+  // Every failure reports a reason via done(null, reason); success is
+  // done(url, null). Known limits, all of which degrade to a reason
+  // rather than to a wrong ticket: cross-origin images/fonts taint the canvas and toDataURL
   // throws; very large subtrees are skipped; anything slow times out.
   var SHOT_PROPS = [
     'display','position','width','height','margin','padding','border',
@@ -323,12 +342,12 @@ export function inspectScript(): string {
 
   function snapshot(el, done){
     var finished = false;
-    function finish(v){ if (!finished) { finished = true; done(v); } }
-    setTimeout(function(){ finish(null); }, ${SHOT_TIMEOUT_MS});
+    function finish(v, reason){ if (!finished) { finished = true; done(v, reason); } }
+    setTimeout(function(){ finish(null, 'timeout'); }, ${SHOT_TIMEOUT_MS});
     try {
       var r = el.getBoundingClientRect();
       var w = Math.ceil(r.width), h = Math.ceil(r.height);
-      if (!w || !h) return finish(null);
+      if (!w || !h) return finish(null, 'zero-size');
       var scale = Math.min(1, ${SHOT_MAX_W} / w, ${SHOT_MAX_H} / h);
       var clone = el.cloneNode(true);
       inlineStyles(el, clone, { n: 0 });
@@ -342,19 +361,57 @@ export function inspectScript(): string {
         + '</foreignObject></svg>';
       var img = new Image();
       img.onload = function(){
+        var url;
         try {
           var c = document.createElement('canvas');
           c.width = Math.max(1, Math.round(w * scale));
           c.height = Math.max(1, Math.round(h * scale));
           var ctx = c.getContext('2d');
           ctx.drawImage(img, 0, 0, c.width, c.height);
-          var url = c.toDataURL('image/png');
-          finish(url.length > ${SHOT_MAX_BYTES} ? null : url);
-        } catch (e) { finish(null); }   // tainted canvas
+          // Alpha scan: a fully transparent canvas is a failed render,
+          // not a snapshot. getImageData also throws on a tainted canvas.
+          var px = ctx.getImageData(0, 0, c.width, c.height).data;
+          var seen = false;
+          for (var k = 3; k < px.length; k += 4) {
+            if (px[k] !== 0) { seen = true; break; }
+          }
+          if (!seen) return finish(null, 'blank');
+          url = c.toDataURL('image/png');
+        } catch (e) { return finish(null, 'tainted'); }
+        if (url.length > ${SHOT_MAX_BYTES}) return finish(null, 'too-large');
+        finish(url, null);
       };
-      img.onerror = function(){ finish(null); };
+      img.onerror = function(){ finish(null, 'load-failed'); };
       img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
-    } catch (e) { finish(null); }
+    } catch (e) { finish(null, 'error'); }
+  }
+
+  // Build the capture payload for an element and snapshot it. The
+  // snapshot is best-effort: done(payload) always fires once, and a null
+  // shot just means this ticket has no image. It never loses the capture.
+  function capture(el, done){
+    var r = el.getBoundingClientRect();
+    var cs = window.getComputedStyle(el);
+    var payload = {
+      url: location.href,
+      xpath: xpathOf(el),
+      selector: selectorOf(el),
+      html: (el.outerHTML || '').slice(0, HTML_MAX),
+      style: {
+        color: cs.color,
+        background: cs.backgroundColor,
+        font: cs.font || (cs.fontSize + ' ' + cs.fontFamily),
+        display: cs.display,
+        bbox: { x: r.left, y: r.top, w: r.width, h: r.height }
+      },
+      shot: null,
+      shot_error: null
+    };
+    snapshot(el, function(shot, reason){
+      payload.shot = shot;
+      payload.shot_error = shot ? null : (reason || 'error');
+      done(payload);
+    });
   }
 
   function targetFrom(e){
@@ -385,28 +442,9 @@ export function inspectScript(): string {
     if (!el) return;
     e.preventDefault();
     e.stopPropagation();
-    var r = el.getBoundingClientRect();
-    var cs = window.getComputedStyle(el);
-    var payload = {
-      url: location.href,
-      xpath: xpathOf(el),
-      selector: selectorOf(el),
-      html: (el.outerHTML || '').slice(0, HTML_MAX),
-      style: {
-        color: cs.color,
-        background: cs.backgroundColor,
-        font: cs.font || (cs.fontSize + ' ' + cs.fontFamily),
-        display: cs.display,
-        bbox: { x: r.left, y: r.top, w: r.width, h: r.height }
-      },
-      shot: null
-    };
     // Freeze the highlight while rasterizing so the click feels handled.
     tip.textContent = 'ymux: capturing…';
-    // The snapshot is best-effort: it always calls back, and a null just
-    // means this ticket has no image. It must never lose the capture.
-    snapshot(el, function(shot){
-      payload.shot = shot;
+    capture(el, function(payload){
       try {
         location.href = 'ymux-ticket:' + b64url(JSON.stringify(payload));
       } catch (err) { /* nothing we can surface from in here */ }
@@ -416,7 +454,7 @@ export function inspectScript(): string {
   document.addEventListener('mousemove', onMove, true);
   document.addEventListener('contextmenu', onCtx, true);
 
-  window.__ymuxTicket = { stop: function(){
+  window.__ymuxTicket = { capture: capture, stop: function(){
     document.removeEventListener('mousemove', onMove, true);
     document.removeEventListener('contextmenu', onCtx, true);
     if (hi.parentNode) hi.parentNode.removeChild(hi);

@@ -67,8 +67,9 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
 - **Failures do not abort the run.** Each step ends `pending | running | done | failed`;
   the wizard offers retry/skip per step and a checkpoint is saved after every state
   change, so a second pass resumes.
-- Profiles persist in `%APPDATA%\ymux\provisioning-profiles.json`; original credentials
-  in `provisioning-secrets.json`.
+- Profiles persist in `%APPDATA%\ymux\provisioning-profiles.json`. The initial
+  password is never persisted (the old write-only `provisioning-secrets.json` was
+  deleted); it lives in memory for the run only.
 
 **This is the file where Rule #3 (argv arrays, never string concatenation) is enforced
 most often.** It and `local_setup.rs` are the two paths that build remote commands from

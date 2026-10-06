@@ -8,8 +8,6 @@
 //!   - streams progress to the frontend via `provisioning:progress`
 //!     events so the wizard's live log feels native
 //!   - persists profiles in `%APPDATA%\ymux\provisioning-profiles.json`
-//!     and original credentials in `…\provisioning-secrets.json` (DPAPI
-//!     wrap planned — see below) so a second pass can resume
 //!
 //! Connections are stateless within a provisioning run: we open one
 //! russh `client::Handle` to the target and reuse it across every step's
@@ -188,10 +186,6 @@ fn profiles_path() -> Result<PathBuf, String> {
     Ok(config_dir_pub()?.join("provisioning-profiles.json"))
 }
 
-fn secrets_path() -> Result<PathBuf, String> {
-    Ok(config_dir_pub()?.join("provisioning-secrets.json"))
-}
-
 pub(crate) fn load_profiles_from_disk() -> Result<ProfilesFile, String> {
     let path = profiles_path()?;
     if !path.exists() {
@@ -236,87 +230,6 @@ fn save_profiles_to_disk(file: &ProfilesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
     }
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    Ok(())
-}
-
-// ─── secret storage (DPAPI-wrapped initial password) ───────────────────────
-
-#[derive(Clone, Serialize, Deserialize, Default)]
-struct SecretsFile {
-    #[serde(default)]
-    entries: std::collections::BTreeMap<String, String>, // workspace_id → b64(ciphertext)
-}
-
-/// Wrap secret bytes with Windows DPAPI. PowerShell shell-out keeps us
-/// off the windows-rs dep tree. The encrypted blob is bound to the
-/// current user's profile and machine — moving the JSON file to another
-/// user account yields gibberish.
-#[cfg(target_os = "windows")]
-fn dpapi_protect(secret: &str) -> Result<String, String> {
-    let secret = secret.to_string();
-    let out = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$ErrorActionPreference = 'Stop'; \
-             Add-Type -AssemblyName System.Security; \
-             $in = $env:YMUX_SECRET; \
-             $bytes = [System.Text.Encoding]::UTF8.GetBytes($in); \
-             $prot = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, 'CurrentUser'); \
-             [Convert]::ToBase64String($prot)",
-        ])
-        .env("YMUX_SECRET", &secret)
-        .output()
-        .map_err(|e| format!("dpapi spawn: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// No at-rest wrapper exists off Windows, so there is nothing to write.
-///
-/// This used to return `noprotect:<secret>`, and `save_workspace_secret`
-/// wrote that verbatim into `provisioning-secrets.json` — i.e. the user's
-/// SSH password in plaintext, at default permissions, in the config dir.
-/// The premise in the old comment ("non-Windows builds are just the
-/// cross-compile for ymux-linux-x64, provisioning runs UI-side on
-/// Windows") stopped being true when the desktop shipped for macOS.
-///
-/// Rule #2 sanctions exactly this: DPAPI when persistence is possible,
-/// "otherwise keep in memory only". Deliberately NOT a Keychain
-/// integration — see the note on `save_workspace_secret`: nothing in the
-/// tree ever reads this store back, so wiring one up would be building a
-/// feature nobody asked for around a value nobody consumes.
-#[cfg(not(target_os = "windows"))]
-fn dpapi_protect(_secret: &str) -> Result<String, String> {
-    Err("no at-rest secret store on this platform (Rule #2: memory only)".into())
-}
-
-/// Persist the initial password, wrapped, keyed by workspace.
-///
-/// NOTE: write-only. Nothing in the tree reads this file back — there is
-/// no `dpapi_unprotect` and no loader — so today it is groundwork for a
-/// "remember this password" feature that does not exist yet. The caller
-/// already treats failure as non-fatal (it logs and continues), which is
-/// what makes the unix `Err` above safe: provisioning is unaffected.
-/// FOLLOWUPS P2 tracks giving it a reader or deleting it outright.
-fn save_workspace_secret(workspace_id: &str, password: &str) -> Result<(), String> {
-    // Wrap first: on a platform with no at-rest store this bails before we
-    // touch the file at all, so nothing half-writes and no empty
-    // provisioning-secrets.json appears in a macOS config dir.
-    let wrapped = dpapi_protect(password)?;
-    let path = secrets_path()?;
-    let mut file: SecretsFile = if path.exists() {
-        let t = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&t).unwrap_or_default()
-    } else {
-        SecretsFile::default()
-    };
-    file.entries.insert(workspace_id.to_string(), wrapped);
-    let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("write {path:?}: {e}"))?;
     Ok(())
 }
 
@@ -573,9 +486,7 @@ pub(crate) fn iso_now() -> String {
 }
 
 /// Spawn a provisioning task and return a handle. The task emits
-/// `provisioning:progress` events with `StepProgress` payloads. The
-/// initial password (if provided) is DPAPI-wrapped and saved alongside
-/// the workspace so a later "View server info" can recover it.
+/// `provisioning:progress` events with `StepProgress` payloads.
 #[tauri::command]
 pub(crate) async fn provisioning_start(
     state: State<'_, AppState>,
@@ -592,11 +503,6 @@ pub(crate) async fn provisioning_start(
             .cloned()
             .ok_or_else(|| format!("unknown profile {}", input.profile_id))?
     };
-    if let Some(pw) = input.initial_password.as_ref() {
-        if let Err(e) = save_workspace_secret(&input.workspace_id, pw) {
-            log_warn("PROVISION", &format!("provisioning: save secret failed: {e}"));
-        }
-    }
 
     let app_for_task = app.clone();
     let run_id_clone = run_id.clone();
@@ -1089,6 +995,7 @@ fn finalize_workspace(
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     };
     let ws = Workspace {
         id: new_workspace_id(),

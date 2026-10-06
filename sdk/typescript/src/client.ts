@@ -105,12 +105,7 @@ export class YmuxClient {
       headers: this.auth(),
     });
     if (!res.ok) throw new YmuxApiError(res.status, await res.text());
-    // `X-Winmux-Truncated` fallback: a server predating the winmux → ymux
-    // rename only sends the old header, and silently reporting a truncated
-    // read as complete is the worst possible failure mode here.
-    const truncated =
-      res.headers.get("X-Ymux-Truncated") === "true" ||
-      res.headers.get("X-Winmux-Truncated") === "true";
+    const truncated = res.headers.get("X-Ymux-Truncated") === "true";
     return { bytes: new Uint8Array(await res.arrayBuffer()), truncated };
   }
   async uploadFile(path: string, data: Blob | Uint8Array, filename = "file"): Promise<UploadResult> {
