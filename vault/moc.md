@@ -13,3 +13,6 @@
 
 ## Pipeline how-tos
 - [howto/run-committed-server-blob.md](howto/run-committed-server-blob.md): query the committed Go daemon on a side port without building (Rule #17)
+
+## Notes
+- [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
