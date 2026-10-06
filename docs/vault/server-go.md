@@ -156,7 +156,7 @@ raw attach/events WebSockets, which are out of OpenAPI; WS is described by `asyn
 handlers ignored both (the browser also sends `pane_id`/`cmd`). So the create/rename bodies
 are **pointer** `Body` fields (nil = defaults; huma v2.38 ignores `required:"false"` on a
 non-pointer Body and 400s an empty POST) with `additionalProperties:"true"` — do not
-tighten them, 422s would break the page and web clients. The other term routes (feed, events, history, webapp, ...)
+tighten them, 422s would break the page and web clients. Pinned by `TestCreateEmptyBodyIsAccepted` (empty create → 201 with defaults) and `TestRenameEmptyBodyIs400` (empty rename reaches the handler and fails name validation, not 422) in `internal/term/service_test.go`. The other term routes (feed, events, history, webapp, ...)
 are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a Service with
 neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
 "no auth configured => open".
