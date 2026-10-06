@@ -51,8 +51,13 @@ The only crate `app` cannot function without. Three files:
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
   *list* because macOS caps `sun_path` at 104 bytes.
 
-**`log_writer.rs` (554)** — the queued writer behind the logger, and the reason
+**`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.
+Rotation is safe across two processes sharing a config dir: `rotate` closes its handle,
+takes `File::lock` on `debug.log.lock` around stat + rename only, and renames only if
+`debug.log` is still over the cap (fail-open unlocked if the lock can't be taken);
+`write_to_current` compares handle length to path length once per batch and reopens on a
+mismatch, so a process whose file another rotated aside stops appending to `debug.log.1`.
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
@@ -69,6 +74,10 @@ when unset; `diff_cwd` is view state and deliberately did **not** bump the schem
 `ymux-core`'s `backfill_terminal_connections` and every `LayoutNode::Pane { … }` literal in
 the tree carry the field (a struct-literal add is exhaustive, so all of them do).
 
+**`LayoutNode::Pane.claude_running: Option<bool>`** (after `diff_cwd`, same `serde(default,
+skip_serializing_if)` elision, no schema bump) persists "Claude is running in this pane" so a
+reattach seeds the bidi TUI signal. Stale-true is accepted: see DECISIONS.md.
+
 **`Workspace.tmux_session: Option<String>`** (Phase 90.B) marks a row the active-sessions
 overview opened FOR one multiplexer session. Written only by `workspace_open_session`,
 renamed by `tmux_rename_session`, elided when absent so old files round-trip byte-identical
@@ -76,6 +85,11 @@ renamed by `tmux_rename_session`, elided when absent so old files round-trip byt
 the terminal glyph from, and the fallback that lets the row's first pane re-attach after a
 restart on a machine whose localStorage never saw it. `parent_id`'s comment now names three
 create paths, not two.
+
+**`Workspace.is_folder: bool`** marks a pinned folder, git or not, so it stays a header
+(`is_header` in lib.rs). Stored because a non-git folder has a `parent_id` but no
+`is_project_root`. Serde-default false and skipped when false; no schema bump — an older
+build that drops it is re-healed by `flag_pinned_folders` on the next load.
 
 **`Workspace.tabs_mode: bool`** is worth reading the comment on. It renders the
 workspace's panes as a tab strip instead of a split grid — and it is a **flag, not a
