@@ -1,7 +1,6 @@
 import { onCleanup, onMount } from "solid-js";
 import { backend, type UnlistenFn } from "../backend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { backend } from "../backend";
 import {
   TerminalInstance,
   setRtlProfiles,
