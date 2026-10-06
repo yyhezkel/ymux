@@ -608,22 +608,60 @@ pub(crate) async fn download_and_install_update(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    // The whole install path below is NSIS-shaped: it picks the
-    // `-setup.exe` asset, names the temp file `.exe`, and runs it. Off
-    // Windows that used to *still happen* — download a Windows installer,
-    // `Command::new(dest).spawn()` it, and then exit the app 800 ms later
-    // regardless of whether the spawn had failed. So the visible effect of
-    // "Install update" on macOS was: ymux quits, nothing is installed.
-    //
-    // Refuse before touching the network instead. A real self-update here
-    // means mounting the .dmg and swapping a running .app — a feature, not
-    // a platform gap, and it is tracked in FOLLOWUPS rather than faked.
-    #[cfg(not(target_os = "windows"))]
+    // Windows runs the NSIS installer; macOS mounts the per-arch .dmg and
+    // swaps the running .app (`macos.rs`); any other OS refuses before
+    // touching the network.
+    #[cfg(target_os = "windows")]
+    return install_nsis_update(app, state).await;
+    #[cfg(target_os = "macos")]
+    return install_macos_update(app, state).await;
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (&app, &state);
         return Err("in-app update is Windows-only for now — download the latest .dmg from the releases page".into());
     }
+}
 
+/// macOS arm of `download_and_install_update`: manifest → dmg for the running
+/// arch → mount, swap, relaunch. Every failure is an `Err` before the exit is
+/// scheduled inside `macos::install_dmg_and_relaunch`.
+#[cfg(target_os = "macos")]
+async fn install_macos_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let url = {
+        let s = state.settings.lock().map_err(|e| format!("settings lock: {e}"))?;
+        s.updates
+            .manifest_url
+            .clone()
+            .ok_or_else(|| "no manifest_url configured".to_string())?
+    };
+    let manifest = fetch_manifest(&url).await?;
+    if cmp_versions(&manifest.version, APP_VERSION) != std::cmp::Ordering::Greater {
+        return Err(format!(
+            "manifest version {} is not newer than current {APP_VERSION} — nothing to install",
+            manifest.version
+        ));
+    }
+    let arch = std::env::consts::ARCH;
+    let tag = mac_dmg_arch_tag(arch)
+        .ok_or_else(|| format!("unsupported macOS architecture {arch}"))?;
+    let (dmg_url, dmg_sha) = manifest.dmg_for_arch(tag);
+    let dmg_url = dmg_url.ok_or_else(|| {
+        format!("manifest has no dmg for {tag} — falling back to manual download")
+    })?;
+    let dmg_sha = dmg_sha.ok_or_else(|| {
+        format!("manifest has no dmg sha256 for {tag} — refusing to install unverified")
+    })?;
+    macos::install_dmg_and_relaunch(app, dmg_url, Some(dmg_sha), manifest.version).await
+}
+
+#[cfg(target_os = "windows")]
+async fn install_nsis_update(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Step 1: re-fetch the manifest (we don't trust the cached one
     // from the last check — the version might have moved on, and
     // we'd rather error than install something stale).
@@ -677,19 +715,12 @@ pub(crate) async fn download_and_install_update(
     // Step 5: spawn the installer detached and schedule app exit.
     // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS so the installer
     // survives our exit and isn't tied to our console.
-    #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         std::process::Command::new(&dest)
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            .spawn()
-            .map_err(|e| format!("spawn installer: {e}"))?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::Command::new(&dest)
             .spawn()
             .map_err(|e| format!("spawn installer: {e}"))?;
     }
@@ -1026,14 +1057,53 @@ pub(crate) async fn updater_install_version(
     version: String,
     backup_settings: bool,
 ) -> Result<(), String> {
-    // Same NSIS assumption as `download_and_install_update` — and the same
-    // "quits without installing" outcome off Windows. Refuse up front.
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "windows")]
+    return install_nsis_version(app, version, backup_settings).await;
+    #[cfg(target_os = "macos")]
+    return install_macos_version(app, version, backup_settings).await;
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
         let _ = (&app, &version, backup_settings);
         return Err("installing a specific version is Windows-only for now — download that release's .dmg from the releases page".into());
     }
+}
 
+/// macOS arm of `updater_install_version`: the release's dmg for the running
+/// arch; the checksum is optional (GitHub digest), as on the NSIS path.
+#[cfg(target_os = "macos")]
+async fn install_macos_version(
+    app: AppHandle,
+    version: String,
+    backup_settings: bool,
+) -> Result<(), String> {
+    let list = match cached_versions() {
+        Some(c) => c,
+        None => fetch_releases().await?,
+    };
+    let rel = list
+        .iter()
+        .find(|r| r.version == version || r.tag == version)
+        .ok_or_else(|| format!("version {version} not found in releases"))?
+        .clone();
+    let dmg_url = rel.dmg_url.clone().ok_or_else(|| {
+        format!(
+            "release {} has no macOS dmg for {}",
+            rel.tag,
+            std::env::consts::ARCH
+        )
+    })?;
+    if backup_settings {
+        let _ = backup_settings_file(&rel.tag); // best-effort, never blocks install
+    }
+    macos::install_dmg_and_relaunch(app, dmg_url, rel.dmg_sha256.clone(), rel.version).await
+}
+
+#[cfg(target_os = "windows")]
+async fn install_nsis_version(
+    app: AppHandle,
+    version: String,
+    backup_settings: bool,
+) -> Result<(), String> {
     // Resolve the release (prefer cache; fall back to a fresh fetch).
     let list = match cached_versions() {
         Some(c) => c,
@@ -1080,19 +1150,12 @@ pub(crate) async fn updater_install_version(
         )),
     }
 
-    #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
         const DETACHED_PROCESS: u32 = 0x00000008;
         const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
         std::process::Command::new(&dest)
             .creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP)
-            .spawn()
-            .map_err(|e| format!("spawn installer: {e}"))?;
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        std::process::Command::new(&dest)
             .spawn()
             .map_err(|e| format!("spawn installer: {e}"))?;
     }
