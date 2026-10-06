@@ -102,7 +102,7 @@ import {
   type ShortcutActionId,
   type ShortcutTable,
 } from "./shortcuts";
-import { inTerminal } from "./selectAllShortcut";
+import { inTerminal, makeSelectAllBinding } from "./selectAllShortcut";
 import { makeSttRecorder, type SttRecorder } from "./stt";
 import {
   collectPanes,
@@ -3678,7 +3678,7 @@ function App() {
       }).catch((err) => log.warn("paste failed", err));
     } },
     { id: "select_all",
-      when: (e) => inTerminal(e) && hasActivePane(),
+      when: makeSelectAllBinding({ activePaneId, termFor: (id) => terms.get(id)?.term }).when,
       run: (e) => {
         e.preventDefault();
         const pid = activePaneId();
