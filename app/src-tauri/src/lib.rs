@@ -1406,7 +1406,7 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     let secret_err = reconcile_secret_env(state).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
-    let load_state = *state.load_state.lock().unwrap();
+    let load_state = *state.load_state.lock().map_err(|e| e.to_string())?;
     match load_state {
         Some(LoadState::Loaded) => {}
         Some(LoadState::Failed) => {
@@ -1422,7 +1422,7 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
             return Err("persistence not yet initialized".into());
         }
     }
-    let file = state.workspaces.lock().unwrap().clone();
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
     save_to_disk(&file)?;
     match secret_err {
         Some(e) => Err(format!("secret env not saved: {e}")),
@@ -1440,8 +1440,8 @@ fn secret_env_path() -> Result<std::path::PathBuf, String> {
 /// Run `secret_env::reconcile` over the live workspaces; save the store when
 /// it changed. Error text never carries a value.
 fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
-    let mut file = state.workspaces.lock().unwrap();
-    let mut store = state.secret_env.lock().unwrap();
+    let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
+    let mut store = state.secret_env.lock().map_err(|e| e.to_string())?;
     if store.reconcile(&mut file.workspaces) {
         store.save(&secret_env_path()?)?;
     }
@@ -1454,10 +1454,10 @@ fn workspace_secret_env_keys(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<Vec<String>, String> {
-    let file = state.workspaces.lock().unwrap();
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?;
     let owner = secret_env::env_owner(&file.workspaces, &workspace_id)
         .ok_or_else(|| format!("no workspace {workspace_id}"))?;
-    Ok(state.secret_env.lock().unwrap().keys_for(&owner))
+    Ok(state.secret_env.lock().map_err(|e| e.to_string())?.keys_for(&owner))
 }
 
 // ─── Tree operations ─────────────────────────────────────────────────────────
@@ -2021,7 +2021,7 @@ pub(crate) fn update_pane_auto_title(
     new_title: &str,
 ) {
     let changed = {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = lock_or_recover(&state.workspaces);
         let Some(ws_id) = find_workspace_for_pane(&file, pane_id) else {
             // Phase 81.G: this used to return in total silence, which is
             // why a permanently broken pane-header path looked like a
@@ -2447,7 +2447,7 @@ fn schedule_setup_injection(
         if bytes.is_empty() {
             return;
         }
-        let mut sessions = sessions.lock().unwrap();
+        let mut sessions = lock_or_recover(&sessions);
         if let Some(s) = sessions.get_mut(&session_id) {
             match s {
                 Session::Local(l) => {
@@ -2802,8 +2802,8 @@ fn cleanup_session_maps(
     pane_id: &str,
     session_id: &str,
 ) {
-    let _ = sessions.lock().unwrap().remove(session_id);
-    let mut p = pane_sessions.lock().unwrap();
+    let _ = lock_or_recover(&sessions).remove(session_id);
+    let mut p = lock_or_recover(&pane_sessions);
     if p.get(pane_id).map(|s| s.as_str()) == Some(session_id) {
         p.remove(pane_id);
     }
@@ -3067,7 +3067,7 @@ fn spawn_local_pty(
         emit_exit(&app_for_thread, &id_for_thread, None);
     });
 
-    state.core.sessions.lock().unwrap().insert(
+    lock_or_recover(&state.core.sessions).insert(
         id.clone(),
         Session::Local(LocalSession {
             writer,
@@ -3109,7 +3109,7 @@ fn spawn_local_pty(
                     );
                     return;
                 };
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                     use std::io::Write as _;
                     // Rule #1: a fixed control string built from a sanitized
@@ -3166,7 +3166,7 @@ fn spawn_local_pty(
                     "[ymux] tmux not installed — falling back to plain shell",
                     &secret_keys,
                 );
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                     use std::io::Write as _;
                     let _ = l.writer.write_all(script.as_bytes());
@@ -3728,7 +3728,7 @@ fn spawn_wsl_pty(
         emit_exit(&app_for_thread, &id_for_thread, None);
     });
 
-    state.core.sessions.lock().unwrap().insert(
+    state.core.sessions.lock().map_err(|e| e.to_string())?.insert(
         id.clone(),
         Session::Local(LocalSession {
             writer,
@@ -3801,7 +3801,7 @@ fn spawn_wsl_pty(
                 "[ymux] tmux not installed in WSL — falling back to plain shell",
                 &[],
             );
-            let mut sessions = sessions_clone.lock().unwrap();
+            let mut sessions = lock_or_recover(&sessions_clone);
             if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                 use std::io::Write as _;
                 let _ = l.writer.write_all(script.as_bytes());
@@ -4348,7 +4348,7 @@ async fn connect_and_authenticate(
         target,
         connect_res.is_ok()
     ));
-    let outcome = outcome_arc.lock().unwrap().clone();
+    let outcome = outcome_arc.lock().map_err(|e| e.to_string())?.clone();
 
     let mut handle = match connect_res {
         Ok(h) => h,
@@ -4564,7 +4564,7 @@ async fn spawn_ssh(
     // (`~/.ymux/log-level`, read by the Go server watcher + CLI hooks).
     // Best-effort — a failure never blocks the shell.
     {
-        let level = state.settings.lock().unwrap().logs.level.clone();
+        let level = state.settings.lock().map_err(|e| e.to_string())?.logs.level.clone();
         if let Err(e) = log_sync::push_log_level(&handle, &level).await {
             log_warn("LOGS", &format!("log-level push on connect failed: {e}"));
         }
@@ -4854,9 +4854,7 @@ async fn spawn_ssh(
         }
         // Phase 8.B: if this was the last SSH session for the workspace, tear
         // down all of its port forwards.
-        let still_alive = sessions_for_task
-            .lock()
-            .unwrap()
+        let still_alive = lock_or_recover(&sessions_for_task)
             .values()
             .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_for_task));
         if !still_alive {
@@ -4864,12 +4862,10 @@ async fn spawn_ssh(
             // Phase JJ: last SSH session for this workspace is gone — abort
             // the remote port-watcher task so it doesn't leak.
             let aborted = {
-                let mut tasks = port_watcher_tasks_for_task.lock().unwrap();
+                let mut tasks = lock_or_recover(&port_watcher_tasks_for_task);
                 tasks.remove(&workspace_for_task).map(|h| h.abort()).is_some()
             };
-            port_watchers_for_task
-                .lock()
-                .unwrap()
+            lock_or_recover(&port_watchers_for_task)
                 .remove(&workspace_for_task);
             port_watcher_release_owner(&hosts_for_task, &workspace_for_task);
             if aborted {
@@ -4893,7 +4889,7 @@ async fn spawn_ssh(
     } else {
         None
     };
-    state.core.sessions.lock().unwrap().insert(
+    state.core.sessions.lock().map_err(|e| e.to_string())?.insert(
         id.clone(),
         Session::Ssh(SshSession {
             tx: Some(tx),
@@ -5000,7 +4996,7 @@ async fn spawn_ssh(
                 &secret_keys,
             );
             {
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Ssh(ssh)) = sessions.get_mut(&id_clone) {
                     let _ = ssh.try_send(SshCmd::Data(script.into_bytes()));
                 }
@@ -5018,7 +5014,7 @@ async fn spawn_ssh(
                 shell_quote(&machine_id()),
             );
             let handle = {
-                let sessions = sessions_clone.lock().unwrap();
+                let sessions = lock_or_recover(&sessions_clone);
                 match sessions.get(&id_clone) {
                     Some(Session::Ssh(ssh)) => Some(ssh.handle.clone()),
                     _ => None,
@@ -5499,14 +5495,14 @@ async fn spawn_port_watcher(
             .core
             .port_watchers
             .lock()
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .contains(workspace_id);
         if already {
             let alive = state
                 .core
                 .port_watcher_tasks
                 .lock()
-                .unwrap()
+                .map_err(|e| e.to_string())?
                 .get(workspace_id)
                 .map(|h| !h.is_finished())
                 .unwrap_or(false);
@@ -5518,12 +5514,12 @@ async fn spawn_port_watcher(
                 .core
                 .port_watcher_tasks
                 .lock()
-                .unwrap()
+                .map_err(|e| e.to_string())?
                 .remove(workspace_id)
             {
                 h.abort();
             }
-            state.core.port_watchers.lock().unwrap().remove(workspace_id);
+            state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
             log_debug("TUNNEL", &format!(
                 "port-watch[{workspace_id}]: stale slot, replacing with fresh watcher"
             ));
@@ -5532,7 +5528,7 @@ async fn spawn_port_watcher(
             .core
             .port_watchers
             .lock()
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .insert(workspace_id.to_string());
     }
     // Phase JJ.2 (leak fix): the desktop-side dedup above only knows about
@@ -5570,14 +5566,14 @@ async fn spawn_port_watcher(
         log_warn("TUNNEL", &format!(
             "port-watch[{workspace_id}]: skipped — remote ymux CLI is not the build this desktop embeds"
         ));
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
         return Err("remote ymux CLI out of sync".into());
     }
     let mut wchan = match handle.channel_open_session().await {
         Ok(c) => c,
         Err(e) => {
             log_warn("TUNNEL", &format!("port-watch[{workspace_id}]: channel_open_session failed: {e}"));
-            state.core.port_watchers.lock().unwrap().remove(workspace_id);
+            state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
             return Err(format!("channel_open: {e}"));
         }
     };
@@ -5594,7 +5590,7 @@ async fn spawn_port_watcher(
     );
     if let Err(e) = wchan.exec(true, cmd.as_str()).await {
         log_warn("TUNNEL", &format!("port-watch[{workspace_id}]: exec failed: {e}"));
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
         return Err(format!("exec failed: {e}"));
     }
     let ws_guard = workspace_id.to_string();
@@ -5608,8 +5604,8 @@ async fn spawn_port_watcher(
                 _ => {}
             }
         }
-        watchers.lock().unwrap().remove(&ws_guard);
-        tasks.lock().unwrap().remove(&ws_guard);
+        lock_or_recover(&watchers).remove(&ws_guard);
+        lock_or_recover(&tasks).remove(&ws_guard);
         // Phase 86: subscribers stay; the next ensure from any of them
         // respawns and becomes owner.
         port_watcher_release_owner(&hosts, &ws_guard);
@@ -5620,7 +5616,7 @@ async fn spawn_port_watcher(
     state.core
         .port_watcher_tasks
         .lock()
-        .unwrap()
+        .map_err(|e| e.to_string())?
         .insert(workspace_id.to_string(), task);
     if let Some(hk) = hkey {
         let mut hosts = state.port_watcher_hosts.lock().map_err(|e| e.to_string())?;
@@ -5639,21 +5635,18 @@ async fn spawn_port_watcher(
 /// when no watcher is running.
 fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &str) {
     let aborted = {
-        let mut tasks = state.core.port_watcher_tasks.lock().unwrap();
+        let mut tasks = lock_or_recover(&state.core.port_watcher_tasks);
         tasks.remove(workspace_id).map(|h| {
             h.abort();
             true
         })
     };
     if aborted.is_some() {
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        lock_or_recover(&state.core.port_watchers).remove(workspace_id);
     }
     // Phase 86: leave the host's sharing group (drops ownership too).
     port_watcher_forget(&state.port_watcher_hosts, workspace_id);
-    state.core
-        .detected_ports
-        .lock()
-        .unwrap()
+    lock_or_recover(&state.core.detected_ports)
         .remove(workspace_id);
     let _ = app.emit(
         "port-detection-cleared",
@@ -5669,7 +5662,7 @@ fn find_ssh_handle_for_workspace(
     state: &AppState,
     workspace_id: &str,
 ) -> Option<Arc<client::Handle<SshClient>>> {
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().ok()?;
     for s in sessions.values() {
         if let Session::Ssh(ssh) = s {
             if ssh.workspace_id == workspace_id {
@@ -5695,7 +5688,7 @@ pub(crate) async fn open_auto_forward(
     remote_port: u16,
 ) -> Result<u16, String> {
     {
-        let m = state.core.forwards.lock().unwrap();
+        let m = state.core.forwards.lock().map_err(|e| e.to_string())?;
         if let Some(e) = m.get(&(workspace_id.to_string(), remote_port)) {
             return Ok(e.local_port);
         }
@@ -5744,13 +5737,11 @@ pub(crate) async fn open_auto_forward(
                 }
             }
         }
-        forwards_for_task
-            .lock()
-            .unwrap()
+        lock_or_recover(&forwards_for_task)
             .remove(&(ws_for_task, remote_port));
     });
 
-    state.core.forwards.lock().unwrap().insert(
+    state.core.forwards.lock().map_err(|e| e.to_string())?.insert(
         (workspace_id.to_string(), remote_port),
         ForwardEntry {
             local_port,
@@ -5816,7 +5807,7 @@ pub(crate) fn close_one_forward(
     remote_port: u16,
 ) {
     let removed = {
-        let mut m = state.core.forwards.lock().unwrap();
+        let mut m = lock_or_recover(&state.core.forwards);
         m.remove(&(workspace_id.to_string(), remote_port))
     };
     if let Some(mut e) = removed {
@@ -5835,7 +5826,7 @@ pub(crate) fn close_one_forward(
 
 /// Cancel every forward task whose key has the given workspace_id.
 pub(crate) fn close_workspace_forwards(forwards: &ForwardMap, workspace_id: &str) {
-    let mut m = forwards.lock().unwrap();
+    let mut m = lock_or_recover(&forwards);
     let keys: Vec<(String, u16)> = m
         .keys()
         .filter(|(w, _)| w == workspace_id)
@@ -5872,7 +5863,7 @@ fn layout_has_ssh_consumer_pane(node: &LayoutNode) -> bool {
 
 #[tauri::command]
 fn workspaces_load(state: State<'_, AppState>) -> Result<WorkspacesFile, String> {
-    let file = state.workspaces.lock().unwrap().clone();
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
     log_debug("WORKSPACE", &format!(
         "workspaces_load: returning {} workspaces, active={:?}",
         file.workspaces.len(),
@@ -5902,7 +5893,7 @@ fn workspace_create(
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
     log_info("WORKSPACE", &format!("created ws={root_id} with screen ws={screen_id}"));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 7.C: edit a workspace's mutable metadata fields. Each field is `Option`:
@@ -5927,7 +5918,7 @@ fn workspace_update(
     connection: Option<Connection>,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -5962,7 +5953,7 @@ fn workspace_update(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 37: rewrite the `connection` on every Terminal pane in the
@@ -5998,7 +5989,7 @@ fn workspace_reset_layout(
     workspace_id: String,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -6036,7 +6027,7 @@ fn workspace_reset_layout(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 51.B1: first_terminal_connection_pub moved to ymux-core.
@@ -6235,7 +6226,7 @@ fn workspace_pin_project_folder(
             "pinned a project folder under ws={parent_workspace_id} as ws={new_id} (repo={is_project_root})"
         ),
     );
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Open one worktree of a project-folder workspace as its own child.
@@ -6291,7 +6282,7 @@ fn workspace_open_worktree(
             file.active_workspace_id = Some(existing);
             drop(file);
             persist(&state)?;
-            return Ok(state.workspaces.lock().unwrap().clone());
+            return Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone());
         }
 
         let id = new_workspace_id();
@@ -6308,7 +6299,7 @@ fn workspace_open_worktree(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 90.B: where a session row goes in the tree.
@@ -6629,7 +6620,7 @@ fn workspace_new_screen(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 91.C: does ANY row on the same host already stand for `name`?
@@ -6770,7 +6761,7 @@ fn workspace_mirror_sessions(
         ),
     );
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 90.B: open a multiplexer session on a screen of its own — a
@@ -6831,7 +6822,7 @@ fn workspace_open_session(
         );
         let _ = app.emit("workspaces:changed", ());
     }
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Demote a workspace that turned out not to be a git repo.
@@ -6871,7 +6862,7 @@ fn workspace_set_project_root(
         "WORKSPACE",
         &format!("ws={workspace_id} is_project_root={is_project_root}"),
     );
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Persisted collapse state of a workspace's subtree.
@@ -6899,7 +6890,7 @@ fn workspace_set_collapsed(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 84.A: flip a workspace between the split grid and the tab strip.
@@ -7769,13 +7760,13 @@ fn workspace_rename(
     name: String,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             ws.name = name;
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 30: dedicated identity command for live preview. The full
@@ -7807,7 +7798,7 @@ async fn workspace_set_identity(
     }
     let updated: Workspace;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -7835,7 +7826,7 @@ async fn workspace_set_auto_port_forward(
 ) -> Result<Workspace, String> {
     let updated: Workspace;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -7964,7 +7955,7 @@ async fn list_detected_ports(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<Vec<DetectedPortInfo>, String> {
-    let m = state.core.detected_ports.lock().unwrap();
+    let m = state.core.detected_ports.lock().map_err(|e| e.to_string())?;
     let mut out: Vec<DetectedPortInfo> = m
         .get(&workspace_id)
         .map(|ports| {
@@ -8010,7 +8001,7 @@ async fn forward_port_start(
     remote_port: u16,
 ) -> Result<u16, String> {
     let addr = {
-        let m = state.core.detected_ports.lock().unwrap();
+        let m = state.core.detected_ports.lock().map_err(|e| e.to_string())?;
         m.get(&workspace_id)
             .and_then(|ports| ports.get(&remote_port))
             .map(|(addr, _family)| addr.clone())
@@ -8107,7 +8098,7 @@ async fn pane_set_identity(
     }
     let updated: PaneIdentity;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8140,7 +8131,7 @@ fn workspace_delete(
     // teardown below is I/O (PTY kill, webview close, filesystem) and
     // must never run under the workspaces mutex.
     let (ids, panes_by_ws, deleted_parent) = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ids = collect_subtree_ids(&file, &workspace_id);
         let deleted_parent = file
             .workspaces
@@ -8183,7 +8174,7 @@ fn workspace_delete(
     // One retain, one reassignment, one persist. Doing this per id would
     // leave the tree half-removed if a later teardown panicked.
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces.retain(|w| !ids.contains(&w.id));
         if file
             .active_workspace_id
@@ -8198,7 +8189,7 @@ fn workspace_delete(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Every id in the subtree rooted at `workspace_id`, including itself.
@@ -8236,7 +8227,7 @@ fn teardown_workspace_runtime(
     // its login state (tunnel cookies, macOS per-workspace data store,
     // legacy browser-sessions dir). State DOES survive transient
     // hide/show cycles; this is the only cleanup path that wipes it.
-    let webview = state.workspace_browsers.lock().unwrap().remove(workspace_id);
+    let webview = lock_or_recover(&state.workspace_browsers).remove(workspace_id);
     if let Some(w) = webview {
         let _ = w.close();
     }
@@ -8273,8 +8264,8 @@ fn teardown_workspace_runtime(
     // once we are here.
     release_session_owners_of_workspace(workspace_id);
     for pane_id in panes_to_kill {
-        if let Some(sid) = state.core.pane_sessions.lock().unwrap().remove(pane_id) {
-            if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+        if let Some(sid) = lock_or_recover(&state.core.pane_sessions).remove(pane_id) {
+            if let Some(mut s) = lock_or_recover(&state.core.sessions).remove(&sid) {
                 kill_session_inner(&mut s);
             }
         }
@@ -8292,7 +8283,7 @@ fn workspace_set_active(
     workspace_id: Option<String>,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         // Phase 92: a header hands activation to its first screen; a header
         // with none is refused rather than shown as an empty area.
         let workspace_id = match workspace_id {
@@ -8313,7 +8304,7 @@ fn workspace_set_active(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 49-B: anchor a workspace to a fresh git worktree.
@@ -8344,7 +8335,7 @@ fn workspace_create_worktree(
     }
     // Snapshot the source cwd while holding the lock briefly.
     let src_cwd = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter()
@@ -8388,7 +8379,7 @@ fn workspace_create_worktree(
     }
     // Stamp the workspace and re-anchor its cwd to the new worktree.
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             ws.cwd = Some(target.to_string_lossy().into_owned());
             ws.git_worktree = Some(target.clone());
@@ -8402,7 +8393,7 @@ fn workspace_create_worktree(
         branch_name,
     ));
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8422,7 +8413,7 @@ fn workspace_split(
     let kind = pane_kind.unwrap_or(PaneKind::Terminal);
     // Phase 92: a header has nothing to split.
     {
-        let file = state.workspaces.lock().unwrap();
+        let file = lock_or_recover(&state.workspaces);
         if file
             .workspaces
             .iter()
@@ -8454,7 +8445,7 @@ fn workspace_split(
         //   3. live SSH session bound to the workspace
         //   4. Local (only if all of the above are absent)
         let (layout_fallback, ws_conn) = {
-            let file = state.workspaces.lock().unwrap();
+            let file = lock_or_recover(&state.workspaces);
             let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
             (
                 ws.and_then(|w| w.layout.as_ref().and_then(first_terminal_connection)),
@@ -8468,7 +8459,7 @@ fn workspace_split(
         None
     };
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = lock_or_recover(&state.workspaces);
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 let (new_layout, _) = split_pane_in(
@@ -8485,7 +8476,7 @@ fn workspace_split(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(lock_or_recover(&state.workspaces).clone())
 }
 
 // ─── Phase 8.A: browser-pane commands ───────────────────────────────────────
@@ -8554,7 +8545,7 @@ fn workspace_close_pane(
     // here would leave those panes dead with no UI to reconnect.
     let keep_ssh_alive: bool;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8579,14 +8570,14 @@ fn workspace_close_pane(
     }
     if let Some(pid) = removed_pane {
         // Always unbind the pane from its session — the pane is gone.
-        let sid_opt = state.core.pane_sessions.lock().unwrap().remove(&pid);
+        let sid_opt = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pid);
         if let Some(sid) = sid_opt {
             // Decide whether to actually drop the session. If the
             // session is SSH AND the workspace still has a consumer
             // (file-manager / browser pane), keep it alive so those
             // panes stay functional. Otherwise drop and clean up.
             let is_ssh_for_workspace = {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 matches!(
                     sessions.get(&sid),
                     Some(Session::Ssh(ssh)) if ssh.workspace_id == workspace_id
@@ -8599,7 +8590,7 @@ fn workspace_close_pane(
                 // Leave the session in state.core.sessions; it has no pane
                 // binding now but `pick_ssh_handle_for_workspace`
                 // will still find it via its workspace_id.
-            } else if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+            } else if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
                 // Closing a pane is not killing its session. `kill_session_inner`
                 // is a detach on every backend, so a persistent session OUTLIVES
                 // the pane — deliberately, and symmetrically with SSH and WSL,
@@ -8627,7 +8618,7 @@ fn workspace_close_pane(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8638,7 +8629,7 @@ fn workspace_set_split_ratio(
     ratio: f32,
 ) -> Result<(), String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(set_split_ratio_in(layout, &split_id, ratio));
@@ -8679,7 +8670,7 @@ fn workspace_distribute_evenly(
 ) -> Result<WorkspacesFile, String> {
     let count;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8696,7 +8687,7 @@ fn workspace_distribute_evenly(
     log_debug("WORKSPACE", &format!(
         "workspace_distribute_evenly: ws={workspace_id} reset {count} split(s)"
     ));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // ─── Pane metadata (title / annotation) ─────────────────────────────────────
@@ -8747,7 +8738,7 @@ fn pane_set_smart_bidi(
     enabled: bool,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8770,7 +8761,7 @@ fn pane_set_smart_bidi(
         "[bidi] pane_set_smart_bidi: ws={} pane={} enabled={}",
         workspace_id, pane_id, enabled
     ));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Persist "Claude is running in this pane" so a reattach to a persistent
@@ -8802,7 +8793,7 @@ fn pane_set_claude_running(
     running: bool,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8822,7 +8813,7 @@ fn pane_set_claude_running(
         "[bidi] pane_set_claude_running: ws={} pane={} running={}",
         workspace_id, pane_id, running
     ));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8835,7 +8826,7 @@ fn pane_set_title(
 ) -> Result<WorkspacesFile, String> {
     let normalized = title.filter(|s| !s.is_empty());
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(update_pane_in(layout, &pane_id, Some(normalized.clone()), None, None));
@@ -8884,7 +8875,7 @@ fn pane_set_title(
     }
 
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 23.I helper: look up the SSH session bound to a pane and
@@ -8976,7 +8967,7 @@ fn pane_set_annotation(
 ) -> Result<WorkspacesFile, String> {
     let normalized = annotation.filter(|s| !s.is_empty());
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(update_pane_in(layout, &pane_id, None, Some(normalized), None));
@@ -8985,7 +8976,7 @@ fn pane_set_annotation(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // ─── Pane connect / disconnect ───────────────────────────────────────────────
@@ -9031,7 +9022,7 @@ async fn workspace_ensure_connected(
 
     // Resolve the workspace's canonical SSH target.
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -9064,7 +9055,7 @@ async fn workspace_ensure_connected(
             // Quick idempotency pre-check (a pane may have already
             // connected). If so, drop the spare handle now.
             {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 let already = sessions
                     .values()
                     .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_id));
@@ -9098,7 +9089,7 @@ async fn workspace_ensure_connected(
             // tunnel setup, drop the spare (its handle Drop tears the tunnel
             // down with it) — and let the lease roll the registration back,
             // which is what nothing did before.
-            let mut sessions = state.core.sessions.lock().unwrap();
+            let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
             let already = sessions
                 .values()
                 .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_id));
@@ -9179,7 +9170,7 @@ async fn pane_connect(
     // Phase 23.I: also lift the pane's title so the persistent (tmux) flow can
     // derive a session name from it instead of the opaque pane-id default.
     let (conn, cwd, ws_env, ws_setup, pane_title, pane_smart_bidi) = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter()
@@ -9240,13 +9231,13 @@ async fn pane_connect(
         (Vec::new(), Vec::new())
     } else {
         let owner = {
-            let file = state.workspaces.lock().unwrap();
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
             secret_env::env_owner(&file.workspaces, &workspace_id)
         };
         match owner {
             Some(owner) => {
                 // Per key, so the rows that did resolve are still delivered.
-                let store = state.secret_env.lock().unwrap();
+                let store = state.secret_env.lock().map_err(|e| e.to_string())?;
                 let mut found = Vec::new();
                 let mut missing = Vec::new();
                 for k in &secret_names {
@@ -9330,8 +9321,8 @@ async fn pane_connect(
     };
 
     // Kill any prior session for this pane.
-    if let Some(old_sid) = state.core.pane_sessions.lock().unwrap().remove(&pane_id) {
-        if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&old_sid) {
+    if let Some(old_sid) = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pane_id) {
+        if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&old_sid) {
             kill_session_inner(&mut s);
         }
     }
@@ -9485,7 +9476,7 @@ async fn pane_connect(
     state.core
         .pane_sessions
         .lock()
-        .unwrap()
+        .map_err(|e| e.to_string())?
         .insert(pane_id.clone(), session_id.clone());
 
     if !secret_missing.is_empty() {
@@ -9506,7 +9497,7 @@ async fn pane_connect(
     // three cfg-split arms, and a fourth copy of the rule is a fourth chance
     // to disagree with the other three.
     let pane_is_persistent = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         match sessions.get(&session_id) {
             Some(Session::Local(l)) => l.tmux_session.is_some(),
             Some(Session::Ssh(s)) => s.tmux_session.is_some(),
@@ -9521,7 +9512,7 @@ async fn pane_connect(
     // reports no working directory at all.
     if pane_is_persistent {
         let (host_key, ws_cwd) = {
-            let file = state.workspaces.lock().unwrap();
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
             let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
             (
                 session_owner_host_key(ws.and_then(|w| w.connection.as_ref())),
@@ -9697,7 +9688,7 @@ async fn pane_connect(
                 } else {
                     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
                 }
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(s) = sessions.get_mut(&session_id_clone) {
                     match s {
                         Session::Local(l) => {
@@ -9950,7 +9941,7 @@ async fn list_workspace_tmux_sessions(
     // handle involved, and it works before any pane has connected (the
     // tmux server inside the distro is reachable whenever wsl.exe is).
     let wsl_distro: Option<Option<String>> = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -9980,7 +9971,7 @@ async fn list_workspace_tmux_sessions(
     #[cfg(windows)]
     {
         let is_local = {
-            let file = state.workspaces.lock().unwrap();
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
             file.workspaces
                 .iter()
                 .find(|w| w.id == workspace_id)
@@ -10008,7 +9999,7 @@ async fn list_workspace_tmux_sessions(
     // reports `reachable: false` in that case and the caller must treat an
     // unreachable host as "might already be live", never as "safe to inject".
     let handle = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions
             .iter()
             .find_map(|(_sid, sess)| match sess {
@@ -10026,7 +10017,7 @@ async fn list_workspace_tmux_sessions(
             #[cfg(not(windows))]
             {
                 let is_local = {
-                    let file = state.workspaces.lock().unwrap();
+                    let file = state.workspaces.lock().map_err(|e| e.to_string())?;
                     file.workspaces
                         .iter()
                         .find(|w| w.id == workspace_id)
@@ -10053,7 +10044,7 @@ async fn list_workspace_tmux_sessions(
 /// empty list that means "unknown", not "empty".
 fn workspace_sessions_reachable(state: &AppState, workspace_id: &str) -> bool {
     let needs_handle = {
-        let file = state.workspaces.lock().unwrap();
+        let file = lock_or_recover(&state.workspaces);
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -10063,7 +10054,7 @@ fn workspace_sessions_reachable(state: &AppState, workspace_id: &str) -> bool {
     if !needs_handle {
         return true;
     }
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = lock_or_recover(&state.core.sessions);
     sessions
         .iter()
         .any(|(_sid, sess)| matches!(sess, Session::Ssh(s) if s.workspace_id == workspace_id))
@@ -10095,7 +10086,7 @@ async fn pane_list_tmux_sessions(
     // workspace can say whose it is instead of just "not yours". All three come
     // off the one lock this block already takes.
     let (host_key, ws_cwd, ws_names) = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
         (
             session_owner_host_key(ws.and_then(|w| w.connection.as_ref())),
@@ -10166,7 +10157,7 @@ async fn pane_target_session_state(
     tmux_session_name: Option<String>,
 ) -> Result<TargetSessionState, String> {
     let pane_title = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -10433,7 +10424,7 @@ async fn pane_probe_tmux_sessions(
     // A pane that's already connected (or a sibling on the same workspace)
     // gives us a handle for free — no second handshake.
     let live = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions.iter().find_map(|(_sid, sess)| match sess {
             Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
             _ => None,
@@ -10446,7 +10437,7 @@ async fn pane_probe_tmux_sessions(
     // Resolve the pane's effective connection: its own first, then the
     // workspace's — the same precedence `pane_connect` uses.
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = match file.workspaces.iter().find(|w| w.id == workspace_id) {
             Some(w) => w,
             None => return Ok(None),
@@ -11047,7 +11038,7 @@ async fn tmux_rename_session(
         return Err("new name is the same as the old one".into());
     }
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -11062,7 +11053,7 @@ async fn tmux_rename_session(
     let ssh_handle = match &conn {
         Some(Connection::Ssh { .. }) => {
             let handle = {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 sessions
                     .iter()
                     .find_map(|(_sid, sess)| match sess {
@@ -11124,7 +11115,7 @@ async fn tmux_rename_session(
 
     // The multiplexer agreed. Now move everything ymux keys by the old name.
     {
-        let mut sessions = state.core.sessions.lock().unwrap();
+        let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         for sess in sessions.values_mut() {
             match sess {
                 Session::Ssh(s)
@@ -11147,7 +11138,7 @@ async fn tmux_rename_session(
     let label = rename_tmux_label(&workspace_id, &old_name, &new_name);
     // Phase 90.B: a session row in the tree is keyed by this name too.
     let rows_moved = {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let mut n = 0;
         for w in file.workspaces.iter_mut() {
             if conn_same_host(&w.connection, &conn)
@@ -11227,7 +11218,7 @@ async fn pane_list_claude_sessions(
     // Locate any live SSH handle for this workspace. The shell command runs
     // on the remote where Claude Code is actually installed.
     let handle_opt = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions
             .iter()
             .find_map(|(_sid, sess)| match sess {
@@ -11626,10 +11617,10 @@ fn pane_persistence_get(
     state: State<'_, AppState>,
     pane_id: String,
 ) -> Option<String> {
-    let sessions_map = state.core.pane_sessions.lock().unwrap();
+    let sessions_map = state.core.pane_sessions.lock().ok()?;
     let sid = sessions_map.get(&pane_id)?.clone();
     drop(sessions_map);
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().ok()?;
     match sessions.get(&sid) {
         Some(Session::Ssh(s)) => s.tmux_session.clone(),
         // Phase 80: WSL panes carry their tmux name on LocalSession.
@@ -11646,8 +11637,8 @@ fn pane_persistence_list(
     state: State<'_, AppState>,
 ) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    let pane_sessions = state.core.pane_sessions.lock().unwrap().clone();
-    let sessions = state.core.sessions.lock().unwrap();
+    let pane_sessions = lock_or_recover(&state.core.pane_sessions).clone();
+    let sessions = lock_or_recover(&state.core.sessions);
     for (pane, sid) in pane_sessions {
         // Phase 80: Local sessions carry a tmux name too (WSL panes).
         let name = match sessions.get(&sid) {
@@ -11948,7 +11939,7 @@ pub(crate) async fn kill_pane_session_inner(
     state: &AppState,
     pane_id: &str,
 ) -> KillSessionOutcome {
-    let sid_opt = state.core.pane_sessions.lock().unwrap().get(pane_id).cloned();
+    let sid_opt = lock_or_recover(&state.core.pane_sessions).get(pane_id).cloned();
     let Some(sid) = sid_opt else {
         return KillSessionOutcome::new("no_session", "none", None);
     };
@@ -11957,7 +11948,7 @@ pub(crate) async fn kill_pane_session_inner(
     // Phase 80: WSL panes (Session::Local with a tmux name) kill their
     // session via wsl.exe instead of an SSH exec channel.
     let target = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = lock_or_recover(&state.core.sessions);
         match sessions.get(&sid) {
             Some(Session::Ssh(s)) => match &s.tmux_session {
                 Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
@@ -11989,9 +11980,9 @@ pub(crate) async fn kill_pane_session_inner(
     // Unconditional: the PTY goes either way. A multiplexer session we failed
     // to destroy is reported through `outcome`, not by leaving a dead pane
     // wired up in the maps.
-    let sid = state.core.pane_sessions.lock().unwrap().remove(pane_id);
+    let sid = lock_or_recover(&state.core.pane_sessions).remove(pane_id);
     if let Some(sid) = sid {
-        if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+        if let Some(mut s) = lock_or_recover(&state.core.sessions).remove(&sid) {
             kill_session_inner(&mut s);
         }
     }
@@ -12003,7 +11994,7 @@ pub(crate) async fn kill_pane_session_inner(
     if matches!(outcome.result.as_str(), "killed" | "already_gone") {
         if let Some(name) = outcome.session.as_deref() {
             let host_key = {
-                let file = state.workspaces.lock().unwrap();
+                let file = lock_or_recover(&state.workspaces);
                 let conn = file
                     .workspaces
                     .iter()
@@ -12034,7 +12025,7 @@ async fn pane_disconnect(
     state: State<'_, AppState>,
     pane_id: String,
 ) -> Result<(), String> {
-    let sid = state.core.pane_sessions.lock().unwrap().remove(&pane_id);
+    let sid = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pane_id);
     let Some(sid) = sid else {
         return Ok(());
     };
@@ -12042,7 +12033,7 @@ async fn pane_disconnect(
     // Phase 7.C: if the workspace has a teardown_command, send it and give the
     // shell ~500ms to run it before we drop the channel.
     let teardown = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| {
@@ -12057,7 +12048,7 @@ async fn pane_disconnect(
     if let Some(t) = teardown {
         let bytes = format!("{}\r\n", t).into_bytes();
         {
-            let mut sessions = state.core.sessions.lock().unwrap();
+            let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
             if let Some(s) = sessions.get_mut(&sid) {
                 match s {
                     Session::Local(l) => {
@@ -12074,7 +12065,7 @@ async fn pane_disconnect(
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
-    if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+    if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
         kill_session_inner(&mut s);
     }
     Ok(())
@@ -12083,7 +12074,7 @@ async fn pane_disconnect(
 // ─── Session-level commands (write/resize) ───────────────────────────────────
 
 pub(crate) fn write_to_session(state: &AppState, session_id: &str, data: &[u8]) -> Result<(), String> {
-    let mut sessions = state.core.sessions.lock().unwrap();
+    let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
     let s = sessions
         .get_mut(session_id)
         .ok_or_else(|| format!("no such session {session_id}"))?;
@@ -12106,18 +12097,18 @@ fn pty_write(state: State<'_, AppState>, session_id: String, data: String) -> Re
 
 #[tauri::command]
 fn notifications_list(state: State<'_, AppState>) -> Vec<NotificationItem> {
-    state.notifications.lock().unwrap().clone()
+    lock_or_recover(&state.notifications).clone()
 }
 
 #[tauri::command]
 fn notifications_clear(state: State<'_, AppState>) -> Result<(), String> {
-    state.notifications.lock().unwrap().clear();
+    state.notifications.lock().map_err(|e| e.to_string())?.clear();
     Ok(())
 }
 
 #[tauri::command]
 fn pane_status_get(state: State<'_, AppState>) -> HashMap<String, String> {
-    state.pane_status.lock().unwrap().clone()
+    lock_or_recover(&state.pane_status).clone()
 }
 
 /// Phase 6.5: shared decision logic for feed items. Used both by the Tauri command
@@ -12136,7 +12127,7 @@ pub(crate) fn decide_feed(
         other => return Err(format!("unknown decision: {other}")),
     };
     let tx = {
-        let mut store = state.feed.lock().unwrap();
+        let mut store = state.feed.lock().map_err(|e| e.to_string())?;
         for item in store.items.iter_mut() {
             if item.request_id == request_id {
                 item.state = new_state.clone();
@@ -12156,7 +12147,7 @@ pub(crate) fn decide_feed(
 
 #[tauri::command]
 fn feed_list(state: State<'_, AppState>) -> Vec<FeedItem> {
-    state.feed.lock().unwrap().items.iter().cloned().collect()
+    lock_or_recover(&state.feed).items.iter().cloned().collect()
 }
 
 #[tauri::command]
@@ -12175,11 +12166,11 @@ fn feed_decide(
 // the `ymux doctor` CLI subcommand.
 pub(crate) fn build_doctor_snapshot(state: &AppState) -> serde_json::Value {
     use std::sync::atomic::Ordering;
-    let workspaces = state.workspaces.lock().unwrap().workspaces.clone();
+    let workspaces = lock_or_recover(&state.workspaces).workspaces.clone();
     let workspace_count = workspaces.len();
     // Count which workspaces have a live SSH session (any pane or the
     // headless Phase 41 entry counts).
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = lock_or_recover(&state.core.sessions);
     let mut ssh_connected = std::collections::HashSet::new();
     let mut pty_count = 0usize;
     for s in sessions.values() {
@@ -12276,7 +12267,7 @@ fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
     let s = sessions
         .get(&session_id)
         .ok_or_else(|| format!("no such session {session_id}"))?;
@@ -12544,21 +12535,21 @@ pub fn run() {
                 Err(e) => log_warn("APP", &format!("setup: tray init failed (continuing): {e}")),
             }
             match secret_env_path().and_then(|p| secret_env::SecretEnvStore::load(&p)) {
-                Ok(store) => *state.secret_env.lock().unwrap() = store,
+                Ok(store) => *state.secret_env.lock().map_err(|e| e.to_string())? = store,
                 Err(e) => log_warn("APP", &format!("setup: secret env load failed: {e} (starting empty)")),
             }
             match load_from_disk() {
                 Ok(file) => {
-                    *state.workspaces.lock().unwrap() = file;
+                    *state.workspaces.lock().map_err(|e| e.to_string())? = file;
                     // Plaintext secret values from a pre-flag file move into the store.
                     if let Err(e) = reconcile_secret_env(&state) {
                         log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
                     }
-                    *state.load_state.lock().unwrap() = Some(LoadState::Loaded);
+                    *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Loaded);
                     log_info("APP", "setup: load_state = Loaded");
                 }
                 Err(e) => {
-                    *state.load_state.lock().unwrap() = Some(LoadState::Failed);
+                    *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Failed);
                     log_error("APP", &format!(
                         "setup: load FAILED: {e} — load_state = Failed (persists will refuse)"
                     ));
@@ -12571,7 +12562,7 @@ pub fn run() {
             match notes::load_notes_from_disk() {
                 Ok(nf) => {
                     let count = nf.notes.len();
-                    *state.notes.lock().unwrap() = nf;
+                    *state.notes.lock().map_err(|e| e.to_string())? = nf;
                     log_info("APP", &format!("setup: notes loaded ({count} notes)"));
                 }
                 Err(e) => {
@@ -12585,7 +12576,7 @@ pub fn run() {
             match local_wizard::load_recent_from_disk() {
                 Ok(rf) => {
                     let count = rf.entries.len();
-                    *state.recent_paths.lock().unwrap() = rf;
+                    *state.recent_paths.lock().map_err(|e| e.to_string())? = rf;
                     log_info("APP", &format!("setup: recent_paths loaded ({count} entries)"));
                 }
                 Err(e) => {
@@ -12596,7 +12587,7 @@ pub fn run() {
             match settings::load_from_disk() {
                 Ok(s) => {
                     log_info("APP", &format!("setup: settings loaded (theme.preset={})", s.theme.preset));
-                    *state.settings.lock().unwrap() = s;
+                    *state.settings.lock().map_err(|e| e.to_string())? = s;
                 }
                 Err(e) => {
                     log_warn("APP", &format!("setup: settings load failed: {e} (using defaults)"));
@@ -12608,7 +12599,7 @@ pub fn run() {
             // start the remote-log sync loop (pulls server/hooks/install
             // logs into the local debug.log every 60s).
             {
-                let logs = state.settings.lock().unwrap().logs.clone();
+                let logs = state.settings.lock().map_err(|e| e.to_string())?.logs.clone();
                 ymux_core::set_log_level(ymux_core::LogLevel::from_str(&logs.level));
                 prune_logs(logs.retention_days);
             }
@@ -12623,16 +12614,16 @@ pub fn run() {
             // != Loaded) so we never persist over a clobbered file.
             {
                 let load_ok =
-                    *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                    *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let already_done = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .migrations
                     .phase_39_auto_port_forward_default_flipped;
                 if load_ok && !already_done {
                     let changed = {
-                        let mut f = state.workspaces.lock().unwrap();
+                        let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                         disable_all_auto_port_forward(&mut f)
                     };
                     if changed > 0 {
@@ -12648,7 +12639,7 @@ pub fn run() {
                     // Mark done + persist settings (do this regardless of
                     // `changed` so the migration never re-runs).
                     let snapshot = {
-                        let mut s = state.settings.lock().unwrap();
+                        let mut s = state.settings.lock().map_err(|e| e.to_string())?;
                         s.migrations.phase_39_auto_port_forward_default_flipped = true;
                         s.clone()
                     };
@@ -12667,16 +12658,16 @@ pub fn run() {
             // load_state != Loaded.
             {
                 let load_ok =
-                    *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                    *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let already_done = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .migrations
                     .phase_53_remove_browser_filemanager_panes;
                 if load_ok && !already_done {
                     let changed = {
-                        let mut f = state.workspaces.lock().unwrap();
+                        let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                         rewrite_browser_filemanager_panes_to_terminal(&mut f)
                     };
                     if changed > 0 {
@@ -12690,7 +12681,7 @@ pub fn run() {
                         log_debug("APP", "migration phase_53: no legacy Browser/FileManager panes found");
                     }
                     let snapshot = {
-                        let mut s = state.settings.lock().unwrap();
+                        let mut s = state.settings.lock().map_err(|e| e.to_string())?;
                         s.migrations.phase_53_remove_browser_filemanager_panes = true;
                         s.clone()
                     };
@@ -12710,11 +12701,11 @@ pub fn run() {
             // never-touched workspaces. Silent — the user opted in via
             // the setting; no toast.
             {
-                let load_ok = *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                let load_ok = *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let ttl_days = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .auto_destroy_empty_workspaces_days;
                 if load_ok {
                     if let Some(days) = ttl_days {
@@ -12725,7 +12716,7 @@ pub fn run() {
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
                             let removed = {
-                                let mut f = state.workspaces.lock().unwrap();
+                                let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                                 let before = f.workspaces.len();
                                 f.workspaces.retain(|w| {
                                     let stale = w.last_active_at > 0
@@ -12760,7 +12751,7 @@ pub fn run() {
             // never blocks startup; failures (offline, manifest missing, repo
             // private) just log to debug.log and emit nothing.
             {
-                let s = state.settings.lock().unwrap().clone();
+                let s = state.settings.lock().map_err(|e| e.to_string())?.clone();
                 if s.updates.check_on_startup {
                     let app_handle = app.handle().clone();
                     let state_clone: AppState = (*state).clone();
@@ -13033,6 +13024,19 @@ pub fn run() {
                 ymux_core::flush_log();
             }
         });
+}
+
+/// Lock a state mutex in a context that cannot return an error (spawned tasks,
+/// `()`-returning fns, iterator closures): a poisoned lock yields its inner
+/// value instead of panicking (Rule #4).
+pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            ymux_core::log_warn("STATE", "mutex poisoned; recovering inner value");
+            e.into_inner()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -16146,5 +16150,39 @@ mod two_instance_save_tests {
         assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
         let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
         assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
+    }
+}
+
+#[cfg(test)]
+mod lock_or_recover_tests {
+    use super::*;
+
+    fn poisoned() -> Arc<Mutex<Vec<u8>>> {
+        let m = Arc::new(Mutex::new(vec![1u8, 2, 3]));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        m
+    }
+
+    // Pins: a poisoned mutex still yields its data; breaking it brings back the Rule #4 panic.
+    #[test]
+    fn recovers_inner_data_from_poisoned_mutex() {
+        let m = poisoned();
+        assert!(m.is_poisoned());
+        assert_eq!(*lock_or_recover(&m), vec![1u8, 2, 3]);
+    }
+
+    // Pins: the command-path `map_err` form turns poison into Err(String), not a panic.
+    #[test]
+    fn map_err_form_returns_err_on_poison() {
+        fn f(m: &Mutex<Vec<u8>>) -> Result<usize, String> {
+            Ok(m.lock().map_err(|e| e.to_string())?.len())
+        }
+        assert!(f(&poisoned()).is_err());
+        assert_eq!(f(&Mutex::new(vec![9u8])), Ok(1));
     }
 }
