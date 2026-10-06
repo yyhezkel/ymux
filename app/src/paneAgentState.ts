@@ -1,7 +1,8 @@
 // Phase 84.B: the traffic light shown on a pane header and on its tab.
 //
 // Green = Claude is working. Yellow = it finished, your move. Red = it is
-// blocked on you. Nothing at all = we don't know, which is the honest
+// blocked on you. A red square (failed) = the turn died on an API error,
+// nothing is pending. Nothing at all = we don't know, which is the honest
 // answer for a plain shell pane, a disconnected pane, or one whose state
 // is old enough to be untrustworthy.
 //
@@ -17,9 +18,10 @@ export type PaneAgentState =
   | "idle"
   | "running"
   | "done"
-  | "needs-input";
+  | "needs-input"
+  | "failed";
 
-export type TrafficLight = "green" | "yellow" | "red";
+export type TrafficLight = "green" | "yellow" | "red" | "failed";
 
 export interface AgentLightInput {
   state: PaneAgentState;
@@ -68,6 +70,8 @@ export function trafficLight(i: AgentLightInput): TrafficLight | null {
       return "green";
     case "done":
       return "yellow";
+    case "failed":
+      return "failed";
   }
 }
 
@@ -84,6 +88,8 @@ export function trafficLightKey(
       return "pane.agent.state.running";
     case "yellow":
       return "pane.agent.state.done";
+    case "failed":
+      return "pane.agent.state.failed";
   }
 }
 

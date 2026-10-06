@@ -162,6 +162,7 @@
   "pane.agent.state.done": "Claude finished — your turn",
   "pane.agent.state.needs_input": "Claude needs your input",
   "pane.agent.state.waiting_approval": "Waiting for your approval",
+  "pane.agent.state.failed": "Claude hit an API error",
   "pane.agent.tooltip.elapsed": "{state} · {time}",
   "pane.connect.persistent_hint": "Wrap remote shell in tmux so reconnects resume the same session",
   "pane.meta.title_placeholder": "title (e.g. trying to find the X bug)",
