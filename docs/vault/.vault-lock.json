@@ -139,7 +139,8 @@
     "app/src/settings.ts": "2fe5a3425270c73da4c31f27cf661ca3fb3b2e8f0d48bed303cd6335c0aff7dd",
     "app/src/shortcuts.ts": "020e14da8b0185e4ef5b17f73a8b7b4a37eb8ee75e72c54cd81506e4a0e7ac03",
     "app/src/stt.ts": "468bb7ca66e3336650b1ebc9451bbe38300718471cba42f7260a1e7660abdb94",
-    "app/src/terminalInstance.ts": "13d311f859b0855e06aae8cd4fc1d099bbda2dd55c4dee6fb73f2b0b0e4aea2f",
+    "app/src/termMenuCopy.ts": "ae92e517ab4d8bc5d2784b326fe262ba65ddcc22d2ab2f746c52e424f6c61904",
+    "app/src/terminalInstance.ts": "905d64e2fe7f530f6718cdde504624d4dcfaadccac53f45ebd039fc12b039688",
     "app/src/textDirection.ts": "a15d1af75e5967b52c401c95733dc9bd2daf2e18f396bdc8968cc7c6e1c51ef0",
     "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
