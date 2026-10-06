@@ -220,7 +220,13 @@ a wide argument list because every connection mode funnels through it: `persiste
   live* could land `cd … && claude …` in a running agent — it therefore skips injection
   (`target_was_live`) and emits `pane-connect-notice` so the UI can toast (`had_command` /
   `had_cwd`). It probes liveness with `workspace_sessions_reachable` + `list_workspace_tmux_sessions`;
-  an unreachable host falls back to "not live" (a first SSH connect has no session yet).
+  a cold SSH host (no live handle) while injection is pending is asked anyway by
+  `probe_ssh_session_live`: temp `connect_and_authenticate` with the pane's creds, one
+  `list_tmux_sessions_via_handle`, handle dropped, verdict via pure `attach_guard_verdict`
+  (exact name match; list error → live, fail-closed, logged by kind). A handshake error is
+  returned from `pane_connect` BEFORE the prior-session kill, so App.tsx's passphrase /
+  password / unknown-host prompts fire and retry. `pane_connect` has no RPC caller — only
+  App.tsx `connectPane` invokes it.
   **Phase 91.G**: an explicit `tmux_session_name` runs the SAME probe — it used to be
   assumed live because the only source was the picker, but Phase 91.C's `+` new-session row
   and `sessionForPane` name a session *before* it exists, and assuming live dropped the
