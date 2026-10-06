@@ -36,6 +36,10 @@ The only crate `app` cannot function without. Three files:
   add callers** (Rule #9).
 - `config_dir()` — and this is where the `%APPDATA%\winmux` → `ymux` migration runs,
   once, on upgrade.
+  Resolution order: `YMUX_CONFIG_DIR` / `WINMUX_CONFIG_DIR` env → under `cfg(test)` or
+  the `test-config-dir` feature, `temp_dir()/ymux-test-config-<pid>` → the real dir.
+  Every dependent enables the feature in its dev-dependencies, so their tests never
+  write the real `debug.log`; release builds never see it.
 - `shell_quote(s)` — the only sanctioned way to put a value into a POSIX script
   (Rule #3).
 - Pure layout walkers — `collect_panes`, `collect_panes_with_kind`,
