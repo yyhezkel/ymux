@@ -13,7 +13,7 @@
     "app/src-tauri/src/lib.rs": "3f2e3dfd0da062bd494eba016e014dc07d4887848eee0af1280552bb5a903233",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
-    "app/src-tauri/src/secret_env.rs": "c603422947e0aeed687a97b6dab1632abbc924c9154a84c62a002ca8ec2f6a87",
+    "app/src-tauri/src/secret_env.rs": "0573706746a75de5f2f4eb531d7c69e22481af48b70178d935e21810be8863bd",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
   },
   "backend-panes": {
