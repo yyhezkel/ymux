@@ -196,8 +196,9 @@ pub(crate) struct AppState {
     /// floating Browser window. At most one Webview per workspace
     /// keyed by `workspace_id`. Lives only at runtime — never
     /// persisted to workspaces.json. `workspace_delete` also calls
-    /// `workspace_browser::cleanup_workspace_sessions` to remove the
-    /// matching `browser-sessions/<workspace_id>/` directory.
+    /// `workspace_browser::cleanup_workspace_sessions` to clear its
+    /// Browser state (tunnel cookies, macOS per-workspace data store,
+    /// legacy `browser-sessions/<workspace_id>/` directory).
     pub(crate) workspace_browsers: workspace_browser::WorkspaceBrowserMap,
     /// Phase 62.A (item D): serializes native Browser Webview creation.
     /// WebView2's `add_child` intermittently returns 0x8007139F
@@ -8106,9 +8107,9 @@ fn teardown_workspace_runtime(
 ) {
     // Phase 53 (rebased): drop the workspace-level Browser Webview
     // (at most one per workspace, keyed by workspace_id) and delete
-    // the per-workspace browser-sessions directory (cookies /
-    // localStorage / cache). Sessions DO survive transient hide/show
-    // cycles; this is the only cleanup path that should wipe them.
+    // its login state (tunnel cookies, macOS per-workspace data store,
+    // legacy browser-sessions dir). State DOES survive transient
+    // hide/show cycles; this is the only cleanup path that wipes it.
     let webview = state.workspace_browsers.lock().unwrap().remove(workspace_id);
     if let Some(w) = webview {
         let _ = w.close();
@@ -8117,7 +8118,7 @@ fn teardown_workspace_runtime(
     // which would otherwise outlive the workspace it belongs to. Its
     // `Destroyed` handler does the rest of the cleanup.
     workspace_browser::close_popout_window(app, workspace_id);
-    workspace_browser::cleanup_workspace_sessions(workspace_id);
+    workspace_browser::cleanup_workspace_sessions(app, workspace_id);
     // Drop the CLI-alignment verdict with the workspace it described.
     // Deliberately NOT dropped on mere disconnect: an unresolved skew should
     // outlive the connection, so the features it gates stay off until a

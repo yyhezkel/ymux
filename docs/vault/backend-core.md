@@ -25,7 +25,7 @@ not covered by `popout-*`.
 
 `teardown_workspace_runtime` is the single place a workspace's runtime state dies: the
 Browser child Webview, its pop-out OS window (`close_popout_window` — otherwise the
-window outlives the workspace), the browser session dir, the bootstrap verdict, and the
+window outlives the workspace), its Browser login state (`cleanup_workspace_sessions(app, ws)`: tunnel cookies, macOS per-workspace data store, legacy session dir), the bootstrap verdict, and the
 reverse-tunnel state.
 
 **13,966 lines, and about 1,700 of them are `#[cfg(test)]` at the bottom.** It is the
