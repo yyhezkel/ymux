@@ -172,6 +172,11 @@ back) surfaced as the user-facing error message.
 `parse_releases_for_arch(body, arch)` picks the dmg asset by arch; `parse_releases`
 delegates with `std::env::consts::ARCH`.
 
+- **Manifest size keys absent** — `struct Manifest` has no `msi_size` / `nsis_size`; the
+  sha256 check already rejects any altered download.
+- **`ManifestHook.min_ymux_version` is intentionally unused** — parsed for forward-compat,
+  read nowhere; enforcing it would be a separate decision.
+
 ## `updater/macos.rs` — dmg mount, swap, relaunch
 
 `install_dmg_and_relaunch(app, url, expected_sha, label)`: `bundle_root_of(current_exe())`
