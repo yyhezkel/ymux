@@ -7909,3 +7909,4 @@ RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
 NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
 
 2026-10-06 — ymux-app-src-tauri-src-14: pane_connect attach-guard now probes a cold SSH host (probe_ssh_session_live, attach_guard_verdict); vault backend-core + FOLLOWUPS P3 updated. Compiles untested until CI; NOT VERIFIED LIVE.
+2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
