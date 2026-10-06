@@ -25,7 +25,7 @@
     "app/src-tauri/src/notes.rs": "c66ce93fe4ad80e03f01ab62b367895aa3430872cdc48740175620fe0dde7ffe",
     "app/src-tauri/src/skills.rs": "6eba5ee8f7f63fff53c07ce6710fd1b50b0b436bb2f87bf7675e975df8934c62",
     "app/src-tauri/src/stt.rs": "35956e8f38309ab501f3b0ca2d0f28407b0fea2b29a365e4d035262108072a39",
-    "app/src-tauri/src/tickets.rs": "486194080dd25ce42ed09df4e2a15115121b5652d8953f05baf6e15af412af93",
+    "app/src-tauri/src/tickets.rs": "50b09167474299a1102dfa653d12f4723980bd471944f27d6d8811c623a4caa5",
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
     "app/src-tauri/src/workspace_browser.rs": "2bb21fcbbf25fda5b249ea307198287831f79c3e4073fe0518b39836ee6aaf7a",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",

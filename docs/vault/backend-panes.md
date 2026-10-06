@@ -228,6 +228,7 @@ workspace — the point is handing one to Claude Code inside the right repo — 
 written to `<project>/.ymux-tickets/` when the project is reachable from this machine,
 and fall back to `<config_dir>/tickets/<workspace_id>/` while still recording the project
 path, so nothing is orphaned.
+For SSH workspaces the pane-cwd rung asks tmux for one session's cwd: `tmux_session_for_workspace` prefers the session of the pane the frontend last reported via `pane_set_active` (`AppState.active_panes`), else the smallest tmux name (`pick_tmux_session`, pure), so the choice never depends on map order.
 
 **`skills.rs` (288)** — installs a skill folder (`SKILL.md` + scripts) from the local
 registry at `config_dir()/ymux-tools/skills/<name>/` onto a workspace's
