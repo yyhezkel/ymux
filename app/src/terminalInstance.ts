@@ -13,7 +13,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
 
-// Rule #9: user-visible logging via termLog.
+// Rule #9: user-visible logging. Every site in this file goes through
+// termLog (no raw console.*): Phase 79 converted it, merge bcaa330 threw the
+// conversion away, and the clipboard paste bug hid behind an invisible
+// console.warn. logger.ts emit() still mirrors to devtools.
 const termLog = createLogger("TERM");
 import {
   detectDirection,
