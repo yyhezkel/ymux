@@ -41,6 +41,18 @@ use tauri::{
 
 use crate::{config_dir, log_debug, log_info, log_warn, AppState};
 
+/// Per-workspace WKWebsiteDataStore id (Phase 62.A follow-up): macOS >= 14
+/// otherwise puts every workspace Browser in the one default store, so a
+/// delete could not clear one workspace's login state. Derived, not
+/// stored, so show and delete agree without any persistence.
+pub(crate) fn workspace_store_id(workspace_id: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("ymux-browser-store:{workspace_id}").as_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id
+}
+
 /// URL scheme the Dev-Mode inspect script uses to hand a captured
 /// element back to the app. See `install_ticket_bridge`.
 const TICKET_SCHEME: &str = "ymux-ticket";
@@ -388,6 +400,10 @@ pub(crate) async fn workspace_browser_show(
         let load_ws = workspace_id.clone();
         let builder = WebviewBuilder::new(&label, WebviewUrl::External(parsed_url.clone()))
             .on_navigation(move |url| handle_ticket_navigation(&bridge_app, &bridge_ws, url))
+            // Own data store per workspace; a no-op off macOS >= 14, so
+            // Windows keeps its shared WebView2 profile (never set a
+            // data directory there — 0x8007139F).
+            .data_store_identifier(workspace_store_id(&workspace_id))
             // ----- Phase 82.E diagnostics (see the const block above) -----
             .initialization_script(DIAG_SCRIPT)
             // Both platforms, on purpose (Yossi's call): the Windows
@@ -851,6 +867,25 @@ pub(crate) fn cleanup_workspace_sessions(workspace_id: &str) {
             dir.display(),
             e
         )),
+    }
+}
+
+#[cfg(test)]
+mod store_id_tests {
+    use super::*;
+
+    /// Show and delete both derive the id; if it drifted between calls the
+    /// delete would target a different store and leave the login behind.
+    #[test]
+    fn store_id_is_stable() {
+        assert_eq!(workspace_store_id("ws-1"), workspace_store_id("ws-1"));
+    }
+
+    /// Distinct workspaces must not share a store, or isolation is void.
+    #[test]
+    fn store_id_differs_per_workspace() {
+        assert_ne!(workspace_store_id("ws-1"), workspace_store_id("ws-2"));
+        assert_ne!(workspace_store_id(""), workspace_store_id("ws-1"));
     }
 }
 
