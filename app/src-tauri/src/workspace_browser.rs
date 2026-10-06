@@ -843,10 +843,38 @@ pub(crate) async fn workspace_browser_resize(
     Ok(())
 }
 
-/// `workspace_delete` hooks here to wipe the per-workspace session
-/// dir (the user explicitly deleted the workspace — they don't want
-/// cookies surviving). Best-effort; errors are logged not raised.
-pub(crate) fn cleanup_workspace_sessions(workspace_id: &str) {
+/// `workspace_delete` hooks here to wipe the workspace's Browser state
+/// (the user explicitly deleted it — they don't want logins surviving).
+/// Removes the legacy `browser-sessions/<ws>` dir synchronously, then
+/// spawns the real clear: a tunnel-host cookie sweep (Windows shares one
+/// WebView2 profile, so this also drops other workspaces' 127.0.0.1
+/// cookies) and, on macOS >= 14, removal of the per-workspace data store.
+/// Returns immediately; every failure is logged, never raised.
+pub(crate) fn cleanup_workspace_sessions(app: &AppHandle, workspace_id: &str) {
+    remove_legacy_sessions_dir(workspace_id);
+    let app = app.clone();
+    let ws = workspace_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        let sweep_app = app.clone();
+        let sweep_ws = ws.clone();
+        // `cookies()` deadlocks on Windows from a sync command / event
+        // handler, so it only ever runs on a blocking thread.
+        match tauri::async_runtime::spawn_blocking(move || {
+            sweep_tunnel_cookies(&sweep_app, &sweep_ws)
+        })
+        .await
+        {
+            Ok(()) => {}
+            Err(e) => log_warn("BROWSER", &format!(
+                "[workspace_browser] cookie sweep join FAILED ws={ws}: {e}"
+            )),
+        }
+        #[cfg(target_os = "macos")]
+        remove_workspace_data_store(&app, &ws).await;
+    });
+}
+
+fn remove_legacy_sessions_dir(workspace_id: &str) {
     let Ok(base) = config_dir() else {
         return;
     };
@@ -867,6 +895,129 @@ pub(crate) fn cleanup_workspace_sessions(workspace_id: &str) {
             dir.display(),
             e
         )),
+    }
+}
+
+/// Browser only ever loads `http://127.0.0.1:<port>` tunnels, so those
+/// hosts are the only cookies a workspace Browser can have set.
+fn is_tunnel_cookie_domain(domain: Option<&str>) -> bool {
+    let Some(d) = domain else {
+        return false;
+    };
+    let d = d.trim_start_matches('.');
+    d.eq_ignore_ascii_case("127.0.0.1") || d.eq_ignore_ascii_case("localhost")
+}
+
+/// Blocking: deletes tunnel-host cookies via the `main` webview (shares
+/// the default WebView2 environment with the Browser webviews). Logs
+/// counts only — never cookie names or values.
+fn sweep_tunnel_cookies(app: &AppHandle, workspace_id: &str) {
+    let Some(main) = app.get_webview("main") else {
+        log_warn("BROWSER", &format!(
+            "[workspace_browser] cookie sweep FAILED ws={workspace_id}: no main webview"
+        ));
+        return;
+    };
+    let cookies = match main.cookies() {
+        Ok(c) => c,
+        Err(e) => {
+            log_warn("BROWSER", &format!(
+                "[workspace_browser] cookies() FAILED ws={workspace_id}: {e}"
+            ));
+            return;
+        }
+    };
+    let (mut deleted, mut failed) = (0usize, 0usize);
+    for c in cookies.into_iter().filter(|c| is_tunnel_cookie_domain(c.domain())) {
+        match main.delete_cookie(c) {
+            Ok(()) => deleted += 1,
+            Err(_) => failed += 1,
+        }
+    }
+    if failed > 0 {
+        log_warn("BROWSER", &format!(
+            "[workspace_browser] delete_cookie FAILED ws={workspace_id}: {failed} of {}",
+            deleted + failed
+        ));
+    }
+    log_info("BROWSER", &format!(
+        "[workspace_browser] cookie sweep ws={workspace_id} deleted={deleted}"
+    ));
+}
+
+/// Major version from `sw_vers -productVersion` output ("14.5\n").
+#[cfg(any(test, target_os = "macos"))]
+fn macos_major(version: &str) -> Option<u32> {
+    version.trim().split('.').next()?.parse().ok()
+}
+
+/// macOS >= 14 only (older systems ignore `data_store_identifier`, so
+/// there is no per-workspace store to remove). The store reports
+/// `DataStoreInUse` until the closed webview releases it, hence retries.
+#[cfg(target_os = "macos")]
+async fn remove_workspace_data_store(app: &AppHandle, workspace_id: &str) {
+    let out = match std::process::Command::new("sw_vers")
+        .arg("-productVersion")
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            log_warn("BROWSER", &format!(
+                "[workspace_browser] sw_vers FAILED ws={workspace_id}: {e}"
+            ));
+            return;
+        }
+    };
+    match macos_major(&String::from_utf8_lossy(&out.stdout)) {
+        Some(m) if m >= 14 => {}
+        _ => return,
+    }
+    let id = workspace_store_id(workspace_id);
+    let mut last_err = String::new();
+    for _ in 0..5 {
+        match app.remove_data_store(id).await {
+            Ok(()) => {
+                log_info("BROWSER", &format!(
+                    "[workspace_browser] removed data store ws={workspace_id}"
+                ));
+                return;
+            }
+            Err(e) => last_err = e.to_string(),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    }
+    log_warn("BROWSER", &format!(
+        "[workspace_browser] remove_data_store FAILED ws={workspace_id}: {last_err}"
+    ));
+}
+
+#[cfg(test)]
+mod cleanup_tests {
+    use super::*;
+
+    /// Tunnel hosts are what the sweep deletes; breaking this leaves logins behind.
+    #[test]
+    fn tunnel_domains_match() {
+        assert!(is_tunnel_cookie_domain(Some("127.0.0.1")));
+        assert!(is_tunnel_cookie_domain(Some(".LocalHost")));
+    }
+
+    /// Must not delete unrelated cookies (main window / other hosts).
+    #[test]
+    fn other_domains_do_not_match() {
+        assert!(!is_tunnel_cookie_domain(None));
+        assert!(!is_tunnel_cookie_domain(Some("")));
+        assert!(!is_tunnel_cookie_domain(Some("example.com")));
+        assert!(!is_tunnel_cookie_domain(Some("127.0.0.10")));
+    }
+
+    /// The >= 14 gate depends on this parse; junk must be None, not 0.
+    #[test]
+    fn macos_major_parses() {
+        assert_eq!(macos_major("14.5\n"), Some(14));
+        assert_eq!(macos_major("13"), Some(13));
+        assert_eq!(macos_major(""), None);
+        assert_eq!(macos_major("abc"), None);
     }
 }
 
