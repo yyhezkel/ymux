@@ -5,4 +5,4 @@ export type LocalSetupInput = {
  * LocalStepKind names, in execution order (the wizard sends only
  * the needed ones; unknown names fail their step, not the run).
  */
-steps: Array<string>, distro: string | null, wsl_username: string | null, workspace_name: string | null, create_workspace: boolean, workspace_cwd: string | null, };
+steps: Array<string>, distro: string | null, workspace_name: string | null, create_workspace: boolean, workspace_cwd: string | null, };

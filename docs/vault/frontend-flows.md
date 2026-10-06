@@ -49,7 +49,8 @@ and it no longer hosts the "existing" flows at all.
   platform's multiplexer, offers to install what is missing (winget / Homebrew /
   official installers / `npm -g`), installs ymux hooks for local Claude Code, and
   finishes by creating a local workspace to land in. Progress arrives as
-  `local-setup:progress` events from `local_setup.rs`.
+  `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
+  `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
   `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
