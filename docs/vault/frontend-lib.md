@@ -2,6 +2,7 @@
 vault: frontend-lib
 covers:
   - app/src/terminalInstance.ts
+  - app/src/termMenuCopy.ts
   - app/src/types.ts
   - app/src/settings.ts
   - app/src/claudePricing.ts
@@ -65,6 +66,8 @@ bindings. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
 always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.
+
+**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (`lastOsc52`, set in the write-only provider) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
 
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
@@ -342,7 +345,7 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   queries so an assistant with shell access can slice the data itself. **No URL in it on
   purpose**: neither store is exposed over HTTP outside `127.0.0.1`, and nothing here
   suggests changing that — these are local reads on a box the user already has a session
-  on. `local` picks desktop paths over remote ones.
+  on. `local` picks desktop paths over remote ones; the metrics block keeps the same schema and queries for local, pointed at `insights-local.db` (`%APPDATA%\ymux` / `~/Library/Application Support/ymux`) — there is no "no history" variant any more.
 
 ## Invariants
 

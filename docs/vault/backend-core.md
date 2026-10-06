@@ -66,10 +66,13 @@ put logic there.
   is the *owner*, siblings are *subscribers*, and the owner slot is released when the
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
-  `pane_status`, `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
+  command, in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
+  `emit_pane_status_event` also writes `pane_status` (empty text removes the slot; lock dropped before `emit`).
+  `schedule_status_clear(app, pane_id, expected, secs)` clears only if the slot still holds `expected` (`clear_if_current`), so a late timer cannot wipe a newer status.
 - **`Session` / `LocalSession` / `SshSession` / `SshCmd`** — defined in
   `ymux-core`, re-exported here so `crate::Session` still resolves. See `crates.md`.
 - **`Connection`, `LayoutNode`, `Workspace`** — `ymux-types`. `LayoutNode::Pane` carries
@@ -90,10 +93,10 @@ put logic there.
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
   `workspace_secret_env_keys(workspace_id)` returns names only.
-  `pane_connect` runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
+  `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
-  in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
+  in workspace settings)`; WSL panes get a status, no delivery. The `Connection::Wsl` arm first runs `local_setup::wsl_pane_problem` (missing wsl.exe / no distro / wanted distro absent) → `log_warn`, status text, `Err` before `spawn_wsl_pty`; a probe error fails open. `build_tmux_attach_script`
   takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
   `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
@@ -155,9 +158,9 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1007](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1012](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:918](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:953](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
@@ -219,9 +222,15 @@ tmp+rename discipline: `machine-id` (stable per-install id, deliberately **not**
 settings.json so "Reset all settings" can't change this machine's identity),
 tmux labels, session owners.
 
+## Local Insights sampler spawn
+
+`setup()` calls `insights_local::spawn_sampler((*state).clone())` right after the
+rpc_server spawn, and `lib.rs` declares `mod insights_store;`. The sampler is a detached
+task that idles unless a Local workspace exists; details in `backend-claude.md`.
+
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9148](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9224](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -240,7 +249,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2550](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2584](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
@@ -256,7 +265,13 @@ a wide argument list because every connection mode funnels through it: `persiste
   live* could land `cd … && claude …` in a running agent — it therefore skips injection
   (`target_was_live`) and emits `pane-connect-notice` so the UI can toast (`had_command` /
   `had_cwd`). It probes liveness with `workspace_sessions_reachable` + `list_workspace_tmux_sessions`;
-  an unreachable host falls back to "not live" (a first SSH connect has no session yet).
+  a cold SSH host (no live handle) while injection is pending is asked anyway by
+  `probe_ssh_session_live`: temp `connect_and_authenticate` with the pane's creds, one
+  `list_tmux_sessions_via_handle`, handle dropped, verdict via pure `attach_guard_verdict`
+  (exact name match; list error → live, fail-closed, logged by kind). A handshake error is
+  returned from `pane_connect` BEFORE the prior-session kill, so App.tsx's passphrase /
+  password / unknown-host prompts fire and retry. `pane_connect` has no RPC caller — only
+  App.tsx `connectPane` invokes it.
   **Phase 91.G**: an explicit `tmux_session_name` runs the SAME probe — it used to be
   assumed live because the only source was the picker, but Phase 91.C's `+` new-session row
   and `sessionForPane` name a session *before* it exists, and assuming live dropped the
@@ -475,8 +490,13 @@ list command. The module owns what the picker never needed:
 
 - **Rule #7** — every config write is tmp + fsync + rename. No exceptions in this file.
 - **Rule #6** — every `#[tauri::command]` returns `Result<_, String>`; no `panic!`.
-- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path. The
-  `state.workspaces.lock().unwrap()` calls are the known exception and predate the rule.
+- **Rule #4** — no `unwrap`/`expect` outside tests and the `run()` boot path; no
+  exceptions left (the old `state.workspaces.lock().unwrap()` carve-out is gone). State
+  mutex locks take one of three forms by enclosing return type: `Result<_, String>` (and
+  the `.setup()` closure) → `.lock().map_err(|e| e.to_string())?`; `Option<_>` →
+  `.lock().ok()?`; anything else (`()`/value returns, spawned tasks, iterator closures)
+  → `lock_or_recover(&mutex)`, defined right after `run()`, which logs a `STATE` warning
+  and returns the poisoned guard's inner value.
 - **Rule #1** — PTY bytes are never logged. `log_debug` lines carry byte counts and
   pane ids only. It is also why every terminal-bearing window is built `.devtools(false)`
   — see Gotchas.

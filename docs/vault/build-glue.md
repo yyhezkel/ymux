@@ -134,6 +134,8 @@ browser webviews depend on. Bumping tauri means verifying `add_child`'s signatur
 multi-webview shape still compile — push the bump and let CI type-check it (Rule #17),
 then smoke-test the workspace Browser.
 
+`mainBinaryName` is top-level in Tauri 2 and set only in `tauri.macos.conf.json` (`"ymux"`, so the macOS executable is `Contents/MacOS/ymux`, not the cargo package name `app`); `tauri.conf.json` must stay without it or Windows `app.exe` (hardcoded in `build-windows.yml`) breaks.
+
 `windows-sys` carries `Win32_Security_Cryptography` for `CryptProtectData` /
 `CryptUnprotectData` in `secret_env.rs` (secret env rows; see `backend-core.md`).
 
@@ -158,6 +160,13 @@ later inherits `true` unless it opts out.
 
 `build.rs` runs `tauri_build`, which is what embeds `frontendDist` — the whole reason
 Rule #13 exists.
+
+`build.rs` calls `check_staged_resources()` first, before `emit_build_metadata()` and
+`tauri_build::build()`. It resolves `resources/` against `CARGO_MANIFEST_DIR` and accepts
+either `ymux-cli.exe` (Windows) or `ymux-cli` (macOS). If neither exists it prints
+`error: staged CLI missing` (both paths, the gitignored note, and "run `npm run build:linux-cli`
+from `app/`") to stderr and exits 1, so a fresh worktree fails with an actionable message
+rather than tauri's opaque resource error. Both paths are `rerun-if-changed`.
 
 The workspace also contains the eight `crates/ymux-*` members, the `cli` and `mcp`
 binaries.

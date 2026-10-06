@@ -28,6 +28,7 @@ import { transformMouseX, findRow } from "./mouseRtl";
 import { wheelSteps, type WheelDeltaMode } from "./wheelSteps";
 import type { RtlProfileKind } from "./types";
 import { t } from "./i18n";
+import { menuCopyText } from "./termMenuCopy";
 
 // Phase 62.B (item J): parse a `file://` URI (as emitted in Claude Code's
 // OSC 8 hyperlinks, e.g. `file:///home/runner/.env.prod`) into the bare
@@ -488,7 +489,11 @@ function onTermMenuKey(e: KeyboardEvent): void {
 }
 function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): void {
   dismissTerminalMenu();
-  const sel = ti.term.getSelection();
+  const sel = menuCopyText(
+    ti.term.getSelection(),
+    ti.term.modes.mouseTrackingMode !== "none",
+    ti.lastOsc52,
+  );
   const menu = document.createElement("div");
   menu.className = "term-ctx-menu";
   const addItem = (label: string, enabled: boolean, action: () => void) => {
@@ -631,6 +636,8 @@ export class TerminalInstance {
   private tmuxScroll = false;
   /** Sub-notch wheel remainder between events (Phase 98, see wheelSteps.ts). */
   private wheelCarry = 0;
+  // Last raw OSC 52 write; read by the right-click Copy fallback. Never logged.
+  lastOsc52 = "";
 
   setTmuxScroll(on: boolean): void {
     if (this.tmuxScroll === on) return;
@@ -902,6 +909,7 @@ export class TerminalInstance {
         _sel: ClipboardSelectionType,
         text: string,
       ): Promise<void> => {
+        this.lastOsc52 = text;
         await this.copyToClipboard(text, "osc52");
       },
     };
@@ -999,11 +1007,15 @@ export class TerminalInstance {
     //   Ctrl+Shift+C   → copy (global shortcut table)
     //   Ctrl+Shift+V   → paste (global shortcut table)
     //   right-click    → Copy / Paste / Select-all menu
-    this.container.addEventListener("contextmenu", (e) => {
+    //                    (Copy falls back to the last OSC 52 write when the
+    //                    app owns the mouse, e.g. zellij mouse_mode; capture
+    //                    phase so xterm never forwards the click to the app)
+    const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault();
       e.stopPropagation();
       showTerminalContextMenu(this, e.clientX, e.clientY);
-    });
+    };
+    this.container.addEventListener("contextmenu", onContextMenu, { capture: true });
 
     // Phase 91.D: the wheel proxy, back — but only for MULTIPLEXER panes.
     // tmux's mouse is off since Phase 91.B (left-clicks were landing on
