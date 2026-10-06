@@ -115,7 +115,7 @@
   },
   "frontend-lib": {
     "app/src/bidi.ts": "5b4085a91e52eba4197602919978224c2cee57424fa3133e2566283e7153ff1f",
-    "app/src/claudePricing.ts": "c650c4416d7e37ccc2b14faff785244263125959d35410e6335d5ef21be380af",
+    "app/src/claudePricing.ts": "3c6e5fcb697728a9ec807262801973e9fb83fe1106c52469c9c77b1f759ff2fd",
     "app/src/clipboardText.ts": "8f6fdfe74bc46cf164e577b0b97fdb791d587b6ff88b8c7ce75036565717e682",
     "app/src/copyBidi.ts": "662eb7dedc786417e5921a69a5119a6b0b821fc5d9b3d3107eed386bad02ce8e",
     "app/src/download.ts": "021dad2bfe07dae746fd21bdd824352d36b5737160678e6945924e42c69dabb4",

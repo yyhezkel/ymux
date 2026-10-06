@@ -18,7 +18,7 @@
 // modelled here.
 
 /** When the table was last checked against published pricing. */
-export const PRICING_AS_OF = "2026-08-23";
+export const PRICING_AS_OF = "2026-10-06";
 
 export interface ModelPrice {
   /** USD per million input tokens. */
@@ -51,10 +51,12 @@ const SONNET5_INTRO_UNTIL = Date.UTC(2026, 7, 31, 23, 59, 59) / 1000;
 export const PRICES: Record<string, ModelPrice> = {
   "claude-fable-5": { in: 10, out: 50 },
   "claude-mythos-5": { in: 10, out: 50 },
+  "claude-opus-5-5": { in: 4, out: 20, fast: { in: 8, out: 40 } },
   "claude-opus-5": { in: 5, out: 25, fast: { in: 10, out: 50 } },
-  "claude-opus-4-8": { in: 5, out: 25 },
+  "claude-opus-4-8": { in: 5, out: 25, fast: { in: 10, out: 50 } },
   "claude-opus-4-7": { in: 5, out: 25 },
   "claude-opus-4-6": { in: 5, out: 25 },
+  "claude-sonnet-5-5": { in: 2, out: 10 },
   "claude-sonnet-5": {
     in: 3,
     out: 15,
