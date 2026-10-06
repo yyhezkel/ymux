@@ -349,3 +349,22 @@ func TestScanCountsEveryFileInWindow(t *testing.T) {
 		t.Fatalf("scanned=%d skipped=%d calls=%d", rep.ScannedFiles, rep.SkippedFiles, rep.Totals.Calls)
 	}
 }
+
+// A line past the old 8 MiB Scanner limit must not hide the usage line after
+// it; the Rust scanner has no limit, so both sides must count the same call.
+func TestScanKeepsLinesAfterOversizedLine(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	big := `{"type":"user","content":"` + strings.Repeat("x", 9*1024*1024) + `"}`
+	writeTranscript(t, root, "proj", "s1", []string{
+		big,
+		assistantLine(now.Add(-time.Minute), "s1", "/p", "claude-opus-5", 5, 6, 0, 0, 0, false, "standard"),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.Totals.Calls != 1 || rep.Totals.In != 5 || rep.ParseErrors != 0 {
+		t.Fatalf("calls=%d in=%d parse_errors=%d, want 1/5/0", rep.Totals.Calls, rep.Totals.In, rep.ParseErrors)
+	}
+}

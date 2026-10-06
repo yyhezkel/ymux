@@ -576,4 +576,19 @@ mod tests {
         assert_eq!(rep.totals.calls, 1001);
         let _ = std::fs::remove_dir_all(&tmp);
     }
+
+    // Parity pin with Go: a line past 8 MiB must not hide the usage line after it.
+    #[test]
+    fn scan_keeps_lines_after_oversized_line() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-bigline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        let big = format!(r#"{{"type":"user","content":"{}"}}"#, "x".repeat(9 * 1024 * 1024));
+        write_transcript(&tmp, "p", "s1", &[big, line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)]);
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!(rep.totals.calls, 1);
+        assert_eq!(rep.totals.in_tokens, 5);
+        assert_eq!(rep.parse_errors, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

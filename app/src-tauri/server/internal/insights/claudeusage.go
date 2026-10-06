@@ -25,6 +25,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,10 +42,8 @@ import (
 // hot path.
 var usageMarker = []byte(`"usage"`)
 
-const (
-	claudeMaxLineSize = 8 * 1024 * 1024 // one assistant line with a big tool result
-	claudeSeriesStep  = 3600            // hourly buckets, always — see below
-)
+// hourly buckets, always — see below
+const claudeSeriesStep = 3600
 
 // ClaudeTokens is the token tally shared by every row in the report. Cache
 // writes are split because a 1-hour write costs materially more than a
@@ -306,10 +305,22 @@ func scanClaudeFile(
 	}
 	defer fh.Close()
 
-	sc := bufio.NewScanner(fh)
-	sc.Buffer(make([]byte, 0, 256*1024), claudeMaxLineSize)
-	for sc.Scan() {
-		raw := sc.Bytes()
+	// ReadBytes, not bufio.Scanner: Scanner aborts the whole file at its token
+	// limit, and a single huge tool-result line must not hide every usage line
+	// after it. Rust's BufRead::lines has no limit either, so the two agree.
+	br := bufio.NewReaderSize(fh, 256*1024)
+	for {
+		raw, rerr := br.ReadBytes('\n')
+		if rerr != nil && rerr != io.EOF {
+			rep.ParseErrors++
+			return
+		}
+		// One trailing \n then one \r, as Rust's lines() strips them.
+		raw = bytes.TrimSuffix(raw, []byte("\n"))
+		raw = bytes.TrimSuffix(raw, []byte("\r"))
+		if rerr == io.EOF && len(raw) == 0 {
+			return
+		}
 		// Cheap reject before the JSON decoder. Most lines in a transcript are
 		// user turns, attachments and tool results with no usage block at all,
 		// and unmarshalling them would dominate the scan.
@@ -391,9 +402,9 @@ func scanClaudeFile(
 				bySession.project[l.SessionID] = l.CWD
 			}
 		}
-	}
-	if err := sc.Err(); err != nil {
-		rep.ParseErrors++
+		if rerr == io.EOF {
+			return
+		}
 	}
 }
 
