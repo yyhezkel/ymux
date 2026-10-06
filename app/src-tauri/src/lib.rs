@@ -1,5 +1,6 @@
 // Phase 24.D: claude_chat module deleted with the ClaudeChat pane.
 mod addons;
+mod agent_runs_store;
 mod bidi_filter;
 mod bootstrap_guard;
 mod brief;
@@ -161,12 +162,14 @@ pub(crate) struct AppState {
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
     /// pane_id. turn-start = UserPromptSubmit hook, turn-end = Stop hook.
-    /// In-memory and session-scoped — the rolling average is a within-session
-    /// signal, meaningless after a restart, so it's never persisted.
+    /// Persisted on exit to `<config>/agent-runs.json` with each state's
+    /// timestamp and restored in setup; entries 6h or older, without a
+    /// timestamp, or for panes that no longer exist are dropped — see
+    /// `agent_runs_store.rs`.
     pub(crate) agent_runs: Arc<Mutex<HashMap<String, AgentRunState>>>,
     /// BRIEF: per-pane agent brief + last user prompt, keyed by RESOLVED
-    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
-    /// same rationale as agent_runs — see `brief.rs`.
+    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only
+    /// (unlike agent_runs, which is persisted) — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
     /// Phase 105: per-Claude-session context (first prompt + brief log),
     /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
@@ -246,7 +249,8 @@ pub(crate) struct AppState {
 /// arrival order, which needs a single writer and a monotonic sequence.
 /// Third, a transition table here is unit-testable; a pile of derived
 /// signals is not.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum PaneAgentState {
     /// No hook has ever arrived for this pane. Renders nothing — a pane
     /// running a plain shell must not sprout a status light.
@@ -1197,6 +1201,7 @@ fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             });
             migrated = true;
         }
@@ -1543,6 +1548,7 @@ pub(crate) fn split_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1617,6 +1623,7 @@ pub(crate) fn split_pane_in(
                     diff_source: new_diff_s,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1635,6 +1642,7 @@ pub(crate) fn split_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 };
                 (
                     LayoutNode::Split {
@@ -1662,6 +1670,7 @@ pub(crate) fn split_pane_in(
                         diff_source,
                         smart_bidi,
                         diff_cwd,
+                        claude_running,
                     },
                     false,
                 )
@@ -1737,6 +1746,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1755,6 +1765,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }),
                 None,
             )
@@ -1837,6 +1848,7 @@ pub(crate) fn update_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1853,6 +1865,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1869,6 +1882,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             }
         }
@@ -2708,11 +2722,11 @@ pub(crate) struct PaneAgentSnapshot {
 /// Phase 84.B: every pane's agent state at once.
 ///
 /// Exists for the webview reload (F5, devtools reload, an HMR round in
-/// dev) — far more common than an app restart, and without this every
-/// light goes dark until the next hook happens to fire, which for an idle
-/// agent could be never. Deliberately NOT persisted to disk: restoring an
-/// eight-hour-old "running" after an app restart would be a lie, and the
-/// first hook restores the truth anyway.
+/// dev) — and without this every light goes dark until the next hook
+/// happens to fire, which for an idle agent could be never. The map is also
+/// persisted across an app restart with each state's timestamp; restore
+/// drops anything 6h or older, so an eight-hour-old "running" never comes
+/// back, and the first hook corrects the rest.
 #[tauri::command]
 fn pane_agent_states(
     state: State<'_, AppState>,
@@ -3467,8 +3481,8 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             exited: line.contains("(EXITED"),
             label: None,
             claude_title: None,
-            // Phase 81.F: zellij sessions carry no session-meta join yet —
-            // the picker falls back to `name`, same as a pre-rename server.
+            // Filled by `apply_session_meta` in `list_zellij_sessions`; the
+            // picker falls back to `name` when no entry exists.
             auto_name: None,
             claude_session_id: None,
             origin: None,
@@ -3486,6 +3500,23 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
     // Newest first, matching parse_tmux_sessions' ordering contract.
     out.sort_by(|a, b| b.created.cmp(&a.created));
     out
+}
+
+/// 2026-10: join `session-meta.json` onto zellij rows by session name, same
+/// fields as the tmux join in `parse_tmux_sessions`. Garbled or empty JSON is
+/// no metadata, never an error; a session without an entry keeps its raw name.
+fn apply_session_meta(sessions: &mut [TmuxSessionInfo], meta_text: &str) {
+    let meta: SessionMetaFileMirror =
+        serde_json::from_str(meta_text.trim()).unwrap_or_default();
+    for s in sessions.iter_mut() {
+        if let Some(m) = meta.sessions.get(&s.name) {
+            s.label = m.label.clone();
+            s.claude_title = m.claude_title.clone();
+            s.auto_name = m.auto_name.clone();
+            s.claude_session_id = m.claude_session_id.clone();
+            s.origin = m.origin.clone();
+        }
+    }
 }
 
 /// `12m 30s` / `3h 4m 1s` / `5s` / `2days 1h` → seconds. Unknown units are
@@ -6000,6 +6031,7 @@ fn workspace_reset_layout(
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
     }
     persist(&state)?;
@@ -7150,6 +7182,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -7647,6 +7680,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -8739,6 +8773,58 @@ fn pane_set_smart_bidi(
     Ok(state.workspaces.lock().unwrap().clone())
 }
 
+// Persist "Claude is running in this pane" so a reattach to a persistent
+// session starts in the right bidi state before the first hook arrives.
+fn set_pane_claude_running_in_layout(node: &mut LayoutNode, target: &str, running: bool) -> bool {
+    match node {
+        LayoutNode::Pane {
+            pane_id,
+            claude_running,
+            ..
+        } if pane_id == target => {
+            *claude_running = Some(running);
+            true
+        }
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { first, second, .. } => {
+            set_pane_claude_running_in_layout(first, target, running)
+                || set_pane_claude_running_in_layout(second, target, running)
+        }
+    }
+}
+
+#[tauri::command]
+fn pane_set_claude_running(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    pane_id: String,
+    running: bool,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state.workspaces.lock().unwrap();
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        let layout = ws
+            .layout
+            .as_mut()
+            .ok_or_else(|| format!("workspace {workspace_id} has no layout"))?;
+        if !set_pane_claude_running_in_layout(layout, &pane_id, running) {
+            return Err(format!("no pane {pane_id} in workspace {workspace_id}"));
+        }
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_debug("PTY", &format!(
+        "[bidi] pane_set_claude_running: ws={} pane={} running={}",
+        workspace_id, pane_id, running
+    ));
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
 #[tauri::command]
 fn pane_set_title(
     state: State<'_, AppState>,
@@ -9779,7 +9865,16 @@ async fn list_zellij_sessions() -> Vec<TmuxSessionInfo> {
     match tokio::time::timeout(std::time::Duration::from_secs(6), c.output()).await {
         Ok(Ok(out)) => {
             let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            parse_zellij_sessions(&text)
+            let mut sessions = parse_zellij_sessions(&text);
+            // winmux -> ymux rename: current spelling first, pre-rename second.
+            if let Some(meta) = dirs::home_dir().and_then(|h| {
+                std::fs::read_to_string(h.join(".ymux").join("session-meta.json"))
+                    .or_else(|_| std::fs::read_to_string(h.join(".winmux").join("session-meta.json")))
+                    .ok()
+            }) {
+                apply_session_meta(&mut sessions, &meta);
+            }
+            sessions
         }
         Ok(Err(e)) => {
             log_debug("PTY", &format!("list_zellij_sessions: spawn failed: {e}"));
@@ -12470,6 +12565,8 @@ pub fn run() {
                     tracing::warn!("workspaces load failed: {e}");
                 }
             }
+            // Agent lights: restore after workspaces load (unknown panes are dropped).
+            agent_runs_store::restore_into(&state);
             // Phase 7.B: load notes (best-effort; missing file is fine).
             match notes::load_notes_from_disk() {
                 Ok(nf) => {
@@ -12747,6 +12844,7 @@ pub fn run() {
             clear_debug_log_cmd,
             pane_set_identity,
             pane_set_smart_bidi,
+            pane_set_claude_running,
             workspace_browser::workspace_browser_show,
             workspace_browser::workspace_browser_hide,
             workspace_browser::workspace_browser_navigate,
@@ -12929,8 +13027,9 @@ pub fn run() {
         // path Rule #4 exempts.
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                agent_runs_store::save_from(&app.state::<AppState>());
                 ymux_core::flush_log();
             }
         });
@@ -13054,6 +13153,7 @@ mod pane_swap_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -13263,6 +13363,7 @@ mod migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -15042,7 +15143,7 @@ mod zellij_tests {
     // Windows on 2026-08-19, not from the docs — the spike session Yossi left
     // running produced `spike [Created 12m 30s ago]` verbatim.
     use super::{
-        build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
+        apply_session_meta, build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
         pick_zellij_resources, sanitize_tmux_session_name_for_title,
         session_name_char_is_safe, zellij_args_delete_force, zellij_args_list,
         zellij_args_write_chars, zellij_spawn_error_outcome, KillSessionOutcome,
@@ -15243,6 +15344,42 @@ mod zellij_tests {
         );
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["newest", "middle", "older"]);
+    }
+
+    #[test]
+    fn zellij_sessions_join_session_meta() {
+        // Pins the name-keyed join; breaking it blanks zellij picker titles.
+        let mut out = parse_zellij_sessions("ymux-p1 [Created 5s ago]\n");
+        apply_session_meta(
+            &mut out,
+            r#"{"sessions":{"ymux-p1":{"label":"L","claude_title":"T","auto_name":"A","claude_session_id":"S","origin":"O"}}}"#,
+        );
+        assert_eq!(out[0].label.as_deref(), Some("L"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_session_id.as_deref(), Some("S"));
+        assert_eq!(out[0].origin.as_deref(), Some("O"));
+    }
+
+    #[test]
+    fn zellij_meta_fields_follow_picker_precedence() {
+        // Partial entries must stay partial so the frontend's
+        // label > auto_name > claude_title > name chain sees real gaps.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, r#"{"sessions":{"a":{"auto_name":"A","claude_title":"T"}}}"#);
+        assert!(out[0].label.is_none());
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn zellij_session_without_meta_keeps_raw_name() {
+        // Bad JSON and unknown names are no-ops, never errors.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, "{not json");
+        apply_session_meta(&mut out, r#"{"sessions":{"other":{"label":"X"}}}"#);
+        assert_eq!(out[0].name, "a");
+        assert!(out[0].label.is_none() && out[0].auto_name.is_none() && out[0].origin.is_none());
     }
 
     #[test]
@@ -15695,6 +15832,7 @@ mod wsl_migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 

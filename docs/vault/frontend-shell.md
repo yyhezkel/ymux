@@ -55,9 +55,11 @@ collide — and neither can their capability globs, which are prefix-anchored to
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
 `App.tsx` `popOutPane` writes `ti.profile` under `popoutProfileKey(sid)` before `popout_pane`;
-the `popout:closed` listener removes it first.
+the `popout:closed` listener removes it first. It also seeds
+`localStorage["ymux.popout.pane.<sid>"]=paneId`, since the popout
+window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy.
 
-## `App.tsx` (5,566) — one component, ~50 signals
+## `App.tsx` (5,808) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -406,13 +408,22 @@ from the tmux session picker (with its confirm) and the sidebar's session rows. 
 the header's `onClose` to `closeTab` when `tabsMode()` (else `closePane`), so the header X
 and the tab's X land on the same neighbour.
 
-**`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
+**`paneAgentState.ts` (119)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
 disagree about what colour a pane is. `failed` (StopFailure, API-error turn) is a fourth
 light, painted as a red square; `queueStatus` maps it to `stuck`. Unit-tested in `paneAgentState.test.ts`. It only
 decides how to *paint* a state; the transition table is owned by the backend
 (`PaneAgentState::apply_hook` in `lib.rs`, arriving as the `pane:agent-run` event) — see
-`backend-core.md`.
+`backend-core.md`. `agentAnnounceKey(prev, next)` is the one rule for what a screen
+reader hears: it returns the i18n key only when the SAME focused pane's light key
+changed — focus moves, first sight of a pane and unknown (null) lights stay silent.
+
+**Announcement region (App.tsx)** — exactly one `aria-live="polite"` `.sr-only` div in
+the `.app` root, so tool-call churn in background panes never speaks. An effect reads
+the `allPaneAgentRows()` row for `activePaneId()`, feeds `agentAnnounceKey`, then clears
+the text and sets `t(key)` on the next animation frame so a repeated phrase is re-read.
+`.sr-only` is clip/1px, not `display:none` (which would hide it from readers). Mount
+speaks nothing: the first snapshot has no previous.
 
 **`AgentLight.tsx` (45)** — paints it. Green = Claude is working, yellow = it finished and
 it is your move, red = it is blocked on you, a filled square (red, no pulse) = the turn died on an API error (`failed`), **nothing at all = unknown**, which is the
@@ -591,3 +602,8 @@ four layers.
 You need a specific effect's dependency list, the exact props of a component, or the
 CSS class names. Test files (`*.test.ts`) are intentionally **not** covered by this
 vault file — a test edit should not trip the freshness gate.
+
+**Claude-running flag.** `connectPane` applies `tuiSignalOnConnect(mode, restoring, node.claude_running)` before
+`pane_connect` (restore + persisted true → signal on, so a reattach starts right). `syncClaudeRunning(paneId, on)`
+writes `pane_set_claude_running` only on a transition (`claudeRunningWrite`), called from `connectPane` (non-restoring)
+and the `feed:item-added` listener (`session-end` → false). A failed invoke is logged, never thrown.
