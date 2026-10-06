@@ -103,7 +103,7 @@ func TestTermOpsAcceptDeviceToken(t *testing.T) {
 	}
 	for _, op := range termOps {
 		for _, who := range []string{termOwner, tok} {
-			if w := termDo(h, op.method, op.path, who, op.body); w.Code == 401 || w.Code == 403 {
+			if w := termDo(h, op.method, op.path, who, op.body); w.Code == http.StatusUnauthorized || w.Code == http.StatusForbidden {
 				t.Errorf("%s %s with granted token: %d", op.method, op.path, w.Code)
 			}
 		}
@@ -117,7 +117,7 @@ func TestTermOpsRejectBadToken(t *testing.T) {
 	_, tok := pairDevice(t, h)
 	for _, op := range termOps {
 		for _, bad := range []string{"", "wrong"} {
-			if w := termDo(h, op.method, op.path, bad, op.body); w.Code != 401 {
+			if w := termDo(h, op.method, op.path, bad, op.body); w.Code != http.StatusUnauthorized {
 				t.Errorf("%s %s token %q: want 401 got %d", op.method, op.path, bad, w.Code)
 			}
 		}
