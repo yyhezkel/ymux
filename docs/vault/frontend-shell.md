@@ -409,9 +409,9 @@ decides how to *paint* a state; the transition table is owned by the backend
 `backend-core.md`.
 
 **`AgentLight.tsx` (45)** — paints it. Green = Claude is working, yellow = it finished and
-it is your move, red = it is blocked on you, **nothing at all = unknown**, which is the
+it is your move, red = it is blocked on you, a filled square (red, no pulse) = the turn died on an API error (`failed`), **nothing at all = unknown**, which is the
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
-untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
+untrustworthy. It uses **shape as well as hue** (disc / ring / triangle / square) so it survives
 greyscale, 8px, and red-green deficiency.
 
 **`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
