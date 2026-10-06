@@ -9276,10 +9276,15 @@ async fn pane_connect(
     // shell that gets restarted, or a live `claude` that receives
     // `cd … && claude --resume …` as a chat message. Yossi's report, exactly.
     //
-    // WHEN THE HOST CANNOT BE ASKED the fallback is "not live" (first-connect
-    // case): an unreachable host has no session yet by definition, so assuming
-    // "live" would silently drop the command on every FIRST connect to an SSH
-    // workspace — a worse bug than the one this guards.
+    // WHEN THE HOST CANNOT BE ASKED (an SSH workspace with no live handle —
+    // the first connect, or after a drop) we ask it anyway: a temp handshake
+    // with THIS pane's credentials, one `tmux list-sessions`, then the handle
+    // is dropped. The old fallback assumed "not live" for fear of silently
+    // dropping the command on a first connect, and that assumption is exactly
+    // what typed `cd … && claude --resume …` into a running session. A
+    // handshake error is returned as-is, so App.tsx's passphrase / password /
+    // unknown-host prompts fire and retry with credentials; it happens before
+    // the prior-session kill below, so the old pane session survives it.
     //
     // Phase 91.G (2026-09-09): an EXPLICIT `tmux_session_name` no longer means
     // "live, no question asked". It used to — the only source was the picker,
@@ -9310,14 +9315,27 @@ async fn pane_connect(
             .unwrap_or_default()
             .iter()
             .any(|s| s.name == target_name)
+    } else if let Connection::Ssh {
+        host,
+        user,
+        port,
+        key_path,
+    } = &conn
+    {
+        probe_ssh_session_live(
+            host,
+            user,
+            *port,
+            key_path.as_deref(),
+            key_passphrase.as_deref(),
+            password.as_deref(),
+            accept_unknown_host.unwrap_or(false),
+            &target_name,
+        )
+        .await?
     } else {
-        log_debug(
-            "PTY",
-            &format!(
-                "attach-guard: cannot reach ws={workspace_id} to check '{target_name}'; \
-                 assuming it is not live (first-connect case)"
-            ),
-        );
+        // Invariant: workspace_sessions_reachable is true for every non-SSH
+        // workspace, so this arm is unreachable in practice.
         false
     };
 
@@ -10271,6 +10289,54 @@ async fn list_tmux_sessions_via_handle(
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
     Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+}
+
+/// Pure verdict of the attach-only guard: is `target` a live session?
+/// A list error is "unknown", which the guard treats as live (fail-closed) —
+/// typing into an unknown session is the bug the guard exists to prevent.
+fn attach_guard_verdict(listed: Result<&[TmuxSessionInfo], &str>, target: &str) -> bool {
+    match listed {
+        Ok(sessions) => sessions.iter().any(|s| s.name == target),
+        Err(_) => true,
+    }
+}
+
+/// Attach-only guard probe for an SSH host with no live handle: temp
+/// handshake with the pane's credentials, one list, handle dropped.
+/// `Err` only on handshake failure (the caller returns it so the frontend
+/// can prompt); a list failure is logged by kind and judged fail-closed.
+#[allow(clippy::too_many_arguments)]
+async fn probe_ssh_session_live(
+    host: &str,
+    user: &str,
+    port: u16,
+    key_path: Option<&str>,
+    key_passphrase: Option<&str>,
+    password: Option<&str>,
+    accept_unknown_host: bool,
+    target: &str,
+) -> Result<bool, String> {
+    let hs = connect_and_authenticate(
+        host,
+        user,
+        port,
+        key_path,
+        key_passphrase,
+        password,
+        accept_unknown_host,
+    )
+    .await?;
+    let listed = list_tmux_sessions_via_handle(&hs.handle).await;
+    if let Err(e) = &listed {
+        log_warn(
+            "PTY",
+            &format!("attach-guard: list failed for '{target}' ({e}); treating as live"),
+        );
+    }
+    Ok(attach_guard_verdict(
+        listed.as_ref().map(|v| v.as_slice()).map_err(|e| e.as_str()),
+        target,
+    ))
 }
 
 /// `tmux list-sessions -F` format shared by every list path (SSH, WSL,
@@ -15938,6 +16004,41 @@ mod wsl_migration_tests {
             serde_json::from_str(json).expect("a wsl connection must still parse");
         assert_eq!(f.workspaces.len(), 1);
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
+    }
+}
+
+#[cfg(test)]
+mod attach_guard_tests {
+    use super::{attach_guard_verdict, parse_tmux_sessions};
+
+    fn listed(names: &[&str]) -> Vec<super::TmuxSessionInfo> {
+        let text: String = names.iter().map(|n| format!("{n}|1|0|1|0|/x\n")).collect();
+        parse_tmux_sessions(&text)
+    }
+
+    #[test]
+    fn hit_is_live() {
+        // pins: a listed target must block injection
+        assert!(attach_guard_verdict(Ok(&listed(&["a", "work"])), "work"));
+    }
+
+    #[test]
+    fn miss_and_empty_are_not_live() {
+        // pins: a free name must still get its cd/command on first create
+        assert!(!attach_guard_verdict(Ok(&listed(&["a"])), "work"));
+        assert!(!attach_guard_verdict(Ok(&[]), "work"));
+    }
+
+    #[test]
+    fn list_error_is_live() {
+        // pins: fail-closed — unknown must never read as safe to inject
+        assert!(attach_guard_verdict(Err("exec: closed"), "work"));
+    }
+
+    #[test]
+    fn prefix_is_not_a_match() {
+        // pins: exact-name match; "work2" running must not mark "work" live
+        assert!(!attach_guard_verdict(Ok(&listed(&["work2"])), "work"));
     }
 }
 
