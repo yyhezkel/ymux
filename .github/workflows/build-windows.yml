@@ -72,17 +72,6 @@ jobs:
           workspaces: app/src-tauri
           shared-key: windows-release
 
-      # The WiX and NSIS toolchains are downloaded by the Tauri bundler into
-      # target/release/{wix,nsis} -- which is inside the directory rust-cache
-      # prunes before saving, so CI re-downloaded both on every single run.
-      - uses: actions/cache@v6
-        with:
-          path: |
-            app/src-tauri/target/release/wix
-            app/src-tauri/target/release/nsis
-          key: tauri-bundler-toolchains-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
-          restore-keys: tauri-bundler-toolchains-${{ runner.os }}-
-
       - name: Install frontend deps
         working-directory: app
         run: npm ci

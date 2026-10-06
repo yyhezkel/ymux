@@ -7884,6 +7884,7 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — wizard browse view renders DirPicker inline (ticket ymux-app-src-paneview-tsx): DirPicker modal|inline union, PaneView duplicate list/recents removed (-20 lines), vault frontend-flows/frontend-shell updated, FOLLOWUPS P3 (PaneView.tsx:1794) archived. Compiles untested until CI.
 
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 close P2 .claude/worktrees entry -> archive (FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md) ticket ymux-claude-worktrees
 2026-10-06 — ymux-app-src-tauri-server: term list/create/rename/kill moved to huma ops (shell:attach via bearerMiddleware/opScopes), spec + TS/Kotlin regenerated, vault server-go.md updated, FOLLOWUPS: P2 annotated, P1 rebake + c5/c6 port note added. Server blobs NOT rebaked. Compiles untested until CI.
 2026-10-06 — ymux-app-src-tauri-src-7: closed FOLLOWUPS P3 (persisted smart_bidi not re-applied after restart) → archived; pane_connect now seeds bidi_filters via find_pane_smart_bidi + set_pane_enabled (14622c0). Compiles untested until CI; NOT VERIFIED LIVE.
 2026-10-06 — ymux-hooks-claude-code-json: StopFailure hook (v1.8.0) + PaneAgentState::Failed / Go StateFailed + failed light square; FOLLOWUPS 'traffic light one known lie' archived, DECISIONS known-lie bullet marked resolved. Go blobs still need rebake. Compiles untested until CI. NOT VERIFIED LIVE.
