@@ -13,6 +13,7 @@
 
 ## Pipeline how-tos
 - [howto/run-committed-server-blob.md](howto/run-committed-server-blob.md): query the committed Go daemon on a side port without building (Rule #17)
+- [howto/redeploy-server-blob.md](howto/redeploy-server-blob.md): detect a stale deployed daemon + redeploy the committed blob
 
 ## Notes
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
