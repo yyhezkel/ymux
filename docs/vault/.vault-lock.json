@@ -56,7 +56,8 @@
     "app/src-tauri/src/local_setup.rs": "82bbefed237772c27abdf0c5e02bb940970360fb79fbeb5af3b43dcfe998e5fc",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "9919c0bbaca44f1d67e712b1a33cb536d7d21e223aab863ced5a9c94741c3336",
-    "app/src-tauri/src/updater.rs": "d9c517270bb3832992185db5594277368329f7b7eca0c334d244d8a731631f06"
+    "app/src-tauri/src/updater.rs": "8bd3ae38f8c876702e1980ca45b54d46b6c6f9f6a9c94a7cafcb54c4d311985c",
+    "app/src-tauri/src/updater/macos.rs": "6953bbb78bae4571686a1eef6c3efbe38ae14f6fcf04a130b21e1fc21ceac6d5"
   },
   "build-glue": {
     "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
@@ -110,7 +111,7 @@
     "app/src/SetupWizard.tsx": "51ca7b5495cf570960bcf8b44bf1927f4d74547afaa2697e9c3c05a008c65b76",
     "app/src/SshConnectionFields.tsx": "14bb9a89e7edd60ca0d896b45034ab3ea9ee6aa7000511ab64f1ed05a8b2c57d",
     "app/src/SshKeyOfferModal.tsx": "4e12b7032d69bfdc248e6f9c4a8f74fcde0202fcd9f7fafc59b2fb32dd3dd9a6",
-    "app/src/VersionManager.tsx": "4c443726157d3646f7f871c8bfcfd90fb631b40917257d2865f7190dc5bbd928",
+    "app/src/VersionManager.tsx": "8b182fc23e54f11c21b2759349fdc6b95567e0eab876545b1c09959c00a2d0c6",
     "app/src/WorkspaceExtrasFields.tsx": "fab806329870e9e6653dfb27fe307da06bcde6fb96459f3b86f1a2fee357d8e6",
     "app/src/provisioningTypes.ts": "ef3996374e93e130185e743b0da00159cc72df07eb2b22c4672b026de44aa022"
   },
