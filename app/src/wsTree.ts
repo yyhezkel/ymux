@@ -4,8 +4,8 @@
 // A ROOT (the machine) or a pinned project folder is a HEADER: a row that
 // holds rows and never holds panes (`layout: null`). Every other workspace
 // is a SCREEN — the only kind with a layout, the only kind that can be
-// active. Derived, not stored: `parent_id` and `is_project_root` already
-// say everything. Mirrors `is_header` in `app/src-tauri/src/lib.rs`.
+// active. Stored, not derived: a pinned non-git folder has a parent and no
+// `is_project_root`, so only the stored `is_folder` flag keeps it a header. Mirrors `is_header` in `app/src-tauri/src/lib.rs`.
 //
 // Pure and dependency-free on purpose, so it runs under the bare-node
 // `npm test` glob like `cwdShort.ts` and `queueModel.ts`.
@@ -15,11 +15,12 @@ export interface TreeNode {
   id: string;
   parent_id: string | null;
   is_project_root: boolean;
+  is_folder: boolean;
   sort_order: number | null;
 }
 
-export function isHeader(w: Pick<TreeNode, "parent_id" | "is_project_root">): boolean {
-  return !w.parent_id || w.is_project_root;
+export function isHeader(w: Pick<TreeNode, "parent_id" | "is_project_root" | "is_folder">): boolean {
+  return !w.parent_id || w.is_project_root || w.is_folder;
 }
 
 /** Ancestors of `id`, nearest first. Hop-capped so a cycle cannot spin. */
