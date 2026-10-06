@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Stages CLI binaries into src-tauri/resources/ for the Tauri bundler.
 #  - ymux-linux-x64 (cross-compiled, static-musl) — uploaded to remote SSH servers
 #    by `remote_bootstrap`
