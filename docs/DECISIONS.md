@@ -464,6 +464,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Zellij picker rows get session-meta names (reader wired now, writer unverified)
+- **Context:** FOLLOWUPS P2 "A ZELLIJ SESSION HAS NO auto_name": `parse_zellij_sessions` hardcoded `auto_name: None`; nothing joined session-meta onto zellij rows.
+- **Options:** A) wire the reader now, track the writer separately / B) wait until the writer is verified on Windows-local zellij / C) rename zellij sessions to carry the title.
+- **Decision:** A. `list_zellij_sessions` reads `~/.ymux/session-meta.json` (fallback `~/.winmux/`) and `apply_session_meta` joins by session name (`ymux-<pane>`), same precedence as tmux; frontend already ranks label > auto_name > claude_title > name. C rejected: renaming sessions is out of scope and breaks attach-by-name.
+- **Outcome:** reader in lib.rs, vault `backend-core.md` updated. Compiles untested until CI. Open P3 in FOLLOWUPS: CLI writer for Windows-local zellij panes and prune-vs-`tmux ls` unverified.
+
 ### 2026-10-06 — `bidi_reorder`: caret pinned right + half-reordered repaints are the cursed cursor — DEFERRED, documented as a known limit
 - **Context:** Under `rtl_mode="bidi_reorder"` the caret stays pinned to the right instead of tracking the text, and a partial repaint can leave a line half-reordered. Cause: `flushPending` runs `reorderRtlForDisplay` (`app/src/bidi.ts`) on each rAF chunk of the byte stream, while the TUI positions its cursor and repaints regions in columns of the UNtransformed text — two coordinate systems that diverge. `normaliseIncomingToLogical` has the same fragment limit (it sees runs between ANSI escapes, not whole lines).
 - **Precedent:** terminal-wg's BiDi proposal (https://terminal-wg.pages.freedesktop.org/bidi/) names this problem "the cursed cursor". Root cause first written up in `PROGRESS.txt`, 2026-08-19 entry (the DECISIONS entry it promised never landed; `bidi.ts` points at it — this closes that dangling pointer). NOT VERIFIED LIVE.
