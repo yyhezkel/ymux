@@ -166,10 +166,11 @@
     "app/src/browserDevMode.ts": "9304deba9ae698af8de14418c123f17ec09f0e75eb08d59d68d71ffb11c01a8d",
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
-    "app/src/components/PopoutTerminal.tsx": "a36a42a26560f5a523dd4659cf990ff54b10c8c673ba4d42217941f266d9bc25",
+    "app/src/components/PopoutTerminal.tsx": "d8e16c82e2260d61959125e68641391118248d78219d463dc5d7f0bb60775631",
     "app/src/diffModel.ts": "7c06189aaf325fba90aca553ebb2b6d9b0dfc66c905d4776346a2f03b5970516",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
+    "app/src/popoutWheelArm.ts": "8b7559b9500f4a0f27c60fd95ba5fe4c9d7fb94480f5bc97ceeb67de4ba36544",
     "app/src/transferStore.ts": "3a6f9a9daba15d335e5d98f257bbad07bf709cd79a102b5a8ae779446ad03e14"
   },
   "frontend-shell": {

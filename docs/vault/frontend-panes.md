@@ -35,6 +35,7 @@ covers:
   - app/src/MobilePairing.tsx
   - app/src/HelpPane.tsx
   - app/src/components/PopoutTerminal.tsx
+  - app/src/popoutWheelArm.ts
 ---
 
 # Panes, windows, and panels
@@ -303,11 +304,12 @@ does — a unified diff is a fixed-column grid and must not inherit the Hebrew U
 **`HelpPane.tsx` (96)** — renders bundled markdown (currently ssh-key-setup) keyed by
 topic and UI language, with a Copy button on every fenced block.
 
-**`components/PopoutTerminal.tsx` (154)** — the pop-out terminal window. Ctrl+wheel font
+**`components/PopoutTerminal.tsx` (150)** — the pop-out terminal window. Ctrl+wheel font
 zoom applies to popouts only (the grid stays Settings-driven); all open popouts share one
 zoom level, synced via the `popout:zoom` event and persisted in localStorage. After attach it arms the tmux wheel proxy: it reads
 `ymux.popout.pane.<sid>` (seeded by `popOutPane` in App.tsx), calls `pane_persistence_list`
-and sets `ti.setTmuxScroll(!!map[paneId])`. A missing key or failed lookup (logged, tag
+and sets `ti.setTmuxScroll(armed)`. The decision is the pure `resolvePopoutTmuxArm` in `popoutWheelArm.ts`
+(zero imports, node-tested): a missing id or failed lookup (logged, tag
 `POPOUT`) leaves it unarmed, so a plain shell keeps the xterm wheel.
 
 ## Invariants
