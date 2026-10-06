@@ -13,11 +13,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
 
-// Rule #9: user-visible logging. The rest of this file still uses raw
-// console.* — NOT pre-existing debt as once assumed: Phase 79 converted this
-// file (24 logger sites, 0 console.*) and merge bcaa330 threw the conversion
-// away. See FOLLOWUPS. The clipboard paths were converted back because an
-// invisible failure there is what hid the paste bug.
+// Rule #9: user-visible logging. Every site in this file goes through
+// termLog (no raw console.*): Phase 79 converted it, merge bcaa330 threw the
+// conversion away, and the clipboard paste bug hid behind an invisible
+// console.warn. logger.ts emit() still mirrors to devtools.
 const termLog = createLogger("TERM");
 import {
   detectDirection,
@@ -279,7 +278,7 @@ export function setTerminalTheme(theme: ITheme): void {
       ti.term.options.minimumContrastRatio = 4.5;
       ti.term.refresh(0, ti.term.rows - 1);
     } catch (e) {
-      console.warn("setTerminalTheme: per-instance update failed", e);
+      termLog.warn("setTerminalTheme: per-instance update failed", e);
     }
   }
 }
@@ -298,7 +297,7 @@ export function setTerminalFont(family: string, sizePt: number): void {
       ti.logFontSwap("afterSet");
       requestAnimationFrame(() => ti.logFontSwap("settled"));
     } catch (e) {
-      console.warn("setTerminalFont: per-instance update failed", e);
+      termLog.warn("setTerminalFont: per-instance update failed", e);
     }
   }
 }
@@ -318,7 +317,7 @@ export function setTerminalFontSize(sizePt: number): void {
       ti.fitAndResize();
       ti.term.refresh(0, ti.term.rows - 1);
     } catch (e) {
-      console.warn("setTerminalFontSize: per-instance update failed", e);
+      termLog.warn("setTerminalFontSize: per-instance update failed", e);
     }
   }
 }
@@ -448,7 +447,7 @@ export function pasteIntoActiveTerminal(text: string): void {
     // the pane. Re-assert focus on the pasted-into terminal.
     target?.term.focus();
   } catch (e) {
-    console.warn("paste failed", e);
+    termLog.warn("paste failed", e);
   }
 }
 
@@ -751,12 +750,12 @@ export class TerminalInstance {
     try {
       await navigator.clipboard.writeText(out);
       // Rule #1: lengths and a route label, never the content itself.
-      console.debug(
+      termLog.debug(
         `[copy] ${via} ${out.length} chars${flip ? " (visual->logical)" : ""}`,
       );
       return true;
     } catch (e) {
-      console.warn(`clipboard write failed (${via})`, e);
+      termLog.warn(`clipboard write failed (${via})`, e);
       return false;
     }
   }
@@ -854,7 +853,7 @@ export class TerminalInstance {
             return;
           }
           if (/^https?:\/\//i.test(uri)) {
-            void openUrl(uri).catch((e) => console.warn("openUrl failed", e));
+            void openUrl(uri).catch((e) => termLog.warn("openUrl failed", e));
           }
         },
         hover: (_event: MouseEvent, uri: string) => {
@@ -1072,7 +1071,7 @@ export class TerminalInstance {
         // (the "terminal goes blank after resizing post-conversation"
         // bug).
         addon.onContextLoss(() => {
-          console.warn("WebGL context lost — falling back to DOM renderer");
+          termLog.warn("WebGL context lost — falling back to DOM renderer");
           try {
             addon.dispose();
           } catch {}
@@ -1086,7 +1085,7 @@ export class TerminalInstance {
         this.term.loadAddon(addon);
         this.webglAddon = addon;
       } catch (e) {
-        console.warn("WebGL addon unavailable", e);
+        termLog.warn("WebGL addon unavailable", e);
       }
     }
   }
@@ -1554,7 +1553,7 @@ export class TerminalInstance {
       }
       if (this.sessionId)
         invoke("pty_write", { sessionId: this.sessionId, data: out }).catch(
-          (err) => console.error("pty_write failed", err)
+          (err) => termLog.error("pty_write failed", err)
         );
     });
     // Phase 25.C: force a pty_resize on attach so tmux gets the
@@ -1575,7 +1574,7 @@ export class TerminalInstance {
     try {
       this.term.write(MOUSE_DISABLE_SEQ);
     } catch (e) {
-      console.warn("resetMouseModes failed", e);
+      termLog.warn("resetMouseModes failed", e);
     }
   }
 
@@ -1586,7 +1585,7 @@ export class TerminalInstance {
     try {
       this.term.write(MOUSE_DISABLE_SEQ + "\x1b[0m");
     } catch (e) {
-      console.warn("resetTerminal failed", e);
+      termLog.warn("resetTerminal failed", e);
     }
   }
 
