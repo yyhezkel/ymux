@@ -813,6 +813,7 @@ pub(crate) struct Shortcuts {
     pub copy: String,
     pub paste: String,
     pub select_all: String,
+    // DEPRECATED: no search addon is wired, so nothing dispatches this; kept so old settings.json still loads.
     pub find: String,
     pub new_workspace: String,
     pub toggle_notes: String,
