@@ -6,6 +6,7 @@ covers:
   - app/src/components/PopoutBrowser.tsx
   - app/src/BrowserPane.tsx
   - app/src/browserDevMode.ts
+  - app/scripts/devmode-snapshot-check.mjs
   - app/src/FileManagerWindow.tsx
   - app/src/FileManagerPane.tsx
   - app/src/FileEditor.tsx
@@ -114,10 +115,26 @@ any HTML in the slot. The DevTools button spent a release cycle broken with `log
 as its only failure channel; anything in the chrome that can fail while a page is up
 reports here.
 
-**`browserDevMode.ts` (448)** — right-click an element in the workspace browser to
+**`browserDevMode.ts` (486)** — right-click an element in the workspace browser to
 capture it as a ticket. Kept out of the chrome on purpose: with Dev Mode in its
 own module, the browser component gains one signal, one toolbar button, and one
 re-inject effect, and nothing about tabs or navigation changes.
+
+The element screenshot (`snapshot(el, done)`) calls `done(url|null, reason|null)`:
+a missing shot always carries a `ShotError` (`zero-size`, `timeout`, `tainted`,
+`load-failed`, `too-large`, `blank` — every pixel alpha 0 — or `error`), sent as
+`shot_error` in the `ymux-ticket:` payload and narrowed to that allowlist by
+`parseCapture` (unknown → null). Payload build is `capture(el, done)`, exposed as
+`window.__ymuxTicket.capture` so a harness can drive it. `TicketModal` shows a
+plain-text notice with the reason when `shot` is null, and a dim caption when the
+shot exists but the element's own background is transparent. Finding: a transparent
+`<pre>` with light text is a **correct** PNG (alpha 0 around the glyphs) — it only
+looked broken on the modal's checkerboard, not a `foreignObject` failure.
+`app/scripts/devmode-snapshot-check.mjs` re-checks this in headless Chrome: it
+evaluates the real `inspectScript()` template against four fixtures
+(`bg-box`, `pre-transparent`, `blank-empty`, `zero-size`); run
+`node app/scripts/devmode-snapshot-check.mjs [fixture...]` (`YMUX_CHROME` overrides
+the binary; exit 1 = FAIL, 2 = no Chrome).
 
 **`BrowserPane.tsx` (546)** — the pre-Phase-53 in-pane Browser. **Not imported by
 `LayoutView` any more**; kept as reference for its in-pane Webview wiring. Do not wire
@@ -171,7 +188,7 @@ name the right paths.
 **`InsightsAnalytics.tsx` (623)** — the Analytics tab: what the server has *been* doing,
 as opposed to Metrics' what-it-is-doing-right-now. A thin view over the `/analytics`
 endpoint (`server-go.md`), which rolls up the three sampler tables the daemon was already
-writing and nobody read. Range picker is 1h / 6h / 24h / 7d. Three house rules it keeps on
+writing and nobody read. Range picker is 1h / 6h / 24h / 7d. Local workspaces get a real report from the local store (`insights_local.rs`); an empty store is just the "no data yet" state — there is no local marker or `unavailable` field on `AnReport`. Three house rules it keeps on
 purpose, and the same three apply to the Claude cost panel below:
 
 - **No polling.** This is an analysis screen. It loads when the tab opens and when Refresh
@@ -222,7 +239,7 @@ layout, falling back to `workspace_id`) and can be filtered or grouped by it. Ki
 subkind / state codes are translated, falling back to the raw code for any value without
 a key.
 
-**`TicketsPanel.tsx` (366)** + **`TicketModal.tsx` (354)** — workspace-scoped ticket
+**`TicketsPanel.tsx` (366)** + **`TicketModal.tsx` (377)** — workspace-scoped ticket
 list, and the dialog that finalizes a captured element into a ticket on disk. **The
 capture came from an untrusted page**, so the element HTML is rendered as **text, never
 as markup**, and the preview is collapsed by default.

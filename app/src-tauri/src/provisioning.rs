@@ -8,8 +8,6 @@
 //!   - streams progress to the frontend via `provisioning:progress`
 //!     events so the wizard's live log feels native
 //!   - persists profiles in `%APPDATA%\ymux\provisioning-profiles.json`
-//!     and original credentials in `…\provisioning-secrets.json` (DPAPI
-//!     wrap planned — see below) so a second pass can resume
 //!
 //! Connections are stateless within a provisioning run: we open one
 //! russh `client::Handle` to the target and reuse it across every step's
@@ -188,10 +186,6 @@ fn profiles_path() -> Result<PathBuf, String> {
     Ok(config_dir_pub()?.join("provisioning-profiles.json"))
 }
 
-fn secrets_path() -> Result<PathBuf, String> {
-    Ok(config_dir_pub()?.join("provisioning-secrets.json"))
-}
-
 pub(crate) fn load_profiles_from_disk() -> Result<ProfilesFile, String> {
     let path = profiles_path()?;
     if !path.exists() {
@@ -236,47 +230,6 @@ fn save_profiles_to_disk(file: &ProfilesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync: {e}"))?;
     }
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    Ok(())
-}
-
-// ─── secret storage (DPAPI-wrapped initial password) ───────────────────────
-
-#[derive(Clone, Serialize, Deserialize, Default)]
-struct SecretsFile {
-    #[serde(default)]
-    entries: std::collections::BTreeMap<String, String>, // workspace_id → b64(ciphertext)
-}
-
-/// Persist the initial password, wrapped, keyed by workspace.
-///
-/// NOTE: write-only. Nothing in the tree reads this file back — there is
-/// no `dpapi_unprotect` and no loader — so today it is groundwork for a
-/// "remember this password" feature that does not exist yet. The caller
-/// already treats failure as non-fatal (it logs and continues), which is
-/// what makes the non-Windows `Err` safe: provisioning is unaffected.
-/// FOLLOWUPS P2 tracks giving it a reader or deleting it outright.
-///
-/// Wrapping reuses `secret_env::protect_b64` (DPAPI CurrentUser, base64).
-/// Off Windows there is no at-rest wrapper, so it returns `Err` and nothing
-/// is written. It used to return `noprotect:<secret>`, which landed the SSH
-/// password in plaintext in `provisioning-secrets.json`. Rule #2 sanctions
-/// "otherwise keep in memory only"; deliberately NOT a Keychain integration,
-/// since nothing reads this store back.
-fn save_workspace_secret(workspace_id: &str, password: &str) -> Result<(), String> {
-    // Wrap first: on a platform with no at-rest store this bails before we
-    // touch the file at all, so nothing half-writes and no empty
-    // provisioning-secrets.json appears in a macOS config dir.
-    let wrapped = crate::secret_env::protect_b64(password)?;
-    let path = secrets_path()?;
-    let mut file: SecretsFile = if path.exists() {
-        let t = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-        serde_json::from_str(&t).unwrap_or_default()
-    } else {
-        SecretsFile::default()
-    };
-    file.entries.insert(workspace_id.to_string(), wrapped);
-    let text = serde_json::to_string_pretty(&file).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| format!("write {path:?}: {e}"))?;
     Ok(())
 }
 
@@ -533,9 +486,7 @@ pub(crate) fn iso_now() -> String {
 }
 
 /// Spawn a provisioning task and return a handle. The task emits
-/// `provisioning:progress` events with `StepProgress` payloads. The
-/// initial password (if provided) is DPAPI-wrapped and saved alongside
-/// the workspace so a later "View server info" can recover it.
+/// `provisioning:progress` events with `StepProgress` payloads.
 #[tauri::command]
 pub(crate) async fn provisioning_start(
     state: State<'_, AppState>,
@@ -552,11 +503,6 @@ pub(crate) async fn provisioning_start(
             .cloned()
             .ok_or_else(|| format!("unknown profile {}", input.profile_id))?
     };
-    if let Some(pw) = input.initial_password.as_ref() {
-        if let Err(e) = save_workspace_secret(&input.workspace_id, pw) {
-            log_warn("PROVISION", &format!("provisioning: save secret failed: {e}"));
-        }
-    }
 
     let app_for_task = app.clone();
     let run_id_clone = run_id.clone();
@@ -1781,19 +1727,4 @@ pub(crate) fn provisioning_step_catalog() -> Vec<(String, String)> {
     all.into_iter()
         .map(|k| (format!("{k:?}"), k.label().to_string()))
         .collect()
-}
-
-#[cfg(all(test, not(windows)))]
-mod secret_tests {
-    use super::*;
-
-    // Pins Rule #2: off Windows the password is never persisted; a regression to plaintext write breaks this.
-    #[test]
-    fn save_workspace_secret_memory_only_off_windows() {
-        let existed = secrets_path().map(|p| p.exists()).unwrap_or(false);
-        let err = save_workspace_secret("ws-test", "hunter2").unwrap_err();
-        assert!(err.contains("memory-only"), "{err}");
-        let after = secrets_path().map(|p| p.exists()).unwrap_or(false);
-        assert_eq!(existed, after);
-    }
 }

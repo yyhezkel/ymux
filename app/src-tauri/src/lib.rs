@@ -22,6 +22,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod insights_store;
 mod ipc_guard;
 mod ipc_meter;
 mod local_setup;
@@ -397,6 +398,35 @@ impl AgentRunState {
         self.state = next;
         self.state_since = Some(std::time::SystemTime::now());
         true
+    }
+}
+
+#[cfg(test)]
+mod status_slot_tests {
+    use super::clear_if_current;
+    use std::collections::HashMap;
+
+    // Pins: a clear for the exact emitted text removes the slot.
+    #[test]
+    fn clears_on_match() {
+        let mut m = HashMap::from([("p".to_string(), "a".to_string())]);
+        assert!(clear_if_current(&mut m, "p", "a"));
+        assert!(m.is_empty());
+    }
+
+    // Pins: a newer status must survive an older timer (the bug this guards).
+    #[test]
+    fn keeps_newer_text() {
+        let mut m = HashMap::from([("p".to_string(), "new".to_string())]);
+        assert!(!clear_if_current(&mut m, "p", "old"));
+        assert_eq!(m.get("p").map(String::as_str), Some("new"));
+    }
+
+    // Pins: clearing an absent slot is a no-op, not a panic.
+    #[test]
+    fn absent_slot_is_noop() {
+        let mut m = HashMap::new();
+        assert!(!clear_if_current(&mut m, "p", "a"));
     }
 }
 
@@ -2630,6 +2660,19 @@ fn emit_data(
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
 /// progress/errors. The frontend listens on `pane:status` events.
 pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str) {
+    // Mirror into AppState so a delayed clear can tell whether the slot still
+    // holds its own text. Lock is dropped before the emit.
+    {
+        let state = app.state::<AppState>();
+        // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
+        if let Ok(mut map) = state.pane_status.lock() {
+            if text.is_empty() {
+                map.remove(pane_id);
+            } else {
+                map.insert(pane_id.to_string(), text.to_string());
+            }
+        }
+    }
     let _ = app.emit(
         "pane:status",
         serde_json::json!({ "pane_id": pane_id, "text": text }),
@@ -2776,11 +2819,36 @@ fn pane_briefs(
     Ok(briefs.clone())
 }
 
-/// Spawns a tokio task that clears a pane's status text after `secs` seconds.
-pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, secs: u64) {
+/// Removes the slot only when it still holds `expected`; true when cleared.
+pub(crate) fn clear_if_current(
+    map: &mut HashMap<String, String>,
+    pane_id: &str,
+    expected: &str,
+) -> bool {
+    if map.get(pane_id).map(String::as_str) == Some(expected) {
+        map.remove(pane_id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Spawns a tokio task that clears a pane's status text after `secs` seconds,
+/// but only if the pane still shows `expected` (a newer status must survive).
+pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, expected: String, secs: u64) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-        emit_pane_status_event(&app, &pane_id, "");
+        let cleared = match app.state::<AppState>().pane_status.lock() {
+            Ok(mut map) => clear_if_current(&mut map, &pane_id, &expected),
+            // AI-NOTE: poisoned lock → cannot verify the slot; keep the text.
+            Err(_) => false,
+        };
+        if cleared {
+            let _ = app.emit(
+                "pane:status",
+                serde_json::json!({ "pane_id": pane_id, "text": "" }),
+            );
+        }
     });
 }
 
@@ -4505,20 +4573,14 @@ async fn spawn_ssh(
         Ok(remote_bootstrap::BootstrapStatus::Uploaded { bytes, sha256: _ }) => {
             state.bootstrap_guard.clear_failure(&hkey, &wanted_sha);
             set_cli_alignment(app, state, &workspace_id, bootstrap_guard::Alignment::Ok);
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("ymux installed ({} bytes)", bytes),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 3);
+            let msg = format!("ymux installed ({} bytes)", bytes);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 3);
         }
         Ok(remote_bootstrap::BootstrapStatus::UnsupportedArch(arch)) => {
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("remote arch '{}' not supported (no ymux binary)", arch),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("remote arch '{}' not supported (no ymux binary)", arch);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
         // We could not converge the remote onto our binary. The shell still
         // works; the CLI-dependent features do not, and this stays on screen
@@ -4555,8 +4617,9 @@ async fn spawn_ssh(
         }
         Err(e) => {
             tracing::warn!("remote bootstrap failed: {e}");
-            emit_pane_status_event(app, &pane_id, &format!("bootstrap failed: {e}"));
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("bootstrap failed: {e}");
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
     }
     drop(_boot_guard);
@@ -9233,6 +9296,10 @@ async fn pane_connect(
         &format!("[bidi] pane_connect seed: pane={pane_id} enabled={pane_smart_bidi}"),
     );
 
+    // A reconnect starts with a clean header: a stale status from the previous
+    // attempt must not outlive the problem it reported.
+    emit_pane_status_event(&app, &pane_id, "");
+
     // Secret rows never reach the typed `export` path: split them off, resolve
     // their values from the store by env owner. A name with no stored value is
     // reported on the pane, never typed and never guessed.
@@ -9276,10 +9343,15 @@ async fn pane_connect(
     // shell that gets restarted, or a live `claude` that receives
     // `cd … && claude --resume …` as a chat message. Yossi's report, exactly.
     //
-    // WHEN THE HOST CANNOT BE ASKED the fallback is "not live" (first-connect
-    // case): an unreachable host has no session yet by definition, so assuming
-    // "live" would silently drop the command on every FIRST connect to an SSH
-    // workspace — a worse bug than the one this guards.
+    // WHEN THE HOST CANNOT BE ASKED (an SSH workspace with no live handle —
+    // the first connect, or after a drop) we ask it anyway: a temp handshake
+    // with THIS pane's credentials, one `tmux list-sessions`, then the handle
+    // is dropped. The old fallback assumed "not live" for fear of silently
+    // dropping the command on a first connect, and that assumption is exactly
+    // what typed `cd … && claude --resume …` into a running session. A
+    // handshake error is returned as-is, so App.tsx's passphrase / password /
+    // unknown-host prompts fire and retry with credentials; it happens before
+    // the prior-session kill below, so the old pane session survives it.
     //
     // Phase 91.G (2026-09-09): an EXPLICIT `tmux_session_name` no longer means
     // "live, no question asked". It used to — the only source was the picker,
@@ -9310,14 +9382,27 @@ async fn pane_connect(
             .unwrap_or_default()
             .iter()
             .any(|s| s.name == target_name)
+    } else if let Connection::Ssh {
+        host,
+        user,
+        port,
+        key_path,
+    } = &conn
+    {
+        probe_ssh_session_live(
+            host,
+            user,
+            *port,
+            key_path.as_deref(),
+            key_passphrase.as_deref(),
+            password.as_deref(),
+            accept_unknown_host.unwrap_or(false),
+            &target_name,
+        )
+        .await?
     } else {
-        log_debug(
-            "PTY",
-            &format!(
-                "attach-guard: cannot reach ws={workspace_id} to check '{target_name}'; \
-                 assuming it is not live (first-connect case)"
-            ),
-        );
+        // Invariant: workspace_sessions_reachable is true for every non-SSH
+        // workspace, so this arm is unreachable in practice.
         false
     };
 
@@ -9412,6 +9497,12 @@ async fn pane_connect(
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // A missing wsl.exe / distro otherwise dies silently inside the pty.
+            if let Some(msg) = local_setup::wsl_pane_problem(distro.as_deref()).await {
+                log_warn("PTY", &format!("WSL preflight failed for pane {pane_id}: {msg}"));
+                emit_pane_status_event(&app, &pane_id, &msg);
+                return Err(msg);
+            }
             // No delivery path into a wsl.exe session: say so instead of
             // silently dropping the rows.
             if !secret_names.is_empty() {
@@ -10271,6 +10362,54 @@ async fn list_tmux_sessions_via_handle(
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
     Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+}
+
+/// Pure verdict of the attach-only guard: is `target` a live session?
+/// A list error is "unknown", which the guard treats as live (fail-closed) —
+/// typing into an unknown session is the bug the guard exists to prevent.
+fn attach_guard_verdict(listed: Result<&[TmuxSessionInfo], &str>, target: &str) -> bool {
+    match listed {
+        Ok(sessions) => sessions.iter().any(|s| s.name == target),
+        Err(_) => true,
+    }
+}
+
+/// Attach-only guard probe for an SSH host with no live handle: temp
+/// handshake with the pane's credentials, one list, handle dropped.
+/// `Err` only on handshake failure (the caller returns it so the frontend
+/// can prompt); a list failure is logged by kind and judged fail-closed.
+#[allow(clippy::too_many_arguments)]
+async fn probe_ssh_session_live(
+    host: &str,
+    user: &str,
+    port: u16,
+    key_path: Option<&str>,
+    key_passphrase: Option<&str>,
+    password: Option<&str>,
+    accept_unknown_host: bool,
+    target: &str,
+) -> Result<bool, String> {
+    let hs = connect_and_authenticate(
+        host,
+        user,
+        port,
+        key_path,
+        key_passphrase,
+        password,
+        accept_unknown_host,
+    )
+    .await?;
+    let listed = list_tmux_sessions_via_handle(&hs.handle).await;
+    if let Err(e) = &listed {
+        log_warn(
+            "PTY",
+            &format!("attach-guard: list failed for '{target}' ({e}); treating as live"),
+        );
+    }
+    Ok(attach_guard_verdict(
+        listed.as_ref().map(|v| v.as_slice()).map_err(|e| e.as_str()),
+        target,
+    ))
 }
 
 /// `tmux list-sessions -F` format shared by every list path (SSH, WSL,
@@ -12779,6 +12918,7 @@ pub fn run() {
                 rpc_server::run(state_clone, app_handle).await;
             });
             log_info("APP", &format!("setup: rpc server spawned on {}", rpc_server::pipe_name()));
+            insights_local::spawn_sampler((*state).clone());
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
@@ -15938,6 +16078,41 @@ mod wsl_migration_tests {
             serde_json::from_str(json).expect("a wsl connection must still parse");
         assert_eq!(f.workspaces.len(), 1);
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
+    }
+}
+
+#[cfg(test)]
+mod attach_guard_tests {
+    use super::{attach_guard_verdict, parse_tmux_sessions};
+
+    fn listed(names: &[&str]) -> Vec<super::TmuxSessionInfo> {
+        let text: String = names.iter().map(|n| format!("{n}|1|0|1|0|/x\n")).collect();
+        parse_tmux_sessions(&text)
+    }
+
+    #[test]
+    fn hit_is_live() {
+        // pins: a listed target must block injection
+        assert!(attach_guard_verdict(Ok(&listed(&["a", "work"])), "work"));
+    }
+
+    #[test]
+    fn miss_and_empty_are_not_live() {
+        // pins: a free name must still get its cd/command on first create
+        assert!(!attach_guard_verdict(Ok(&listed(&["a"])), "work"));
+        assert!(!attach_guard_verdict(Ok(&[]), "work"));
+    }
+
+    #[test]
+    fn list_error_is_live() {
+        // pins: fail-closed — unknown must never read as safe to inject
+        assert!(attach_guard_verdict(Err("exec: closed"), "work"));
+    }
+
+    #[test]
+    fn prefix_is_not_a_match() {
+        // pins: exact-name match; "work2" running must not mark "work" live
+        assert!(!attach_guard_verdict(Ok(&listed(&["work2"])), "work"));
     }
 }
 
