@@ -22,6 +22,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod ipc_guard;
 mod ipc_meter;
 mod local_setup;
 mod local_wizard;
@@ -12773,7 +12774,8 @@ pub fn run() {
             Ok(())
         })
         // 2026-09-23: counted per command — see ipc_meter.rs.
-        .invoke_handler(ipc_meter::metered(tauri::generate_handler![
+        // 2026-10-06: outermost guard denies the workspace Browser webview — see ipc_guard.rs.
+        .invoke_handler(ipc_guard::guarded(ipc_meter::metered(tauri::generate_handler![
             clipboard_read_text,
             // Phase 68.B: add-on framework commands.
             addons::addon_list,
@@ -13007,7 +13009,7 @@ pub fn run() {
             // Unshipped-fivefer (#4): pop a terminal pane into its own window.
             popout_pane,
             ui_log_batch,
-        ]))
+        ])))
         // #2 (feedback): close-to-tray removed — closing the window quits
         // normally (the minimize-to-tray surprise was confusing). The tray
         // icon + badge stay for quick access; quit is either the window close
