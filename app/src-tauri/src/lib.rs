@@ -171,7 +171,9 @@ pub(crate) struct AppState {
     /// Persisted on exit to `<config>/agent-runs.json` with each state's
     /// timestamp and restored in setup; entries 6h or older, without a
     /// timestamp, or for panes that no longer exist are dropped — see
-    /// `agent_runs_store.rs`.
+    /// `agent_runs_store.rs`. An entry is also removed when its pane is
+    /// closed (`workspace_close_pane`) or its workspace is deleted
+    /// (`teardown_workspace_runtime`) via `clear_pane_agent_run`.
     pub(crate) agent_runs: Arc<Mutex<HashMap<String, AgentRunState>>>,
     /// BRIEF: per-pane agent brief + last user prompt, keyed by RESOLVED
     /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only
@@ -436,7 +438,40 @@ mod status_slot_tests {
 
 #[cfg(test)]
 mod agent_run_tests {
+    use super::forget_agent_run;
     use super::AgentRunState;
+    use std::collections::HashMap;
+
+    // Pins: closing removes the entry and the Unknown event's seq is
+    // one past the last, so the frontend seq guard accepts it.
+    #[test]
+    fn forget_agent_run_removes_entry_and_bumps_seq() {
+        let mut runs = HashMap::new();
+        let mut r = AgentRunState::default();
+        r.seq = 4;
+        runs.insert("p".to_string(), r);
+        assert_eq!(forget_agent_run(&mut runs, "p"), Some(5));
+        assert!(runs.is_empty());
+    }
+
+    // Pins: an untracked pane yields None, so nothing is emitted.
+    #[test]
+    fn forget_agent_run_on_unknown_pane_is_none() {
+        let mut runs: HashMap<String, AgentRunState> = HashMap::new();
+        assert_eq!(forget_agent_run(&mut runs, "ghost"), None);
+    }
+
+    // Pins: open/close churn cannot grow the map.
+    #[test]
+    fn repeated_open_close_leaves_no_agent_runs() {
+        let mut runs = HashMap::new();
+        for i in 0..50 {
+            let id = format!("pane-{i}");
+            runs.insert(id.clone(), AgentRunState::default());
+            assert!(forget_agent_run(&mut runs, &id).is_some());
+        }
+        assert!(runs.is_empty());
+    }
 
     #[test]
     fn average_excludes_short_turns_and_means_the_rest() {
@@ -2747,6 +2782,26 @@ pub(crate) fn emit_agent_run_event(
             "seq": seq,
         }),
     );
+}
+
+/// Pane-close cleanup: drops `pane_id`'s run entry. Returns the seq an
+/// Unknown event must carry (removed seq + 1, so the frontend seq guard
+/// accepts it), or `None` when the pane had no entry.
+pub(crate) fn forget_agent_run(
+    runs: &mut HashMap<String, AgentRunState>,
+    pane_id: &str,
+) -> Option<u32> {
+    runs.remove(pane_id).map(|r| r.seq.saturating_add(1))
+}
+
+/// Removes a closed pane's `agent_runs` entry and tells the frontend
+/// (Unknown → it deletes its copy). No emit when nothing was tracked.
+fn clear_pane_agent_run(state: &AppState, app: &AppHandle, pane_id: &str) {
+    let seq = forget_agent_run(&mut lock_or_recover(&state.agent_runs), pane_id);
+    // guard dropped above — emit runs lock-free
+    if let Some(seq) = seq {
+        emit_agent_run_event(app, pane_id, None, None, PaneAgentState::Unknown, None, seq);
+    }
 }
 
 /// Phase 84.B: one pane's agent state, for the hydration command below.
@@ -8332,6 +8387,8 @@ fn teardown_workspace_runtime(
     // once we are here.
     release_session_owners_of_workspace(workspace_id);
     for pane_id in panes_to_kill {
+        // A pane without a session can still hold run state.
+        clear_pane_agent_run(state, app, pane_id);
         if let Some(sid) = lock_or_recover(&state.core.pane_sessions).remove(pane_id) {
             if let Some(mut s) = lock_or_recover(&state.core.sessions).remove(&sid) {
                 kill_session_inner(&mut s);
@@ -8600,6 +8657,7 @@ fn ui_log_batch(state: State<'_, AppState>, entries: Vec<UiLogEntry>) -> Result<
 #[tauri::command]
 fn workspace_close_pane(
     state: State<'_, AppState>,
+    app: AppHandle,
     workspace_id: String,
     pane_id: String,
 ) -> Result<WorkspacesFile, String> {
@@ -8635,6 +8693,7 @@ fn workspace_close_pane(
         // Phase 50: stop any diff-pane watcher bound to the removed
         // pane. Idempotent — no-op for non-Diff panes.
         diff_pane::stop_watcher(&state, pid);
+        clear_pane_agent_run(&state, &app, pid);
     }
     if let Some(pid) = removed_pane {
         // Always unbind the pane from its session — the pane is gone.
