@@ -49,15 +49,26 @@ already-authenticated SSH session and open **a fresh SFTP channel per call**. Se
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.
 
-**`workspace_browser.rs` (1,063)** — **at most one child Webview per workspace**, attached
+**`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
 to the main window via `Window::add_child` (this is what pins `tauri = "=2.10.3"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
 creates or reveals it. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
 workspace and WebView2 does not support multiple environments in one process — that
 surfaced as `0x8007139F`. Creation is serialized by `AppState.browser_create_lock` for
-the same reason. Runtime-only, never persisted; `workspace_delete` calls
-`cleanup_workspace_sessions` to remove `browser-sessions/<workspace_id>/`.
+the same reason. Runtime-only, never persisted. On macOS >= 14 each workspace gets its own
+`WKWebsiteDataStore` via `.data_store_identifier(workspace_store_id(ws))` (sha256 of
+`ymux-browser-store:<ws>`, first 16 bytes; derived, so show and delete agree; a no-op
+off macOS >= 14, and Windows never gets a data dir). `workspace_delete` calls
+`cleanup_workspace_sessions(app, ws)`: it removes the legacy `browser-sessions/<ws>/`
+dir synchronously, then spawns (a) a `spawn_blocking` sweep that deletes 127.0.0.1 /
+localhost cookies via the `main` webview (`cookies()` deadlocks on Windows off a
+blocking thread) — Windows shares one WebView2 profile, so this also drops other
+workspaces' tunnel cookies (accepted collateral); (b) macOS >= 14 only
+(`macos_major(sw_vers)`), `remove_data_store` with up to 5 x 400 ms retries since it
+errors `DataStoreInUse` until the closed webview lets go. Every failure is a
+`log_warn("BROWSER", ..)`, never an error to delete; logs carry counts, never cookie
+names or values.
 
 **Pop-out: a child Webview CANNOT be re-parented.** `add_child` binds it to its host
 window for life, so `browser_popout_open` (Phase 85.C) does destroy-and-respawn, not
@@ -202,7 +213,11 @@ share `%APPDATA%\ymux` unless someone sets `YMUX_CONFIG_DIR`, and the pre-rename
 `%APPDATA%\winmux` + `WINMUX_CONFIG_DIR` are still honoured — so an old and a new binary
 can land on the same directory from either side of the rename. `reconcile(ours, base,
 theirs)` is a **pure function with unit tests**, which is the point: an idle app never
-saves, so the interesting path cannot be reached by launching one and waiting.
+saves, so the interesting path cannot be reached by launching one and waiting. Beyond the
+`reconcile` seam, `two_instance_save_tests` in `lib.rs` drive `write_workspaces_text` with two
+merge bases over one tempdir (two instances' edits both survive; an older build's rewrite does
+not strip `parent_id`; a newer on-disk schema refuses the write byte-identically). A second
+instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content
 

@@ -60,6 +60,30 @@ func TestTheTurnCycleWalksRunningThenDone(t *testing.T) {
 	}
 }
 
+func TestAStopFailureTurnsTheLightFailed(t *testing.T) {
+	// A turn that died on an API error must not read as a clean Done.
+	var r Run
+	r.ApplyHook("user-prompt-submit", "", t0)
+	if !r.ApplyHook("stop-failure", "", t0) || r.CurrentState() != StateFailed {
+		t.Fatalf("after stop-failure: %q", r.CurrentState())
+	}
+	if string(r.CurrentState()) != "failed" {
+		t.Fatalf("wire value %q", r.CurrentState())
+	}
+	if r.ApplyHook("stop-failure", "", t0) {
+		t.Fatal("already Failed must report no change")
+	}
+}
+
+func TestAPromptAfterAFailureResumesRunning(t *testing.T) {
+	// Failed is not sticky: a retried turn must not keep showing red.
+	var r Run
+	r.ApplyHook("stop-failure", "", t0)
+	if !r.ApplyHook("user-prompt-submit", "", t0) || r.CurrentState() != StateRunning {
+		t.Fatalf("after prompt: %q", r.CurrentState())
+	}
+}
+
 func TestIdlePromptPromotesDoneToNeedsInput(t *testing.T) {
 	var r Run
 	r.ApplyHook("stop", "", t0)

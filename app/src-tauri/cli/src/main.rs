@@ -2555,6 +2555,49 @@ async fn real_main() -> ExitCode {
                 return ExitCode::SUCCESS;
             }
 
+            // ── StopFailure: the turn died on an API error — pane STATE only ──
+            //
+            // Same shape as the notification branch and for the same reason:
+            // it must never reach the feed-item dispatch below. Rule #1: the
+            // push carries the error TYPE (rate_limit, authentication_failed…)
+            // and nothing else — never error_details or
+            // last_assistant_message, which are prose.
+            if subcommand == "stop-failure" {
+                let error = payload
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("unknown");
+                let request_id = format!(
+                    "req_{:x}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                );
+                let pane_id = std::env::var("YMUX_PANE_ID").ok();
+                hook_dlog(&format!(
+                    "stop-failure type={error} pane={} req_id={request_id}",
+                    pane_id.as_deref().unwrap_or("(none)")
+                ));
+                let mut push = json!({
+                    "request_id": request_id,
+                    "kind": "passive",
+                    "subkind": "stop-failure",
+                    "pane_id": pane_id,
+                    "title": format!("claude stop-failure: {error}"),
+                    "summary": "",
+                    "payload": { "error": error },
+                    "wait_timeout_seconds": 5,
+                });
+                // Stale-prone pane id (Phase 81.G): send the session name too.
+                if let Some(s) = session_meta::resolve_session_name() {
+                    push["tmux_session"] = json!(s);
+                }
+                let _ = rpc_call("feed.push", push).await;
+                return ExitCode::SUCCESS;
+            }
+
             // Multi-machine sync: on every `stop` (fires each turn) record
             // this pane's tmux-session → Claude-session mapping + title in
             // the server-side `~/.ymux/session-meta.json`; `session-end`
