@@ -111,6 +111,12 @@ on their own path; the rest also move the timer and emit further down. If you ad
 subkind that should affect the traffic light, it goes through `apply_hook`, not through a
 second state machine here.
 
+`stop-failure` (Claude Code `StopFailure`, a turn that died on an API error) is a
+state-only signal like `notification`: its pane arm clears `turn_started_at` WITHOUT
+`record_turn` (a failed turn must not skew the average), folds `apply_hook` → `failed`,
+and emits with `started_at` null. It shares the post-block early return with
+`notification`, outside the pane block, so it never becomes a FeedItem or toast.
+
 `feed.push` reads `settings::load_from_disk()` once per call (it used to re-read for
 the policy, the Block branch and Stop separately). With `blocking: true` it parks the caller on a
 `tokio::sync::oneshot::Sender` held in `FeedStore.pending`, and `decide_feed` (shared
