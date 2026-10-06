@@ -401,6 +401,35 @@ impl AgentRunState {
 }
 
 #[cfg(test)]
+mod status_slot_tests {
+    use super::clear_if_current;
+    use std::collections::HashMap;
+
+    // Pins: a clear for the exact emitted text removes the slot.
+    #[test]
+    fn clears_on_match() {
+        let mut m = HashMap::from([("p".to_string(), "a".to_string())]);
+        assert!(clear_if_current(&mut m, "p", "a"));
+        assert!(m.is_empty());
+    }
+
+    // Pins: a newer status must survive an older timer (the bug this guards).
+    #[test]
+    fn keeps_newer_text() {
+        let mut m = HashMap::from([("p".to_string(), "new".to_string())]);
+        assert!(!clear_if_current(&mut m, "p", "old"));
+        assert_eq!(m.get("p").map(String::as_str), Some("new"));
+    }
+
+    // Pins: clearing an absent slot is a no-op, not a panic.
+    #[test]
+    fn absent_slot_is_noop() {
+        let mut m = HashMap::new();
+        assert!(!clear_if_current(&mut m, "p", "a"));
+    }
+}
+
+#[cfg(test)]
 mod agent_run_tests {
     use super::AgentRunState;
 
@@ -2630,6 +2659,19 @@ fn emit_data(
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
 /// progress/errors. The frontend listens on `pane:status` events.
 pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str) {
+    // Mirror into AppState so a delayed clear can tell whether the slot still
+    // holds its own text. Lock is dropped before the emit.
+    {
+        let state = app.state::<AppState>();
+        // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
+        if let Ok(mut map) = state.pane_status.lock() {
+            if text.is_empty() {
+                map.remove(pane_id);
+            } else {
+                map.insert(pane_id.to_string(), text.to_string());
+            }
+        }
+    }
     let _ = app.emit(
         "pane:status",
         serde_json::json!({ "pane_id": pane_id, "text": text }),
@@ -2776,11 +2818,36 @@ fn pane_briefs(
     Ok(briefs.clone())
 }
 
-/// Spawns a tokio task that clears a pane's status text after `secs` seconds.
-pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, secs: u64) {
+/// Removes the slot only when it still holds `expected`; true when cleared.
+pub(crate) fn clear_if_current(
+    map: &mut HashMap<String, String>,
+    pane_id: &str,
+    expected: &str,
+) -> bool {
+    if map.get(pane_id).map(String::as_str) == Some(expected) {
+        map.remove(pane_id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Spawns a tokio task that clears a pane's status text after `secs` seconds,
+/// but only if the pane still shows `expected` (a newer status must survive).
+pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, expected: String, secs: u64) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-        emit_pane_status_event(&app, &pane_id, "");
+        let cleared = match app.state::<AppState>().pane_status.lock() {
+            Ok(mut map) => clear_if_current(&mut map, &pane_id, &expected),
+            // AI-NOTE: poisoned lock → cannot verify the slot; keep the text.
+            Err(_) => false,
+        };
+        if cleared {
+            let _ = app.emit(
+                "pane:status",
+                serde_json::json!({ "pane_id": pane_id, "text": "" }),
+            );
+        }
     });
 }
 
@@ -4505,20 +4572,14 @@ async fn spawn_ssh(
         Ok(remote_bootstrap::BootstrapStatus::Uploaded { bytes, sha256: _ }) => {
             state.bootstrap_guard.clear_failure(&hkey, &wanted_sha);
             set_cli_alignment(app, state, &workspace_id, bootstrap_guard::Alignment::Ok);
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("ymux installed ({} bytes)", bytes),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 3);
+            let msg = format!("ymux installed ({} bytes)", bytes);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 3);
         }
         Ok(remote_bootstrap::BootstrapStatus::UnsupportedArch(arch)) => {
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("remote arch '{}' not supported (no ymux binary)", arch),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("remote arch '{}' not supported (no ymux binary)", arch);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
         // We could not converge the remote onto our binary. The shell still
         // works; the CLI-dependent features do not, and this stays on screen
@@ -4555,8 +4616,9 @@ async fn spawn_ssh(
         }
         Err(e) => {
             tracing::warn!("remote bootstrap failed: {e}");
-            emit_pane_status_event(app, &pane_id, &format!("bootstrap failed: {e}"));
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("bootstrap failed: {e}");
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
     }
     drop(_boot_guard);
@@ -9233,6 +9295,10 @@ async fn pane_connect(
         &format!("[bidi] pane_connect seed: pane={pane_id} enabled={pane_smart_bidi}"),
     );
 
+    // A reconnect starts with a clean header: a stale status from the previous
+    // attempt must not outlive the problem it reported.
+    emit_pane_status_event(&app, &pane_id, "");
+
     // Secret rows never reach the typed `export` path: split them off, resolve
     // their values from the store by env owner. A name with no stored value is
     // reported on the pane, never typed and never guessed.
@@ -9430,6 +9496,12 @@ async fn pane_connect(
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // A missing wsl.exe / distro otherwise dies silently inside the pty.
+            if let Some(msg) = local_setup::wsl_pane_problem(distro.as_deref()).await {
+                log_warn("PTY", &format!("WSL preflight failed for pane {pane_id}: {msg}"));
+                emit_pane_status_event(&app, &pane_id, &msg);
+                return Err(msg);
+            }
             // No delivery path into a wsl.exe session: say so instead of
             // silently dropping the rows.
             if !secret_names.is_empty() {

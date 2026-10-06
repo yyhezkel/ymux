@@ -11,7 +11,7 @@
     "app/src-tauri/src/config_lock.rs": "3785df0a43aa1ddb150b0d0b864fbd25fb1b75c817b7a63c6cabbb0b78ded206",
     "app/src-tauri/src/ipc_guard.rs": "4925c6413a7cac989c898deba7f6a9d96ed4d0f3f674329f467472d106ca66e7",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "607c70ce300120b99d3cb703b75b317dcfa20e60aa35e0ea825016a6c0161e3d",
+    "app/src-tauri/src/lib.rs": "0c3daedd35e0e6561b01bbab183377d68a08ae0a3637b54b0c9c471c164cbd27",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "0573706746a75de5f2f4eb531d7c69e22481af48b70178d935e21810be8863bd",
@@ -55,7 +55,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
-    "app/src-tauri/src/local_setup.rs": "9c99740d18d66bc91f548e2323a283a91d705694172940d274f5b8deed367111",
+    "app/src-tauri/src/local_setup.rs": "9b098658a98d218bcf31d77a682919ca004ec20e3461f6e6a62b3bae9590b08d",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "053665ac863e2f5be4a76a6ee4b7c958f284c6587e3b42140cb212df6c3079a9",
     "app/src-tauri/src/updater.rs": "5e32ee0804d8762b214409d2ec8e0e46471c2716925266f664f5b9c76e13ef71",
