@@ -160,6 +160,10 @@ pub(crate) struct AppState {
     pub(crate) secret_env: Arc<Mutex<secret_env::SecretEnvStore>>,
     pub(crate) notifications: Arc<Mutex<Vec<NotificationItem>>>,
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
+    /// Active pane per workspace (workspace_id -> pane_id), pushed by the
+    /// frontend via `pane_set_active`. In-memory, last write wins. Taken
+    /// alone, never nested under another lock.
+    pub(crate) active_panes: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
     /// pane_id. turn-start = UserPromptSubmit hook, turn-end = Stop hook.
     /// Persisted on exit to `<config>/agent-runs.json` with each state's
@@ -8739,6 +8743,23 @@ fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
 }
 
 #[tauri::command]
+pub(crate) fn pane_set_active(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    pane_id: String,
+) -> Result<(), String> {
+    if workspace_id.is_empty() || pane_id.is_empty() {
+        return Err("pane_set_active: empty workspace or pane id".into());
+    }
+    let mut map = state
+        .active_panes
+        .lock()
+        .map_err(|e| format!("pane_set_active: {e}"))?;
+    map.insert(workspace_id, pane_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn pane_set_smart_bidi(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -12784,6 +12805,7 @@ pub fn run() {
         // 2026-09-23: counted per command — see ipc_meter.rs.
         .invoke_handler(ipc_meter::metered(tauri::generate_handler![
             clipboard_read_text,
+            pane_set_active,
             // Phase 68.B: add-on framework commands.
             addons::addon_list,
             addons::addon_install,
