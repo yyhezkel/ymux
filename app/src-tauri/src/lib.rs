@@ -15682,4 +15682,46 @@ mod smart_bidi_seed_tests {
         let t = split(pane("a", Some(true)), pane("b", Some(true)));
         assert!(!find_pane_smart_bidi(&t, "zzz"));
     }
+
+    // Pins the persisted-shape lookup on full Pane literals: Some(true) → on, None → off.
+    #[test]
+    fn struct_literal_some_true_and_none() {
+        let t = LayoutNode::Split {
+            split_id: "s".to_string(),
+            direction: SplitDirection::Horizontal,
+            ratio: 0.5,
+            first: Box::new(LayoutNode::Pane {
+                pane_id: "on".to_string(),
+                pane_kind: PaneKind::Terminal,
+                connection: None,
+                browser: None,
+                title: None,
+                auto_title: None,
+                annotation: None,
+                color: None,
+                emoji: None,
+                help_topic: None,
+                diff_source: None,
+                smart_bidi: Some(true),
+                diff_cwd: None,
+            }),
+            second: Box::new(LayoutNode::Pane {
+                pane_id: "off".to_string(),
+                pane_kind: PaneKind::Terminal,
+                connection: None,
+                browser: None,
+                title: None,
+                auto_title: None,
+                annotation: None,
+                color: None,
+                emoji: None,
+                help_topic: None,
+                diff_source: None,
+                smart_bidi: None,
+                diff_cwd: None,
+            }),
+        };
+        assert!(find_pane_smart_bidi(&t, "on"));
+        assert!(!find_pane_smart_bidi(&t, "off"));
+    }
 }
