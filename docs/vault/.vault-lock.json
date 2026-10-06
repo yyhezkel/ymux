@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "3f65bdbd7e434c0b309fb8540acdcdd956e1acae0e0440026bbc7ad22fb6e2b8",
+    "app/src-tauri/src/lib.rs": "bf541d5281126e11360df3be5e6feea7b8ace84a63338979e4544eb4d004450f",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "8f76b67d7a62f0b26597398467dd1d1cabfe2c4528951e5163c426d02d483917",
@@ -44,7 +44,7 @@
     "app/src-tauri/src/rpc_server.rs": "c7d70220ec855bffb9ffaa120beefd8b1a40bb5f3017b52da91bf6c87be4fe9c"
   },
   "backend-sessions": {
-    "app/src-tauri/src/bidi_filter.rs": "bf2f974aa4570b22a50c8f88db6a47e4509f88f41238b0f0639ce6a51039b06d",
+    "app/src-tauri/src/bidi_filter.rs": "0164d9501462eb1c2d3b758ad72cfaebcc3fd07f7b389a0662c7c5752346a6ee",
     "app/src-tauri/src/log_sync.rs": "5e00229cdf74e70d52e5c7dcec2469905cc85920dcc95fa40911cf1b3ccb890f",
     "app/src-tauri/src/osc_notify.rs": "05576d992b25f0f3157a77588182d3ac5bc2567857d7c2940490d6d08314d85c",
     "app/src-tauri/src/pty_decode.rs": "a90d689aa032c5c8f223cec9fe31a8b999c6246d85a783272e19e97b01854d66",
@@ -59,7 +59,7 @@
   },
   "build-glue": {
     "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
-    "app/scripts/build-linux-cli.ps1": "f315ca76cc2fbc98016ab80b7d1ee8bb9f96a64c9b21e7703e0f62049b31d490",
+    "app/scripts/build-linux-cli.ps1": "611152c2d34194859f02390416ddca6deef65ee6637ca30eae7fed0d6abd720e",
     "app/scripts/build-release.ps1": "94f393bbeb1fca76bf581f4722700de94a9a9c441a7343788b6dddb3b44b4964",
     "app/scripts/reset-local-setup.ps1": "347e044d783487badb372a67a6faa3043ba676b0bc01857cac6090f9ff59ca09",
     "app/src-tauri/Cargo.toml": "70a59cb058bdc93e909091251ea4b5a85a3eaf32fb012e8dfaf64fd6e400132f",
