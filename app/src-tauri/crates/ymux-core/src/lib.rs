@@ -40,6 +40,10 @@ use ymux_types::{Connection, LayoutNode, PaneKind};
 /// debug builds, see `ymux-debug-test\run-ymux-debug.bat`); the
 /// pre-rename `WINMUX_CONFIG_DIR` is still honoured as a fallback so
 /// existing debug harnesses keep working.
+/// Under `cfg(test)` or the `test-config-dir` feature (enabled by every
+/// dependent's dev-dependencies, so their tests link it too) the fallback
+/// is `temp_dir()/ymux-test-config-<pid>` instead, so unit tests never
+/// write the real `%APPDATA%\ymux\debug.log`.
 /// Otherwise: `dirs::config_dir() / "ymux"` (≈ `%APPDATA%\ymux\`).
 /// The directory is created on demand.
 ///
@@ -59,6 +63,23 @@ pub fn config_dir() -> Result<PathBuf, String> {
         std::fs::create_dir_all(&p).map_err(|e| format!("create {:?}: {e}", p))?;
         return Ok(p);
     }
+    #[cfg(any(test, feature = "test-config-dir"))]
+    return test_config_dir();
+    #[cfg(not(any(test, feature = "test-config-dir")))]
+    real_config_dir()
+}
+
+/// Per-process scratch config dir for tests.
+#[cfg(any(test, feature = "test-config-dir"))]
+fn test_config_dir() -> Result<PathBuf, String> {
+    let p = std::env::temp_dir().join(format!("ymux-test-config-{}", std::process::id()));
+    std::fs::create_dir_all(&p).map_err(|e| format!("create {:?}: {e}", p))?;
+    Ok(p)
+}
+
+/// The real per-user dir, with the one-shot winmux → ymux migration.
+#[cfg_attr(any(test, feature = "test-config-dir"), allow(dead_code))]
+fn real_config_dir() -> Result<PathBuf, String> {
     let base = dirs::config_dir().ok_or_else(|| "no config dir available".to_string())?;
     let dir = base.join("ymux");
     // `Once`, not a plain `if !dir.exists()`: the log_* calls below route
@@ -1281,6 +1302,16 @@ mod tests {
     //
     // Phase 80: writes are asynchronous now, so every read-back needs a
     // `flush_log()` first. Without it this test is a coin flip.
+    // Pins the test-only fallback: a test that unsets the env var must land
+    // in a per-pid temp dir, never the real profile.
+    #[test]
+    fn test_config_dir_is_per_pid_temp() {
+        let d = test_config_dir().expect("temp config dir");
+        assert!(d.starts_with(std::env::temp_dir()), "{d:?}");
+        assert!(d.ends_with(format!("ymux-test-config-{}", std::process::id())));
+        assert!(d.is_dir());
+    }
+
     #[test]
     fn log_at_format_threshold_and_raw_append() {
         let dir = std::env::temp_dir().join(format!("ymux-core-logtest-{}", std::process::id()));
