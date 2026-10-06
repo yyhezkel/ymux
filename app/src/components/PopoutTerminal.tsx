@@ -1,7 +1,18 @@
 import { onCleanup, onMount } from "solid-js";
 import { backend, type UnlistenFn } from "../backend";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
+import { backend } from "../backend";
+import {
+  TerminalInstance,
+  setRtlProfiles,
+  setTerminalFontSize,
+} from "../terminalInstance";
+import { loadSettings, resolveRtlProfiles } from "../settings";
+import { parsePopoutProfile, popoutProfileKey } from "../popoutProfile";
+import { createLogger } from "../logger";
+import { resolvePopoutTmuxArm } from "../popoutWheelArm";
+
+const log = createLogger("POPOUT");
 
 // Ctrl+wheel font zoom — pop-out windows only (the grid stays Settings-driven).
 // All open popouts share one zoom level, synced via the `popout:zoom` event and
@@ -23,6 +34,11 @@ function readPopoutFontPt(): number {
 // bootstrap. It reuses TerminalInstance (same onData→pty_write + resize
 // contract as an in-grid pane) and taps the app-wide `pty:data` / `pty:exit`
 // streams filtered to its own session.
+//
+// RTL: the fresh webview never ran App's settings bootstrap, so onMount loads
+// settings itself (setRtlProfiles BEFORE the constructor -- the renderer is
+// fixed at construction) and reads the origin pane's profile from
+// localStorage (written by App.tsx before popout_pane).
 //
 // Ownership while open: this window drives input + resize (pty_write /
 // pty_resize); the origin pane in the main window detaches to a read-only
@@ -49,8 +65,19 @@ export function PopoutTerminal(props: { sessionId: string }) {
   let sizePt = readPopoutFontPt();
   let onWheel: ((e: WheelEvent) => void) | null = null;
 
-  onMount(() => {
-    ti = new TerminalInstance(`popout-${props.sessionId}`);
+  let disposed = false;
+
+  onMount(async () => {
+    const profile = parsePopoutProfile(localStorage.getItem(popoutProfileKey(props.sessionId)));
+    try {
+      const s = await loadSettings();
+      setRtlProfiles(resolveRtlProfiles(s.terminal));
+    } catch (e) {
+      // AI-NOTE: settings unreadable → built-in defaults
+      log.warn(`settings load failed: ${e instanceof Error ? e.name : typeof e}`);
+    }
+    if (disposed) return;
+    ti = new TerminalInstance(`popout-${props.sessionId}`, profile);
     hostRef.appendChild(ti.container);
     ti.container.style.display = "block";
     // attach() binds onData→pty_write and pushes an initial pty_resize, so
@@ -60,6 +87,15 @@ export function PopoutTerminal(props: { sessionId: string }) {
     setTerminalFontSize(sizePt);
     requestAnimationFrame(() => ti?.fitAndResize(true));
     ti.focus();
+
+    // Arm the tmux wheel proxy when the origin pane is tmux-persisted. The
+    // pane id arrives via localStorage (App.tsx popOutPane); a missing key or
+    // failed lookup leaves the proxy unarmed (plain shell keeps xterm wheel).
+    void resolvePopoutTmuxArm(
+      localStorage.getItem(`ymux.popout.pane.${props.sessionId}`),
+      () => backend.call<Record<string, string>>("pane_persistence_list"),
+      (m, e) => log.warn(m, e),
+    ).then((armed) => ti?.setTmuxScroll(armed));
 
     // Ctrl+wheel zoom. Capture phase + non-passive so we beat xterm's own
     // viewport wheel handler and can preventDefault — a plain (no-Ctrl) wheel
@@ -118,6 +154,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
   });
 
   onCleanup(() => {
+    disposed = true;
     if (ti && onWheel) {
       ti.container.removeEventListener("wheel", onWheel, { capture: true });
     }

@@ -104,7 +104,7 @@ fn hook_entry(matcher: &str, command: &str, timeout: Option<u64>) -> Value {
 /// `source=bundled` AND as the version recorded when no fetched spec
 /// was applied. Bump whenever you ship a new hook in a release with a
 /// matching `hooks/claude-code.json` change.
-const BUNDLED_CLAUDE_VERSION: &str = "1.6.0";
+const BUNDLED_CLAUDE_VERSION: &str = "1.8.0";
 
 /// The bundled fallback spec for Claude Code. Mirrors what
 /// `hooks/claude-code.json` carries at the same `ymux_hooks_version`
@@ -123,8 +123,10 @@ fn bundled_claude_spec() -> HookSpec {
         },
     );
     // v0.4.4 dropped Notification and SessionStart as observability-only
-    // noise. SessionStart stays dropped; a stale settings.json still
-    // calling `claude-hook session-start` is silent-acked by the CLI.
+    // noise. v1.7.0 (Phase 105.C) registers SessionStart again for ONE job:
+    // the CLI asks the desktop for this session's context and prints it as
+    // `additionalContext` (compact/resume/startup). It still never becomes
+    // a feed item or a toast — see the session-start branch in main.rs.
     //
     // v1.5.0 (Phase 84.B) brings Notification BACK, with a different job.
     // It was noise as a feed item — a card per event that nobody acted on
@@ -136,10 +138,15 @@ fn bundled_claude_spec() -> HookSpec {
     // ymux-tools chrome Ticker. Fires in every permission mode (unlike
     // pre-tool-use, which the CLI short-circuits in acceptEdits/bypass).
     // The desktop keeps it off the feed — it only stamps per-pane turn timing.
+    // v1.8.0: StopFailure (turn died on an API error) — the CLI pushes the
+    // error type alone; the desktop paints the pane light `failed`, state
+    // only, never a feed item or a toast.
     for (ev, sub) in [
         ("Notification", "notification"),
         ("SessionEnd", "session-end"),
+        ("SessionStart", "session-start"),
         ("Stop", "stop"),
+        ("StopFailure", "stop-failure"),
         ("UserPromptSubmit", "user-prompt-submit"),
     ] {
         events.insert(
@@ -833,6 +840,18 @@ mod tests {
             "matcher": "Bash",
             "hooks": [{ "type": "command", "command": command }]
         })
+    }
+
+    // Pins the v1.8.0 registration: dropping StopFailure from the bundled
+    // spec would silently leave the pane light yellow on API errors.
+    #[test]
+    fn bundled_spec_registers_stop_failure() {
+        let spec = bundled_claude_spec();
+        assert_eq!(spec.ymux_hooks_version, "1.8.0");
+        assert_eq!(spec.events.len(), 7);
+        let ev = spec.events.get("StopFailure").expect("StopFailure registered");
+        assert_eq!(ev.matcher, "");
+        assert_eq!(ev.command, "${YMUX_BIN} claude-hook stop-failure");
     }
 
     #[test]

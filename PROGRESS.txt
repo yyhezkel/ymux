@@ -5748,7 +5748,6 @@ session (Yossi's call, scope was cleanup only):
 
 STATUS: documentation only, nothing to build. The 10 "NOT VERIFIED LIVE"
 entries are untouched — they need a real run, not a code reading.
-=======
 2026-08-23 — Phase 85 (+85.A/B/C/D): the vault + its CI freshness gate
 
 TASK
@@ -6352,9 +6351,7 @@ STATUS: this unblocks CI for every branch, not just this one - the gate runs
 before cargo test, tsc, the frontend build and the whole Go half, so nothing
 real has been checked on main since PR #18. Phase 84.F/G/H still have not
 compiled; that is what the next CI run is for.
-=======
 ================================================================================
-=======
 [2026-08-23 ~17:40] vault: re-sync after the four-PR merge train (#20/#21/#22/#23)
   Task: main's ci-windows was red — the vault gate fired on 7 pages. PR #20 landed
         the gate and stamped its lock on its own branch; #22 (Phase 84.C-E Monitor
@@ -6483,7 +6480,6 @@ three live checks, none of which CI can do:
         instead of silently winning.
   84.L  install a catalog font, remove it, confirm the picker flips back to
         the warning row and that the files and HKCU values are really gone.
-=======
 [2026-08-23] CLAUDE.md: added Absolute Rule #19 — before every push, sweep the full worktree-vs-origin/main diff and update docs/vault/ + re-stamp .vault-lock.json. Files: CLAUDE.md. Result: doc-only, no code touched.
 
 
@@ -6571,7 +6567,6 @@ that would work: an IDENTITY check (cite the symbol with the line, verify the
 symbol is on or near it) rather than a bounds check.
 
 Verdict: keep vault-check.mjs, do not adopt or fork the shell script.
-=======
 2026-08-23 | Phase 87: every keyboard shortcut is recordable, not typed
 Trigger: the voice (push-to-talk) hotkey in Settings -> AI was a FREE-TEXT box.
 The accelerator had to be typed by hand, and a typo produced a hotkey that
@@ -7848,17 +7843,92 @@ Vault: server-go (core interfaces, hooks row + section rewritten, chat_hookrpc, 
 
 2026-10-05 — Phase 102 verified live on 2.6.0 with the real ymux CLI in an API-created session: set-status (own pane ok, other pane refused), notify, note add/list/done + notes.json survives a restart, port-detected 0.5 s / port-undetected 1 s on a real http.server, own ports never listed, no note/notify text in the log. FOLLOWUPS P1 Phase 102 archived.
 
+2026-10-05 — Phase 105.A: Context Rail, branch claude/phase-103a-context-rail. First pass built a HITL task layer (tasks from brief ask, answer outbox typed into the pane, secret heuristic, decisions log); Yossi rescoped mid-way to CONTEXT only — that code was deleted before commit (DECISIONS 2026-10-05 records the rejected idea). Numbered 105: main took Phase 102 (WEB-DESIGN B4, PR #57), 103 (B5, PR #60) and 104 (B6, PR #61) while this was in flight — no reuse per CLAUDE.md.
+Shipped: app/src-tauri/src/context_store.rs — per Claude session_id record {first_prompt ≤2000, log ≤200 of Turn/Closed from the parsed brief incl. degraded, ws/pane/cwd, version}, <config>/context/sessions/<id>.json atomic, id validated, unparsable file never overwritten, 30-day mtime prune + background warm at startup; wired into feed.push user-prompt-submit (first prompt only once) / stop / session-end, emits context:changed; commands session_context_list / session_context_get. BriefStatus gains Deserialize. Frontend: ContextRail.tsx (third .app grid column, collapsible strip, width+collapsed in localStorage, Ctrl+Shift+K + palette), contextModel.ts (+ test), QueueRow.tsx (row shared by Queue/Briefing/Rail), IntentEditor.tsx (lifted from BriefingCard), App.saveIntent shared; i18n en/he/ar/ru. Docs: CONTEXT.md (new), BRIEF.md, DECISIONS, CLAUDE.md, BACKLOG (Go parity), vault backend-rpc/backend-core/frontend-shell/frontend-panes/frontend-lib.
+Compiles untested — CI is the gate (Rule #17); live smoke pending.
+
+2026-10-05 — Phase 105.C: context injection, branch claude/phase-103c-context-inject (stacked on 105.A / PR #58). Hook spec 1.6.0 → 1.7.0 (hooks/claude-code.json + BUNDLED_CLAUDE_VERSION + bundled spec): SessionStart registered again. CLI claude-hook session-start: no feed.push; RPC context.inject under tokio timeout (300 ms default, YMUX_CONTEXT_TIMEOUT_MS 100–3000), fail-open, prints exactly one hookSpecificOutput.additionalContext JSON line (serde-built, session_start_output + tests) or nothing. Desktop: rpc_server `context.inject` arm → context_store::injection_for_hook → pure build_injection (compact/resume = first prompt ≤500 + last 8 log lines; startup = intent + ≤8 open sibling sessions task+status; clear/other = nothing; [ymux-context] header, 1536-byte cap dropping oldest lines first, control chars stripped) + tests (each source, caps, empty). Settings → General → Briefing: brief.inject_context (default on; settings.rs + bindings/BriefOptions.ts + settings.ts + SettingsModal + i18n ×4). manifest.json NOT bumped (release step). Docs: CONTEXT.md, PROTOCOLS.md, CLI.md, DECISIONS, BACKLOG; vault cli/backend-rpc/backend-wizards/frontend-flows. Compiles untested.
+
+2026-10-05 — Phase 105.A follow-up (Yossi: each window shows only its own context): Context Rail now renders ONLY the focused pane's session (App activePaneId → paneId + that pane's row), plus "earlier sessions in this pane (N)" toggle; one-line empty hints (no pane / no session). Removed the others strip + othersSummary + its tests + i18n keys (context.others/noSessions/showClosed/hideClosed) + CSS, and the workspace-wide session list. New pure helper contextModel.sessionsForPane (+ test). session_context_list kept (still the fetch; pane filter is client-side). Injection (105.C) unchanged; merged into claude/phase-103c-context-inject. Docs: CONTEXT.md, DECISIONS follow-up, vault frontend-shell. Compiles untested.
+
 2026-10-05 — Phase 103 (WEB-DESIGN B5), daemon 2.6.0 → 2.7.0, branch yos/b5-layout-verbs. term/webws.go: browser workspaces in <data dir>/web-workspaces.json (term-owned, DECISIONS: not internal/workspace's SQLite — import rule + SDK churn), REST /api/v2/web/workspaces (+/{id} GET/PUT/DELETE), PUT guarded by version → 409 + current doc, workspaces:changed events; writeFileAtomic/loadJSON shared with notes. term/layout.go: LayoutNode as generic JSON (unknown fields survive) — find leaf, split leaf (desktop's split_pane_in), title/annotation. term/agentverbs.go: tree, ui.tree, split/action.split (daemon creates the tmux session: same ws/policy/cwd; reply adds pane_id), send/send-key/action.send_keys via tmux send-keys -H (exact bytes), set-pane-title/annotation, pane.scrollback = the desktop's stub. Fence (Yossi): send/title verbs only within the caller's workspace. service.go: spawnSession shared by create + split; create takes workspace_id, answers pane_id. tmux.go: SendBytes, CurrentPath, paneTarget (=name: — verified live that a bare =name is not a pane target). Tests: term/agentverbs_test.go. Compiles untested until CI; live check = new FOLLOWUPS P1.
 
 2026-10-05 — Phase 103 verified live on 2.7.0 with the real ymux CLI: workspaces + 409 guard + restart persistence, tree, split (new tmux session in the source cwd, 3 leaves), send within the workspace ran / across refused, send-key ctrl-c, set-pane-title; nothing typed in the log. FOLLOWUPS P1 Phase 103 archived.
+
+2026-10-05 — Phase 105.A follow-up 2 (Yossi: rail still long/unclear → card modeled on tzafrir/human-in-the-loop's task card, approved layout). Brief format: optional sticky keys goal / done (aliases done when|done-when|done_when) in Rust brief.rs (ParsedBrief + PaneBrief + binding) + test; SessionContext.goal / done_when last-non-empty-wins in append_turn + test. Card (ContextRail SessionCard): 🎯 goal (fallback first prompt line 80) + Done when; Now (AgentLight or status icon + age) / ➜ Next / ❓ Waiting on you (ask · rec, only while latest turn asked); last 3 ✔ deltas ~70 chars + clock, degraded dimmed, closed ✅; ▸ N more · ▸ original prompt. contextModel rewritten (oneLine, cardGoal, lastTurn, waitingText, doneEntries/doneCount) + tests; i18n ×4 (he: עכשיו / הבא / מחכה לך / סיום כש:). Snippet (Queue empty state + BRIEF.md) gains goal/done + "≤ 80 chars, imperative, write goal/done once, repeat only on change". Go brief.go parity DEFERRED (BACKLOG P2; needs rebake + version bump). Compiles untested.
 
 2026-10-05 — Phase 104 (WEB-DESIGN B6, session history), daemon 2.7.0 → 2.8.0 + a CLI change, branch yos/b6-session-history. CLI session_meta.rs: prune_with stamps ended_at instead of deleting (first time kept, cleared on revival), retention: no-claude ended rows dropped at once, >90 days dropped, only 100 newest ended kept; record_live clears ended_at and records cwd from the hook payload; SessionMetaEntry.extra (serde flatten) keeps unknown fields. Daemon term/history.go: GET /api/v2/term/history, GET /api/v2/claude/sessions/{id}/transcript (UUID-validated, glob by id, turns = prompts/text/tool markers, paged, Rule #1 logs id+bytes), POST /api/v2/term/history/{name}/resume (tmux new-session -- <claude> --resume <id>, argv; name reused if free). Tmux.Create/spawnSession take an optional cmd argv. ci-windows uploads the staged musl CLI as artifact ymux-cli-linux-x64 (CLAUDE.md + build-glue vault updated). Decisions: N=100, resume reuses the name, transcript found by id. Tests: CLI session_meta tests (5 new), term/history_test.go. Compiles untested until CI; live check = new FOLLOWUPS P1.
 
 2026-10-05 — Phase 104 verified live (daemon 2.8.0 + the CI-artifact CLI): kill → prune kept the row with ended_at, history listed it with cwd, transcript 2 turns (nothing logged), resume → same name running claude in the cwd, row left history; unknown field survived a re-save. Release CLI restored on the box afterwards. CLI help for `session-meta prune` updated. Phase B (B1–B6) complete. FOLLOWUPS P1 Phase 104 archived.
 
+2026-10-05 — Phase 105.C follow-up: compact/resume injection digest now has the card's shape — Goal / Done when (sticky store fields) / Now: [status] task / Next, last 5 ✔ deltas (oldest → newest, degraded included, closed marker), tail "Original request" (first prompt ≤ 400 chars); still [ymux-context] + 1536-byte cap, deltas dropped oldest-first before the tail is touched (assemble gained a tail). Builder tests updated (card shape, absent goal/done omitted, cap keeps newest + tail). Merged #58 (HITL card, main merge, renumber to 105). Docs: CONTEXT.md, PROTOCOLS.md, hooks note, vault backend-rpc. Compiles untested.
+
+2026-10-05 — Phase 105.A follow-up 3 (Yossi: one 🎯 only): workspace intent editor removed from the Context Rail (ContextRail onSaveIntent prop + App wiring gone); IntentEditor.tsx stays for the Briefing card; startup injection still uses the intent. No orphaned CSS/i18n (the rail reused briefing.* keys). Docs: CONTEXT.md, DECISIONS one-liner, vault frontend-shell. Compiles untested.
+
 2026-10-05 — Phase 108 (WEB-DESIGN C4), daemon 2.8.0 → 2.9.0, branch yos/c4-web-serve. term/webapp.go: SetWebRoot(<data dir>) → www/current; GET / = the app when current/index.html exists (no-cache, app CSP), else the diagnostic page; /diag always the diag page; GET /assets/{file...} (immutable) + /fonts/{file...}; no catch-all (mux conflict panic with method-less /api patterns). term/settings.go: GET/PUT /api/v2/settings — opaque desktop Settings JSON + version guard (409 + current), ≤256 KB, object only, web-settings.json atomic, settings:changed {version, settings} on the events WS. ci-windows uploads app/dist as artifact ymux-web. Tests: term/webapp_test.go + gate test routes. Compiles untested until CI; live check = new FOLLOWUPS P1.
 
 2026-10-05 — Phase 108 verified live on 2.9.0 (by hand): / = diag page without a bundle, the app with www/current (also over HTTPS), /diag kept, assets immutable, traversal 404; app loads under its CSP in headless Chrome (only Cloudflare's injected beacon blocked); settings round-trip + 409 + 401 + settings:changed + restart persistence, log = version+bytes. FOLLOWUPS P1 Phase 108 archived.
+
+2026-10-06 — claude_summary.rs module doc corrected to SSH-only (comment-only); FOLLOWUPS P3 archived; vault backend-claude.md sentence added + restamped.
+
+2026-10-06 — Secret env rows (EnvVar.secret): SecretEnvStore + DPAPI secret-env.json, local/SSH delivery, RPC redaction, UI checkbox + edit-modal stored keys. Vault pages updated + restamped; DECISIONS Decided entry; FOLLOWUPS P1-P3 (live check, zellij env, provisioning DPAPI reuse). Compiles untested until CI.
+
+2026-10-06 — vault cite checker: scripts/vault-cites.mjs (checkCites, symbol@file:line identity within 3 lines) wired into vault-check verify mode, eight cites migrated, unit tests in ci-windows frontend job; documented in build-glue.md + CONTRIBUTING § Citing a line; FOLLOWUPS P3 (cite rot) archived; lock restamped.
+
+2026-10-06 — rename-shim retirement (ticket ymux-crates-ymux-tunnel-src): emitted handshake tag flipped to YMUX-CHALLENGE (Rust + Go), WINMUX_* env dual-writes, CLI adopt_legacy_env/migrate_legacy_home_dir, legacy pipe listener, X-Winmux-Truncated and use_winmux_tmux_config alias dropped; read arms + folder migrations kept. CLAUDE.md rename section updated, FOLLOWUPS P1 archived, new P1 for server rebake + live smoke. Compiles untested until CI.
+
+2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
+
+2026-10-06 — shortcuts placebo rows (ticket ymux-app-src-shortcuts-ts): select_all wired to terminal selectAll in App.tsx; find deprecated + hidden (DEPRECATED_SHORTCUT_IDS), Rust field kept; 4 vault pages updated, lock restamped; FOLLOWUPS PLACEBO UI entry archived. Compiles untested until CI.
+2026-10-06 — capabilities hardening (ticket ymux-app-src-tauri-capabilities): ipc_guard.rs label-based guard outermost in invoke_handler denies all app commands to workspace-browser-* webviews (no app ACL manifest => capabilities never gated app commands); WEBVIEW_LABEL_PREFIX shared; ipc_guard_tests; vault backend-core/backend-panes + lock; FOLLOWUPS capabilities/default.json LATENT entry archived; DECISIONS entry. Compiles untested until CI.
+2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-terminalinstance-ts: right-click Copy falls back to last OSC 52 write (termMenuCopy.ts + capture-phase contextmenu in terminalInstance.ts); vault frontend-lib, ZELLIJ.md, FOLLOWUPS updated. Compiles untested until CI; NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-src-9: local Insights SQLite store + sampler + local /analytics (rusqlite bundled); vault backend-claude/backend-core updated and re-stamped. Cargo.lock refresh pending CI. Compiles untested until CI.
+2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
+
+2026-10-06 — ticket ymux-app-src-app-tsx-2 t05: documented persisted claude_running (vault: crates, backend-core, frontend-shell, frontend-lib; DECISIONS stale-true entry; FOLLOWUPS status); fixed 2 stale lib.rs cites in backend-core; vault re-stamped. Live smoke pending.
+2026-10-06 — wizard browse view renders DirPicker inline (ticket ymux-app-src-paneview-tsx): DirPicker modal|inline union, PaneView duplicate list/recents removed (-20 lines), vault frontend-flows/frontend-shell updated, FOLLOWUPS P3 (PaneView.tsx:1794) archived. Compiles untested until CI.
+
+2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 close P2 .claude/worktrees entry -> archive (FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md) ticket ymux-claude-worktrees
+2026-10-06 — ymux-app-src-tauri-server: term list/create/rename/kill moved to huma ops (shell:attach via bearerMiddleware/opScopes), spec + TS/Kotlin regenerated, vault server-go.md updated, FOLLOWUPS: P2 annotated, P1 rebake + c5/c6 port note added. Server blobs NOT rebaked. Compiles untested until CI.
+2026-10-06 — ymux-app-src-tauri-src-7: closed FOLLOWUPS P3 (persisted smart_bidi not re-applied after restart) → archived; pane_connect now seeds bidi_filters via find_pane_smart_bidi + set_pane_enabled (14622c0). Compiles untested until CI; NOT VERIFIED LIVE.
+2026-10-06 — ymux-hooks-claude-code-json: StopFailure hook (v1.8.0) + PaneAgentState::Failed / Go StateFailed + failed light square; FOLLOWUPS 'traffic light one known lie' archived, DECISIONS known-lie bullet marked resolved. Go blobs still need rebake. Compiles untested until CI. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-crates-2: ymux-core config_dir test-only temp default (feature test-config-dir); vault crates.md updated, FOLLOWUPS P2 closed to archive. Not run locally (Rule #17); CI verifies.
+2026-10-06 — macOS in-app update (ticket ymux-app-src-tauri-src-19): updater/macos.rs dmg mount-swap-relaunch, per-arch dmg manifest/release parsing, install commands routed on macOS, VersionManager Install gate on dmg_url. Vault (backend-wizards, frontend-flows) + RELEASING §4¼ updated. Compiles untested until CI; NOT VERIFIED LIVE on a Mac.
+2026-10-06 — ymux-app-src-tauri-src-2: stored is_folder on Workspace; is_header/isHeader read it; pin writes it; flag_pinned_folders load migration; vault (backend-core, crates, frontend-shell) synced, FOLLOWUP 'Pinning a NON-git folder' archived. Compiles untested until CI.
+
+2026-10-06 — ymux-app-src-tauri-src-11: agent_runs persisted to agent-runs.json (save on Exit, restore in setup, 6h cutoff); vault backend-core.md + lock + FOLLOWUPS updated. Compiles untested until CI. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-src-17: two-builds-one-config-dir. save_to_disk body extracted to write_workspaces_text, new config_lock.rs (OS lock + owner file + pre-rename scan, wired in setup()), two_instance_save_tests. Docs: backend-core/backend-panes vault, CONTRIBUTING § two builds side by side, FOLLOWUPS P2 reduced to the live run, BACKLOG lock half marked done. Compiles untested until CI; NOT VERIFIED LIVE.
+2026-10-06 — popout RTL profile (ticket ymux-app-src-components-popoutterminal-2): popoutProfile.ts key/parse helper; App.tsx writes ti.profile to localStorage before popout_pane and removes it on popout:closed; PopoutTerminal loads settings → setRtlProfiles before constructing TerminalInstance with the origin profile. Vault pages + lock restamped. Compiles untested until CI.
+2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-scripts-vault-check-mjs: vault gate now fails on unclaimed code; 87 files allowlisted via `unowned:`, build-glue/INDEX/CONTRIBUTING updated, FOLLOWUP archived. Gate run locally (node only); CI not yet run.
+
+2026-10-06 — ymux-app-src-tauri-cargo: log_writer.rs cross-process rotation (File::lock on debug.log.lock, per-batch stale-handle check, 2 new tests); crates.md + vault lock updated; FOLLOWUPS "TWO ymux.exe INSTANCES" archived. Compiles untested until CI (Rule #17).
+
+2026-10-06 — ymux-app-src-tauri-src-10: workspace delete now clears Browser state (per-workspace macOS data store + remove_data_store, tunnel cookie sweep, Windows collateral on shared profile); vault backend-panes/backend-core updated. Compiles untested until CI; NOT VERIFIED LIVE.
+[2026-10-06] session=ymux-app-src-tauri-src-6
+TASK: emit_data reorder decode -> osc observe -> bidi filter; apply_to_pane String->String
+FILES:
+  M app/src-tauri/src/lib.rs
+  M app/src-tauri/src/bidi_filter.rs
+  M docs/vault/backend-sessions.md
+  M docs/vault/backend-core.md
+  M docs/vault/.vault-lock.json
+RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
+NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
+
+2026-10-06 — ymux-app-src-tauri-src-14: pane_connect attach-guard now probes a cold SSH host (probe_ssh_session_live, attach_guard_verdict); vault backend-core + FOLLOWUPS P3 updated. Compiles untested until CI; NOT VERIFIED LIVE.
+2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
+2026-10-06 — ymux-app-src-terminalinstance-ts-2: closed FOLLOWUPS P2 (local pane Hebrew reversed under auto_per_line) as fixed by bc12388; docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-src-20: Rule #4 sweep of lib.rs, 164 non-test lock().unwrap() → map_err?/ok()?/lock_or_recover; new lock_or_recover_tests; vault backend-core.md + lock updated; FOLLOWUPS P3 closed to archive. Compiles untested until CI.
+2026-10-06 — ymux-app-src-tauri-src-29 t02: tickets.rs tmux_session_for_workspace prefers active pane session, deterministic otherwise (pick_tmux_session + 5 tests); vault backend-panes.md + lock restamped; FOLLOWUPS P3 archived. Compiles untested until CI (Rule 17).
+2026-10-06 — ymux-app-src-browserdevmode-ts: Dev Mode snapshot reports shot_error reason, TicketModal notice, headless-Chrome harness (4 PASS); vault frontend-panes.md updated, lock restamped; FOLLOWUPS P2 (transparent png) archived. Compiles untested until CI; not verified live.
+
+2026-10-06 — ymux-app-src-tauri-src-28 (close-wsl-followup-obsolete): moved FOLLOWUPS P3 `is_local_workspace` WSL-routing entry to FOLLOWUPS-ARCHIVE.md as closed-obsolete (WSL removed; migrate_wsl_workspaces rewrites Wsl→Local on load). Docs-only, no source touched. Not verified live.
+2026-10-06 — ymux-app-src-tauri-src-22: closed FOLLOWUPS P2 (WSL elevation English-substring detection) as fixed by 65d6fdc; WSL install unreachable since 2026-08-19. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-ymux-staff-redact-mut (audit-redact-and-close-followup): verified secret_env.rs:181/188 slice-based redact + callers rpc_server.rs:652,695,769; moved FOLLOWUPS Staff redact(&mut WorkspacesFile) entry to FOLLOWUPS-ARCHIVE.md as closed. Docs-only, no source touched.
+2026-10-06 — ymux-app-src-tauri-tauri-2 (archive-followup-entry): moved FOLLOWUPS tauri.macos.conf.json P3 entry to FOLLOWUPS-ARCHIVE.md as closed (config + CI in place 048f1b2; NOT verified live; Developer ID declined). Docs-only.
 2026-10-05 — Phase C planned (WEB-DESIGN §8.2; DECISIONS: C1–C3 in one desktop release, browser settings on the daemon, Q2 = (b) add-on). Phase 106 (C1), branch yos/c1-backend-seam: app/src/backend/{types,tauri,index}.ts — Backend { call, on, emit }, TauriBackend = invoke/listen/emit pass-through, singleton picked at module load. One-off codemod rewrote 311 sites in 40 files (invoke→backend.call, listen→backend.on, emit→backend.emit; generics kept, Rule #5). Guard: src/backendSeam.test.ts fails on any @tauri-apps/api/core|event import outside src/backend/. Vault: frontend-lib (new seam section + covers), frontend-shell/flows/panes prose. Compiles untested until CI; live check = the C1–C3 release smoke (FOLLOWUPS P1).
 
 2026-10-05 — Phase C plan amended: C2 (TermStream) dropped — the WebBackend will answer pty_write/pty_resize and emit pty:data/pty:exit itself over the attach WS, so the desktop PTY path is not touched. Release before WebBackend = C1 + C3. WEB-DESIGN §5/§8/§8.2 + DECISIONS updated.

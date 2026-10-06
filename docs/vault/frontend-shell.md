@@ -11,9 +11,14 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/windowPaneName.ts
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
+  - app/src/QueueRow.tsx
+  - app/src/IntentEditor.tsx
+  - app/src/ContextRail.tsx
+  - app/src/contextModel.ts
   - app/src/Divider.tsx
   - app/src/PanelChrome.tsx
   - app/src/PanelFloat.tsx
@@ -27,6 +32,8 @@ covers:
   - app/src/useNarrow.ts
   - app/src/icons.tsx
   - app/src/TechText.tsx
+unowned:
+  - app/src/tabsHarness.tsx   # Phase 84.F CSS harness, not part of the app
 ---
 
 # Frontend shell — App, sidebar, layout, panes, panel chrome
@@ -41,15 +48,21 @@ workspace/settings bootstrap runs in those windows:
 
 | label | renders | id |
 |---|---|---|
-| `popout-<sid>` | `<PopoutTerminal>` | terminal session |
+| `popout-<sid>` | `<PopoutTerminal>` | terminal session (origin profile via `ymux.popout.profile.<sid>`) |
 | `browser-popout-<ws>` | `<PopoutBrowser>` | workspace |
 
 The browser prefix deliberately does NOT start with `popout-`, so the two checks cannot
 collide — and neither can their capability globs, which are prefix-anchored too. The
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
+`App.tsx` `popOutPane` writes `ti.profile` under `popoutProfileKey(sid)` before `popout_pane`;
+the `popout:closed` listener removes it first. It also seeds
+`localStorage["ymux.popout.pane.<sid>"]=paneId`, since the popout
+window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy.
+Every one of those `localStorage` writes (font-size seed, pane id, profile) is individually
+try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from running.
 
-## `App.tsx` (5,566) — one component, ~50 signals
+## `App.tsx` (5,808) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -57,6 +70,10 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `notes`, `paneStatus`, `agentRuns`, `portForwards`, `detectedPorts`, `sidebarWidth`,
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
+
+A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
+(`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
+focus sends nothing. The backend uses it to pick the ticket pane-cwd tmux session.
 
 **`refreshPersistence()` is the one place the wheel proxy is armed (Phase 91.D).** Every
 refresh of `pane_persistence_list` fans out `ti.setTmuxScroll(!!m[pid])` over `terms`,
@@ -76,6 +93,9 @@ to break:
 - **`run` owns its own `preventDefault()`.** `copy` deliberately does not call it until
   `copyTerminalSelection()` resolves true, so a native text-selection copy still works
   in a non-terminal pane. A central `preventDefault` in the loop would kill that.
+
+`select_all` (Ctrl+Shift+A) sits after `paste` in the table: it fires only in a terminal
+with an active pane and calls the active terminal's `selectAll()`.
 
 Accelerators come from `settings.shortcuts` via `shortcutTable()`, rebuilt on every
 `settings:changed`, so a rebind in Settings takes effect without a relaunch. Before
@@ -122,7 +142,7 @@ screen, not on the header. `activePaneId` is cleared when the activated workspac
 layout. The backend applies the same rule in `workspace_set_active`, so the guard here is
 belt. `headerChain()` = `ancestorsOf` of the active screen (folder, then machine): the
 main-area `.ws-header` title reads `machine › folder › screen` and its dot takes the
-nearest ancestor colour; `allPaneAgentRows` labels every Queue row `header › screen`.
+nearest ancestor colour; `allPaneAgentRows` labels every Queue row `machine › screen` (root = last ancestor; folder tier omitted).
 `rootIdOf` is the `file()`-bound wrapper of `wsTree.rootIdOf`. `newScreen(w)` is the
 header `+` (§ Sessions as rows).
 
@@ -162,7 +182,7 @@ notes, settings, add-ons), and forwarded-port rows. Reads `Workspace`,
 **Headers + cards (Phase 91.E — the cmux look).** Every row is still one
 `.ws-item[data-ws-id]` (drag/drop hit-tests `closest("[data-ws-id]")`, and the context menu
 is shared), but there are two bodies. **Phase 92 made the split structural:** `isHeaderRow(w)`
-is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder, full stop; it
+is `isHeader(w)` from `wsTree.ts` — a root (the machine) or a pinned folder (`is_project_root || is_folder`), full stop; it
 holds rows and never panes, and it is never the active workspace. A header renders the
 pre-91.E row as a slim `.ws-header`: a chevron on EVERY header (it may hold zero screens
 right after a create), glyph, dim small-caps-weight name, worktree chip, the `+`, and a
@@ -345,13 +365,15 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   land under whichever refreshed first. The live-only filter hides mirrored (and grey) rows
   until they connect — that is its contract. A row's name is fixed at creation.
 
-## `PaneView.tsx` (2,194) — one terminal pane
+## `PaneView.tsx` (2,174) — one terminal pane
 
 Owns a `TerminalInstance` (see `frontend-lib.md`), the connect/disconnect UI, the
 session picker (tmux/zellij sessions, Claude sessions), pane title and annotation
 editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 `profileFor()` / `effectiveIdentity()` from `types.ts` decide what a pane can offer
-based on its effective connection.
+based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
+(`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
+the directory listing itself no longer lives in `PaneView`.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls
@@ -396,17 +418,27 @@ from the tmux session picker (with its confirm) and the sidebar's session rows. 
 the header's `onClose` to `closeTab` when `tabsMode()` (else `closePane`), so the header X
 and the tab's X land on the same neighbour.
 
-**`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
+**`paneAgentState.ts` (119)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
-disagree about what colour a pane is. Unit-tested in `paneAgentState.test.ts`. It only
+disagree about what colour a pane is. `failed` (StopFailure, API-error turn) is a fourth
+light, painted as a red square; `queueStatus` maps it to `stuck`. Unit-tested in `paneAgentState.test.ts`. It only
 decides how to *paint* a state; the transition table is owned by the backend
 (`PaneAgentState::apply_hook` in `lib.rs`, arriving as the `pane:agent-run` event) — see
-`backend-core.md`.
+`backend-core.md`. `agentAnnounceKey(prev, next)` is the one rule for what a screen
+reader hears: it returns the i18n key only when the SAME focused pane's light key
+changed — focus moves, first sight of a pane and unknown (null) lights stay silent.
+
+**Announcement region (App.tsx)** — exactly one `aria-live="polite"` `.sr-only` div in
+the `.app` root, so tool-call churn in background panes never speaks. An effect reads
+the `allPaneAgentRows()` row for `activePaneId()`, feeds `agentAnnounceKey`, then clears
+the text and sets `t(key)` on the next animation frame so a repeated phrase is re-read.
+`.sr-only` is clip/1px, not `display:none` (which would hide it from readers). Mount
+speaks nothing: the first snapshot has no previous.
 
 **`AgentLight.tsx` (45)** — paints it. Green = Claude is working, yellow = it finished and
-it is your move, red = it is blocked on you, **nothing at all = unknown**, which is the
+it is your move, red = it is blocked on you, a filled square (red, no pulse) = the turn died on an API error (`failed`), **nothing at all = unknown**, which is the
 honest answer for a plain shell pane, a disconnected pane, or state old enough to be
-untrustworthy. It uses **shape as well as hue** (disc / ring / triangle) so it survives
+untrustworthy. It uses **shape as well as hue** (disc / ring / triangle / square) so it survives
 greyscale, 8px, and red-green deficiency.
 
 **`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
@@ -431,6 +463,8 @@ and hydrated by `pane_briefs`.
 shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
+The OS window title uses a separate helper, `windowPaneName.ts` (`title → auto_title →
+described connection`, no workspace-name step; `App.tsx` falls back to `ws.name` on null).
 
 **`cwdShort.ts`** (Phase 91.E) — `shortenCwd(path, sshUser, maxLen = 34)` for the card's path
 line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an
@@ -439,18 +473,23 @@ Import-free on purpose so `cwdShort.test.ts` runs under plain `node --test`.
 
 **`wsTree.ts`** (Phase 92) — the header / screen rule and the tree walks, shared by the
 Sidebar and App and mirrored by `is_header` in lib.rs: `isHeader(w)` (`!parent_id ||
-is_project_root`), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
+is_project_root || is_folder` — stored, not derived), `ancestorsOf` (nearest first, hop-capped), `rootIdOf`, `childrenInOrder`
 (`sort_order` asc, null last, insertion order — the same sort as the Sidebar's `childrenOf`
 and lib.rs's `children_in_order`), `firstScreenOf` (skips a root's folder children — they
 are headers too), `screenOrSelf` (a screen is itself, a header hands over, an empty header
 is `null`). Takes a structural `TreeNode`, not `Workspace`, so `wsTree.test.ts` builds
 fixtures without the 20 other fields and runs under plain `node --test`.
 
-**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent (inline edit
-→ `workspace_set_intent`; Enter/blur save, plus an explicit Save button whose
-disabled state doubles as "saved ✓" — beta feedback: a field that saves
-invisibly reads as one that doesn't save at all; empty clears) + this
-workspace's brief rows (the Queue's row markup verbatim). Its `briefingWs` signal is **in
+**`BriefingCard.tsx` (BRIEF)** — the workspace-entry card: 🎯 intent + this
+workspace's brief rows. Since Phase 105 both pieces are separate components:
+**`IntentEditor.tsx`** (used ONLY here — the Context Rail dropped it to avoid a
+second 🎯; inline edit → App's `saveIntent` → `workspace_set_intent`;
+Enter/blur save, plus an explicit Save button whose disabled state doubles as
+"saved ✓" — beta feedback: a field that saves invisibly reads as one that
+doesn't save at all; empty clears; the draft follows external saves) and
+**`QueueRow.tsx`** (`QueueRowView` + `STATUS_EMOJI` + `relAge` — the Queue,
+the card and the Context Rail paint one row component; it is a focusable
+`role="button"`). Its `briefingWs` signal is **in
 `anyModalOpen()`** — the native Browser webview paints over it otherwise. Three
 triggers, all but the last opt-in via `settings.brief`: **return-after-absence**
 lives INSIDE `handleSetActive` and reads `last_active_at` off the pre-switch
@@ -462,6 +501,44 @@ second timer; it skips ticks while `document.hidden`), firing on the first input
 after the gap; **manual** =
 `show_briefing` (Ctrl+Alt+Q) + the palette, which work regardless of the
 toggles.
+
+**`ContextRail.tsx` (Phase 105)** + **`contextModel.ts`** — the always-docked
+context column; spec in `docs/CONTEXT.md`. It is the `.app` grid's **third
+column** (`grid-template-columns: <sidebar>px minmax(0,1fr) <rail>px`, the rail
+pinned with `grid-column: 3`), NOT a `SideDrawer`: no backdrop, nothing in
+`anyModalOpen()`, it never covers a pane, and in RTL the grid puts it on the
+left. App owns `railWidth` / `railCollapsed` (`loadRailPrefs` / `saveRailPrefs`,
+localStorage in try/catch — per-machine UI state per the invariant below),
+`toggleContextRail` (shortcut `toggle_context_rail` Ctrl+Shift+K + palette
+`contextRail.toggle`, one handler). The rail has NO intent editor (Yossi,
+2026-10-05: one 🎯 only — the session goal; the workspace intent stays on the
+Briefing card and in startup injection). **It shows only the focused pane** (Yossi, 2026-10-05 follow-up): App
+passes `paneId = activePaneId()` (the same signal keyboard/focus routing uses;
+null with no active workspace) and that pane's row from `allPaneAgentRows()`.
+The rail fetches `session_context_list` for the active workspace on workspace
+change and on `context:changed` for that workspace (a sequence number drops a
+stale response after a switch), then `sessionsForPane` picks the pane's
+sessions newest-first client-side — so a focus change costs no IPC. Body:
+ONE `SessionCard` — modeled on
+tzafrir/human-in-the-loop's task card (Phase 105 follow-up, Yossi-approved
+layout): 🎯 `cardGoal` (sticky brief `goal`, else the first prompt's first line
+clipped to 80) + *Done when* (`done_when`, omitted when absent); *Now* =
+`lastTurn().task` with the pane's `AgentLight` (or the turn's status icon) and
+the age of that turn; ➜ *Next*; ❓ *Waiting on you* (`waitingText`: ask · rec,
+only while the latest turn asked and the session is open); the last
+`LOG_PREVIEW` = 3 ✔ lines (`doneEntries`: deltas incl. degraded, dimmed, plus
+✅ closed) with clock time; then "▸ N more" (full ✔ list) · "▸ original
+prompt" (raw first prompt). Every one-liner goes through `oneLine` (~70
+chars + ellipsis, full text in `title`). Then "earlier sessions in this pane
+(N)" behind a toggle that resets on a pane change. Empty states are one-line hints
+(`context.noPane` / `context.noSession`); an agent pane with no session record
+still shows its live row. Per-session expand state is keyed by session id so a
+refetch doesn't collapse what the user opened. Collapsed = a plain 36 px
+strip. The resizer is the inline-start edge; the drag delta flips sign under
+RTL. `contextModel.ts` is pure (wire types mirrored by hand from
+`context_store.rs`, `oneLine` / `cardGoal` / `lastTurn` / `waitingText` /
+`doneEntries` / `doneCount`, icons, `sessionsForPane`, width clamp)
+and tested by `contextModel.test.ts`.
 
 ## Panel chrome — "one body, three surfaces"
 
@@ -538,3 +615,8 @@ four layers.
 You need a specific effect's dependency list, the exact props of a component, or the
 CSS class names. Test files (`*.test.ts`) are intentionally **not** covered by this
 vault file — a test edit should not trip the freshness gate.
+
+**Claude-running flag.** `connectPane` applies `tuiSignalOnConnect(mode, restoring, node.claude_running)` before
+`pane_connect` (restore + persisted true → signal on, so a reattach starts right). `syncClaudeRunning(paneId, on)`
+writes `pane_set_claude_running` only on a transition (`claudeRunningWrite`), called from `connectPane` (non-restoring)
+and the `feed:item-added` listener (`session-end` → false). A failed invoke is logged, never thrown.
