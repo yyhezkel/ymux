@@ -40,6 +40,8 @@ use ymux_core::http::get_with_retry;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Size keys (`msi_size`, `nsis_size`) are deliberately absent: the sha256
+/// check on install already rejects any altered download.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Manifest {
     pub version: String,
@@ -91,6 +93,20 @@ impl Manifest {
             _ => (None, None),
         }
     }
+
+    /// (url, sha256) of the dmg to install for `tag`; a missing url or sha is
+    /// a user-facing refusal (never install an unverified dmg).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS install arm only
+    pub(crate) fn dmg_for_install(&self, tag: &str) -> Result<(String, String), String> {
+        let (url, sha) = self.dmg_for_arch(tag);
+        let url = url.ok_or_else(|| {
+            format!("manifest has no dmg for {tag} — falling back to manual download")
+        })?;
+        let sha = sha.ok_or_else(|| {
+            format!("manifest has no dmg sha256 for {tag} — refusing to install unverified")
+        })?;
+        Ok((url, sha))
+    }
 }
 
 /// Rust `ARCH` const → dmg asset/manifest arch tag.
@@ -107,6 +123,8 @@ pub(crate) struct ManifestHook {
     pub version: String,
     #[serde(default)]
     pub url: Option<String>,
+    /// Parsed for forward-compat, read nowhere: no code compares it to
+    /// `APP_VERSION`. Enforcement would be a separate decision.
     #[serde(default)]
     pub min_ymux_version: Option<String>,
 }
@@ -647,13 +665,7 @@ async fn install_macos_update(
     let arch = std::env::consts::ARCH;
     let tag = mac_dmg_arch_tag(arch)
         .ok_or_else(|| format!("unsupported macOS architecture {arch}"))?;
-    let (dmg_url, dmg_sha) = manifest.dmg_for_arch(tag);
-    let dmg_url = dmg_url.ok_or_else(|| {
-        format!("manifest has no dmg for {tag} — falling back to manual download")
-    })?;
-    let dmg_sha = dmg_sha.ok_or_else(|| {
-        format!("manifest has no dmg sha256 for {tag} — refusing to install unverified")
-    })?;
+    let (dmg_url, dmg_sha) = manifest.dmg_for_install(tag)?;
     macos::install_dmg_and_relaunch(app, dmg_url, Some(dmg_sha), manifest.version).await
 }
 
@@ -952,6 +964,45 @@ mod version_manager_tests {
         assert_eq!(m.dmg_for_arch("x64"), (Some("u1".into()), Some("s1".into())));
         assert_eq!(m.dmg_for_arch("aarch64"), (Some("u2".into()), Some("s2".into())));
         assert_eq!(m.dmg_for_arch("x86"), (None, None));
+    }
+
+    // Pins dmg_for_install returns the url+sha pair of the requested arch.
+    #[test]
+    fn manifest_dmg_for_install_picks_arch_pair() {
+        let m: Manifest = serde_json::from_str(
+            r#"{"version": "0.5.0", "dmg_x64_url": "u1", "dmg_x64_sha256": "s1",
+                "dmg_aarch64_url": "u2", "dmg_aarch64_sha256": "s2"}"#,
+        )
+        .unwrap();
+        assert_eq!(m.dmg_for_install("x64"), Ok(("u1".to_string(), "s1".to_string())));
+        assert_eq!(m.dmg_for_install("aarch64"), Ok(("u2".to_string(), "s2".to_string())));
+    }
+
+    // Pins the exact refusal text per missing field; url is checked before sha.
+    #[test]
+    fn manifest_dmg_for_install_errors() {
+        let no_url: Manifest =
+            serde_json::from_str(r#"{"version": "0.5.0", "dmg_x64_sha256": "s1"}"#).unwrap();
+        assert_eq!(
+            no_url.dmg_for_install("x64"),
+            Err("manifest has no dmg for x64 — falling back to manual download".to_string())
+        );
+        let no_sha: Manifest =
+            serde_json::from_str(r#"{"version": "0.5.0", "dmg_aarch64_url": "u2"}"#).unwrap();
+        assert_eq!(
+            no_sha.dmg_for_install("aarch64"),
+            Err("manifest has no dmg sha256 for aarch64 — refusing to install unverified"
+                .to_string())
+        );
+        let none: Manifest = serde_json::from_str(r#"{"version": "0.5.0"}"#).unwrap();
+        assert_eq!(
+            none.dmg_for_install("x64"),
+            Err("manifest has no dmg for x64 — falling back to manual download".to_string())
+        );
+        assert_eq!(
+            none.dmg_for_install("x86"),
+            Err("manifest has no dmg for x86 — falling back to manual download".to_string())
+        );
     }
 
     #[test]
