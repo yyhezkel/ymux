@@ -20,6 +20,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod insights_store;
 mod ipc_meter;
 mod local_setup;
 mod local_wizard;
