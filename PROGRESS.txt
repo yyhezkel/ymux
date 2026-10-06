@@ -5748,7 +5748,6 @@ session (Yossi's call, scope was cleanup only):
 
 STATUS: documentation only, nothing to build. The 10 "NOT VERIFIED LIVE"
 entries are untouched — they need a real run, not a code reading.
-=======
 2026-08-23 — Phase 85 (+85.A/B/C/D): the vault + its CI freshness gate
 
 TASK
@@ -6352,9 +6351,7 @@ STATUS: this unblocks CI for every branch, not just this one - the gate runs
 before cargo test, tsc, the frontend build and the whole Go half, so nothing
 real has been checked on main since PR #18. Phase 84.F/G/H still have not
 compiled; that is what the next CI run is for.
-=======
 ================================================================================
-=======
 [2026-08-23 ~17:40] vault: re-sync after the four-PR merge train (#20/#21/#22/#23)
   Task: main's ci-windows was red — the vault gate fired on 7 pages. PR #20 landed
         the gate and stamped its lock on its own branch; #22 (Phase 84.C-E Monitor
@@ -6483,7 +6480,6 @@ three live checks, none of which CI can do:
         instead of silently winning.
   84.L  install a catalog font, remove it, confirm the picker flips back to
         the warning row and that the files and HKCU values are really gone.
-=======
 [2026-08-23] CLAUDE.md: added Absolute Rule #19 — before every push, sweep the full worktree-vs-origin/main diff and update docs/vault/ + re-stamp .vault-lock.json. Files: CLAUDE.md. Result: doc-only, no code touched.
 
 
@@ -6571,7 +6567,6 @@ that would work: an IDENTITY check (cite the symbol with the line, verify the
 symbol is on or near it) rather than a bounds check.
 
 Verdict: keep vault-check.mjs, do not adopt or fork the shell script.
-=======
 2026-08-23 | Phase 87: every keyboard shortcut is recordable, not typed
 Trigger: the voice (push-to-talk) hotkey in Settings -> AI was a FREE-TEXT box.
 The accelerator had to be typed by hand, and a typo produced a hotkey that
@@ -7883,8 +7878,11 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — rename-shim retirement (ticket ymux-crates-ymux-tunnel-src): emitted handshake tag flipped to YMUX-CHALLENGE (Rust + Go), WINMUX_* env dual-writes, CLI adopt_legacy_env/migrate_legacy_home_dir, legacy pipe listener, X-Winmux-Truncated and use_winmux_tmux_config alias dropped; read arms + folder migrations kept. CLAUDE.md rename section updated, FOLLOWUPS P1 archived, new P1 for server rebake + live smoke. Compiles untested until CI.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
+
+2026-10-06 — popout RTL profile (ticket ymux-app-src-components-popoutterminal-2): popoutProfile.ts key/parse helper; App.tsx writes ti.profile to localStorage before popout_pane and removes it on popout:closed; PopoutTerminal loads settings → setRtlProfiles before constructing TerminalInstance with the origin profile. Vault pages + lock restamped. Compiles untested until CI.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
 
+2026-10-06 — ymux-app-src-tauri-src-10: workspace delete now clears Browser state (per-workspace macOS data store + remove_data_store, tunnel cookie sweep, Windows collateral on shared profile); vault backend-panes/backend-core updated. Compiles untested until CI; NOT VERIFIED LIVE.
 [2026-10-06] session=ymux-app-src-tauri-src-6
 TASK: emit_data reorder decode -> osc observe -> bidi filter; apply_to_pane String->String
 FILES:
