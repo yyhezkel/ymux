@@ -1057,6 +1057,12 @@ body {
   clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
   animation: ymux-agent-light-pulse 1.6s ease-in-out infinite;
 }
+/* Failed: filled square — the turn died on an API error. No pulse:
+   nothing is pending, the user just needs to know it stopped. */
+.pane-agent-light[data-light="failed"] {
+  background: var(--w-error, #f7768e);
+  border-radius: 0;
+}
 @keyframes ymux-agent-light-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }

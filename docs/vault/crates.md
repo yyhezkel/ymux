@@ -51,8 +51,13 @@ The only crate `app` cannot function without. Three files:
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
   *list* because macOS caps `sun_path` at 104 bytes.
 
-**`log_writer.rs` (554)** — the queued writer behind the logger, and the reason
+**`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.
+Rotation is safe across two processes sharing a config dir: `rotate` closes its handle,
+takes `File::lock` on `debug.log.lock` around stat + rename only, and renames only if
+`debug.log` is still over the cap (fail-open unlocked if the lock can't be taken);
+`write_to_current` compares handle length to path length once per batch and reopens on a
+mismatch, so a process whose file another rotated aside stops appending to `debug.log.1`.
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
@@ -76,6 +81,11 @@ renamed by `tmux_rename_session`, elided when absent so old files round-trip byt
 the terminal glyph from, and the fallback that lets the row's first pane re-attach after a
 restart on a machine whose localStorage never saw it. `parent_id`'s comment now names three
 create paths, not two.
+
+**`Workspace.is_folder: bool`** marks a pinned folder, git or not, so it stays a header
+(`is_header` in lib.rs). Stored because a non-git folder has a `parent_id` but no
+`is_project_root`. Serde-default false and skipped when false; no schema bump — an older
+build that drops it is re-healed by `flag_pinned_folders` on the next load.
 
 **`Workspace.tabs_mode: bool`** is worth reading the comment on. It renders the
 workspace's panes as a tab strip instead of a split grid — and it is a **flag, not a
