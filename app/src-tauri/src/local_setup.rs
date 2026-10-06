@@ -2390,6 +2390,45 @@ mod tests {
         assert!(winget_already_ok(0x8A15_002Bu32 as i32));
         assert!(!winget_already_ok(1));
     }
+
+    #[test]
+    fn local_setup_input_without_wsl_username() {
+        // Pins serde defaults: only `steps` is required; breaking it
+        // would reject minimal wizard payloads.
+        let min: LocalSetupInput = serde_json::from_str(r#"{"steps":["InstallGit"]}"#).unwrap();
+        assert_eq!(min.steps, vec!["InstallGit".to_string()]);
+        assert!(min.distro.is_none());
+        assert!(min.workspace_name.is_none());
+        assert!(min.workspace_cwd.is_none());
+        assert!(!min.create_workspace);
+
+        let full: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c"}"#,
+        )
+        .unwrap();
+        assert_eq!(full.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(full.workspace_name.as_deref(), Some("w"));
+        assert_eq!(full.workspace_cwd.as_deref(), Some("/c"));
+        assert!(full.create_workspace);
+
+        // `steps` has no default: an empty object must fail.
+        assert!(serde_json::from_str::<LocalSetupInput>("{}").is_err());
+    }
+
+    #[test]
+    fn local_setup_input_ignores_legacy_wsl_username() {
+        // An old client may still send wsl_username; no deny_unknown_fields,
+        // so it must be ignored, not an error.
+        let input: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c","wsl_username":"bob"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.steps, vec!["InstallGit".to_string()]);
+        assert_eq!(input.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(input.workspace_name.as_deref(), Some("w"));
+        assert_eq!(input.workspace_cwd.as_deref(), Some("/c"));
+        assert!(input.create_workspace);
+    }
 }
 
 #[cfg(test)]
