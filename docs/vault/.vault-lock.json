@@ -222,7 +222,7 @@
     "app/src-tauri/server/internal/api/integration_test.go": "9032d1e0a60f4038afbc61a90d74c57e7d751b9c3afd323fcfe93e72fd951bea",
     "app/src-tauri/server/internal/api/mobile.go": "13ab97db09ff17042b902503d42f48ac315d63f25f6d9c02d371961d92c6579d",
     "app/src-tauri/server/internal/api/spec_test.go": "b6e0fc77ce7ebfdf4083e111a1485b072c9ae13a1070cb9a9735958708eb7ed6",
-    "app/src-tauri/server/internal/api/term_test.go": "2e26cc638742289923fc298b256b23e96c1c275bd3f2c3069d9e3c4cc9d7f5db",
+    "app/src-tauri/server/internal/api/term_test.go": "683017b0e6116b2fd4d573f366bf500d35bf30ebc8ab9cd1e18c042670202d07",
     "app/src-tauri/server/internal/auth/auth.go": "2ca80d6bff9677ae307f696bca963b76a47a3d6b75a4669afd2ceecf04ba8407",
     "app/src-tauri/server/internal/auth/scopes.go": "a1fe577a5ecb64d35c5cd35d20be3934eed45775ba13a62c08f76bfbed67e9c5",
     "app/src-tauri/server/internal/auth/scopes_test.go": "cc59378b1a512db95259b9af018ae9ab61de4faf0f0bd867090049efbdd063ed",
