@@ -12558,6 +12558,7 @@ pub fn run() {
                 rpc_server::run(state_clone, app_handle).await;
             });
             log_info("APP", &format!("setup: rpc server spawned on {}", rpc_server::pipe_name()));
+            insights_local::spawn_sampler((*state).clone());
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
