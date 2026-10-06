@@ -7887,3 +7887,14 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
 
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+
+[2026-10-06] session=ymux-app-src-tauri-src-6
+TASK: emit_data reorder decode -> osc observe -> bidi filter; apply_to_pane String->String
+FILES:
+  M app/src-tauri/src/lib.rs
+  M app/src-tauri/src/bidi_filter.rs
+  M docs/vault/backend-sessions.md
+  M docs/vault/backend-core.md
+  M docs/vault/.vault-lock.json
+RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
+NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
