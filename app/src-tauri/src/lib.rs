@@ -15626,3 +15626,114 @@ mod wsl_migration_tests {
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
     }
 }
+
+#[cfg(test)]
+mod two_instance_save_tests {
+    // Two "instances" are two independent `Mutex<Option<String>>` bases
+    // (each process owns one `LAST_KNOWN`) over ONE file in a tempdir.
+    // No YMUX_CONFIG_DIR: it is process-global and parallel tests would race.
+    use super::{write_workspaces_text, WORKSPACES_SCHEMA_VERSION};
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    fn doc(version: u32, workspaces: Value) -> String {
+        serde_json::to_string_pretty(&json!({
+            "version": version,
+            "active_workspace_id": null,
+            "workspaces": workspaces,
+        }))
+        .expect("json serializes")
+    }
+
+    fn ids(text: &str) -> Vec<String> {
+        let v: Value = serde_json::from_str(text).expect("file is json");
+        v["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn two_instances_sharing_one_file_keep_both_edits() {
+        // Pins the merge path through the real writer: if the second save
+        // flattened the first, instance A's workspace would vanish.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let (a, b) = (Mutex::new(None), Mutex::new(None));
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let shared = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        write_workspaces_text(&path, &shared, &a).expect("A first save");
+        // B starts from the same file, as if launched after A's save.
+        *b.lock().expect("lock") = Some(shared.clone());
+
+        let a_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-a", "name": "a" }]));
+        write_workspaces_text(&path, &a_ours, &a).expect("A save");
+        let b_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-b", "name": "b" }]));
+        let landed = write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let on_disk = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(on_disk, landed, "return value is what landed on disk");
+        let got = ids(&on_disk);
+        for want in ["shared", "from-a", "from-b"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
+        // The original P1: an older build rewrote the file without
+        // `parent_id`; our next save must put the nesting back.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let base = Mutex::new(None);
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let nested = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &nested, &base).expect("first save");
+
+        // Older build: lower schema version, nesting keys never written.
+        let older = doc(1, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app" },
+        ]));
+        std::fs::write(&path, older).expect("older build write");
+
+        let ours = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app-renamed", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &ours, &base).expect("downgrade is a warning, not a refusal");
+
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        let app = &after["workspaces"][1];
+        assert_eq!(app["parent_id"], "srv", "nesting stripped: {app}");
+        assert_eq!(app["is_project_root"], true);
+        assert_eq!(app["name"], "app-renamed", "our edit still applies");
+    }
+
+    #[test]
+    fn a_newer_schema_on_disk_refuses_the_write() {
+        // A newer build owns the file: Err, and not one byte of it changes
+        // (nor a tmp file left behind).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let newer = doc(WORKSPACES_SCHEMA_VERSION + 1, json!([{ "id": "x", "name": "x", "future_field": 1 }]));
+        std::fs::write(&path, &newer).expect("seed");
+        let base = Mutex::new(None);
+
+        let ours = doc(WORKSPACES_SCHEMA_VERSION, json!([{ "id": "x", "name": "ours" }]));
+        let err = write_workspaces_text(&path, &ours, &base).expect_err("must refuse");
+
+        assert!(err.contains("YMUX_CONFIG_DIR"), "remedy missing: {err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), newer, "file changed");
+        assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
+        let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
+        assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
+    }
+}
