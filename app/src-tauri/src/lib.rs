@@ -263,6 +263,9 @@ pub(crate) enum PaneAgentState {
     /// The agent is blocked on you — a permission prompt, an elicitation
     /// dialog, or it has gone idle waiting for a reply.
     NeedsInput,
+    /// The turn died on an API error (Claude Code `StopFailure`). Exits
+    /// via prompt/stop/notification/session-end like any other state.
+    Failed,
 }
 
 impl PaneAgentState {
@@ -272,6 +275,7 @@ impl PaneAgentState {
             PaneAgentState::Running => "running",
             PaneAgentState::Done => "done",
             PaneAgentState::NeedsInput => "needs-input",
+            PaneAgentState::Failed => "failed",
         }
     }
 }
@@ -365,6 +369,7 @@ impl AgentRunState {
         let next = match subkind {
             "user-prompt-submit" | "pre-tool-use" => PaneAgentState::Running,
             "stop" => PaneAgentState::Done,
+            "stop-failure" => PaneAgentState::Failed,
             "notification" => match notification_type {
                 Some(t) if NEEDS_INPUT_NOTIFICATIONS.contains(&t) => {
                     PaneAgentState::NeedsInput
@@ -508,6 +513,28 @@ mod agent_run_tests {
         }
         assert_eq!(r.state_since, first, "state_since must not move");
         assert_eq!(r.seq, 6, "but every applied hook still advances seq");
+    }
+
+    #[test]
+    fn a_stop_failure_turns_the_light_failed() {
+        // A turn that died on an API error must not read as a clean Done;
+        // breaking this puts the yellow "done" light back on failures.
+        let mut r = AgentRunState::default();
+        r.apply_hook("user-prompt-submit", None);
+        assert!(r.apply_hook("stop-failure", None));
+        assert_eq!(r.state, PaneAgentState::Failed);
+        assert_eq!(r.state.as_str(), "failed");
+        assert!(!r.apply_hook("stop-failure", None), "already Failed");
+    }
+
+    #[test]
+    fn a_prompt_after_a_failure_resumes_running() {
+        // Failed is not sticky: the next prompt must clear it, or a retried
+        // turn would keep showing red.
+        let mut r = AgentRunState::default();
+        r.apply_hook("stop-failure", None);
+        assert!(r.apply_hook("user-prompt-submit", None));
+        assert_eq!(r.state, PaneAgentState::Running);
     }
 
     #[test]
