@@ -132,6 +132,7 @@
     "app/src/backend/web/defaults.ts": "a29210d09db65da91cb88821c749bd76313053be1a56715df7654f7290e5464c",
     "app/src/backend/web/events.ts": "24fd82dea2b8aacf5df3d6905eaa0b42e689facb2d1abab284a440e8fbece511",
     "app/src/backend/web/files.ts": "48d1899e37405acc46ea4822cc68369ab588920bfeb2712e378095329ae5be6f",
+    "app/src/backend/web/fonts.ts": "4355efc1d31e5678f30d3a57f4c5c9168fbf83bdc1d1e322558951ef19a640fb",
     "app/src/backend/web/pty.ts": "c98232578d5dce5fef5b9c3310d36fa6fd59007b91c783c6622dc2b8b56fdfa0",
     "app/src/backend/web/pwa.ts": "5fa0437301cca2382f9e90ac1a55d23a7b11ead0d6919db704fe000fd5b572fc",
     "app/src/bidi.ts": "5b4085a91e52eba4197602919978224c2cee57424fa3133e2566283e7153ff1f",
