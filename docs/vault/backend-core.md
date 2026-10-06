@@ -2,6 +2,7 @@
 vault: backend-core
 covers:
   - app/src-tauri/src/lib.rs
+  - app/src-tauri/src/agent_runs_store.rs
   - app/src-tauri/src/ipc_meter.rs
   - app/src-tauri/src/pty_emit.rs
   - app/src-tauri/src/main.rs
@@ -101,8 +102,14 @@ put logic there.
   tests in the same file (and ported, with the same test names, to the daemon's
   `server/internal/agent/state.go` in Phase 99 — change both). Transitions reach the UI as the **`pane:agent-run`** event via
   `emit_agent_run_event`, which carries `(started, avg, state, since, seq)`; `seq` bumps
-  only on an applied transition, so a no-op skips the emit. In-memory and
-  session-scoped — never persisted. Its sibling store is
+  only on an applied transition, so a no-op skips the emit. Persisted
+  across restarts by `agent_runs_store.rs`: `<config>/agent-runs.json` (v1) is written on
+  `RunEvent::Exit` and restored in `setup` right after `load_from_disk()`, each run keeping
+  its state timestamp. Restore drops Unknown state, entries without a timestamp, entries
+  `>= STALE_AFTER` (6h, same cutoff as `STALE_AFTER_MS` in `paneAgentState.ts`) old, and
+  pane ids not in the loaded workspaces; a future stamp counts as age 0. Corrupt file or
+  unknown version → `log_warn` + empty. Unit tests live in that file; the first hook after
+  restore corrects any stale-but-kept state. Its sibling store is
   **`AppState.briefs`** (`HashMap<pane_id, PaneBriefEntry>` from `brief.rs`, covered in
   `backend-rpc.md`): per-pane agent briefs + last user prompt, same in-memory-only
   rationale, emitted as `pane:brief` via `emit_brief_event` and hydrated by the
@@ -140,7 +147,7 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:878](../../app/src-tauri/src/lib.rs)).
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:882](../../app/src-tauri/src/lib.rs)).
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
@@ -186,7 +193,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:8953](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:8957](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -205,7 +212,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2467](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2471](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke
