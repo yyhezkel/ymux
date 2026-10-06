@@ -1058,6 +1058,19 @@ function App() {
     terms.get(paneId)?.focus();
   };
 
+  // Active terminal pane → backend, so ticket pane-cwd picks its tmux session.
+  // Non-terminal focus (diff/files/browser) sends nothing: last terminal stays.
+  createEffect(() => {
+    const ws = activeWs();
+    const pid = activePaneId();
+    if (!ws?.layout || !pid) return;
+    const node = findPane(ws.layout, pid);
+    if (!node || paneKindOf(node) !== "terminal") return;
+    invoke<void>("pane_set_active", { workspaceId: ws.id, paneId: pid }).catch((e) =>
+      log.warn(`pane_set_active failed: ${e}`),
+    );
+  });
+
   // Phase 35 (#1.3): cycle focus through the active workspace's panes.
   const focusAdjacentPane = (delta: number) => {
     const ws = activeWs();

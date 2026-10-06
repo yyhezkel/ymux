@@ -68,6 +68,10 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
 
+A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
+(`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
+focus sends nothing. The backend uses it to pick the ticket pane-cwd tmux session.
+
 **`refreshPersistence()` is the one place the wheel proxy is armed (Phase 91.D).** Every
 refresh of `pane_persistence_list` fans out `ti.setTmuxScroll(!!m[pid])` over `terms`,
 so a pane the backend lists as holding a tmux/zellij session gets the Shift+Up/Down wheel
