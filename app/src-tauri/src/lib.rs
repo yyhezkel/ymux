@@ -2484,51 +2484,25 @@ fn emit_data(
     // of one character to the head of another.
     stream: &mut pty_decode::Utf8Stream,
     // Phase 35 (#1.2): OSC-notification side channel. The parser
-    // observes the RAW bytes (OSC sequences are ASCII, so this is
-    // independent of the utf8 reassembly below) and emits an
-    // `osc-notification` event per detected sequence. The byte stream
-    // forwarded to xterm.js is untouched.
+    // observes the DECODED text's bytes (OSC sequences are ASCII, so
+    // reassembly does not change them) and emits an `osc-notification`
+    // event per detected sequence. The text forwarded to xterm.js is
+    // untouched by it.
     pane_id: &str,
     osc: &mut osc_notify::OscNotifyParser,
     // Phase 52 (BiDi 33B): per-pane bidi filter map. When the pane's
-    // smart_bidi toggle is on, the chunk passes through `apply_to_pane`
-    // before being decoded as UTF-8 and emitted. When off, this is a
-    // memcpy (filter.enabled = false fast-path) and the bytes flow
-    // through unchanged.
+    // smart_bidi toggle is on, the DECODED text passes through
+    // `apply_to_pane` before being emitted, so the filter only ever sees
+    // whole characters. When off, the text moves through unchanged.
     bidi_filters: &bidi_filter::BidiFilterMap,
 ) {
-    for n in osc.feed(bytes) {
-        ipc_meter::record("emit:osc-notification");
-        let _ = app.emit(
-            "osc-notification",
-            serde_json::json!({
-                "pane_id": pane_id,
-                "title": n.title,
-                "body": n.body,
-                "kind": n.kind.as_str(),
-            }),
-        );
-    }
-
-    // Phase 52: optional bidi rewrite. Operates on raw bytes BEFORE
-    // UTF-8 reassembly so the filter's escape-sequence state machine
-    // sees ANSI/CSI/OSC/DCS verbatim. The filter is itself a no-op
-    // when smart_bidi is off for this pane.
-    //
-    // Note: unlike `stream` and `osc`, this state is keyed by pane and so
-    // is still SHARED across an SSH channel's stdout and stderr. Giving
-    // stderr its own entry would need a synthetic key, which would miss
-    // the per-pane smart_bidi toggle and silently leave stderr unfiltered
-    // — worse than the rare escape-splice it would prevent. Left shared
-    // deliberately; see FOLLOWUPS.
-    let filtered = bidi_filter::apply_to_pane(bidi_filters, pane_id, bytes);
-
-    // Incremental UTF-8 reassembly: an incomplete trailing character is
-    // carried to the next chunk (so Hebrew/emoji split across two reads
-    // survive), while bytes that can never become valid are replaced with
-    // U+FFFD and skipped. The skip is what keeps the pane alive — the old
-    // decoder stalled forever on a leading invalid byte.
-    let decoded = stream.push(&filtered);
+    // Incremental UTF-8 reassembly FIRST: an incomplete trailing character
+    // is carried to the next chunk (so Hebrew/emoji split across two reads
+    // survive the bidi filter instead of becoming U+FFFD), while bytes
+    // that can never become valid are replaced with U+FFFD and skipped.
+    // The skip is what keeps the pane alive — the old decoder stalled
+    // forever on a leading invalid byte.
+    let decoded = stream.push(bytes);
 
     if let Some(n) = decoded.first_invalid {
         // Rule #1: metadata only — counts and ids, never the bytes.
@@ -2545,12 +2519,38 @@ fn emit_data(
         );
     }
 
+    for n in osc.feed(decoded.text.as_bytes()) {
+        ipc_meter::record("emit:osc-notification");
+        let _ = app.emit(
+            "osc-notification",
+            serde_json::json!({
+                "pane_id": pane_id,
+                "title": n.title,
+                "body": n.body,
+                "kind": n.kind.as_str(),
+            }),
+        );
+    }
+
     if decoded.text.is_empty() {
         return;
     }
+
+    // Phase 52: optional bidi rewrite, on decoded text. The filter's
+    // escape-sequence state machine still sees ANSI/CSI/OSC/DCS verbatim
+    // (they are ASCII). It is a no-op when smart_bidi is off for this pane.
+    //
+    // Note: unlike `stream` and `osc`, this state is keyed by pane and so
+    // is still SHARED across an SSH channel's stdout and stderr. Giving
+    // stderr its own entry would need a synthetic key, which would miss
+    // the per-pane smart_bidi toggle and silently leave stderr unfiltered
+    // — worse than the rare escape-splice it would prevent. Left shared
+    // deliberately; see FOLLOWUPS.
+    let text = bidi_filter::apply_to_pane(bidi_filters, pane_id, decoded.text);
+
     // Batched: one flusher thread emits at most every 33 ms per session,
     // leading edge first (pty_emit.rs).
-    pty_emit::data(app, session_id, decoded.text);
+    pty_emit::data(app, session_id, text);
 }
 
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface

@@ -7887,3 +7887,14 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — ticket ymux-app-src-app-tsx-2 t05: documented persisted claude_running (vault: crates, backend-core, frontend-shell, frontend-lib; DECISIONS stale-true entry; FOLLOWUPS status); fixed 2 stale lib.rs cites in backend-core; vault re-stamped. Live smoke pending.
 
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+
+[2026-10-06] session=ymux-app-src-tauri-src-6
+TASK: emit_data reorder decode -> osc observe -> bidi filter; apply_to_pane String->String
+FILES:
+  M app/src-tauri/src/lib.rs
+  M app/src-tauri/src/bidi_filter.rs
+  M docs/vault/backend-sessions.md
+  M docs/vault/backend-core.md
+  M docs/vault/.vault-lock.json
+RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
+NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
