@@ -108,9 +108,9 @@ Gatekeeper blocks the first launch without it.
 
 In step 5, also fill the `dmg_x64_*` / `dmg_aarch64_*` manifest fields (url,
 sha256, size — same `gh release view` digest workflow). The desktop updater
-does not consume them yet (in-app update is Windows-only; the macOS banner
-links to the release page), but the manifest is the record a future macOS
-self-update will read.
+now consumes them on macOS: "Install" downloads the dmg for the running arch,
+verifies the sha256 and swaps the `.app` in place. A missing url falls back to
+the release page; a missing sha256 refuses the install.
 
 ## 4½. Bump hook specs (only when hooks changed)
 
