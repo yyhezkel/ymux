@@ -188,7 +188,7 @@ name the right paths.
 **`InsightsAnalytics.tsx` (623)** — the Analytics tab: what the server has *been* doing,
 as opposed to Metrics' what-it-is-doing-right-now. A thin view over the `/analytics`
 endpoint (`server-go.md`), which rolls up the three sampler tables the daemon was already
-writing and nobody read. Range picker is 1h / 6h / 24h / 7d. Three house rules it keeps on
+writing and nobody read. Range picker is 1h / 6h / 24h / 7d. Local workspaces get a real report from the local store (`insights_local.rs`); an empty store is just the "no data yet" state — there is no local marker or `unavailable` field on `AnReport`. Three house rules it keeps on
 purpose, and the same three apply to the Claude cost panel below:
 
 - **No polling.** This is an analysis screen. It loads when the tab opens and when Refresh

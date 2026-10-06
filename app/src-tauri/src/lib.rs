@@ -22,6 +22,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod insights_store;
 mod ipc_guard;
 mod ipc_meter;
 mod local_setup;
@@ -12917,6 +12918,7 @@ pub fn run() {
                 rpc_server::run(state_clone, app_handle).await;
             });
             log_info("APP", &format!("setup: rpc server spawned on {}", rpc_server::pipe_name()));
+            insights_local::spawn_sampler((*state).clone());
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
