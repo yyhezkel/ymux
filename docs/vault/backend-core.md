@@ -74,6 +74,9 @@ put logic there.
   also carries `diff_source` and (Phase 91.F) `diff_cwd` — which worktree a Diff pane is
   looking at, `None` = the workspace's own cwd. `diff_cwd` is view state, so it did **not**
   bump `WORKSPACES_SCHEMA_VERSION` (a bump makes an older build refuse to save).
+  `claude_running: Option<bool>` follows the same pattern; `pane_set_claude_running`
+  (clone of `pane_set_smart_bidi` minus the bidi-filter call) writes it via `persist()` and
+  emits `workspaces:changed`.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
@@ -186,7 +189,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:8953](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9018](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -205,7 +208,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2467](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2477](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke

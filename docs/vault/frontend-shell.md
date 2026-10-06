@@ -584,3 +584,8 @@ four layers.
 You need a specific effect's dependency list, the exact props of a component, or the
 CSS class names. Test files (`*.test.ts`) are intentionally **not** covered by this
 vault file — a test edit should not trip the freshness gate.
+
+**Claude-running flag.** `connectPane` applies `tuiSignalOnConnect(mode, restoring, node.claude_running)` before
+`pane_connect` (restore + persisted true → signal on, so a reattach starts right). `syncClaudeRunning(paneId, on)`
+writes `pane_set_claude_running` only on a transition (`claudeRunningWrite`), called from `connectPane` (non-restoring)
+and the `feed:item-added` listener (`session-end` → false). A failed invoke is logged, never thrown.

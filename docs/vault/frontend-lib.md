@@ -15,6 +15,7 @@ covers:
   - app/src/mouseRtl.ts
   - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
+  - app/src/claudeRunning.ts
   - app/src/logger.ts
   - app/src/shortcuts.ts
   - app/src/stt.ts
@@ -249,6 +250,10 @@ past installs), `fontInstall`, and `fontUninstall`.
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
   positions divided by `devicePixelRatio` (WebView2 reports physical pixels, wry's macOS
   backend reports logical points).
+- **`claudeRunning.ts` (26)** — pure decisions for the persisted `claude_running` flag:
+  `tuiSignalOnConnect(mode, restoring, persisted)` (claude→true; non-restoring→false; restoring
+  with persisted true→true; else null = untouched) and `claudeRunningWrite(persisted, on)`
+  (null when no transition). App.tsx owns the invokes.
 - **`sessionRestore.ts` (102)** — remembers which tmux session each SSH pane was attached
   to, so the next start re-attaches instead of showing [Connect]. **localStorage on
   purpose**: per-machine, high-churn session state, the same class as window rects and

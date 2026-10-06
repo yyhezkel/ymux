@@ -464,6 +464,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Claude-running flag persisted per pane (`claude_running`); stale-true accepted
+- **Context:** FOLLOWUPS P2 (reattach to a persistent session starts in the wrong bidi state until the first hook).
+- **Decision:** persist `LayoutNode::Pane.claude_running` in workspaces.json; a restoring connect seeds the TUI signal from it. Written only on transitions (connect, any Claude hook, `session-end`).
+- **Trade-off (stale-true):** Claude died while the app was closed → persisted true → shell Hebrew renders reversed after reattach. Corrected by a `session-end` hook or a fresh non-restoring connect. The title detector is gone (ticket -ts-4); do not re-add one.
+- **Limitation (O4):** when `claude_running` is never written because the ymux Claude hooks are not installed, nothing corrects it — hooks are not installed → no signal beyond the wizard's `mode=claude`.
+
 ### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
 - **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
 - **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.
