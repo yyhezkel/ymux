@@ -34,8 +34,9 @@ writes on its own, add it to that carry list.
 
 `HookType` is the canonical enum of Claude Code hook types, serialized in the settings
 file, and it is what `rpc_server`'s `hook_toast_enabled` / `hook_toast_should_sound`
-consult per hook. `list_system_fonts` reads the HKCU font hive — the same hive
-`fonts.rs` installs into, so a font install shows up in the picker immediately.
+consult per hook. `list_system_fonts` reads the HKLM then HKCU font hives in-process via
+`winreg` (no PowerShell; both unreadable → `None`, baseline assumed installed) — HKCU is the
+hive `fonts.rs` installs into, so a font install shows up in the picker immediately.
 
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.
@@ -54,7 +55,8 @@ incident.
 32 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
 Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 105's
-`toggle_context_rail` Ctrl+Shift+K), and per-field
+`toggle_context_rail` Ctrl+Shift+K; `find` is deprecated — nothing dispatches it, it stays
+for old files), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
 the single source of truth instead, so a `settings.json` written by an older build
