@@ -122,7 +122,7 @@
   },
   "frontend-lib": {
     "app/src/WebLogin.tsx": "9c7620b365643eee00e9637eef71f958e6c002b33b045c7116b8ad4f91a91d56",
-    "app/src/WebPushPrompt.tsx": "d257b0e534223a3d615885a1e557dae6722116aa552655bbdef5633fbce7f99c",
+    "app/src/WebPushPrompt.tsx": "c71a97d4c5318722e2874b28828d9845339eba3dd91483238f553d47c743eb00",
     "app/src/backend/index.ts": "ced20e3838f06ebcaec95204858df063bfb8da7ad0d0c5aa43f277c9a51e72ba",
     "app/src/backend/tauri.ts": "e173c89dc7daf27920b0aba3f37b9a1b347c544c10e230303bf309d9d37e57b9",
     "app/src/backend/types.ts": "a3b442aa8232c265a38f2d73ec8360620098a77fd51d379a075b82f87d2b8255",

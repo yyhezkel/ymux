@@ -20,6 +20,9 @@ function dismissedBefore(): boolean {
 export function WebPushPrompt() {
   const [dismissed, setDismissed] = createSignal(dismissedBefore());
   const [busy, setBusy] = createSignal(false);
+  // The click asked and the browser said no (or a browser-level setting
+  // refused without asking — Zen does): say so, instead of vanishing.
+  const [blocked, setBlocked] = createSignal(false);
   const dismiss = () => {
     setDismissed(true);
     try {
@@ -32,14 +35,23 @@ export function WebPushPrompt() {
     setBusy(true);
     const st = await enablePush();
     setBusy(false);
-    if (st === "on" || st === "denied") setDismissed(true);
+    if (st === "on") setDismissed(true);
+    else if (st === "denied" || st === "default") setBlocked(true);
   };
   return (
-    <Show when={!dismissed() && (pushState() === "default" || pushState() === "error")}>
+    <Show
+      when={!dismissed() && (blocked() || pushState() === "default" || pushState() === "error")}
+    >
       <div class="web-push-prompt" role="status">
-        <span>{pushState() === "error" ? t("web.push.error") : t("web.push.ask")}</span>
+        <span>
+          {blocked()
+            ? t("web.push.blocked")
+            : pushState() === "error"
+              ? t("web.push.error")
+              : t("web.push.ask")}
+        </span>
         <button class="primary" disabled={busy()} onClick={() => void enable()}>
-          {t("web.push.enable")}
+          {blocked() ? t("web.push.retry") : t("web.push.enable")}
         </button>
         <button disabled={busy()} onClick={dismiss}>
           {t("web.push.later")}

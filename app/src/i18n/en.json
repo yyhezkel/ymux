@@ -1409,5 +1409,7 @@
   "web.push.ask": "Get a notification when Claude needs you or finishes — even with this tab closed.",
   "web.push.enable": "Turn on",
   "web.push.later": "Not now",
-  "web.push.error": "Notifications could not be turned on for this browser."
+  "web.push.error": "Notifications could not be turned on for this browser.",
+  "web.push.blocked": "This browser did not allow notifications. Allow them for this site (the lock icon in the address bar → Notifications), then try again.",
+  "web.push.retry": "Try again"
 }

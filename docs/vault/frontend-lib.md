@@ -137,7 +137,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   so a daemon that lost its record heals on the next load. `enablePush` is the only call
   that asks for permission — from a click, in `WebPushPrompt.tsx` (a fixed banner
   index.tsx mounts beside `<App>` in a browser only; "Not now" is remembered per
-  browser) — then subscribes and asks the daemon for a test notification. A
+  browser; a click the browser refuses — or a browser-level setting refuses without
+  asking, as Zen does — turns the banner into "allow it in the site settings" + Try
+  again, instead of vanishing) — then subscribes and asks the daemon for a test notification. A
   `feed:item-resolved` closes that gate's notification. The worker has **no fetch
   handler and no cache** (a cached shell outlives a bundle update); it shows the push,
   takes it straight down when an app window is focused, answers Approve/Deny with
