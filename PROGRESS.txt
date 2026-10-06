@@ -7884,3 +7884,4 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — macOS in-app update (ticket ymux-app-src-tauri-src-19): updater/macos.rs dmg mount-swap-relaunch, per-arch dmg manifest/release parsing, install commands routed on macOS, VersionManager Install gate on dmg_url. Vault (backend-wizards, frontend-flows) + RELEASING §4¼ updated. Compiles untested until CI; NOT VERIFIED LIVE on a Mac.
