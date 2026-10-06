@@ -584,10 +584,22 @@
       "TermCreateRequest": {
         "additionalProperties": true,
         "properties": {
+          "cmd": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "cwd": {
             "type": "string"
           },
           "name": {
+            "type": "string"
+          },
+          "pane_id": {
             "type": "string"
           },
           "policy": {

@@ -538,8 +538,10 @@ export interface components {
             session_id: string;
         };
         TermCreateRequest: {
+            cmd?: string[] | null;
             cwd?: string;
             name?: string;
+            pane_id?: string;
             policy?: string;
             workspace_id?: string;
         } & {

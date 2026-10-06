@@ -186,8 +186,10 @@ data class SessionCreated(
 
 @Serializable
 data class TermCreateRequest(
+    val cmd: List<String>? = null,
     val cwd: String? = null,
     val name: String? = null,
+    @SerialName("pane_id") val paneId: String? = null,
     val policy: String? = null,
     @SerialName("workspace_id") val workspaceId: String? = null
 )
