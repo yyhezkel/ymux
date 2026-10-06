@@ -5308,7 +5308,6 @@ DECISIONS THAT MATTER, and why:
 Status: 28 frontend tests + 9 Go tests + 4 Rust tests, all written; the
 frontend ones run and pass here. NOT VERIFIED LIVE (Rule 14).
 2026-08-23 | Phase 82.E | macOS: site JS dead in the in-app Browser - DIAGNOSTIC
-================================================================================
 Symptom (Yossi): on macOS the workspace Browser renders a page but the site's
 own JavaScript does not run. Windows is fine. No logs, no Web Inspector, and
 Rule #17 means no local mac build - so the diagnosis had to ship in the binary.
@@ -6146,7 +6145,6 @@ step. Rule #14 still applies after that: the live check is titling a pane
 `work; calc` on Windows, confirming no calc, and confirming Kill session still
 finds the session.
 
-================================================================================
 2026-08-23 | Phase 84.G - workspaces.json schema gate (the P1's option (b))
 Files: app/src-tauri/src/lib.rs, FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md, BACKLOG.md
 Closes FOLLOWUPS P1 of 2026-08-18 ("TWO WINMUX BUILDS SHARE %APPDATA%...")
@@ -6207,7 +6205,6 @@ STATUS: per Rule #17 nothing was built or tested here; CI is the verification
 step. Live check after that: run two builds against one config dir and confirm
 the older one now says REFUSING instead of silently winning.
 
-================================================================================
 2026-08-23 | Phase 84.H - fonts: the install finally has an uninstall
 Files: app/src-tauri/src/fonts.rs, app/src-tauri/src/lib.rs (command reg),
        app/src/settings.ts, app/src/SettingsModal.tsx, app/src/App.css,
@@ -6270,7 +6267,6 @@ network timeout, so the branch is unpushed and NOTHING here has compiled.
 Rule #14 after that: install a font, remove it, confirm the picker flips back
 to the warning row and that the files and HKCU values are really gone.
 
-================================================================================
 2026-08-23 | CI: main is red, and the three fixes above are UNCOMPILED
 Files: FOLLOWUPS.md (new P0)
 
@@ -6299,7 +6295,6 @@ CONSEQUENCE, STATED PLAINLY: Phase 84.F, 84.G and 84.H have NOT compiled.
 Not "compiles, untested" - not compiled at all. Rule #17 makes CI the
 verification step and CI is unavailable. Filed as P0.
 
-================================================================================
 2026-08-23 | The vault gate: fixed the prose, then re-stamped. main unblocked.
 Files: docs/vault/{server-go,backend-claude,backend-core,backend-panes,
        build-glue,frontend-flows,frontend-lib,frontend-panes,frontend-shell}.md
@@ -6351,7 +6346,6 @@ STATUS: this unblocks CI for every branch, not just this one - the gate runs
 before cargo test, tsc, the frontend build and the whole Go half, so nothing
 real has been checked on main since PR #18. Phase 84.F/G/H still have not
 compiled; that is what the next CI run is for.
-================================================================================
 [2026-08-23 ~17:40] vault: re-sync after the four-PR merge train (#20/#21/#22/#23)
   Task: main's ci-windows was red — the vault gate fired on 7 pages. PR #20 landed
         the gate and stamped its lock on its own branch; #22 (Phase 84.C-E Monitor
@@ -6486,7 +6480,6 @@ three live checks, none of which CI can do:
 
 
 
-================================================================================
 2026-08-23 | Second vault collision: another session fixed the same nine vaults
 Files: docs/vault/*.md, docs/vault/.vault-lock.json, PROGRESS.txt
 
@@ -6527,7 +6520,6 @@ Both halves of the gate verified locally after resolution: hash check clean,
 and `--diff-base origin/main` reports every touched-and-covered file has an
 updated vault entry. Coverage 96%, 226 files.
 
-================================================================================
 2026-08-23 | Evaluated a candidate vault-check.sh; kept ours, fixed 4 stale cites
 Files: docs/vault/backend-core.md, docs/vault/.vault-lock.json, FOLLOWUPS.md
 
@@ -6775,7 +6767,6 @@ not in any vault's covers list.
 
 
 
-================================================================================
 2026-08-23 | Fourth merge of origin/main; the same P0 had now been filed 3x
 Files: PROGRESS.txt, FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md
 
@@ -7131,9 +7122,7 @@ paragraph), .vault-lock.json re-stamped. Vault: green.
 Status: NOT VERIFIED LIVE (Rule #14). CI = compiles. Real proof: Yossi repros
 the voice failure, then greps debug.log for [STT] / "stt failed".
 
-================================================================================
 2026-08-28 — manifest.json: stale winmux URLs + a dead field name
-================================================================================
 Found while checking whether a build off main was safe to cut. Two real bugs,
 both survivors of the winmux -> YMUX rename; the third thing I first suspected
 turned out to be already fixed.
@@ -7223,9 +7212,7 @@ Standing observation: main took three merges in the time this branch was open.
 Nothing about the vault causes that — but the vault is the part that goes stale
 when it happens, and each merge cost either a real update (twice) or a real
 check (once). The sooner #20 lands, the fewer of these.
-================================================================================
 2026-08-23 — Fork scan (research, no code adopted)
-================================================================================
 Task: Yossi asked whether anyone who forked the repo added something worth
 adopting.
 
@@ -7259,9 +7246,7 @@ PROGRESS.txt (this).
 Result: research only. NO fork code merged, no build run. The four fork remotes
 were removed from the working copy afterwards.
 
-================================================================================
 2026-09-01 — Repo cleanup: merged the 4 stray docs commits, pruned worktrees + branches
-================================================================================
 Task: "נטפל וננקה את כל הבלאגן" — everything unmerged was bookkeeping-only.
 Merged into main (append-only conflict resolution in PROGRESS/FOLLOWUPS/DECISIONS,
 kept both sides everywhere):
@@ -7277,7 +7262,6 @@ deleted local branches with gone upstreams / ahead=0, and deleted the
 now-merged remote branches. Vault: green — diff vs main is PROGRESS/FOLLOWUPS/
 DECISIONS only, no covered source touched.
 
-================================================================================
 2026-09-01 — fix(local-setup): InstallClaudeCode file-lock failure on Windows
 Task: a user's wizard failed at InstallClaudeCode with "The process cannot
 access the file '...\.claude\downloads\claude-2.1.251-win32-x64.exe' because
@@ -7301,9 +7285,7 @@ Published: gh release v0.5.0 (MSI a458ad0a…, NSIS 894eb859…), release notes
 carry the winmux→ymux install-order block. manifest.json flipped to 0.5.0
 (this commit) — the step that actually notifies existing installs.
 
-================================================================================
 2026-09-01 — v0.5.0: macOS dmgs attached; manifest gains mac fields
-================================================================================
 Yossi corrected the record: the office Mac runs the app live (tests included),
 so the "hardened runtime never launched" P1 is closed on his testimony — moved
 to FOLLOWUPS-ARCHIVE. Attached to the v0.5.0 release: ymux_0.5.0_x64.dmg
@@ -7882,6 +7864,7 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — shortcuts placebo rows (ticket ymux-app-src-shortcuts-ts): select_all wired to terminal selectAll in App.tsx; find deprecated + hidden (DEPRECATED_SHORTCUT_IDS), Rust field kept; 4 vault pages updated, lock restamped; FOLLOWUPS PLACEBO UI entry archived. Compiles untested until CI.
 2026-10-06 — capabilities hardening (ticket ymux-app-src-tauri-capabilities): ipc_guard.rs label-based guard outermost in invoke_handler denies all app commands to workspace-browser-* webviews (no app ACL manifest => capabilities never gated app commands); WEBVIEW_LABEL_PREFIX shared; ipc_guard_tests; vault backend-core/backend-panes + lock; FOLLOWUPS capabilities/default.json LATENT entry archived; DECISIONS entry. Compiles untested until CI.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-insightsclaudecost-tsx: audited Claude Cost panel. Remote scan 1d 0.88s / 30d 0.55s (no timeout) but 30d hits the 2000-file cap (undercount, P1). Go vs Rust parity: 9 divergences filed. 24h cross-check endpoint 11539 vs /usage 6427 requests. Pricing re-checked, Opus 5.5 / Sonnet 5.5 rows added (9d24274). Archived the "never been run" FOLLOWUPS entry; re-filed live local-vs-remote run + stale daemon. Docs only, NOT VERIFIED LIVE in the panel.
 2026-10-06 — ymux-app-src-terminalinstance-ts: right-click Copy falls back to last OSC 52 write (termMenuCopy.ts + capture-phase contextmenu in terminalInstance.ts); vault frontend-lib, ZELLIJ.md, FOLLOWUPS updated. Compiles untested until CI; NOT VERIFIED LIVE.
 2026-10-06 — ymux-app-src-tauri-src-9: local Insights SQLite store + sampler + local /analytics (rusqlite bundled); vault backend-claude/backend-core updated and re-stamped. Cargo.lock refresh pending CI. Compiles untested until CI.
 2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
@@ -7924,13 +7907,17 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 2026-10-06 — ymux-app-src-tauri-src-20: Rule #4 sweep of lib.rs, 164 non-test lock().unwrap() → map_err?/ok()?/lock_or_recover; new lock_or_recover_tests; vault backend-core.md + lock updated; FOLLOWUPS P3 closed to archive. Compiles untested until CI.
 2026-10-06 — ymux-app-src-tauri-src-29 t02: tickets.rs tmux_session_for_workspace prefers active pane session, deterministic otherwise (pick_tmux_session + 5 tests); vault backend-panes.md + lock restamped; FOLLOWUPS P3 archived. Compiles untested until CI (Rule 17).
 2026-10-06 — ymux-app-src-browserdevmode-ts: Dev Mode snapshot reports shot_error reason, TicketModal notice, headless-Chrome harness (4 PASS); vault frontend-panes.md updated, lock restamped; FOLLOWUPS P2 (transparent png) archived. Compiles untested until CI; not verified live.
+2026-10-06T10:39:31Z ymux-ymux-none-p2-medium: appended secret_env_persist_tests (5 tests) to app/src-tauri/src/lib.rs; backend-core.md line; vault lock re-stamped. Untested locally (Rule #17), CI only.
 
 2026-10-06 — ymux-app-src-tauri-src-28 (close-wsl-followup-obsolete): moved FOLLOWUPS P3 `is_local_workspace` WSL-routing entry to FOLLOWUPS-ARCHIVE.md as closed-obsolete (WSL removed; migrate_wsl_workspaces rewrites Wsl→Local on load). Docs-only, no source touched. Not verified live.
 2026-10-06 — ymux-app-src-tauri-src-22: closed FOLLOWUPS P2 (WSL elevation English-substring detection) as fixed by 65d6fdc; WSL install unreachable since 2026-08-19. Docs-only, no source touched. NOT VERIFIED LIVE.
 2026-10-06 — ymux-ymux-staff-redact-mut (audit-redact-and-close-followup): verified secret_env.rs:181/188 slice-based redact + callers rpc_server.rs:652,695,769; moved FOLLOWUPS Staff redact(&mut WorkspacesFile) entry to FOLLOWUPS-ARCHIVE.md as closed. Docs-only, no source touched.
+2026-10-06 — ymux-app-src-insightsclaudecost-tsx (close-pricing-followup): moved FOLLOWUPS P2 PRICE TABLE OPEN ITEMS entry to FOLLOWUPS-ARCHIVE.md as closed (fix(frontend): match Claude price table to published page; proof.md PRICING mismatches_open=0). Docs-only, no source touched.
 2026-10-06 — ymux-app-src-tauri-tauri-2 (archive-followup-entry): moved FOLLOWUPS tauri.macos.conf.json P3 entry to FOLLOWUPS-ARCHIVE.md as closed (config + CI in place 048f1b2; NOT verified live; Developer ID declined). Docs-only.
 2026-10-05 — Phase C planned (WEB-DESIGN §8.2; DECISIONS: C1–C3 in one desktop release, browser settings on the daemon, Q2 = (b) add-on). Phase 106 (C1), branch yos/c1-backend-seam: app/src/backend/{types,tauri,index}.ts — Backend { call, on, emit }, TauriBackend = invoke/listen/emit pass-through, singleton picked at module load. One-off codemod rewrote 311 sites in 40 files (invoke→backend.call, listen→backend.on, emit→backend.emit; generics kept, Rule #5). Guard: src/backendSeam.test.ts fails on any @tauri-apps/api/core|event import outside src/backend/. Vault: frontend-lib (new seam section + covers), frontend-shell/flows/panes prose. Compiles untested until CI; live check = the C1–C3 release smoke (FOLLOWUPS P1).
 
 2026-10-05 — Phase C plan amended: C2 (TermStream) dropped — the WebBackend will answer pty_write/pty_resize and emit pty:data/pty:exit itself over the attach WS, so the desktop PTY path is not touched. Release before WebBackend = C1 + C3. WEB-DESIGN §5/§8/§8.2 + DECISIONS updated.
 
 2026-10-06 — Integrating the Phase 106–113 stack with main (5b55133d: worktrees, local insights, secret-env, Context Rail, term huma ops…): C1 took main's App/PaneView/terminalInstance and re-ran the codemod; pane_id/cmd ported onto the new huma create op; new binding fields is_folder / claude_running added to the web code; docs unioned, a drifted vault citation fixed. Then found main itself red (go test + Rust compile errors from the automated pipeline that pushes to main without CI) — FOLLOWUPS P0. Yossi: wait for the pipeline to finish, then integrate once and dispatch the desktop test build.
+
+2026-10-06 — main fixed (PR #73, yos/fix-main-red), after the automated pipeline left it red: E0255/E0597/E0063, term-create/rename pointer bodies (huma ignores required:"false" on non-pointer), secret_env_persist_tests off AppState::default (persist_parts), migrate_loaded converges in one pass, ymux-tunnel env-file line count, openapi TermSession.required order, ci-check prints the diff. Blobs rebaked. ci-windows + build-macos green (runs 37512699271, 37512699129). FOLLOWUPS P0 archived.
