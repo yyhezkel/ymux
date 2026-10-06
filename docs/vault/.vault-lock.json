@@ -99,7 +99,7 @@
     "app/src/ConnectExistingFlow.tsx": "bb821445a7ad661fcb74faeaa280b24a7bb716490bdc574ef221557372f4fda4",
     "app/src/CreateWorkspaceModal.tsx": "23e7e97c10367c0a95d5c1301f3f09cd3df7032eccbd892bba2410d59d1fbf4d",
     "app/src/DirPicker.tsx": "7e21eaff27eb606f446e74d88b2919e5482a9efd74a066285556d04f802acbaa",
-    "app/src/LocalSetupFlow.tsx": "2dc1272555007b214dad6d690c3ccb2d13f06368c23e2c19e0315b52dd105d27",
+    "app/src/LocalSetupFlow.tsx": "660c57288c68681af0b37e52556dea4ef10cba884f3edbb44723c61a09784463",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
     "app/src/ProjectFolderModal.tsx": "017a431e50b533ba339c627ba130fdc1e17566e4232acc00c35f97664479f36c",
     "app/src/ProvisionNewServerFlow.tsx": "54ec1b424c9eaf05c586840e2a4345eb9f7d696ffc19dab09d72733e4ad98c5f",
