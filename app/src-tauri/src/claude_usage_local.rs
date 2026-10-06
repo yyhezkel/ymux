@@ -107,7 +107,6 @@ pub struct ClaudeUsageReport {
 /// Hourly buckets, always. The desktop rolls them up into LOCAL days itself,
 /// which is the only way a day boundary lands where the reader expects it.
 const SERIES_STEP: i64 = 3600;
-const MAX_FILES: u32 = 2000;
 const ROW_LIMIT: usize = 20;
 
 fn projects_dir() -> Option<PathBuf> {
@@ -208,10 +207,6 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
         for f in files.flatten() {
             let path = f.path();
             if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            if rep.scanned_files >= MAX_FILES {
-                rep.skipped_files += 1;
                 continue;
             }
             // The mtime prune: a transcript's mtime is its LAST append, so a
@@ -545,5 +540,40 @@ mod tests {
         let until = v["until"].as_i64().unwrap_or(0);
         assert!(since < until, "empty window {since}..{until}");
         assert!(until - since <= 365 * 86400);
+    }
+
+    // Past the old 2000-file cap every in-window file must still be scanned.
+    #[test]
+    fn scan_has_no_file_cap() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nocap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..2001 {
+            write_transcript(&tmp, "p", &format!("s{i}"), &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
+        }
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!(rep.scanned_files, 2001);
+        assert_eq!(rep.totals.calls, 2001);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // mtime-pruned files still land in skipped_files once the cap is gone.
+    #[test]
+    fn scan_counts_every_file_in_window() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-every-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..2001 {
+            let p = write_transcript(&tmp, "p", &format!("s{i}"), &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
+            if i % 2 == 1 {
+                let old = std::time::SystemTime::now() - std::time::Duration::from_secs(72 * 3600);
+                File::options().write(true).open(&p).expect("open").set_modified(old).expect("mtime");
+            }
+        }
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!(rep.scanned_files, 1001);
+        assert_eq!(rep.skipped_files, 1000);
+        assert_eq!(rep.totals.calls, 1001);
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

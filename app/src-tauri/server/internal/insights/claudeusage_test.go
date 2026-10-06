@@ -305,3 +305,47 @@ func TestHandleClaudeUsageClamps(t *testing.T) {
 		}
 	}
 }
+
+// More than the old 2000-file cap: every in-window file must be scanned, or a
+// heavy user's totals silently shrink. Breaking this means the cap is back.
+func TestScanHasNoFileCap(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	const n = 2001
+	for i := 0; i < n; i++ {
+		writeTranscript(t, root, "proj", fmt.Sprintf("s%d", i), []string{
+			assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard"),
+		}, now)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != n || rep.Totals.Calls != n {
+		t.Fatalf("scanned=%d calls=%d, want %d/%d", rep.ScannedFiles, rep.Totals.Calls, n, n)
+	}
+}
+
+// Pruned files stay in skipped_files even past 2000 files; only the cap went.
+func TestScanCountsEveryFileInWindow(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	old := now.Add(-72 * time.Hour)
+	const n = 2001
+	for i := 0; i < n; i++ {
+		mt := now
+		if i%2 == 1 {
+			mt = old
+		}
+		writeTranscript(t, root, "proj", fmt.Sprintf("s%d", i), []string{
+			assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard"),
+		}, mt)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != 1001 || rep.SkippedFiles != 1000 || rep.Totals.Calls != 1001 {
+		t.Fatalf("scanned=%d skipped=%d calls=%d", rep.ScannedFiles, rep.SkippedFiles, rep.Totals.Calls)
+	}
+}

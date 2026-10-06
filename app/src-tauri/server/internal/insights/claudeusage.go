@@ -42,7 +42,6 @@ import (
 var usageMarker = []byte(`"usage"`)
 
 const (
-	claudeMaxFiles    = 2000
 	claudeMaxLineSize = 8 * 1024 * 1024 // one assistant line with a big tool result
 	claudeSeriesStep  = 3600            // hourly buckets, always — see below
 )
@@ -245,7 +244,6 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 	byModel := newAgg()
 	byProject := newAgg()
 	bySession := newAgg()
-	seen := 0
 
 	for _, dir := range entries {
 		if !dir.IsDir() {
@@ -259,10 +257,6 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
-			if seen >= claudeMaxFiles {
-				rep.SkippedFiles++
-				continue
-			}
 			info, err := f.Info()
 			if err != nil {
 				rep.SkippedFiles++
@@ -273,7 +267,6 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 				rep.SkippedFiles++
 				continue
 			}
-			seen++
 			rep.ScannedFiles++
 			path := filepath.Join(root, dir.Name(), f.Name())
 			scanClaudeFile(path, since, until, rep, buckets, byModel, byProject, bySession)
