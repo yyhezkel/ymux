@@ -166,7 +166,7 @@
     "app/src/browserDevMode.ts": "9304deba9ae698af8de14418c123f17ec09f0e75eb08d59d68d71ffb11c01a8d",
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
-    "app/src/components/PopoutTerminal.tsx": "63cf231f238a1af22438638c1ab225f1d78829412d301a808af6a2959b9589a2",
+    "app/src/components/PopoutTerminal.tsx": "a36a42a26560f5a523dd4659cf990ff54b10c8c673ba4d42217941f266d9bc25",
     "app/src/diffModel.ts": "7c06189aaf325fba90aca553ebb2b6d9b0dfc66c905d4776346a2f03b5970516",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
@@ -174,7 +174,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "9324ec8ce2091eb9a542b2663c98b1ee567ad5422b4aaa451a4ec26ebbd423d2",
-    "app/src/App.tsx": "cbecb9cb883b8d29e230db2d567dcbbde001dd7175a84b2f44e54917b86d8392",
+    "app/src/App.tsx": "42ab62bc07fa9b9f5702d245af915310fb93455a8ba66e5254ded443485bfb61",
     "app/src/BriefingCard.tsx": "74ddaa2fe32a3d7904eb3db62ecf77184ca4f4871d4d6d28168241d376f8523a",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/ContextRail.tsx": "8f9b73396f3b00236a5edd5f36599ea18b04b4b654adfa5c832ed246821b5a79",

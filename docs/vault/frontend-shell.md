@@ -51,9 +51,11 @@ workspace/settings bootstrap runs in those windows:
 The browser prefix deliberately does NOT start with `popout-`, so the two checks cannot
 collide — and neither can their capability globs, which are prefix-anchored too. The
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
-them rendered unstyled, which read as a blank white window.
+them rendered unstyled, which read as a blank white window. `popOutPane` also seeds
+`localStorage["ymux.popout.pane.<sid>"]=paneId` before `popout_pane`, since the popout
+window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy.
 
-## `App.tsx` (5,566) — one component, ~50 signals
+## `App.tsx` (5,808) — one component, ~50 signals
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
