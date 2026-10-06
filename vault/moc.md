@@ -17,3 +17,7 @@
 ## Notes
 - [phase92-headers-screens](phase92-headers-screens.md) — Phase 92 header/screen symbols, RPC select, delete landing: file:line anchors
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
+
+## Test facts
+- `npm test` = `node --experimental-strip-types --test "src/*.test.ts"` (`app/package.json:16`) → needs node ≥22.6; pipeline host node v20.20.2 rejects the flag → frontend unit tests prove on CI only; outcome checks = grep-structural
+- Pure-module pattern: zero-import `app/src/<x>.ts` + `<x>.test.ts` (e.g. `termMenuCopy.ts`); new module must be added to a `docs/vault/*.md` `covers:` list
