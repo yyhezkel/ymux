@@ -83,7 +83,7 @@ function parseFrontmatter(text, relPath) {
   for (const raw of body.split('\n')) {
     const line = raw.replace(/\r$/, '')
     if (!line.trim() || line.trim().startsWith('#')) continue
-    const item = line.match(/^\s+-\s+(.+?)\s*$/)
+    const item = line.match(/^\s+-\s+(.+?)\s*(?:\s#.*)?$/) // trailing '# reason' allowed
     if (item) {
       if (!listKey) throw new Error(`${relPath}: list item outside 'covers:'/'unowned:' — ${line.trim()}`)
       out[listKey].push(item[1].replace(/^["']|["']$/g, ''))
