@@ -67,6 +67,17 @@ fn detach(mnt: &Path) {
 /// Copy the single .app in `mnt` next to `bundle` and swap it in.
 /// On failure of the second rename the old bundle is put back.
 fn swap_from_mount(mnt: &Path, bundle: &Path, parent: &Path) -> Result<(), String> {
+    swap_with(mnt, bundle, parent, |s, d| run(DITTO, &[s, d]), |a, b| std::fs::rename(a, b))
+}
+
+/// `swap_from_mount` with the copy and rename steps injected (test seam).
+fn swap_with(
+    mnt: &Path,
+    bundle: &Path,
+    parent: &Path,
+    copy: impl Fn(&Path, &Path) -> Result<(), String>,
+    rename: impl Fn(&Path, &Path) -> std::io::Result<()>,
+) -> Result<(), String> {
     let mut apps = std::fs::read_dir(mnt)
         .map_err(|e| format!("read {}: {e}", mnt.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -81,10 +92,10 @@ fn swap_from_mount(mnt: &Path, bundle: &Path, parent: &Path) -> Result<(), Strin
     remove_any(&staging);
     remove_any(&old);
 
-    run(DITTO, &[&src, &staging])?;
-    std::fs::rename(bundle, &old).map_err(|e| format!("swap failed: {e}"))?;
-    if let Err(e) = std::fs::rename(&staging, bundle) {
-        let restored = std::fs::rename(&old, bundle);
+    copy(&src, &staging)?;
+    rename(bundle, &old).map_err(|e| format!("swap failed: {e}"))?;
+    if let Err(e) = rename(&staging, bundle) {
+        let restored = rename(&old, bundle);
         remove_any(&staging);
         return Err(match restored {
             Ok(()) => format!("swap failed: {e}"),
@@ -212,5 +223,125 @@ mod tests {
         // dev builds must get the "not running from an .app bundle" error, not a wrong swap
         assert_eq!(bundle_root_of(Path::new("/usr/local/bin/ymux")), None);
         assert_eq!(bundle_root_of(Path::new("")), None);
+    }
+
+    use std::cell::Cell;
+    use std::fs;
+    use std::io;
+
+    /// Fake ditto: recursive-free copy of a dir's single file.
+    fn fake_copy(s: &Path, d: &Path) -> Result<(), String> {
+        fs::create_dir_all(d).map_err(|e| e.to_string())?;
+        fs::copy(s.join("id"), d.join("id")).map(|_| ()).map_err(|e| e.to_string())
+    }
+
+    /// mnt with `n` .app dirs, parent holding a bundle tagged "old".
+    fn fixture(n: usize) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
+        let t = tempfile::tempdir().expect("tempdir");
+        let mnt = t.path().join("mnt");
+        let parent = t.path().join("parent");
+        let bundle = parent.join("YMUX.app");
+        fs::create_dir_all(&mnt).expect("mnt");
+        fs::create_dir_all(&bundle).expect("bundle");
+        fs::write(bundle.join("id"), "old").expect("old id");
+        for i in 0..n {
+            let a = mnt.join(format!("N{i}.app"));
+            fs::create_dir_all(&a).expect("app");
+            fs::write(a.join("id"), "new").expect("new id");
+        }
+        (t, mnt, bundle, parent)
+    }
+
+    /// Rename that fails on the `fail_on`-th call (1-based), else real.
+    fn failing_rename(fail_on: &[u32]) -> impl Fn(&Path, &Path) -> io::Result<()> + '_ {
+        let n = Cell::new(0u32);
+        move |a, b| {
+            n.set(n.get() + 1);
+            if fail_on.contains(&n.get()) {
+                Err(io::Error::other(format!("boom{}", n.get())))
+            } else {
+                fs::rename(a, b)
+            }
+        }
+    }
+
+    #[test]
+    fn swap_success_replaces_bundle_and_keeps_old() {
+        // happy path: new content in place, old kept for the caller's cleanup
+        let (_t, mnt, bundle, parent) = fixture(1);
+        swap_with(&mnt, &bundle, &parent, fake_copy, |a, b| fs::rename(a, b)).expect("swap");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "new");
+        assert_eq!(fs::read_to_string(parent.join(OLD_NAME).join("id")).expect("old"), "old");
+        assert!(!parent.join(STAGING_NAME).exists());
+    }
+
+    #[test]
+    fn swap_clears_stale_staging_and_old() {
+        // leftovers from a crashed run must not break copy/rename
+        let (_t, mnt, bundle, parent) = fixture(1);
+        for n in [STAGING_NAME, OLD_NAME] {
+            fs::create_dir_all(parent.join(n)).expect("stale");
+            fs::write(parent.join(n).join("junk"), "x").expect("junk");
+        }
+        swap_with(&mnt, &bundle, &parent, fake_copy, |a, b| fs::rename(a, b)).expect("swap");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "new");
+        assert!(!parent.join(OLD_NAME).join("junk").exists());
+    }
+
+    #[test]
+    fn swap_errors_when_no_app() {
+        // empty dmg must fail before touching the installed bundle
+        let (_t, mnt, bundle, parent) = fixture(0);
+        let e = swap_with(&mnt, &bundle, &parent, fake_copy, |a, b| fs::rename(a, b)).unwrap_err();
+        assert_eq!(e, "no .app in dmg");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "old");
+    }
+
+    #[test]
+    fn swap_errors_when_several_apps() {
+        // ambiguous dmg must not pick one at random
+        let (_t, mnt, bundle, parent) = fixture(2);
+        let e = swap_with(&mnt, &bundle, &parent, fake_copy, |a, b| fs::rename(a, b)).unwrap_err();
+        assert_eq!(e, "no .app in dmg: expected exactly one, found several");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "old");
+    }
+
+    #[test]
+    fn swap_copy_failure_leaves_bundle() {
+        // a failed ditto passes its error through with the bundle untouched
+        let (_t, mnt, bundle, parent) = fixture(1);
+        let e = swap_with(&mnt, &bundle, &parent, |_, _| Err("ditto failed".into()), |a, b| {
+            fs::rename(a, b)
+        })
+        .unwrap_err();
+        assert_eq!(e, "ditto failed");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "old");
+    }
+
+    #[test]
+    fn swap_first_rename_failure_leaves_bundle() {
+        // bundle->old failing must leave the installed app in place
+        let (_t, mnt, bundle, parent) = fixture(1);
+        let e = swap_with(&mnt, &bundle, &parent, fake_copy, failing_rename(&[1])).unwrap_err();
+        assert_eq!(e, "swap failed: boom1");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "old");
+    }
+
+    #[test]
+    fn swap_second_rename_failure_restores_old() {
+        // staging->bundle failing must put the original back and drop staging
+        let (_t, mnt, bundle, parent) = fixture(1);
+        let e = swap_with(&mnt, &bundle, &parent, fake_copy, failing_rename(&[2])).unwrap_err();
+        assert_eq!(e, "swap failed: boom2");
+        assert_eq!(fs::read_to_string(bundle.join("id")).expect("id"), "old");
+        assert!(!parent.join(STAGING_NAME).exists());
+    }
+
+    #[test]
+    fn swap_restore_failure_reports_both() {
+        // both errors must surface so the user knows the app may be missing
+        let (_t, mnt, bundle, parent) = fixture(1);
+        let e = swap_with(&mnt, &bundle, &parent, fake_copy, failing_rename(&[2, 3])).unwrap_err();
+        assert_eq!(e, "swap failed: boom2; restoring old app also failed: boom3");
     }
 }
