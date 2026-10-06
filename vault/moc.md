@@ -16,3 +16,4 @@
 
 ## Notes
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
+- [pane-close-cleanup](pane-close-cleanup.md) — what each pane-retire path drops (sessions, watchers, agent_runs, briefs)
