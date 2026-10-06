@@ -222,6 +222,12 @@ tmp+rename discipline: `machine-id` (stable per-install id, deliberately **not**
 settings.json so "Reset all settings" can't change this machine's identity),
 tmux labels, session owners.
 
+## Local Insights sampler spawn
+
+`setup()` calls `insights_local::spawn_sampler((*state).clone())` right after the
+rpc_server spawn, and `lib.rs` declares `mod insights_store;`. The sampler is a detached
+task that idles unless a Local workspace exists; details in `backend-claude.md`.
+
 ## Spawning a shell
 
 `pane_connect` ([pane_connect@lib.rs:9232](../../app/src-tauri/src/lib.rs)) is the front door and takes

@@ -76,6 +76,10 @@ notify-rust = "4"
 whoami = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 base64 = "0.22"
+# Local Insights metrics history (insights_store.rs): SQLite, same schema
+# as the remote daemon. `bundled` compiles SQLite via cc so Windows and
+# macOS need no system libsqlite3.
+rusqlite = { version = "0.32", features = ["bundled"] }
 # v0.2.3 → beta.3 (netfree): native HTTPS client for the updater.
 # History: v0.2.2 used SChannel (native-tls) — some AV/EDR products
 # intercepted its TLS and broke "Check for updates".
