@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "df40b2ec6892d0bc965bf0f0d4816d2dbb7222d904d3e4816548077c89d8bc6b",
+    "app/src-tauri/src/lib.rs": "65e595f15693141b37d9dff0f96d406d000618860d9890993262cfa87ff95b8a",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "8f76b67d7a62f0b26597398467dd1d1cabfe2c4528951e5163c426d02d483917",
@@ -44,7 +44,7 @@
     "app/src-tauri/src/rpc_server.rs": "9c9245e35ce96859c8be1b6bd348e1f589b44423e9c2c4836fae9bf416b772d0"
   },
   "backend-sessions": {
-    "app/src-tauri/src/bidi_filter.rs": "bf2f974aa4570b22a50c8f88db6a47e4509f88f41238b0f0639ce6a51039b06d",
+    "app/src-tauri/src/bidi_filter.rs": "0164d9501462eb1c2d3b758ad72cfaebcc3fd07f7b389a0662c7c5752346a6ee",
     "app/src-tauri/src/log_sync.rs": "5e00229cdf74e70d52e5c7dcec2469905cc85920dcc95fa40911cf1b3ccb890f",
     "app/src-tauri/src/osc_notify.rs": "05576d992b25f0f3157a77588182d3ac5bc2567857d7c2940490d6d08314d85c",
     "app/src-tauri/src/pty_decode.rs": "a90d689aa032c5c8f223cec9fe31a8b999c6246d85a783272e19e97b01854d66",
