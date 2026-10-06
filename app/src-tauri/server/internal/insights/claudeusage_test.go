@@ -452,6 +452,27 @@ func TestScanSkipsAssistantWithoutUsage(t *testing.T) {
 	}
 }
 
+// D6: an assistant line with a missing or non-string timestamp is one parse
+// error, not a silent skip; a non-assistant line is filtered before the
+// timestamp is read. Mirrors Rust missing_timestamp_is_parse_error.
+func TestScanMissingTimestampIsParseError(t *testing.T) {
+	now := time.Now()
+	root := t.TempDir()
+	usage := `"usage":{"input_tokens":1,"output_tokens":2}`
+	writeTranscript(t, root, "proj", "s1", []string{
+		`{"type":"assistant","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5",` + usage + `}}`,
+		`{"type":"assistant","timestamp":123,"sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5",` + usage + `}}`,
+		`{"type":"user","sessionId":"s","cwd":"/p","message":{` + usage + `}}`,
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 2 || rep.Totals.Calls != 0 {
+		t.Fatalf("parse_errors=%d calls=%d, want 2/0", rep.ParseErrors, rep.Totals.Calls)
+	}
+}
+
 // D7: symlinked dirs/files are followed, a file named exactly ".jsonl" counts,
 // a dir named x.jsonl and a dangling link do not — mirrors the Rust walk.
 func TestScanWalkFollowsSymlinksAndDotJsonl(t *testing.T) {

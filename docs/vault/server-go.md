@@ -510,10 +510,11 @@ is a one-file edit instead of a server rebake plus a matching edit in the Rust l
 mirror. Token counts are facts; prices are a table that goes stale. Guard rails matter
 here because nobody controls the size of `~/.claude/projects` — hundreds of MB is normal
 — and this runs inside a 6-second curl, so lines are rejected on a `"usage"` byte scan
-before the JSON decoder sees them. There is no file-count cap and no line-length cap
+before the JSON decoder sees them. There is no file cap and no line-length cap
 (lines are read with `bufio.Reader`, so an oversized line costs only itself). Token fields
 are a `tokenCount` type that rejects non-integers/negatives as parse errors; an assistant
-line without `usage` is skipped; symlinks are followed; an unreadable root is a 500. The
+line without `usage` is skipped; a missing or non-string `timestamp` is a parse
+error (pinned by tests on both sides); symlinks are followed; an unreadable root is a 500. The
 Rust mirror in `claude_usage_local.rs` follows the same nine-row policy table (D1-D9) in
 `backend-claude.md` — change one side, change both. The committed server blobs are stale
 until the post-push rebake.
