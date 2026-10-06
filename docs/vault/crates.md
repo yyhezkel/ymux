@@ -36,6 +36,10 @@ The only crate `app` cannot function without. Three files:
   add callers** (Rule #9).
 - `config_dir()` — and this is where the `%APPDATA%\winmux` → `ymux` migration runs,
   once, on upgrade.
+  Resolution order: `YMUX_CONFIG_DIR` / `WINMUX_CONFIG_DIR` env → under `cfg(test)` or
+  the `test-config-dir` feature, `temp_dir()/ymux-test-config-<pid>` → the real dir.
+  Every dependent enables the feature in its dev-dependencies, so their tests never
+  write the real `debug.log`; release builds never see it.
 - `shell_quote(s)` — the only sanctioned way to put a value into a POSIX script
   (Rule #3).
 - Pure layout walkers — `collect_panes`, `collect_panes_with_kind`,
@@ -127,6 +131,11 @@ out of this crate.
 `key_load_needs_passphrase` (an error-message classifier), and `pkwh`/`pkwh_pub` (an
 RSA-aware `PrivateKey` wrapper). Functions that take a `Handle<SshClient>` plus
 credentials and return a result — nothing that needs `AppState`.
+
+`try_authenticate` step 3 (default keys `~/.ssh/id_{ed25519,ecdsa,rsa}`) takes its paths
+from the pure `default_key_paths(Option<String>)`. With neither `USERPROFILE` nor `HOME`
+set it gets `None`, logs "step 3 skipped, no home dir" and falls through to step 4
+(password) — it no longer returns `Err` and aborts the ladder.
 
 ## `ymux-tunnel` (527) — the reverse tunnel
 
