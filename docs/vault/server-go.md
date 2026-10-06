@@ -347,7 +347,8 @@ back with `YMUX_POLICY` (written at create, and by `SetPolicy` via `set-environm
 `YMUX_WORKSPACE_ID` (dropped if that workspace is gone). **Desktop sessions carry the same
 variable names pointed at the desktop's tunnel and are never claimed.** No new store and no
 token on disk: tmux already holds it for the hook processes; the env is never logged (only
-counts). Sessions created before 2.12.0 recover with policy `none`.
+counts). Sessions created before 2.12.0 recover with policy `none`. Tests: `term/recover_test.go`, `hooks/port_test.go`; every test that
+starts the listener passes `""` as the port file (ephemeral, nothing recorded).
 
 **Session argv (Phase 110, 2.11.0).** The create body also takes `cmd` — an argv the
 session runs instead of a shell (a browser pane opened in "claude" mode). `sessionArgv`

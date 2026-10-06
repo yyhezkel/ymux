@@ -262,7 +262,7 @@
     "app/src-tauri/server/internal/files/service.go": "fee5ecb6d670fd10110ef1b8bedcb3d32786751f9f32c673c31dd29a06f1691c",
     "app/src-tauri/server/internal/files/service_test.go": "b2606854c59adbf2271fb19b8a24a350b08e8451a658004439f02d72b9682461",
     "app/src-tauri/server/internal/hooks/hooks.go": "3f9ab9d1e1da4b7a6d9d3db7476614c271f25aeed8c3345e35bfb987431c111c",
-    "app/src-tauri/server/internal/hooks/hooks_test.go": "dd86397eef1c677dc9481ea9857542a948c6d7fc8783ca5af72001da19b0360b",
+    "app/src-tauri/server/internal/hooks/hooks_test.go": "67e2bba37347e4fa2bab03ded217c1208b9dcb17f73080276842bd8fd6e5dc59",
     "app/src-tauri/server/internal/hooks/port_test.go": "da53e2de81e6c4b7b9d99733cda3c6bec75b5f99a12f01673951676c9eb2125d",
     "app/src-tauri/server/internal/insights/analytics.go": "991c8554ed11a8e4dcad3efa16e9a83950b33ff52d36586e794ee3b24c0b2e67",
     "app/src-tauri/server/internal/insights/analytics_test.go": "25de3e220f9cd21a98a4cccec4ace326be42c1d372ca9471df63b58c4d6d4b6c",
