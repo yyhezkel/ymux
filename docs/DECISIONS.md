@@ -464,6 +464,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Zellij picker rows get session-meta names (reader wired now, writer unverified)
+- **Context:** FOLLOWUPS P2 "A ZELLIJ SESSION HAS NO auto_name": `parse_zellij_sessions` hardcoded `auto_name: None`; nothing joined session-meta onto zellij rows.
+- **Options:** A) wire the reader now, track the writer separately / B) wait until the writer is verified on Windows-local zellij / C) rename zellij sessions to carry the title.
+- **Decision:** A. `list_zellij_sessions` reads `~/.ymux/session-meta.json` (fallback `~/.winmux/`) and `apply_session_meta` joins by session name (`ymux-<pane>`), same precedence as tmux; frontend already ranks label > auto_name > claude_title > name. C rejected: renaming sessions is out of scope and breaks attach-by-name.
+- **Outcome:** reader in lib.rs, vault `backend-core.md` updated. Compiles untested until CI. Open P3 in FOLLOWUPS: CLI writer for Windows-local zellij panes and prune-vs-`tmux ls` unverified.
+
 ### 2026-10-06 — Claude-running flag persisted per pane (`claude_running`); stale-true accepted
 - **Context:** FOLLOWUPS P2 (reattach to a persistent session starts in the wrong bidi state until the first hook).
 - **Decision:** persist `LayoutNode::Pane.claude_running` in workspaces.json; a restoring connect seeds the TUI signal from it. Written only on transitions (connect, any Claude hook, `session-end`).
