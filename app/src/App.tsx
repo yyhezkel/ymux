@@ -102,6 +102,7 @@ import {
   type ShortcutActionId,
   type ShortcutTable,
 } from "./shortcuts";
+import { inTerminal } from "./selectAllShortcut";
 import { makeSttRecorder, type SttRecorder } from "./stt";
 import {
   collectPanes,
@@ -3584,8 +3585,6 @@ function App() {
     when?: (e: KeyboardEvent) => boolean;
     run: (e: KeyboardEvent) => void;
   }
-  const inTerminal = (e: KeyboardEvent): boolean =>
-    !!(e.target as HTMLElement | null)?.closest?.(".terminal-container");
   const hasActivePane = (): boolean => !!activePaneId();
   const quadrant = (v: "up" | "down", h: "left" | "right") => {
     splitOrMove(v);
