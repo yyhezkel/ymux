@@ -57,7 +57,7 @@
     "app/src-tauri/src/connect_wizard.rs": "9ac1fd4ef1a30a05623281bce60a35692e514a61a001fc6ebca6e818c8679217",
     "app/src-tauri/src/local_setup.rs": "9c99740d18d66bc91f548e2323a283a91d705694172940d274f5b8deed367111",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
-    "app/src-tauri/src/settings.rs": "ea475fc5c4e34cf742d46b72b9bfc6456e4658b1a732f22281738fb34f6e2a1c",
+    "app/src-tauri/src/settings.rs": "053665ac863e2f5be4a76a6ee4b7c958f284c6587e3b42140cb212df6c3079a9",
     "app/src-tauri/src/updater.rs": "5e32ee0804d8762b214409d2ec8e0e46471c2716925266f664f5b9c76e13ef71",
     "app/src-tauri/src/updater/macos.rs": "de1d85244406fd99d9d4786a82f81b0dae94cb05f2c116c43716a7167086e45a"
   },
@@ -144,6 +144,7 @@
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
   },
   "frontend-panes": {
+    "app/scripts/devmode-snapshot-check.mjs": "5957260ee811b866407400ddfdabe30878f84fcdd3fffa84839eb4393109b992",
     "app/src/AddonsTab.tsx": "6eff5e7b1389af86debd3194ff02917788346a7801134b41403c48d9b4578c43",
     "app/src/AddonsWindow.tsx": "7b6df4ee8ad4aea33a29dc9e9f5ae58f2dc46355742f20c8b23762a58be021bb",
     "app/src/BrowserChrome.tsx": "3b914ae40548371f2c550ea4cbc37e72af359f4f3af98ba9afb188a974ee8052",
@@ -166,11 +167,11 @@
     "app/src/PortsWindow.tsx": "b0822121f91512c85bc0cadbd3464ea7673b36e448edb40ee01b3eb14c0db35e",
     "app/src/QueuePanel.tsx": "eab834fabf4712299c13ffd4df5a221b3cf920f6e70b6e3b029257ecd6e694a4",
     "app/src/SessionsOverviewWindow.tsx": "d097b55c279f2fb6b8b14d6ae44c52cdb814b13411630dc0e25830ea1d21bbbb",
-    "app/src/TicketModal.tsx": "d271dea16f1c83d547ea209e3dd8dcfcbdd4778c2e15d69863a40b691ff505f0",
+    "app/src/TicketModal.tsx": "89ba13a6173e9a39cb1a92c7812f886a2e485ed13914c2281ea5caa34a8c1805",
     "app/src/TicketsPanel.tsx": "480d09aa00f31cf1f8c9513ba36377a73f0440a88bd3f0fd1a5ab0b712e0294e",
     "app/src/TransferBar.tsx": "19997105e7db2d1f11ed0e04ed235a7f088458cf19685a66fbb80d75c7b78f13",
     "app/src/YmuxToolsTab.tsx": "a326a58ae9ffb97d1c32f96c3450b9ed7e7e167335246fcd163d39e99a6fce8e",
-    "app/src/browserDevMode.ts": "9304deba9ae698af8de14418c123f17ec09f0e75eb08d59d68d71ffb11c01a8d",
+    "app/src/browserDevMode.ts": "0761d33440b15463b69e8ed80b672484a95a275d1d912458732f1dc4ff80fdfc",
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
     "app/src/components/PopoutTerminal.tsx": "58d8b94a041e5d3e0d4816a17bd38db1f84e6731c434b2ecf820b87dbda7cdc8",
