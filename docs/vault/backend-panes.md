@@ -49,15 +49,26 @@ already-authenticated SSH session and open **a fresh SFTP channel per call**. Se
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.
 
-**`workspace_browser.rs` (1,063)** — **at most one child Webview per workspace**, attached
+**`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
 to the main window via `Window::add_child` (this is what pins `tauri = "=2.10.3"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
 creates or reveals it. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
 workspace and WebView2 does not support multiple environments in one process — that
 surfaced as `0x8007139F`. Creation is serialized by `AppState.browser_create_lock` for
-the same reason. Runtime-only, never persisted; `workspace_delete` calls
-`cleanup_workspace_sessions` to remove `browser-sessions/<workspace_id>/`.
+the same reason. Runtime-only, never persisted. On macOS >= 14 each workspace gets its own
+`WKWebsiteDataStore` via `.data_store_identifier(workspace_store_id(ws))` (sha256 of
+`ymux-browser-store:<ws>`, first 16 bytes; derived, so show and delete agree; a no-op
+off macOS >= 14, and Windows never gets a data dir). `workspace_delete` calls
+`cleanup_workspace_sessions(app, ws)`: it removes the legacy `browser-sessions/<ws>/`
+dir synchronously, then spawns (a) a `spawn_blocking` sweep that deletes 127.0.0.1 /
+localhost cookies via the `main` webview (`cookies()` deadlocks on Windows off a
+blocking thread) — Windows shares one WebView2 profile, so this also drops other
+workspaces' tunnel cookies (accepted collateral); (b) macOS >= 14 only
+(`macos_major(sw_vers)`), `remove_data_store` with up to 5 x 400 ms retries since it
+errors `DataStoreInUse` until the closed webview lets go. Every failure is a
+`log_warn("BROWSER", ..)`, never an error to delete; logs carry counts, never cookie
+names or values.
 
 **Pop-out: a child Webview CANNOT be re-parented.** `add_child` binds it to its host
 window for life, so `browser_popout_open` (Phase 85.C) does destroy-and-respawn, not
@@ -109,12 +120,16 @@ false. These two were the only ones.
 the child, and that was wrong; Phase 82.E corrected it in place. `tauri::manager::webview`
 prepends `__TAURI_INTERNALS__` and the invoke bootstrap to **every** webview's init
 scripts, external URLs included, so an `invoke` function does reach the tunneled page.
-What actually denies it is the capability layer: a remote page's origin is
-`Origin::Remote`, every capability in `capabilities/` declares a `Local` execution
-context, so `Origin::matches` fails and each command is refused. **`capabilities/default.json`
-is scoped to `windows: ["main"]` and this webview lives in the `main` window** — adding a
-`remote` context there would hand a third-party service the app's whole command surface.
-Don't.
+The capability layer does **not** deny it: ymux has no app ACL manifest (`build.rs` is a
+bare `tauri_build::build()`, no `permissions/`), and Tauri 2.10.3 `Webview::on_message`
+ACL-checks app (non-plugin) commands only when one exists. Capabilities gate plugin
+commands only, so every app command was reachable from the tunneled page. What denies it
+now is `ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
+starts with `WEBVIEW_LABEL_PREFIX` (`workspace-browser-`) is rejected with
+`ymux: command <cmd> is not available to the workspace Browser webview`, warn-logged once
+per label (names only). It reads the label, never capabilities, so editing
+`capabilities/*.json` cannot reopen it. This webview has no legitimate caller (ticket bridge
+= navigation, `browser_diag.js` = `document.title`).
 
 The Dev-Mode inspect script still talks back through navigation
 (`location.href = "ymux-ticket:<base64url>"`, decoded by `handle_ticket_navigation`,
@@ -198,7 +213,11 @@ share `%APPDATA%\ymux` unless someone sets `YMUX_CONFIG_DIR`, and the pre-rename
 `%APPDATA%\winmux` + `WINMUX_CONFIG_DIR` are still honoured — so an old and a new binary
 can land on the same directory from either side of the rename. `reconcile(ours, base,
 theirs)` is a **pure function with unit tests**, which is the point: an idle app never
-saves, so the interesting path cannot be reached by launching one and waiting.
+saves, so the interesting path cannot be reached by launching one and waiting. Beyond the
+`reconcile` seam, `two_instance_save_tests` in `lib.rs` drive `write_workspaces_text` with two
+merge bases over one tempdir (two instances' edits both survive; an older build's rewrite does
+not strip `parent_id`; a newer on-disk schema refuses the write byte-identically). A second
+instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content
 
@@ -213,6 +232,7 @@ workspace — the point is handing one to Claude Code inside the right repo — 
 written to `<project>/.ymux-tickets/` when the project is reachable from this machine,
 and fall back to `<config_dir>/tickets/<workspace_id>/` while still recording the project
 path, so nothing is orphaned.
+For SSH workspaces the pane-cwd rung asks tmux for one session's cwd: `tmux_session_for_workspace` prefers the session of the pane the frontend last reported via `pane_set_active` (`AppState.active_panes`), else the smallest tmux name (`pick_tmux_session`, pure), so the choice never depends on map order.
 
 **`skills.rs` (288)** — installs a skill folder (`SKILL.md` + scripts) from the local
 registry at `config_dir()/ymux-tools/skills/<name>/` onto a workspace's
@@ -235,7 +255,10 @@ files land in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and register under HKCU, 
 needs no elevation on Windows 10 1809+. `settings::list_system_fonts` reads that same
 hive, so an install is visible in the picker immediately. Exists because flagging
 unavailable families with ⚠️ was only half an answer — the user still had to go find a
-`.ttf`.
+`.ttf`. Catalog assets pin upstream release tags plus sha256, never a moving branch;
+MesloLGS NF uses the powerlevel10k-media tag `v2.3.3`. Pins (tag + sha256 + bytes) are refreshed
+by hand; the procedure and last-checked date (2026-10-06, FiraCode NF at nerd-fonts v3.5.1) are
+in the CATALOG header comment.
 
 **`font_uninstall` is the mirror, and how it finds the files is the interesting part.**
 Which files belong to a catalog entry is derived from the CATALOG, not recorded at
@@ -284,8 +307,9 @@ bug-report file IO. The commands and RPC handlers themselves live in `lib.rs` an
   wry's default to `true` process-wide; the `.devtools(false)` opt-outs on the main window
   and popouts in `lib.rs` are what keep PTY output out of an inspector. See
   `backend-core.md` § Gotchas.
-- `capabilities/default.json` stays `Local`-context only. A `remote` context would expose
-  the command surface to whatever the Browser is pointed at.
+- The workspace Browser webview gets **zero** app commands via `ipc_guard`, not via
+  capabilities. Keep `WEBVIEW_LABEL_PREFIX` the single source of the `workspace-browser-`
+  label (`webview_label` uses it); renaming the label without it silently disarms the guard.
 
 ## Read the source when
 

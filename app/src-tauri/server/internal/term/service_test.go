@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
+	"github.com/danielgtaylor/huma/v2/adapters/humago"
+
 	"ymux-server/internal/auth"
 )
 
@@ -34,6 +37,9 @@ func testService(respond func(args []string) ([]byte, error)) (*Service, *[][]st
 func do(s *Service, method, path, token string, body string) *httptest.ResponseRecorder {
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
+	// The four huma ops are mounted without auth: api's bearerMiddleware owns
+	// that (api/term_test.go); here they are exercised for behaviour only.
+	s.RegisterHuma(humago.New(mux, huma.DefaultConfig("term-test", "0")))
 	var r *http.Request
 	if body == "" {
 		r = httptest.NewRequest(method, path, nil)
@@ -65,7 +71,7 @@ func TestGateRequiresShellAttach(t *testing.T) {
 		{"", http.StatusUnauthorized, "no token at all"},
 	}
 	for _, c := range cases {
-		w := do(s, "GET", "/api/v2/term/sessions", c.token, "")
+		w := do(s, "GET", "/api/v2/term/history", c.token, "")
 		if w.Code != c.want {
 			t.Errorf("token %q: got %d, want %d — %s", c.token, w.Code, c.want, c.why)
 		}
@@ -78,7 +84,7 @@ func TestGateFailsClosedWithoutConfig(t *testing.T) {
 	// here it must not, because the thing behind the door is a shell.
 	tm, _ := fake(ok(""))
 	s := &Service{tmux: tm}
-	if w := do(s, "GET", "/api/v2/term/sessions", "anything", ""); w.Code != http.StatusUnauthorized {
+	if w := do(s, "GET", "/api/v2/term/history", "anything", ""); w.Code != http.StatusUnauthorized {
 		t.Errorf("unconfigured service returned %d, want 401", w.Code)
 	}
 }
@@ -88,10 +94,7 @@ func TestGateCoversEveryRoute(t *testing.T) {
 	// token that cannot open a terminal has no reason to enumerate them.
 	s, calls := testService(ok(""))
 	routes := []struct{ method, path string }{
-		{"GET", "/api/v2/term/sessions"},
-		{"POST", "/api/v2/term/sessions"},
-		{"POST", "/api/v2/term/sessions/api/rename"},
-		{"DELETE", "/api/v2/term/sessions/api"},
+		// list/create/rename/kill are huma ops now; api's bearerMiddleware gates them.
 		{"GET", "/api/v2/term/sessions/api/attach"},
 		// Phase 101: the feed and the live channel carry the same sessions'
 		// prompts and tool input, so they sit behind the same gate.
@@ -132,7 +135,7 @@ func TestGateCoversEveryRoute(t *testing.T) {
 
 func TestListReturnsAnnotatedSessions(t *testing.T) {
 	s, _ := testService(ok("api\t2\t1700000000\t0\t/srv\n"))
-	w := do(s, "GET", "/api/v2/term/sessions", "owner-token", "")
+	w := do(s, "GET", "/api/v2/term/sessions", "", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("got %d, want 200", w.Code)
 	}
@@ -145,10 +148,75 @@ func TestListReturnsAnnotatedSessions(t *testing.T) {
 	}
 }
 
+func TestListEmptyIsArrayNotNull(t *testing.T) {
+	// A client iterating the body must get [] when no session exists, never null.
+	s, _ := testService(ok(""))
+	w := do(s, "GET", "/api/v2/term/sessions", "", "")
+	if w.Code != http.StatusOK || strings.TrimSpace(w.Body.String()) != "[]" {
+		t.Errorf("got %d %q, want 200 []", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateEmptyBodyIsAccepted(t *testing.T) {
+	// The raw handler ignored a missing body; huma must not start answering 422.
+	s, _ := testService(func(args []string) ([]byte, error) {
+		if args[0] == "has-session" {
+			return nil, exitErr()
+		}
+		return nil, nil
+	})
+	if w := do(s, "POST", "/api/v2/term/sessions", "", ""); w.Code != http.StatusCreated {
+		t.Errorf("got %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateIgnoresUnknownFields(t *testing.T) {
+	// The browser client also sends pane_id/cmd; unknown keys must not 422.
+	s, _ := testService(func(args []string) ([]byte, error) {
+		if args[0] == "has-session" {
+			return nil, exitErr()
+		}
+		return nil, nil
+	})
+	w := do(s, "POST", "/api/v2/term/sessions", "", `{"pane_id":"p1","cmd":"ls"}`)
+	if w.Code != http.StatusCreated {
+		t.Errorf("got %d, want 201 (body %s)", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateRejectsBadPolicy(t *testing.T) {
+	s, _ := testService(ok(""))
+	if w := do(s, "POST", "/api/v2/term/sessions", "", `{"policy":"nope"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", w.Code)
+	}
+}
+
+func TestRenameBadNameIs400(t *testing.T) {
+	s, _ := testService(ok(""))
+	if w := do(s, "POST", "/api/v2/term/sessions/api/rename", "", `{"new_name":""}`); w.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400", w.Code)
+	}
+}
+
+func TestRenameToTakenNameIs409(t *testing.T) {
+	s, _ := testService(ok("")) // has-session succeeds ⇒ target taken
+	if w := do(s, "POST", "/api/v2/term/sessions/api/rename", "", `{"new_name":"web"}`); w.Code != http.StatusConflict {
+		t.Errorf("got %d, want 409", w.Code)
+	}
+}
+
+func TestKillReturnsOK(t *testing.T) {
+	s, _ := testService(ok(""))
+	w := do(s, "DELETE", "/api/v2/term/sessions/api", "", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"ok":true`) {
+		t.Errorf("got %d %s, want 200 ok:true", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateRejectsDuplicate(t *testing.T) {
 	// has-session succeeds ⇒ the name is taken ⇒ 409, not tmux's 500.
 	s, _ := testService(ok(""))
-	w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{"name":"api"}`)
+	w := do(s, "POST", "/api/v2/term/sessions", "", `{"name":"api"}`)
 	if w.Code != http.StatusConflict {
 		t.Errorf("got %d, want 409", w.Code)
 	}
@@ -161,7 +229,7 @@ func TestCreateGeneratesAName(t *testing.T) {
 		}
 		return nil, nil
 	})
-	w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{}`)
+	w := do(s, "POST", "/api/v2/term/sessions", "", `{}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("got %d, want 201 (body %s)", w.Code, w.Body.String())
 	}
@@ -186,7 +254,7 @@ func TestKillMissingSessionIs404(t *testing.T) {
 		}
 		return nil, nil
 	})
-	if w := do(s, "DELETE", "/api/v2/term/sessions/gone", "owner-token", ""); w.Code != http.StatusNotFound {
+	if w := do(s, "DELETE", "/api/v2/term/sessions/gone", "", ""); w.Code != http.StatusNotFound {
 		t.Errorf("got %d, want 404", w.Code)
 	}
 }
@@ -210,7 +278,7 @@ func TestBearerAcceptsQueryToken(t *testing.T) {
 	s, _ := testService(ok(""))
 	mux := http.NewServeMux()
 	s.RegisterRoutes(mux)
-	r := httptest.NewRequest("GET", "/api/v2/term/sessions?token=owner-token", nil)
+	r := httptest.NewRequest("GET", "/api/v2/term/history?token=owner-token", nil)
 	w := httptest.NewRecorder()
 	mux.ServeHTTP(w, r)
 	if w.Code != http.StatusOK {

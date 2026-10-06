@@ -962,6 +962,61 @@ fn parse_wsl_list_verbose(text: &str) -> (Vec<String>, Option<String>) {
     (distros, default)
 }
 
+/// Pane-header text for a WSL problem that would make the spawn fail
+/// silently; `None` = nothing known to be wrong. `distros=None` means the
+/// list could not be read (fail open).
+pub(crate) fn wsl_problem_message(
+    wsl_present: bool,
+    distros: Option<&[String]>,
+    wanted: Option<&str>,
+) -> Option<String> {
+    if !wsl_present {
+        return Some(
+            "WSL is not available on this machine \u{2014} edit this workspace to use a local shell"
+                .to_string(),
+        );
+    }
+    let distros = distros?;
+    if distros.is_empty() {
+        return Some(
+            "no WSL distro installed \u{2014} run wsl --install or edit this workspace".to_string(),
+        );
+    }
+    let wanted = wanted?;
+    if distros.iter().any(|d| d.eq_ignore_ascii_case(wanted)) {
+        None
+    } else {
+        Some(format!(
+            "WSL distro '{wanted}' is not installed \u{2014} edit this workspace's distro"
+        ))
+    }
+}
+
+/// Probe WSL before a WSL pane spawns. Windows: wsl.exe lookup + `wsl -l -v`.
+#[cfg(target_os = "windows")]
+pub(crate) async fn wsl_pane_problem(distro: Option<&str>) -> Option<String> {
+    if crate::local_wizard::which("wsl.exe").is_none() {
+        return wsl_problem_message(false, None, distro);
+    }
+    let mut c = wsl_cmd();
+    c.arg("-l").arg("-v");
+    // AI-NOTE: probe failure fails open — a flaky wsl.exe must not block a pane that might spawn fine.
+    let list = match run_capture(c, "wsl -l -v", 5).await {
+        Ok((0, out)) => {
+            let (d, _) = parse_wsl_list_verbose(&out);
+            Some(d)
+        }
+        _ => None,
+    };
+    wsl_problem_message(true, list.as_deref(), distro)
+}
+
+/// Non-Windows: WSL cannot exist.
+#[cfg(not(target_os = "windows"))]
+pub(crate) async fn wsl_pane_problem(distro: Option<&str>) -> Option<String> {
+    wsl_problem_message(false, None, distro)
+}
+
 #[cfg(target_os = "windows")]
 async fn inspect_wsl(distro_override: Option<&str>) -> WslInspect {
     let mut w = WslInspect::absent();
@@ -1230,8 +1285,6 @@ pub(crate) struct LocalSetupInput {
     #[serde(default)]
     pub distro: Option<String>,
     #[serde(default)]
-    pub wsl_username: Option<String>,
-    #[serde(default)]
     pub workspace_name: Option<String>,
     #[serde(default)]
     pub create_workspace: bool,
@@ -1257,7 +1310,7 @@ pub(crate) struct LocalSetupResult {
     /// (`InstallTmuxLocal` → `DeployTmuxConfLocal`) — true means it ran
     /// clean; a Local workspace is still created when no chain step was
     /// requested at all.
-    pub wsl_chain_ok: bool,
+    pub persistence_chain_ok: bool,
 }
 
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -1869,14 +1922,8 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                 // uid-1000 user as root + set it as the wsl.conf default,
                 // then terminate the distro so the default applies.
                 let user = sanitize_linux_username(
-                    input
-                        .wsl_username
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            std::env::var("USERNAME").unwrap_or_else(|_| "ymux".into())
-                        })
+                    std::env::var("USERNAME")
+                        .unwrap_or_else(|_| "ymux".into())
                         .as_str(),
                 );
                 // Two things this script must NOT do, both learned the hard
@@ -2199,7 +2246,7 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
         workspace_name: None,
         failed_steps: failed_steps.clone(),
         skipped_steps,
-        wsl_chain_ok: chain_ok,
+        persistence_chain_ok: chain_ok,
     };
     if !failed_steps.is_empty() {
         log_warn(
@@ -2287,6 +2334,7 @@ fn finalize_workspace(
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
         auto_title: None,
     };
     let ws = Workspace {
@@ -2312,6 +2360,20 @@ fn finalize_workspace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wsl_problem_message_cases() {
+        // Pins the six classifier outcomes the pane header relies on.
+        let l = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        let msg = wsl_problem_message(false, None, None).unwrap();
+        assert!(msg.starts_with("WSL is not available"));
+        assert!(wsl_problem_message(true, Some(&[]), None).unwrap().starts_with("no WSL distro installed"));
+        let d = l(&["Ubuntu"]);
+        assert!(wsl_problem_message(true, Some(&d), Some("Debian")).unwrap().contains("'Debian' is not installed"));
+        assert_eq!(wsl_problem_message(true, Some(&d), Some("ubuntu")), None);
+        assert_eq!(wsl_problem_message(true, Some(&d), None), None);
+        assert_eq!(wsl_problem_message(true, None, Some("Debian")), None);
+    }
 
     #[test]
     fn persistence_chain_is_exactly_the_mac_tmux_steps() {
@@ -2397,6 +2459,45 @@ mod tests {
     fn winget_no_upgrade_code_is_ok() {
         assert!(winget_already_ok(0x8A15_002Bu32 as i32));
         assert!(!winget_already_ok(1));
+    }
+
+    #[test]
+    fn local_setup_input_without_wsl_username() {
+        // Pins serde defaults: only `steps` is required; breaking it
+        // would reject minimal wizard payloads.
+        let min: LocalSetupInput = serde_json::from_str(r#"{"steps":["InstallGit"]}"#).unwrap();
+        assert_eq!(min.steps, vec!["InstallGit".to_string()]);
+        assert!(min.distro.is_none());
+        assert!(min.workspace_name.is_none());
+        assert!(min.workspace_cwd.is_none());
+        assert!(!min.create_workspace);
+
+        let full: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c"}"#,
+        )
+        .unwrap();
+        assert_eq!(full.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(full.workspace_name.as_deref(), Some("w"));
+        assert_eq!(full.workspace_cwd.as_deref(), Some("/c"));
+        assert!(full.create_workspace);
+
+        // `steps` has no default: an empty object must fail.
+        assert!(serde_json::from_str::<LocalSetupInput>("{}").is_err());
+    }
+
+    #[test]
+    fn local_setup_input_ignores_legacy_wsl_username() {
+        // An old client may still send wsl_username; no deny_unknown_fields,
+        // so it must be ignored, not an error.
+        let input: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c","wsl_username":"bob"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.steps, vec!["InstallGit".to_string()]);
+        assert_eq!(input.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(input.workspace_name.as_deref(), Some("w"));
+        assert_eq!(input.workspace_cwd.as_deref(), Some("/c"));
+        assert!(input.create_workspace);
     }
 }
 
