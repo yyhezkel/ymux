@@ -250,6 +250,17 @@ pub async fn try_agent_auth(
     }
 }
 
+/// Default private-key paths under `home`; empty when no home dir is known.
+fn default_key_paths(home: Option<String>) -> Vec<String> {
+    match home {
+        None => Vec::new(),
+        Some(h) => ["id_ed25519", "id_ecdsa", "id_rsa"]
+            .iter()
+            .map(|n| format!("{h}/.ssh/{n}"))
+            .collect(),
+    }
+}
+
 /// 4-step auth ladder: agent → explicit-key → default-keys → password.
 /// Returns the method that succeeded (or `None` if all 4 are exhausted).
 /// On a passphrase-encrypted explicit key that lacks the right
@@ -338,10 +349,14 @@ pub async fn try_authenticate(
     // 3) Default key paths (tried without passphrase; encrypted keys silently skipped).
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
-        .map_err(|e| e.to_string())?;
-    log_debug("SSH", &format!("ssh.auth: step 3 — default key paths under {home}/.ssh/"));
-    for name in ["id_ed25519", "id_ecdsa", "id_rsa"] {
-        let p = format!("{}/.ssh/{}", home, name);
+        .ok();
+    let default_paths = default_key_paths(home);
+    if default_paths.is_empty() {
+        log_debug("SSH", "ssh.auth: step 3 skipped, no home dir");
+    } else {
+        log_debug("SSH", "ssh.auth: step 3 — default key paths under ~/.ssh/");
+    }
+    for p in default_paths {
         if !Path::new(&p).exists() {
             continue;
         }
@@ -382,4 +397,24 @@ pub async fn try_authenticate(
 
     log_warn("SSH", "ssh.auth: ALL methods exhausted, no auth succeeded");
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_key_paths;
+
+    // pins: no home dir → no default key paths (step 3 skipped, not Err)
+    #[test]
+    fn no_home_yields_no_paths() {
+        assert!(default_key_paths(None).is_empty());
+    }
+
+    // pins: key order ed25519, ecdsa, rsa under {home}/.ssh
+    #[test]
+    fn home_yields_three_paths_in_order() {
+        assert_eq!(
+            default_key_paths(Some("/h".into())),
+            vec!["/h/.ssh/id_ed25519", "/h/.ssh/id_ecdsa", "/h/.ssh/id_rsa"]
+        );
+    }
 }
