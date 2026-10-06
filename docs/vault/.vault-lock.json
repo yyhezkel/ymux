@@ -182,7 +182,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "cd906a7ddce5e29388fe52001a27d63fe54d4e0b2329b2a1c84f4ca5b4713b8e",
-    "app/src/App.tsx": "71e79aad11727cfb58dcd4ebddc165b4e72a46f9e59564622c1eac3205300c01",
+    "app/src/App.tsx": "2453869c790ecd991a3d1e6cdd8f992a2a5f1679fe9b9e421630f2fafe19c38a",
     "app/src/BriefingCard.tsx": "74ddaa2fe32a3d7904eb3db62ecf77184ca4f4871d4d6d28168241d376f8523a",
     "app/src/CommandPalette.tsx": "08512d53521754c8c83a785784258f5767a1384a17cb1b73cba3244600d9306b",
     "app/src/ContextRail.tsx": "8f9b73396f3b00236a5edd5f36599ea18b04b4b654adfa5c832ed246821b5a79",
