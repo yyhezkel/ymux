@@ -67,6 +67,12 @@ test("permission card outranks everything, including a calm brief", () => {
   assert.equal(QUEUE_BUCKET[queueStatus(r)], 0);
 });
 
+test("a failed pane is stuck, not done", () => {
+  // An API-error turn must land in the stuck bucket, not look finished.
+  const r = withBrief({ status: "done" }, { state: "failed" });
+  assert.equal(queueStatus(r), "stuck");
+});
+
 test("a running pane sorts as running no matter what the old brief said", () => {
   const r = withBrief({ status: "stuck" }, { state: "running", startedAt: NOW - 5_000 });
   assert.equal(queueStatus(r), "working");

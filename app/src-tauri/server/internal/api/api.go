@@ -126,10 +126,9 @@ func (s *Server) Handler() http.Handler {
 	if s.deps.Push != nil {
 		mux.HandleFunc("/api/v2/push/subscribe", s.deps.Push.Handler)
 	}
-	// Terminal API (Phase 95). Mounted raw for the same reason push is: authMW
-	// only knows the shared token, and these routes must also accept a paired
-	// device's token — but ONLY one carrying the opt-in auth.ScopeShellAttach
-	// grant. term.Service.gate does both checks and fails closed.
+	// Terminal API (Phase 95). list/create/rename/kill are huma ops (newHumaAPI,
+	// scoped via opScopes → ScopeShellAttach); only history + the attach WS stay
+	// raw, behind term.Service.gate (shared token or a shell:attach device).
 	if s.deps.Term != nil {
 		s.deps.Term.RegisterRoutes(mux)
 	}
