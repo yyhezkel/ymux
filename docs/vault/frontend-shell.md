@@ -58,6 +58,8 @@ them rendered unstyled, which read as a blank white window.
 the `popout:closed` listener removes it first. It also seeds
 `localStorage["ymux.popout.pane.<sid>"]=paneId`, since the popout
 window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy.
+Every one of those `localStorage` writes (font-size seed, pane id, profile) is individually
+try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from running.
 
 ## `App.tsx` (5,808) — one component, ~50 signals
 

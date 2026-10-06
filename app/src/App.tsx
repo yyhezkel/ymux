@@ -978,11 +978,15 @@ function App() {
     const dir = document.documentElement.dir === "rtl" ? "rtl" : "ltr";
     // Seed the popout's Ctrl+wheel zoom from the configured terminal size the
     // first time only — later wheel zooms own it (localStorage, shared origin).
-    if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
-      localStorage.setItem(
-        "ymux.popout.font_size_pt",
-        String(settings()?.font.terminal_size_pt ?? 13),
-      );
+    try {
+      if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
+        localStorage.setItem(
+          "ymux.popout.font_size_pt",
+          String(settings()?.font.terminal_size_pt ?? 13),
+        );
+      }
+    } catch (e) {
+      log.warn("popout font-size seed failed", e);
     }
     // The popout window only knows its sid; hand it the pane id so it can ask
     // pane_persistence_list whether to arm the tmux wheel proxy.
@@ -992,7 +996,11 @@ function App() {
       log.warn("popout pane-id seed failed", e);
     }
     // Hand the origin pane's RTL profile to the popout webview (same origin).
-    localStorage.setItem(popoutProfileKey(sid), ti.profile);
+    try {
+      localStorage.setItem(popoutProfileKey(sid), ti.profile);
+    } catch (e) {
+      log.warn("popout profile handoff failed", e);
+    }
     try {
       await invoke("popout_pane", {
         sessionId: sid,
