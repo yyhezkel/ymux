@@ -162,6 +162,7 @@
   "pane.agent.state.done": "Клод закончил — ваш ход",
   "pane.agent.state.needs_input": "Клоду нужен ваш ответ",
   "pane.agent.state.waiting_approval": "Ожидает вашего подтверждения",
+  "pane.agent.state.failed": "Клод получил ошибку API",
   "pane.agent.tooltip.elapsed": "{state} · {time}",
   "pane.connect.persistent_hint": "Обернуть удалённую оболочку в tmux, чтобы переподключения возобновляли ту же сессию",
   "pane.meta.title_placeholder": "заголовок (например: ищу баг X)",

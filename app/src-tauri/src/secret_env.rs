@@ -10,8 +10,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use ymux_core::log_warn;
 use ymux_types::{EnvVar, Workspace};
 
+const TAG: &str = "SECRET_ENV";
 const FILE_VERSION: u32 = 1;
 
 /// owner id → variable name → plaintext value (memory) .
@@ -29,6 +31,9 @@ struct DiskFile {
 
 impl SecretEnvStore {
     /// Missing file → empty store. Non-Windows → always empty (memory only).
+    /// An undecryptable blob is skipped with a warning (owner + key only), so one
+    /// bad row cannot empty the store; the next save drops it. File read/parse
+    /// errors stay `Err`.
     pub(crate) fn load(path: &Path) -> Result<Self, String> {
         if !cfg!(windows) {
             return Ok(Self::default());
@@ -40,15 +45,9 @@ impl SecretEnvStore {
         };
         let file: DiskFile =
             serde_json::from_str(&raw).map_err(|e| format!("parse secret-env.json: {e}"))?;
-        let mut entries = BTreeMap::new();
-        for (owner, rows) in file.entries {
-            let mut out = BTreeMap::new();
-            for (key, blob) in rows {
-                out.insert(key, unprotect_b64(&blob)?);
-            }
-            entries.insert(owner, out);
-        }
-        Ok(Self { entries })
+        Ok(Self {
+            entries: decode_entries(file.entries, unprotect_b64),
+        })
     }
 
     /// Atomic tmp + rename (Rule #7). Non-Windows → no-op.
@@ -142,6 +141,32 @@ impl SecretEnvStore {
     }
 }
 
+/// Decrypt every blob; failures are logged (owner + key, never the blob) and skipped.
+fn decode_entries(
+    entries: BTreeMap<String, BTreeMap<String, String>>,
+    unprotect: impl Fn(&str) -> Result<String, String>,
+) -> BTreeMap<String, BTreeMap<String, String>> {
+    let mut decoded = BTreeMap::new();
+    for (owner, rows) in entries {
+        let mut out = BTreeMap::new();
+        for (key, blob) in rows {
+            match unprotect(&blob) {
+                Ok(v) => {
+                    out.insert(key, v);
+                }
+                Err(e) => log_warn(
+                    TAG,
+                    &format!("skipping undecryptable secret blob owner={owner} key={key}: {e}"),
+                ),
+            }
+        }
+        if !out.is_empty() {
+            decoded.insert(owner, out);
+        }
+    }
+    decoded
+}
+
 /// Header owns its env; a screen uses its parent's. None → id unknown.
 pub(crate) fn env_owner(workspaces: &[Workspace], id: &str) -> Option<String> {
     let w = workspaces.iter().find(|w| w.id == id)?;
@@ -230,7 +255,7 @@ pub(crate) async fn deliver_ssh(
 }
 
 #[cfg(windows)]
-fn protect_b64(plain: &str) -> Result<String, String> {
+pub(crate) fn protect_b64(plain: &str) -> Result<String, String> {
     use base64::Engine;
     let blob = dpapi(plain.as_bytes(), true)?;
     Ok(base64::engine::general_purpose::STANDARD.encode(blob))
@@ -247,7 +272,7 @@ fn unprotect_b64(b64: &str) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-fn protect_b64(_plain: &str) -> Result<String, String> {
+pub(crate) fn protect_b64(_plain: &str) -> Result<String, String> {
     Err("secret env is memory-only on this platform".to_string())
 }
 
@@ -426,6 +451,45 @@ mod secret_env_tests {
         assert_eq!(reply_refused(&russh::ChannelMsg::Success), Some(false));
         assert_eq!(reply_refused(&russh::ChannelMsg::Failure), Some(true));
         assert_eq!(reply_refused(&russh::ChannelMsg::Eof), None);
+    }
+
+    // Pins: one undecryptable blob is dropped, valid siblings and owners survive.
+    #[test]
+    fn corrupt_blob_skipped_keeps_valid() {
+        let mut rows = BTreeMap::new();
+        rows.insert("GOOD".to_string(), "ok:v".to_string());
+        rows.insert("BAD".to_string(), "garbage".to_string());
+        let mut all_bad = BTreeMap::new();
+        all_bad.insert("X".to_string(), "garbage".to_string());
+        let mut input = BTreeMap::new();
+        input.insert("h".to_string(), rows);
+        input.insert("dead".to_string(), all_bad);
+        let out = decode_entries(input, |b| {
+            b.strip_prefix("ok:").map(str::to_string).ok_or_else(|| "bad".to_string())
+        });
+        assert_eq!(out.len(), 1);
+        assert_eq!(out["h"].len(), 1);
+        assert_eq!(out["h"]["GOOD"], "v");
+    }
+
+    // Pins the data-loss fix: load→save→load keeps the valid secret after a corrupt sibling.
+    #[cfg(windows)]
+    #[test]
+    fn windows_load_save_preserves_valid_after_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("secret-env.json");
+        let mut rows = BTreeMap::new();
+        rows.insert("GOOD".to_string(), protect_b64("v").unwrap());
+        rows.insert("BAD".to_string(), "not-a-blob".to_string());
+        let mut entries = BTreeMap::new();
+        entries.insert("h".to_string(), rows);
+        let file = DiskFile { version: FILE_VERSION, entries };
+        std::fs::write(&path, serde_json::to_string(&file).unwrap()).unwrap();
+        let s = SecretEnvStore::load(&path).unwrap();
+        s.save(&path).unwrap();
+        let again = SecretEnvStore::load(&path).unwrap();
+        assert_eq!(again.keys_for("h"), vec!["GOOD".to_string()]);
+        assert_eq!(again.resolve("h", &["GOOD".into()]).ok(), Some(vec![("GOOD".into(), "v".into())]));
     }
 
     // Pins the DPAPI path: protect→unprotect returns the original, blob differs.

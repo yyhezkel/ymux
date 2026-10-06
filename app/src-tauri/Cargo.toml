@@ -175,3 +175,5 @@ windows-sys = { version = "0.61", features = [
 # Phase 50 (#2.4): integration test for diff_pane::fetch_diff against a
 # real git repo seeded under a temporary directory.
 tempfile = "3"
+# Tests must not write the real %APPDATA%\ymux (see ymux-core config_dir).
+ymux-core = { path = "crates/ymux-core", features = ["test-config-dir"] }

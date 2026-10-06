@@ -162,6 +162,7 @@
   "pane.agent.state.done": "קלוד סיים — תורך",
   "pane.agent.state.needs_input": "קלוד ממתין לתשובה שלך",
   "pane.agent.state.waiting_approval": "ממתין לאישור שלך",
+  "pane.agent.state.failed": "קלוד נתקל בשגיאת API",
   "pane.agent.tooltip.elapsed": "{state} · ‎{time}‎",
   "pane.connect.persistent_hint": "עוטף את ה-shell ב-tmux כך שהתחברות מחדש חוזרת לאותו session",
   "pane.meta.title_placeholder": "כותרת (למשל: מחפש את הבאג של X)",

@@ -40,7 +40,7 @@ move together — that is the point of not copying them.
   `settings.claude.auto_summarize_on_stop` is on. `rpc_server`'s dispatcher calls
   `summarize_session_for_pane` in the background. **Failures are logged, never fatal.**
 
-## `claude_usage.rs` (397) — real subscription quota
+## `claude_usage.rs` (423) — real subscription quota
 
 `claude -p "/usage" --output-format json` returns the user's actual Pro/Max quota —
 session %, weekly %, per-model %, reset times, and a "what's contributing" breakdown —
@@ -52,6 +52,11 @@ slow auto-refresh. **Never fast-poll this.**
 
 **Rule #1 applies hard here:** log the workspace id and the percentages, never the
 `/usage` body — it names the user's subagents, skills, and MCP servers.
+
+**Backoff logs once.** After a failed fetch `mark_failed` logs a single
+`workspace=<id> backoff until <unix>` line (now + 300s); the rejection path in
+`claude_usage_fetch` is silent, because a tight caller loop used to write ~15k
+identical lines.
 
 ## `claude_usage_local.rs` (549) — token history, local half
 
@@ -74,7 +79,7 @@ against a 5-minute write's 1.25x, and collapsing them understates a long session
 **Rule #1 by construction:** it reads `message.model`, `message.usage`, the timestamp,
 the session id and the cwd. It never reads message content, and it logs only counts.
 
-## `claude_log.rs` (600) — alive on purpose, unused on purpose
+## `claude_log.rs` (693) — alive on purpose, unused on purpose
 
 Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
 competing 'talk to claude' UIs felt fragmented"). Yossi asked to keep the backend for a
@@ -86,7 +91,9 @@ resulting warning cascade.
   mtime-gated, full-file fetch (no byte diffing).
 - `claude_log_list(workspace_id)` — local directory scan + per-file summary.
 - `claude_log_read(workspace_id, session_id)` — parse the local JSONL into a structured
-  `ClaudeLogEntry` stream.
+  `ClaudeLogEntry` stream. `user`/`assistant` entries carry an optional `usage`
+  (`ClaudeLogUsage`: input / output / cache_read_input / cache_creation_input tokens,
+  key names as in `claude_usage_local.rs`; missing key → 0, non-object → omitted).
 
 **Do not delete this as dead code.** It is deliberate, and the header says so.
 
