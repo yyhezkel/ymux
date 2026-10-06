@@ -9478,6 +9478,12 @@ async fn pane_connect(
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // A missing wsl.exe / distro otherwise dies silently inside the pty.
+            if let Some(msg) = local_setup::wsl_pane_problem(distro.as_deref()).await {
+                log_warn("PTY", &format!("WSL preflight failed for pane {pane_id}: {msg}"));
+                emit_pane_status_event(&app, &pane_id, &msg);
+                return Err(msg);
+            }
             // No delivery path into a wsl.exe session: say so instead of
             // silently dropping the rows.
             if !secret_names.is_empty() {

@@ -92,7 +92,7 @@ put logic there.
   `pane_connect` first clears the pane status (`pane:status ""`), then runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
-  in workspace settings)`; WSL panes get a status, no delivery. `build_tmux_attach_script`
+  in workspace settings)`; WSL panes get a status, no delivery. The `Connection::Wsl` arm first runs `local_setup::wsl_pane_problem` (missing wsl.exe / no distro / wanted distro absent) → `log_warn`, status text, `Err` before `spawn_wsl_pty`; a probe error fails open. `build_tmux_attach_script`
   takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
   `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane

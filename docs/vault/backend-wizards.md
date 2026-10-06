@@ -200,7 +200,8 @@ live** (Rule #14) — bundles are ad-hoc signed, not notarized.
 - WSL left the wizard on 2026-08-19. Existing `Connection::Wsl` workspaces still load
   and run (and `lib.rs::migrate_wsl_workspaces` rewrites them to `Local` on load), but
   nothing creates new ones. `wsl_exec` survives because `worktrees.rs` still dispatches
-  on it.
+  on it. `wsl_pane_problem` (pane_connect preflight; `wsl -l -v` ≤5 s, fails open) feeds the pure
+  `wsl_problem_message`; non-Windows always reports WSL unavailable.
 - `LocalSetupInput` no longer has `wsl_username`; the `CreateWslUser` step handler
   (kept for compat) derives the name from `$USERNAME` (fallback `ymux`). Old payloads that
   still send the key deserialize fine (no `deny_unknown_fields`).
