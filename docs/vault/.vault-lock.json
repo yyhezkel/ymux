@@ -114,7 +114,7 @@
     "app/src/SshConnectionFields.tsx": "14bb9a89e7edd60ca0d896b45034ab3ea9ee6aa7000511ab64f1ed05a8b2c57d",
     "app/src/SshKeyOfferModal.tsx": "4e12b7032d69bfdc248e6f9c4a8f74fcde0202fcd9f7fafc59b2fb32dd3dd9a6",
     "app/src/VersionManager.tsx": "8b182fc23e54f11c21b2759349fdc6b95567e0eab876545b1c09959c00a2d0c6",
-    "app/src/WorkspaceExtrasFields.tsx": "fab806329870e9e6653dfb27fe307da06bcde6fb96459f3b86f1a2fee357d8e6",
+    "app/src/WorkspaceExtrasFields.tsx": "825cef6e8a5c0913a15b1c901bcc2e7e767376cff173d82259ca2fa91851ce14",
     "app/src/provisioningTypes.ts": "ef3996374e93e130185e743b0da00159cc72df07eb2b22c4672b026de44aa022"
   },
   "frontend-lib": {
