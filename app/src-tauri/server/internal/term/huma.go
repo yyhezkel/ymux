@@ -102,9 +102,15 @@ func (s *Service) RegisterHuma(api huma.API) {
 		DefaultStatus: http.StatusCreated,
 		Tags:          []string{"term"}, Security: secured,
 	}, func(_ context.Context, in *struct {
-		Body TermCreateRequest `required:"false"`
+		// A pointer, not `required:"false"`: huma v2.38 ignores that tag on a
+		// non-pointer Body and answers an empty POST with 400 "request body is
+		// required" (TestCreateEmptyBodyIsAccepted). nil = all defaults.
+		Body *TermCreateRequest
 	}) (*struct{ Body TermCreated }, error) {
-		body := in.Body
+		var body TermCreateRequest
+		if in.Body != nil {
+			body = *in.Body
+		}
 		if body.Policy == "" {
 			body.Policy = policyNone
 		}
@@ -134,10 +140,14 @@ func (s *Service) RegisterHuma(api huma.API) {
 		Summary: "Rename a terminal session",
 		Tags:    []string{"term"}, Security: secured,
 	}, func(_ context.Context, in *struct {
-		Name string            `path:"name"`
-		Body TermRenameRequest `required:"false"`
+		Name string `path:"name"`
+		// A pointer: see term-create. nil = no new name → 400.
+		Body *TermRenameRequest
 	}) (*struct{ Body TermRenamed }, error) {
-		to := strings.TrimSpace(in.Body.NewName)
+		to := ""
+		if in.Body != nil {
+			to = strings.TrimSpace(in.Body.NewName)
+		}
 		from := in.Name
 		if !ValidName(to) {
 			return nil, humaErr(ErrBadName)

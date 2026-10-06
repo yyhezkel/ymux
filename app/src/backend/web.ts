@@ -327,6 +327,7 @@ export class WebBackend implements Backend {
       tmux_session: null,
       intent: w.intent ?? null,
       known_sessions: [],
+      is_folder: false,
     };
   }
 
