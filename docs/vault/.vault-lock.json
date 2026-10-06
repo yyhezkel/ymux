@@ -343,7 +343,7 @@
     "app/src-tauri/server/internal/term/webpush_test.go": "5468bc54f3e5250c1780e0d3125370d8b3d7258585e075798f59cff1db2a6517",
     "app/src-tauri/server/internal/term/webws.go": "f4629bdb30a2e3cbd5eb252166b6f1a552dd28e661473bf472bb6530b7152b63",
     "app/src-tauri/server/internal/webpush/store.go": "c4b79396fb9c7f3ebfa232c811d909464084218eb82158c0001fe1703ad91b21",
-    "app/src-tauri/server/internal/webpush/store_test.go": "2336bd8db45efc892b9b7c7da067a138f15bfc8088c574da0ae4cdd0569f8bba",
+    "app/src-tauri/server/internal/webpush/store_test.go": "9aa0795b5067558550ea6b8bf6713982c04ff4bb3f9e98f730d1c443fda7460b",
     "app/src-tauri/server/internal/webpush/webpush.go": "292b16f53b1de56599e3691e6af471fa624ef91104f1d248c4ef843ba6be2b05",
     "app/src-tauri/server/internal/webpush/webpush_test.go": "87ed91f207910cffbdb7f37674a0cfd7020f3959ecd407d9750af54ca7d1e399",
     "app/src-tauri/server/internal/workspace/frames.go": "d554c5113cdc1f8c95473d767d987f71e555c52f1115d8c69fecde7bf162ae75",
