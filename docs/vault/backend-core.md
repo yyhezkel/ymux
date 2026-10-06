@@ -88,6 +88,7 @@ put logic there.
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `workspace_secret_env_keys(workspace_id)` returns names only.
+  Pinned by `secret_env_persist_tests` (end of lib.rs); the save-failure cases are `cfg(windows)` because `SecretEnvStore::save` is a no-op elsewhere.
   `pane_connect` runs `secret_env::split_env` → plain rows to `schedule_setup_injection`,
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
