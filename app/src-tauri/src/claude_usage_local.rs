@@ -482,11 +482,11 @@ fn scan_file(
 /// corrected rather than turned into an error.
 pub fn route(query: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
-    let mut until = parse_i64(query, "until").unwrap_or(0);
+    let mut until = parse_when(query, "until").unwrap_or(0);
     if until <= 0 || until > now {
         until = now;
     }
-    let mut since = parse_i64(query, "since").unwrap_or(0);
+    let mut since = parse_when(query, "since").unwrap_or(0);
     if since <= 0 {
         since = until - 24 * 3600;
     }
@@ -513,14 +513,49 @@ pub fn route(query: &str) -> Result<String, String> {
     serde_json::to_string(&rep).map_err(|e| format!("serialize claude usage: {e}"))
 }
 
-fn parse_i64(q: &str, key: &str) -> Option<i64> {
-    for pair in q.split('&') {
+/// Query value as unix seconds: integer or RFC3339, anything else 0. Mirrors
+/// Go `parseWhen` so a `+02:00` offset sent either way lands on the same second.
+fn parse_when(q: &str, key: &str) -> i64 {
+    let raw = q.split('&').find_map(|pair| {
         let mut it = pair.splitn(2, '=');
-        if it.next() == Some(key) {
-            return it.next().and_then(|v| v.parse().ok());
-        }
+        (it.next().map(percent_decode).as_deref() == Some(key)).then(|| it.next().unwrap_or(""))
+    });
+    let v = match raw {
+        Some(r) => percent_decode(r),
+        None => return 0,
+    };
+    if let Ok(n) = v.parse::<i64>() {
+        return n;
     }
-    None
+    chrono::DateTime::parse_from_rfc3339(&v)
+        .map(|t| t.timestamp())
+        .unwrap_or(0)
+}
+
+/// Go `url.Query` decoding: `%XX` bytes and `+` as space; a malformed escape
+/// stays literal.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                let hex = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok());
+                match hex {
+                    Some(v) => {
+                        out.push(v);
+                        i += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -597,6 +632,19 @@ mod tests {
         let json = serde_json::to_string(&rep).expect("serialize");
         assert!(json.contains(r#""series":[]"#), "{json}");
         assert!(json.contains(r#""by_model":[]"#), "{json}");
+    }
+
+    #[test]
+    fn parse_when_accepts_rfc3339() {
+        // Pins Go parity: RFC3339 (Z, escaped offset) equals unix seconds; garbage is 0.
+        let z = chrono::DateTime::parse_from_rfc3339("2026-10-06T00:00:00Z").expect("ts").timestamp();
+        assert_eq!(parse_when("since=2026-10-06T00:00:00Z", "since"), z);
+        assert_eq!(parse_when("since=2026-10-06T02:00:00%2B02:00", "since"), z);
+        assert_eq!(parse_when("a=1&until=2026-10-06T00:00:00Z", "until"), z);
+        assert_eq!(parse_when("since=garbage", "since"), 0);
+        assert_eq!(parse_when("since=%zz", "since"), 0);
+        assert_eq!(parse_when("until=5", "since"), 0);
+        assert_eq!(parse_when("since=1700000000", "since"), 1_700_000_000);
     }
 
     #[test]
