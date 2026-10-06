@@ -1121,6 +1121,7 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             });
             migrated = true;
         }
@@ -1474,6 +1475,7 @@ pub(crate) fn split_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1548,6 +1550,7 @@ pub(crate) fn split_pane_in(
                     diff_source: new_diff_s,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1566,6 +1569,7 @@ pub(crate) fn split_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 };
                 (
                     LayoutNode::Split {
@@ -1593,6 +1597,7 @@ pub(crate) fn split_pane_in(
                         diff_source,
                         smart_bidi,
                         diff_cwd,
+                        claude_running,
                     },
                     false,
                 )
@@ -1668,6 +1673,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1686,6 +1692,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }),
                 None,
             )
@@ -1768,6 +1775,7 @@ pub(crate) fn update_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1784,6 +1792,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1800,6 +1809,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             }
         }
@@ -5931,6 +5941,7 @@ fn workspace_reset_layout(
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
     }
     persist(&state)?;
@@ -7056,6 +7067,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -7553,6 +7565,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -12930,6 +12943,7 @@ mod pane_swap_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -13139,6 +13153,7 @@ mod migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -15495,6 +15510,7 @@ mod wsl_migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 

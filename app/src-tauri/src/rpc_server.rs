@@ -2337,6 +2337,7 @@ async fn dispatch(
                     diff_source: None,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 });
             }
             persist(state)?;
