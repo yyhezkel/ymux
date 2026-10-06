@@ -247,66 +247,26 @@ struct SecretsFile {
     entries: std::collections::BTreeMap<String, String>, // workspace_id → b64(ciphertext)
 }
 
-/// Wrap secret bytes with Windows DPAPI. PowerShell shell-out keeps us
-/// off the windows-rs dep tree. The encrypted blob is bound to the
-/// current user's profile and machine — moving the JSON file to another
-/// user account yields gibberish.
-#[cfg(target_os = "windows")]
-fn dpapi_protect(secret: &str) -> Result<String, String> {
-    let secret = secret.to_string();
-    let out = std::process::Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            "$ErrorActionPreference = 'Stop'; \
-             Add-Type -AssemblyName System.Security; \
-             $in = $env:YMUX_SECRET; \
-             $bytes = [System.Text.Encoding]::UTF8.GetBytes($in); \
-             $prot = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, 'CurrentUser'); \
-             [Convert]::ToBase64String($prot)",
-        ])
-        .env("YMUX_SECRET", &secret)
-        .output()
-        .map_err(|e| format!("dpapi spawn: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
-}
-
-/// No at-rest wrapper exists off Windows, so there is nothing to write.
-///
-/// This used to return `noprotect:<secret>`, and `save_workspace_secret`
-/// wrote that verbatim into `provisioning-secrets.json` — i.e. the user's
-/// SSH password in plaintext, at default permissions, in the config dir.
-/// The premise in the old comment ("non-Windows builds are just the
-/// cross-compile for ymux-linux-x64, provisioning runs UI-side on
-/// Windows") stopped being true when the desktop shipped for macOS.
-///
-/// Rule #2 sanctions exactly this: DPAPI when persistence is possible,
-/// "otherwise keep in memory only". Deliberately NOT a Keychain
-/// integration — see the note on `save_workspace_secret`: nothing in the
-/// tree ever reads this store back, so wiring one up would be building a
-/// feature nobody asked for around a value nobody consumes.
-#[cfg(not(target_os = "windows"))]
-fn dpapi_protect(_secret: &str) -> Result<String, String> {
-    Err("no at-rest secret store on this platform (Rule #2: memory only)".into())
-}
-
 /// Persist the initial password, wrapped, keyed by workspace.
 ///
 /// NOTE: write-only. Nothing in the tree reads this file back — there is
 /// no `dpapi_unprotect` and no loader — so today it is groundwork for a
 /// "remember this password" feature that does not exist yet. The caller
 /// already treats failure as non-fatal (it logs and continues), which is
-/// what makes the unix `Err` above safe: provisioning is unaffected.
+/// what makes the non-Windows `Err` safe: provisioning is unaffected.
 /// FOLLOWUPS P2 tracks giving it a reader or deleting it outright.
+///
+/// Wrapping reuses `secret_env::protect_b64` (DPAPI CurrentUser, base64).
+/// Off Windows there is no at-rest wrapper, so it returns `Err` and nothing
+/// is written. It used to return `noprotect:<secret>`, which landed the SSH
+/// password in plaintext in `provisioning-secrets.json`. Rule #2 sanctions
+/// "otherwise keep in memory only"; deliberately NOT a Keychain integration,
+/// since nothing reads this store back.
 fn save_workspace_secret(workspace_id: &str, password: &str) -> Result<(), String> {
     // Wrap first: on a platform with no at-rest store this bails before we
     // touch the file at all, so nothing half-writes and no empty
     // provisioning-secrets.json appears in a macOS config dir.
-    let wrapped = dpapi_protect(password)?;
+    let wrapped = crate::secret_env::protect_b64(password)?;
     let path = secrets_path()?;
     let mut file: SecretsFile = if path.exists() {
         let t = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
@@ -1089,6 +1049,7 @@ fn finalize_workspace(
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     };
     let ws = Workspace {
         id: new_workspace_id(),
@@ -1820,4 +1781,19 @@ pub(crate) fn provisioning_step_catalog() -> Vec<(String, String)> {
     all.into_iter()
         .map(|k| (format!("{k:?}"), k.label().to_string()))
         .collect()
+}
+
+#[cfg(all(test, not(windows)))]
+mod secret_tests {
+    use super::*;
+
+    // Pins Rule #2: off Windows the password is never persisted; a regression to plaintext write breaks this.
+    #[test]
+    fn save_workspace_secret_memory_only_off_windows() {
+        let existed = secrets_path().map(|p| p.exists()).unwrap_or(false);
+        let err = save_workspace_secret("ws-test", "hunter2").unwrap_err();
+        assert!(err.contains("memory-only"), "{err}");
+        let after = secrets_path().map(|p| p.exists()).unwrap_or(false);
+        assert_eq!(existed, after);
+    }
 }

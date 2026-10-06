@@ -111,6 +111,11 @@ patching each one separately.
 
 ### Single-instance lock on the config dir (2026-08-23)
 
+**2026-10-06 update:** the lock half is DONE as diagnostics only — `config_lock.rs` takes an OS lock
+on `ymux.lock`, records the holder in `ymux.owner.json`, and the second instance WARNs and carries
+on (no refusal, so no recovery UX is needed). Still untouched: `tauri-plugin-single-instance` and the
+two-ymux.exe log-rotation race. The text below is the original 2026-08-23 framing.
+
 The other half of the FOLLOWUPS P1 "two builds share %APPDATA%\ymux and the older
 one silently strips newer fields". That entry offered two fixes: (b) a schema
 version that refuses to write over a newer file, and (a) refusing to START when

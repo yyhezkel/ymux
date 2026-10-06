@@ -102,10 +102,18 @@ fn in_backoff(workspace_id: &str) -> bool {
         None => false,
     }
 }
+/// Enter backoff for `workspace_id`. Logs once here (with the unix
+/// instant it ends); the rejection path in `claude_usage_fetch` stays
+/// silent so a tight caller loop cannot flood the log.
 fn mark_failed(workspace_id: &str) {
     if let Ok(mut guard) = USAGE_FAILED_AT.lock() {
         guard.get_or_insert_with(HashMap::new)
             .insert(workspace_id.to_string(), Instant::now());
+        let until = now_unix() + USAGE_BACKOFF.as_secs() as i64;
+        crate::log_debug(
+            "USAGE",
+            &format!("workspace={workspace_id} backoff until {until}"),
+        );
     }
 }
 fn clear_failed(workspace_id: &str) {
@@ -259,7 +267,6 @@ pub(crate) async fn claude_usage_fetch(
     }
     // beta.3 safety net #1 — refuse to spam remote after a recent failure.
     if in_backoff(&workspace_id) {
-        crate::log_debug("USAGE", &format!("workspace={workspace_id} backoff"));
         return cache_stale(&workspace_id)
             .ok_or_else(|| "usage temporarily unavailable (backoff)".to_string());
     }
@@ -374,6 +381,25 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"You are currently using your subscription to power your Claude Code usage\n\nCurrent session: 33% used · resets Jul 8, 4:10am (Europe/Berlin)\nCurrent week (all models): 11% used · resets Jul 14, 10pm (Europe/Berlin)\nCurrent week (Fable): 16% used · resets Jul 14, 10pm (Europe/Berlin)\n\nWhat's contributing to your limits usage?\nApproximate, based on local sessions on this machine.\n\nLast 24h · 3466 requests · 10 sessions\n  94% of your usage came from subagent-heavy sessions\n  Top subagents: implementer 40%, loop 8%\n\nLast 7d · 13897 requests · 26 sessions\n  99% of your usage came from subagent-heavy sessions","total_cost_usd":0}"#;
+
+    // pins: entering backoff flips in_backoff, clear_failed lifts it, and a
+    // poisoned lock degrades to "not in backoff" without panicking. One test
+    // because poisoning the static is permanent for the process.
+    #[test]
+    fn backoff_enter_clear_and_poisoned_lock() {
+        mark_failed("t-backoff-a");
+        assert!(in_backoff("t-backoff-a"));
+        assert!(!in_backoff("t-backoff-other"));
+        clear_failed("t-backoff-a");
+        assert!(!in_backoff("t-backoff-a"));
+        let _ = std::thread::spawn(|| {
+            let _g = USAGE_FAILED_AT.lock();
+            panic!("poison");
+        })
+        .join();
+        mark_failed("t-backoff-b");
+        assert!(!in_backoff("t-backoff-b"));
+    }
 
     #[test]
     fn parses_real_usage() {

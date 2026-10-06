@@ -49,11 +49,13 @@ did. Details in `docs/CONTRIBUTING.md` § Updating the vault.
 ## Coverage
 
 95% of the tracked `.rs` / `.ts` / `.tsx` / `.go` / `.mjs` lines are covered by a vault
-file. The remainder is, by design: generated SDK output, generated ts-rs bindings, test
-files, and a two-line vite shim. `node scripts/vault-check.mjs` prints the current
-number.
+file. `node scripts/vault-check.mjs` prints the current number.
 
-Test files are deliberately uncovered — a test edit should not trip the freshness gate,
+Code no vault claims now fails the gate. The remainder — generated SDK output,
+generated ts-rs bindings, test files, a vite shim, a CSS harness — is listed in the
+`unowned:` frontmatter of a vault page, each entry with a reason.
+
+Test files are deliberately unowned — a test edit should not trip the freshness gate,
 and where the tests are the specification (the RTL modules) the vault says to read them
 rather than paraphrasing.
 

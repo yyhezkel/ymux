@@ -1,9 +1,15 @@
 {
-  "ymux_hooks_version": "1.7.0",
+  "ymux_hooks_version": "1.8.0",
   "agent": "claude-code",
   "min_ymux_version": "0.1.0",
   "settings_file": "~/.claude/settings.json",
   "_notes": [
+    "v1.8.0 (2026-10): StopFailure is registered. Claude Code fires it when",
+    "  a turn ends on an API error (rate limit, auth, overloaded...) instead",
+    "  of Stop. The CLI pushes the error TYPE alone - never error_details or",
+    "  last_assistant_message - and the desktop turns it into the pane light",
+    "  `failed`. State only: never a feed item or a toast. Existing machines",
+    "  must re-run setup-hooks to get it.",
     "v1.7.0 (2026-10, Phase 105.C): SessionStart is registered again, with one",
     "  job: the CLI asks the desktop (RPC context.inject, ~300 ms budget,",
     "  fail-open) for this session's context and prints it on stdout as",
@@ -97,6 +103,10 @@
     "SessionStart": {
       "matcher": "",
       "command": "${YMUX_BIN} claude-hook session-start"
+    },
+    "StopFailure": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook stop-failure"
     },
     "Stop": {
       "matcher": "",
