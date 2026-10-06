@@ -171,14 +171,16 @@ func TestCreateEmptyBodyIsAccepted(t *testing.T) {
 }
 
 func TestCreateIgnoresUnknownFields(t *testing.T) {
-	// The browser client also sends pane_id/cmd; unknown keys must not 422.
+	// A newer client may send keys this daemon does not know; they must not
+	// 422. (pane_id and cmd are known since Phase 109/110 — cmd is an argv
+	// array — so the unknown keys here are made up.)
 	s, _ := testService(func(args []string) ([]byte, error) {
 		if args[0] == "has-session" {
 			return nil, exitErr()
 		}
 		return nil, nil
 	})
-	w := do(s, "POST", "/api/v2/term/sessions", "", `{"pane_id":"p1","cmd":"ls"}`)
+	w := do(s, "POST", "/api/v2/term/sessions", "", `{"from_a_newer_client":"x","another":[1,2]}`)
 	if w.Code != http.StatusCreated {
 		t.Errorf("got %d, want 201 (body %s)", w.Code, w.Body.String())
 	}
