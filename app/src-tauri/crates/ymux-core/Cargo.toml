@@ -27,3 +27,7 @@ whoami = "1"
 # Types only here — TLS features are enabled by the app crate
 # (cargo feature unification merges them in workspace builds).
 ureq = { version = "2", default-features = false }
+
+[features]
+# Test-only default config dir (temp, per pid). Dependents enable it via dev-dependencies.
+test-config-dir = []
