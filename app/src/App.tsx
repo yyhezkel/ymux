@@ -8,13 +8,16 @@ import { NotificationCenter, NotifHeaderActions, type NotifItem } from "./Notifi
 import { WelcomeScreen } from "./WelcomeScreen";
 import { LayoutView } from "./LayoutView";
 import { PaneTabs } from "./PaneTabs";
-import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgentState";
+import { agentAnnounceKey, trafficLight, trafficLightKey, type AnnounceSnapshot, type PaneAgentState, type TrafficLight } from "./paneAgentState";
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
+import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
+import { RAIL_COLLAPSED_W } from "./contextModel";
 import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
+import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
@@ -24,7 +27,9 @@ import {
   prunePaneSessions,
   rememberPaneSession,
 } from "./sessionRestore";
+import { claudeRunningWrite, tuiSignalOnConnect } from "./claudeRunning";
 import { pruneFmPaths } from "./fmPaths";
+import { popoutProfileKey } from "./popoutProfile";
 import { FeedPanel } from "./FeedPanel";
 import { NotesModal } from "./NotesModal";
 import { SetupWizard } from "./SetupWizard";
@@ -351,6 +356,17 @@ function App() {
   // must read last_active_at BEFORE workspace_set_active stamps it),
   // idle-return (below), and the show_briefing shortcut/palette command.
   const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
+  // Phase 105: the Context Rail — a docked third grid column. Width and
+  // collapsed state are per-machine UI prefs (localStorage, see
+  // ContextRail.loadRailPrefs), not workspaces.json.
+  const railPrefs = loadRailPrefs();
+  const [railWidth, setRailWidth] = createSignal(railPrefs.width);
+  const [railCollapsed, setRailCollapsed] = createSignal(railPrefs.collapsed);
+  const railPx = () => (railCollapsed() ? RAIL_COLLAPSED_W : railWidth());
+  const toggleContextRail = () => {
+    setRailCollapsed((v) => !v);
+    saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() });
+  };
   // cmux-A A1: pane_ids that received an OSC 9/99/777 notification and
   // haven't been focused since. Drives the amber pulse ring on the pane
   // + the sidebar aggregate badge. Cleared when the pane is focused.
@@ -965,11 +981,28 @@ function App() {
     const dir = document.documentElement.dir === "rtl" ? "rtl" : "ltr";
     // Seed the popout's Ctrl+wheel zoom from the configured terminal size the
     // first time only — later wheel zooms own it (localStorage, shared origin).
-    if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
-      localStorage.setItem(
-        "ymux.popout.font_size_pt",
-        String(settings()?.font.terminal_size_pt ?? 13),
-      );
+    try {
+      if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
+        localStorage.setItem(
+          "ymux.popout.font_size_pt",
+          String(settings()?.font.terminal_size_pt ?? 13),
+        );
+      }
+    } catch (e) {
+      log.warn("popout font-size seed failed", e);
+    }
+    // The popout window only knows its sid; hand it the pane id so it can ask
+    // pane_persistence_list whether to arm the tmux wheel proxy.
+    try {
+      localStorage.setItem(`ymux.popout.pane.${sid}`, paneId);
+    } catch (e) {
+      log.warn("popout pane-id seed failed", e);
+    }
+    // Hand the origin pane's RTL profile to the popout webview (same origin).
+    try {
+      localStorage.setItem(popoutProfileKey(sid), ti.profile);
+    } catch (e) {
+      log.warn("popout profile handoff failed", e);
     }
     try {
       await backend.call("popout_pane", {
@@ -1035,6 +1068,19 @@ function App() {
     if (wsId) lastPaneByWs.set(wsId, paneId);
     terms.get(paneId)?.focus();
   };
+
+  // Active terminal pane → backend, so ticket pane-cwd picks its tmux session.
+  // Non-terminal focus (diff/files/browser) sends nothing: last terminal stays.
+  createEffect(() => {
+    const ws = activeWs();
+    const pid = activePaneId();
+    if (!ws?.layout || !pid) return;
+    const node = findPane(ws.layout, pid);
+    if (!node || paneKindOf(node) !== "terminal") return;
+    backend.call<void>("pane_set_active", { workspaceId: ws.id, paneId: pid }).catch((e) =>
+      log.warn(`pane_set_active failed: ${e}`),
+    );
+  });
 
   // Phase 35 (#1.3): cycle focus through the active workspace's panes.
   const focusAdjacentPane = (delta: number) => {
@@ -1113,6 +1159,25 @@ function App() {
     void splitPane(cur, splitDir);
   };
 
+  // BRIEF: set or clear a workspace's 🎯 intent (the Briefing card).
+  const saveIntent = (wsId: string, text: string) => {
+    void (async () => {
+      try {
+        const updated = await backend.call<Workspace>("workspace_set_intent", {
+          workspaceId: wsId,
+          intent: text === "" ? null : text,
+        });
+        const f = file();
+        updateFile({
+          ...f,
+          workspaces: f.workspaces.map((w) => (w.id === updated.id ? updated : w)),
+        });
+      } catch (e) {
+        log.error("workspace_set_intent failed", e);
+      }
+    })();
+  };
+
   // Phase 35 (#1.3): the command-palette catalog. Each command reuses
   // the same handler the existing UI calls. `enabled` hides commands
   // that need context they don't have (no active workspace / pane).
@@ -1124,6 +1189,7 @@ function App() {
     return [
       { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
       { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "contextRail.toggle", label: t("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
       { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
       { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
@@ -1221,8 +1287,10 @@ function App() {
     for (const w of all) {
       if (!w.layout) continue;
       // Phase 92: every pane is on a screen, so the queue's label keeps
-      // the machine / project it belongs to: `runner › shell`.
-      const header = ancestorsOf(all, w.id)[0];
+      // the machine it belongs to: `runner › shell`. Root = LAST ancestor
+      // (nearest-first), so a pinned folder tier is never in the label.
+      const chain = ancestorsOf(all, w.id);
+      const header = chain[chain.length - 1];
       for (const pane of collectPaneNodes(w.layout)) {
         const pid = pane.pane_id;
         const run = runs[pid];
@@ -1252,6 +1320,26 @@ function App() {
     }
     return out;
   };
+  // Screen-reader announcement of the FOCUSED pane's light. The decision is
+  // agentAnnounceKey() alone; this only feeds it and speaks the result. Empty
+  // string first, text on the next frame, so a repeated phrase is re-read.
+  const [announceText, setAnnounceText] = createSignal("");
+  let announcePrev: AnnounceSnapshot = { paneId: null, key: null };
+  let announceRaf = 0;
+  createEffect(() => {
+    const pid = activePaneId();
+    const row = allPaneAgentRows().find((r) => r.paneId === pid);
+    const next: AnnounceSnapshot = {
+      paneId: pid ?? null,
+      key: row?.light ? trafficLightKey(row.light, row.waitingOnPermission) : null,
+    };
+    const spoken = agentAnnounceKey(announcePrev, next);
+    announcePrev = next;
+    if (spoken === null) return;
+    cancelAnimationFrame(announceRaf);
+    setAnnounceText("");
+    announceRaf = requestAnimationFrame(() => setAnnounceText(t(spoken)));
+  });
   const paneAgentLights = (): Record<string, TrafficLight | null> => {
     const wsId = activeWs()?.id;
     const out: Record<string, TrafficLight | null> = {};
@@ -1424,9 +1512,7 @@ function App() {
     const focused = pid && ws.layout ? findPane(ws.layout, pid) : null;
     const ident = effectiveIdentity(focused ?? undefined, ws);
     if (ident.emoji) parts.push(ident.emoji);
-    const focusedName =
-      focused?.title ||
-      (focused?.connection ? describeConnection(focused.connection) : null);
+    const focusedName = focused ? windowPaneName(focused, describeConnection) : null;
     parts.push(focusedName ?? ws.name);
     if (waitingWorkspaceIds().has(ws.id)) parts.push("●");
     const title = parts.join(" ") + " — ymux";
@@ -2234,6 +2320,22 @@ function App() {
     return needsInjection ? ws.cwd : null;
   };
 
+  // Persist the Claude-running flag, only on a transition.
+  const syncClaudeRunning = (paneId: string, on: boolean) => {
+    for (const w of file().workspaces) {
+      const node = w.layout ? findPane(w.layout, paneId) : null;
+      if (!node) continue;
+      const running = claudeRunningWrite(node.claude_running, on);
+      if (running === null) return;
+      backend.call("pane_set_claude_running", {
+        workspaceId: w.id,
+        paneId,
+        running,
+      }).catch((e) => log.warn(`pane_set_claude_running failed: ${e}`));
+      return;
+    }
+  };
+
   const connectPane = async (paneId: string, opts: ConnectOpts = {}) => {
     const ws = activeWs();
     if (!ws) return;
@@ -2243,16 +2345,22 @@ function App() {
     ti.workspaceId = ws.id;
     // 2026-08-19: when ymux itself launches Claude, nothing has to be
     // detected. Claude Code writes RTL pre-reordered, so the pane must not
-    // bidi it a second time — and the title-based detector never learns this
-    // inside zellij, which eats the title (measured: `title-seen … match=0`
-    // on every title, 57 chars of zellij's own).
+    // bidi it a second time.
     //
-    // A RESTORE is left alone rather than cleared. Re-attaching to a
-    // persistent session says nothing about what is running inside it — that
-    // is the whole point of persistence — so clearing here would throw away a
-    // signal a hook may have already delivered.
-    if (opts.mode === "claude") ti.setTuiSignal(true);
-    else if (!opts.restoring) ti.setTuiSignal(null);
+    // A RESTORE is not cleared. Re-attaching to a persistent session says
+    // nothing about what is running inside it, so the persisted
+    // `claude_running` flag seeds the signal instead. Stale-true (Claude died
+    // while the app was closed) stays reversed until a session-end hook or a
+    // fresh non-restoring connect corrects it.
+    const connectSignal = tuiSignalOnConnect(
+      opts.mode,
+      !!opts.restoring,
+      ws.layout ? findPane(ws.layout, paneId)?.claude_running : null,
+    );
+    if (connectSignal !== null) {
+      ti.setTuiSignal(connectSignal);
+      if (!opts.restoring) syncClaudeRunning(paneId, connectSignal);
+    }
     // Phase 90.B: a session row (`Workspace.tmux_session`) exists FOR one
     // session, and activation never auto-connects panes — so a plain
     // [Connect] on its first pane must attach to that session rather than
@@ -3545,6 +3653,11 @@ function App() {
       if (surfaceOf("queue") === "closed") openPanel("queue");
       else closePanel("queue");
     } },
+    // Phase 105: collapse / expand the Context Rail.
+    { id: "toggle_context_rail", run: (e) => {
+      e.preventDefault();
+      toggleContextRail();
+    } },
     // BRIEF: the Briefing card, on demand — works regardless of the
     // opt-in trigger toggles.
     { id: "show_briefing", when: () => !!activeWs(), run: (e) => {
@@ -3571,6 +3684,13 @@ function App() {
         if (text) pasteIntoActiveTerminal(text);
       }).catch((err) => log.warn("paste failed", err));
     } },
+    { id: "select_all",
+      when: (e) => inTerminal(e) && hasActivePane(),
+      run: (e) => {
+        e.preventDefault();
+        const pid = activePaneId();
+        if (pid) terms.get(pid)?.term.selectAll();
+      } },
     // Phase 17: Claude session summary.
     { id: "summarize_claude", run: (e) => { e.preventDefault(); void summarizeActivePane(); } },
 
@@ -3937,6 +4057,7 @@ function App() {
     unlistens.push(
       await backend.on<string>("popout:closed", (e) => {
         const sid = e.payload;
+        localStorage.removeItem(popoutProfileKey(sid));
         const pid = sessionToPane.get(sid);
         // pty:exit-driven close already cleared the maps AND un-pruned the
         // pane (see the pty:exit handler); nothing left to do here.
@@ -4003,8 +4124,6 @@ function App() {
         // YMUX_PANE_ID (cli/src/main.rs) — so they drive the per-pane
         // "don't bidi this twice" state. This works over SSH and through any
         // multiplexer, unlike the terminal title, which zellij consumes.
-        // session-end clears back to null rather than asserting false, so the
-        // title can still speak if it ever starts arriving.
         // A Claude hook can only be fired from INSIDE Claude, and it already
         // carries YMUX_PANE_ID (cli/src/main.rs), so ANY of them is proof that
         // Claude holds that pane — which is what decides whether the pane may
@@ -4013,14 +4132,13 @@ function App() {
         // Not just session-start: the case that matters most is re-attaching
         // to a persistent zellij session where Claude never stopped, so no
         // session-start ever fires. `stop` lands after every reply, so the
-        // state corrects itself on the first interaction. Measured need —
-        // Yossi's log had `tui=0` on panes that had Claude running in them.
-        //
-        // Clears to null rather than false so the title can still speak, in
-        // case it ever starts arriving.
+        // state corrects itself on the first interaction. The flag is also
+        // persisted (`claude_running`) so a reattach starts right without
+        // waiting for that hook; session-end clears a stale true.
         if (f.pane_id) {
-          if (f.subkind === "session-end") setPaneTuiSignal(f.pane_id, null);
-          else setPaneTuiSignal(f.pane_id, true);
+          const running = f.subkind !== "session-end";
+          setPaneTuiSignal(f.pane_id, running);
+          syncClaudeRunning(f.pane_id, running);
         }
         // Every hook is recorded in the Notification Center history; feedToNotif
         // carries the workspace_id so the entry shows which workspace it's from.
@@ -4448,8 +4566,9 @@ function App() {
   return (
     <div
       class="app"
-      style={{ "grid-template-columns": `${sidebarPx()}px 1fr` }}
+      style={{ "grid-template-columns": `${sidebarPx()}px minmax(0, 1fr) ${railPx()}px` }}
     >
+      <div class="sr-only" aria-live="polite" aria-atomic="true">{announceText()}</div>
       {/* v0.4.4 (Task 1): headless auto-connect indicator — shown while a
           secondary panel arms the workspace's SSH handle in the background. */}
       <Show when={connectingWs()}>
@@ -5083,6 +5202,20 @@ function App() {
         </Show>
       </div>
 
+      {/* Phase 105: the Context Rail — third grid column, inline-end. */}
+      <ContextRail
+        ws={activeWs()}
+        paneId={activeWs() ? activePaneId() : null}
+        row={allPaneAgentRows().find((r) => r.paneId === activePaneId() && r.wsId === activeWs()?.id) ?? null}
+        nowMs={agentClockMs()}
+        collapsed={railCollapsed()}
+        onToggleCollapsed={toggleContextRail}
+        width={railWidth()}
+        onResize={setRailWidth}
+        onResizeEnd={() => saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() })}
+        onJumpPane={focusPane}
+      />
+
       {/* Phase GG: in-app Markdown viewer (floating window). Reads its
           own global store, opened by FileManager .md double-click. */}
       <MarkdownViewer />
@@ -5362,25 +5495,7 @@ function App() {
               ws={ws}
               rows={allPaneAgentRows().filter((r) => r.wsId === wsId)}
               nowMs={agentClockMs()}
-              onSaveIntent={(text) => {
-                void (async () => {
-                  try {
-                    const updated = await backend.call<Workspace>("workspace_set_intent", {
-                      workspaceId: wsId,
-                      intent: text === "" ? null : text,
-                    });
-                    const f = file();
-                    updateFile({
-                      ...f,
-                      workspaces: f.workspaces.map((w) =>
-                        w.id === updated.id ? updated : w,
-                      ),
-                    });
-                  } catch (e) {
-                    log.error("workspace_set_intent failed", e);
-                  }
-                })();
-              }}
+              onSaveIntent={(text) => saveIntent(wsId, text)}
               onJumpPane={(paneId) => {
                 setBriefingWs(null);
                 focusPane(paneId);

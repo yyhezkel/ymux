@@ -49,7 +49,10 @@ and it no longer hosts the "existing" flows at all.
   platform's multiplexer, offers to install what is missing (winget / Homebrew /
   official installers / `npm -g`), installs ymux hooks for local Claude Code, and
   finishes by creating a local workspace to land in. Progress arrives as
-  `local-setup:progress` events from `local_setup.rs`.
+  `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
+  `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
+  The macOS tmux chain is toggled by the `persistenceGroup` signal (default on; off when
+  brew and tmux are both absent).
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
   `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
@@ -61,17 +64,20 @@ and it no longer hosts the "existing" flows at all.
 
 `provisioningTypes.ts` (38) mirrors the Rust step/progress shapes.
 
-## `CreateWorkspaceModal.tsx` (451) — **edit-only**
+## `CreateWorkspaceModal.tsx` (458) — **edit-only**
 
 Creation moved to `SetupWizard`. This modal is what the sidebar's edit action and the
 palette rename open. The SSH form and the extras block are **shared** with the wizard
-rather than duplicated:
+rather than duplicated. On open it also calls `workspace_secret_env_keys` once and feeds
+the names to `storedSecretKeys` (failure → logged, editor still usable):
 
 - **`SshConnectionFields.tsx` (492)** — the SSH form. **The parent owns the form state**
   (via `createSshFormState`) so it can hydrate from an existing workspace or read the
   built `Connection` on submit; everything transient stays inside the component.
-- **`WorkspaceExtrasFields.tsx` (91)** — the setup/teardown/env block, same ownership
-  split.
+- **`WorkspaceExtrasFields.tsx` (114)** — the setup/teardown/env block, same ownership
+  split. Each env row has a `secret` checkbox: secret → password input, unchecking clears
+  the value; optional `storedSecretKeys` prop swaps the placeholder to "stored — leave
+  blank to keep".
 
 ## Dialogs
 
@@ -89,10 +95,14 @@ rather than duplicated:
   `sessionNames` and names the tmux/zellij sessions behind the subtree's session rows
   (every row with `tmux_session`) — those are KILLED on the host, the one thing the
   dialog does that reaches the host; App's `commitDelete` does the kill before the delete.
-- **`DirPicker.tsx` (176)** — remote directory browser over the workspace's live SSH
-  session. Its markup, CSS classes (`dir-picker-*`), i18n keys (`connect.dirPicker.*`)
-  and localStorage recents were lifted out of `PaneView`, where the dialog had been
-  sitting unreachable.
+- **`DirPicker.tsx` (232)** — remote directory browser over the workspace's live SSH
+  session, one list body in two variants. `modal` (App's pin-folder dialog) keeps the
+  `dir-picker-*` classes, `connect.dirPicker.*` i18n keys and localStorage recents.
+  `inline` (the `PaneView` wizard's browse view) renders the wizard's `nc-*` markup,
+  reports each navigation through `onPathChange`, and is the only remaining caller of
+  `file_home_remote` / `file_list_remote`. The props are a discriminated union, so an
+  inline picker without `onPathChange` is a type error. The modal picker writes recents
+  itself in `choose`; the inline consumer (`PaneView.chooseDir`) owns them.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
 ## `SettingsModal.tsx` (1,869)
@@ -103,7 +113,8 @@ notifications, logs, Claude, updates, shortcuts. Reads and writes through
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
 modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"
 checkbox (`sessions_as_rows`, the `restore_sessions_on_start` row's shape). The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
-toggles + two minute thresholds); its writes always spread the COMPLETE `brief`
+toggles + two minute thresholds + Phase 105.C's "Inject context into sessions",
+checked unless explicitly `false` since it defaults on); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
 group.
 
@@ -132,10 +143,10 @@ delete a font a running app has open, so the `failed` list gets its own message.
 installed flag lives on the catalog and the row would otherwise not appear or disappear
 until Settings was reopened.
 
-**The Shortcuts tab is 28 recordable rows in five labelled groups**, driven by
+**The Shortcuts tab is 27 recordable rows in five labelled groups**, driven by
 `SHORTCUT_GROUPS` from `shortcuts.ts` — the group list is the UI's row order, and a
 unit test asserts it covers every action id exactly once, so a binding cannot exist in
-the schema with no row. `ShortcutRow` is the click-to-record picker: focus it, press
+the schema with no row (deprecated ids such as `find` are excluded from both). `ShortcutRow` is the click-to-record picker: focus it, press
 the combination, `formatEvent` stores the canonical accelerator, Esc cancels. It
 **calls `stopPropagation`**, and that is not optional — `App.tsx` listens for keydown
 on `window` in the bubble phase, so without it the combination being *recorded* also
@@ -154,6 +165,7 @@ typed, and a typo produced a hotkey that silently never fired), and it is passed
 
 **`VersionManager.tsx` (228)** is the Updates tab's list: every published release,
 install any of them (including a downgrade, with a warning), and pick a release channel.
+The Install button is enabled by `dmg_url` on macOS and `nsis_url` elsewhere.
 Backed by `updater_list_versions` / `updater_install_version`.
 
 ## Invariants

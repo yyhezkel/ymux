@@ -104,9 +104,6 @@ func (s *Service) RegisterHuma(api huma.API) {
 			ctx.SetHeader("Content-Type", "application/octet-stream")
 			if truncated {
 				ctx.SetHeader("X-Ymux-Truncated", "true")
-				// Pre-rename header, for SDK builds older than the
-				// winmux → ymux rename. Drop once 0.5.0 is the floor.
-				ctx.SetHeader("X-Winmux-Truncated", "true")
 			}
 			_, _ = ctx.BodyWriter().Write(data)
 		}}, nil

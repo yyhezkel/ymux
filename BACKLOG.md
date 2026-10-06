@@ -11,6 +11,8 @@ Format:
 
 ## Open
 
+- [ ] 2026-10-05 | manual                 | **P2** - brief parser parity: Rust `brief.rs` gained the sticky `goal` / `done` keys (Phase 105 follow-up) and `PaneBrief` carries them; the Go port `server/internal/agent/brief.go` (+ `brief_test.go`) does not, so a browser-created session's brief drops them. Port the two keys + the `goal_and_done_keys_parse_and_clip` test, then rebake both daemon blobs from the ci-windows artifact and bump the daemon version (CLAUDE.md § Rebaking the server).
+- [ ] 2026-10-05 | manual                 | **P3** - Context Rail (Phase 105): Go daemon (browser sessions) parity — `server/internal/agent` has the brief parser but no per-session context store, so browser-created sessions get no persisted first prompt / brief log and (105.C) no SessionStart injection — the daemon answers `context.inject` with an unknown-method error and the CLI fails open. Port `context_store.rs` when Phase C's web UI needs it.
 - [ ] 2026-09-14 | manual                 | **P3** - Pane header: the smart-bidi toggle (`bidi` in PaneView.tsx `actions()`) is now hidden in tabs mode (Phase 93) on the argument that RTL is a Settings matter (`terminal.rtl.*`) - the same argument applies to split mode, where it still shows. Yossi scoped Phase 93 to tabs only; decide whether the per-pane `smart_bidi` byte-stream filter (`pane_set_smart_bidi`) deserves a header button anywhere, or a Settings toggle instead.
 - [x] 2026-09-02 | manual                 | **P1** - DONE in PR #41 (90.C, ephemeral per-open selection; per-host persistence still open below) — USER REQUIREMENT for the active-sessions overview (PR #41): per-session CHOICE of which sessions get an LLM summary — default no auto-summarize, per-row select + "Summarize selected", optional per-host persistence. Full spec posted as a comment on PR #41 (issuecomment-5510542414). Must land with #41 or immediately after; if #41 merges without it, this entry is the reminder that the requirement is still open.
 - [ ] 2026-09-02 | manual                 | **P3** - Active-sessions overview: persist the summarize-selection per host → session name (the `session-owners.json` keying precedent), so a muted noisy session stays muted across opens. v1 (PR #41, 90.C) is per-open only.
@@ -108,6 +110,11 @@ misclassifying WSL remains, which this would fix rather than
 patching each one separately.
 
 ### Single-instance lock on the config dir (2026-08-23)
+
+**2026-10-06 update:** the lock half is DONE as diagnostics only — `config_lock.rs` takes an OS lock
+on `ymux.lock`, records the holder in `ymux.owner.json`, and the second instance WARNs and carries
+on (no refusal, so no recovery UX is needed). Still untouched: `tauri-plugin-single-instance` and the
+two-ymux.exe log-rotation race. The text below is the original 2026-08-23 framing.
 
 The other half of the FOLLOWUPS P1 "two builds share %APPDATA%\ymux and the older
 one silently strips newer fields". That entry offered two fixes: (b) a schema

@@ -14,8 +14,8 @@ Only affects the `auto_per_line` RTL mode (the default). Gated by
 
 ## Unit tests
 
-`app/src/textDirection.test.ts` — 75 cases (`node:test`), of which 10 cover
-`nextTuiOwnsBidi` and 6 cover `rowDirections` / `force_rtl`. Run:
+`app/src/textDirection.test.ts` — 41 cases (`node:test`), of which 5 cover
+`rowDirections` / `force_rtl`. Run:
 
 ```
 cd app && node --experimental-strip-types --test src/textDirection.test.ts
@@ -58,7 +58,7 @@ RTL, the runs are not reversed.
 
 ## TUI-owns-bidi smoke (Claude Code visual-order RTL)
 
-Covers `tuiOwnsBidi` / `nextTuiOwnsBidi`. **Run this whole section after any
+Covers `tuiOwnsBidi` and the hook-driven `claudeActive` signal (`setTuiSignal`). **Run this whole section after any
 merge that touches `terminalInstance.ts` or `textDirection.ts`** — the feature
 was silently lost in merge `bcaa330` (2026-07-31) and stayed gone for 18 days
 with a green test suite, because the merge deleted the code and its tests
@@ -67,7 +67,7 @@ together. See `docs/DECISIONS.md`, the TUI-owns-bidi entry.
 1. Start Claude Code in a pane and print Hebrew → renders correctly: no
    reversed letters, no left-aligned scramble, no clipped glyphs.
 2. `%APPDATA%\winmux\debug.log` shows `[TERM] tui-owns-bidi on pane=<id>` at
-   Claude start. **If this line never appears, the feature is inert** — for
+   Claude start (the ymux Claude hook reports it — no OSC title involved). **If this line never appears, the feature is inert** — for
    tmux panes that is expected to be the open question (see follow-up 3 in
    DECISIONS); for a local pane it is a bug.
 3. Type a Hebrew sentence ending in `?` into Claude's input box → the `?` stays
@@ -80,11 +80,11 @@ together. See `docs/DECISIONS.md`, the TUI-owns-bidi entry.
    renders forced-LTR with no recovery short of a new pane.
 6. Devtools console: no xterm parser errors. (Round 6 saw 519 `FSI U+2068`
    errors when the pipeline double-bidi'd.)
-7. Repeat **inside tmux over SSH**, not only locally — tmux swallows OSC 0/2
-   titles by default, so this is the case that decides follow-up 3.
+7. Repeat **inside tmux over SSH**, not only locally — the hook signal
+   does not depend on tmux passing titles through, so `tui-owns-bidi on` must appear here too.
 8. Restart the app with session restore on, reattaching a pane whose Claude is
-   already running (it will not re-emit its title) → check whether the state
-   engages. New interaction; the feature predates session restore.
+   already running (hooks fire on events, so no hook may arrive until Claude's next event) → check
+   whether the state engages. New interaction; the feature predates session restore.
 
 Accepted costs, **not** failures (`DECISIONS.md`, 2026-07-17 — display
 correctness wins): the caret sits one cell forward when typing Hebrew to
@@ -195,3 +195,31 @@ screenshot:
    The override paints bytes verbatim, which is right only while the buffer is
    still visual. Paired with `dir="rtl"` over a logical buffer it reverses every
    Hebrew word.
+
+## `bidi_reorder` — known limits (the cursed cursor)
+
+DEFERRED, not a bug to chase in an RTL bugfix. Decision:
+`docs/DECISIONS.md` → "`bidi_reorder`: caret pinned right + half-reordered
+repaints are the cursed cursor". terminal-wg calls the problem "the cursed
+cursor": https://terminal-wg.pages.freedesktop.org/bidi/
+
+Why: `flushPending` reorders each rAF chunk of the byte stream
+(`reorderRtlForDisplay`, `app/src/bidi.ts`), while a TUI positions its cursor
+and repaints regions in columns of the UNtransformed text. Two coordinate
+systems; they diverge.
+
+Known limits under `rtl_mode="bidi_reorder"`:
+1. **Caret pinned right.** The caret does not track the reordered text.
+2. **Half-reordered repaint.** A partial repaint can leave a line part
+   rewritten correctly and part reordered again.
+3. **Fragment-only view.** `normaliseIncomingToLogical` sees runs between ANSI
+   escapes, not whole lines (same root cause).
+
+Repro (**NOT VERIFIED LIVE** — taken from the 2026-08-19 PROGRESS.txt entry,
+not re-run):
+1. Set `rtl_mode=bidi_reorder`, open a pane running Claude Code.
+2. Type Hebrew in the prompt → caret stays at the right edge.
+3. Let the TUI repaint part of a Hebrew line → line shows mixed order.
+
+Workaround: use `auto_per_line` (or `force_rtl`). A real fix needs whole-line
+reassembly plus cursor tracking through the transform.

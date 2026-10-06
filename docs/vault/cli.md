@@ -63,6 +63,24 @@ observability-only; it is back with a different job — the CLI filters on
 agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `hooks.claude-code.version` is what tells existing installs to re-sync.
 
+**`StopFailure` is registered as of hooks v1.8.0.** The `stop-failure` branch (right after
+`notification`, before the feed-item dispatch) reads `payload["error"]` (absent/empty →
+`"unknown"`), logs and pushes the type alone — never `error_details` /
+`last_assistant_message` — as a passive `feed.push` subkind `stop-failure` with
+`tmux_session`, ignores the RPC result and exits 0. The desktop paints the pane light
+`failed`; never a card or toast.
+
+**`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
+new job, and still never a feed card. The `session-start` branch (after the env gate)
+sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
+`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
+nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
+stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":
+"SessionStart","additionalContext":…}}` line, so the text cannot break the JSON. The log
+line carries the source and the byte count, never the text. `manifest.json` is bumped at
+release time, not with the spec.
+
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
 is not hypothetical — a move left an entry pointing at the old absolute path, the hook
@@ -162,8 +180,11 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
 - **Rule #8** — the tunnel HMAC token passes through here; never log it.
 - A new verb is: clap subcommand + a `dispatch` arm in `rpc_server.rs` + a line in
   `docs/CLI.md`. Nothing generates one from another.
-- The legacy `winmux-` pipe name is still answered by the app, so an old CLI on a PATH
-  keeps working. Do not "finish the rename" here in isolation.
+- The app no longer answers on the legacy `winmux-` pipe; the CLI's `default_pipe_name_legacy`
+  dial is only a client-side fallback and now finds no listener.
+- `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`
+  (`adopt_legacy_env` / `migrate_legacy_home_dir` removed); the `WINMUX_*` read fallbacks stay,
+  and the remote `~/.winmux` fold is the bootstrap's `migrate_legacy_remote_dir`.
 
 ## Read the source when
 
