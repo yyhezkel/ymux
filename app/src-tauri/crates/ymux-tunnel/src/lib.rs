@@ -453,8 +453,9 @@ mod tests {
         // whatever the read-modify-write appends next.
         assert!(with_pane.ends_with('\n'), "got: {with_pane:?}");
         assert!(without.ends_with('\n'), "got: {without:?}");
-        assert_eq!(with_pane.lines().count(), 6);
-        assert_eq!(without.lines().count(), 4);
+        // YMUX_* only since the WINMUX_* dual-write was dropped (32a88d1d).
+        assert_eq!(with_pane.lines().count(), 3);
+        assert_eq!(without.lines().count(), 2);
     }
 
     // v0.3.1 pipe-leak fix: when the rpc_server handler closes after sending
