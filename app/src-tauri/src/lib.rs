@@ -9294,6 +9294,10 @@ async fn pane_connect(
         &format!("[bidi] pane_connect seed: pane={pane_id} enabled={pane_smart_bidi}"),
     );
 
+    // A reconnect starts with a clean header: a stale status from the previous
+    // attempt must not outlive the problem it reported.
+    emit_pane_status_event(&app, &pane_id, "");
+
     // Secret rows never reach the typed `export` path: split them off, resolve
     // their values from the store by env owner. A name with no stored value is
     // reported on the pane, never typed and never guessed.
