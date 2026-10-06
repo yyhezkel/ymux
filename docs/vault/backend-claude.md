@@ -39,7 +39,7 @@ move together — that is the point of not copying them.
   `settings.claude.auto_summarize_on_stop` is on. `rpc_server`'s dispatcher calls
   `summarize_session_for_pane` in the background. **Failures are logged, never fatal.**
 
-## `claude_usage.rs` (397) — real subscription quota
+## `claude_usage.rs` (423) — real subscription quota
 
 `claude -p "/usage" --output-format json` returns the user's actual Pro/Max quota —
 session %, weekly %, per-model %, reset times, and a "what's contributing" breakdown —
@@ -51,6 +51,11 @@ slow auto-refresh. **Never fast-poll this.**
 
 **Rule #1 applies hard here:** log the workspace id and the percentages, never the
 `/usage` body — it names the user's subagents, skills, and MCP servers.
+
+**Backoff logs once.** After a failed fetch `mark_failed` logs a single
+`workspace=<id> backoff until <unix>` line (now + 300s); the rejection path in
+`claude_usage_fetch` is silent, because a tight caller loop used to write ~15k
+identical lines.
 
 ## `claude_usage_local.rs` (549) — token history, local half
 
