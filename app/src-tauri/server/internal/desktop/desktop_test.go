@@ -180,8 +180,8 @@ func TestCallCompletesTheHandshake(t *testing.T) {
 }
 
 func TestCallMirrorsTheLegacyTag(t *testing.T) {
-	// The desktop still OPENS with the legacy tag on purpose (CHALLENGE_TAG in
-	// ymux-tunnel), so this is the path that actually runs in production today.
+	// A pre-flip desktop still OPENS with the legacy tag (CHALLENGE_TAG in
+	// ymux-tunnel is now YMUX), so this pins the mirror path for old desktops.
 	// The client must answer on the tag it was addressed in.
 	addr := fakeDesktop(t, "WINMUX", "s3cret", func(string) any { return map[string]any{"ok": true} })
 	if _, err := Call(Endpoint{Addr: addr, Token: "s3cret"}, "ping", nil, 5*time.Second); err != nil {

@@ -30,6 +30,10 @@ toggle_queue: string,
  * BRIEF: show the Briefing card for the active workspace.
  */
 show_briefing: string,
+/**
+ * Phase 105: collapse / expand the Context Rail.
+ */
+toggle_context_rail: string,
 open_diff: string,
 /**
  * When true and the terminal has a selection, plain Ctrl+C copies

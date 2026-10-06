@@ -51,6 +51,7 @@ func main() {
 			srv := api.NewServer("", 0, api.Deps{
 				Files:     files.NewService(nil),
 				Logs:      logs.NewService(nil),
+				Term:      term.NewService("", ""),
 				Chat:      chat.NewChatAPI(nil, nil, ""),
 				Workspace: workspace.NewService(workspace.NewManager(nil, nil), ""),
 			})

@@ -2,6 +2,7 @@
 vault: frontend-lib
 covers:
   - app/src/terminalInstance.ts
+  - app/src/termMenuCopy.ts
   - app/src/types.ts
   - app/src/settings.ts
   - app/src/claudePricing.ts
@@ -13,8 +14,10 @@ covers:
   - app/src/bidi.ts
   - app/src/copyBidi.ts
   - app/src/mouseRtl.ts
+  - app/src/popoutProfile.ts
   - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
+  - app/src/claudeRunning.ts
   - app/src/logger.ts
   - app/src/shortcuts.ts
   - app/src/stt.ts
@@ -29,6 +32,10 @@ covers:
   - app/src/backend/web/*.ts
   - app/src/layoutOps.ts
   - app/src/WebLogin.tsx
+unowned:
+  - app/src/bindings/*.ts   # ts-rs generated
+  - app/src/*.test.ts   # tests are the spec, deliberately uncovered
+  - app/src/vite-env.d.ts   # vite type shim
 ---
 
 # Frontend library modules
@@ -120,7 +127,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
 - The singleton is picked synchronously at module load, so any module may call it from
   its first line.
 
-## `terminalInstance.ts` (2,018) — the xterm.js wrapper
+## `terminalInstance.ts` (1,954) — the xterm.js wrapper
+
+**Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
@@ -149,6 +158,8 @@ always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:ex
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.
 
+**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (`lastOsc52`, set in the write-only provider) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
+
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
 and the Ctrl+C-copies-selection flag so new panes construct with the current values;
@@ -163,9 +174,8 @@ Things it does that are easy to get wrong:
   most 40 times — never an unbounded rAF chain (same for `scheduleInitialFontMeasure`
   waiting for the container to be attached).
 - **Diagnostic log lines on per-frame paths are rate-gated.** `rtl-dirs` speaks when the
-  direction vector changes, at most once per 2 s per pane; `title-seen` only when the
-  match flag or a coarse length bucket changes — Claude animates a spinner in its title,
-  and "every title" was several lines a second per pane.
+  direction vector changes, at most once per 2 s per pane. There is no title log line:
+  the OSC-title Claude detector was removed 2026-10-06 (it never fired in practice).
 - **`fitAndResize`** is rAF-throttled — the `ResizeObserver` fires per pixel during a
   divider drag, and every call sends a SIGWINCH down the SSH channel. tmux cannot keep up
   and the renderer thrashes.
@@ -207,8 +217,9 @@ laid out **right-to-left** — so a multi-run Latin row (a diff's gutter, line
 number, two columns) came out with its fragments mirrored, while a single-run
 shell row merely sat at the right edge, which is why it went unnoticed for three
 weeks. The rule now, per row: Hebrew/Arabic present → `rtl` exactly as before; no
-RTL text and **Claude Code holds the pane** (the detected `foldTuiOwnsBidi` state
-— hook or OSC title — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
+RTL text and **Claude Code holds the pane** (the hook-driven `claudeActive` flag
+set by `setTuiSignal(on: boolean)` from the `YMUX_PANE_ID` Claude hooks, so it works over
+SSH, zellij and tmux — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
 two-column TUI keeps both halves where it drew them; no RTL text in a shell →
 **`ltr-end`**, a third `RowDir` value meaning `dir="ltr"` plus
 `text-align: right` and `data-ymux-align="end"`: reading order kept, the run
@@ -247,8 +258,8 @@ Two traps around `force_rtl`, both of which produce reversed letters if missed:
   own layout.
 
 **It is keyed on the pane class, never on what is running inside the pane.** The vote
-first shipped gated on `tuiOwnsBidi`, and because the OSC title propagates over SSH — that
-is how Claude Code is detected at all — it fired on remote panes and broke them. Yossi's
+first shipped gated on `tuiOwnsBidi`, and because the OSC-title detector (since removed;
+detection is now the Claude hook signal) fired on remote panes and broke them. Yossi's
 instruction afterwards was a total separation between local and remote, so a change aimed
 at local panes cannot reach remote ones. A per-profile field is that separation, and
 `remote_direction_policy_is_the_pre_2026_08_19_rule` in `settings.rs` plus the parity
@@ -274,6 +285,8 @@ modules the tests *are* the specification.
 **`bidi.ts` (71)** — the `bidi_reorder` path (bidi-js, no type defs). Exports the escape
 matcher so the visual→logical pass protects escapes **exactly** the way this file does —
 one definition of "what an escape looks like".
+
+**Known limit (DEFERRED):** `bidi_reorder` has the terminal-wg "cursed cursor" — caret stays pinned right and a partial repaint can leave a line half-reordered, because the transform runs per rAF chunk while the TUI addresses untransformed columns. Fix needs whole-line reassembly + cursor tracking; see `docs/DECISIONS.md` and `docs/RTL-TEST.md` § `bidi_reorder` — known limits.
 
 **`copyBidi.ts` (185)** — visual→logical for text on its way to the **clipboard**.
 Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on screen but
@@ -315,7 +328,8 @@ Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cw
 what the backend emits for anything the model did not say cleanly).
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
-apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it. Also
+apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
+(`BriefSettings` gained `inject_context`, default true, in Phase 105.C). Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.
@@ -329,8 +343,11 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window that never loads settings still
+  again — the backend is authoritative, so a popout window (which loads settings only for the RTL profiles) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
+- **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
+  `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
+  hand-off of the origin pane's RTL profile to its popout window.
 - **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
   `dir` react together. A missing key returns the key itself.
@@ -339,6 +356,10 @@ past installs), `fontInstall`, and `fontUninstall`.
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
   positions divided by `devicePixelRatio` (WebView2 reports physical pixels, wry's macOS
   backend reports logical points).
+- **`claudeRunning.ts` (26)** — pure decisions for the persisted `claude_running` flag:
+  `tuiSignalOnConnect(mode, restoring, persisted)` (claude→true; non-restoring→false; restoring
+  with persisted true→true; else null = untouched) and `claudeRunningWrite(persisted, on)`
+  (null when no transition). App.tsx owns the invokes.
 - **`sessionRestore.ts` (102)** — remembers which tmux session each SSH pane was attached
   to, so the next start re-attaches instead of showing [Connect]. **localStorage on
   purpose**: per-machine, high-churn session state, the same class as window rects and
@@ -347,8 +368,12 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
-  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), parses
+  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
+  `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
+  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  kept in the schema and defaults so old `settings.json` loads, but filtered out of
+  `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
+  entry or conflict check), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,
@@ -411,7 +436,7 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   queries so an assistant with shell access can slice the data itself. **No URL in it on
   purpose**: neither store is exposed over HTTP outside `127.0.0.1`, and nothing here
   suggests changing that — these are local reads on a box the user already has a session
-  on. `local` picks desktop paths over remote ones.
+  on. `local` picks desktop paths over remote ones; the metrics block keeps the same schema and queries for local, pointed at `insights-local.db` (`%APPDATA%\ymux` / `~/Library/Application Support/ymux`) — there is no "no history" variant any more.
 
 ## Invariants
 

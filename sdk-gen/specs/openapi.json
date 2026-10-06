@@ -1,6 +1,56 @@
 {
   "components": {
     "schemas": {
+      "Annotated": {
+        "additionalProperties": false,
+        "properties": {
+          "attached": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "auto_name": {
+            "type": "string"
+          },
+          "claude_session_id": {
+            "type": "string"
+          },
+          "claude_title": {
+            "type": "string"
+          },
+          "created": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "display": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "origin": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "windows": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "windows",
+          "created",
+          "attached",
+          "path",
+          "display"
+        ],
+        "type": "object"
+      },
       "ClientInfo": {
         "additionalProperties": false,
         "properties": {
@@ -531,6 +581,86 @@
         ],
         "type": "object"
       },
+      "TermCreateRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "cwd": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TermCreated": {
+        "additionalProperties": false,
+        "properties": {
+          "display": {
+            "type": "string"
+          },
+          "hooks": {
+            "type": "boolean"
+          },
+          "name": {
+            "type": "string"
+          },
+          "pane_id": {
+            "type": "string"
+          },
+          "policy": {
+            "type": "string"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "display",
+          "hooks"
+        ],
+        "type": "object"
+      },
+      "TermKilled": {
+        "additionalProperties": false,
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "type": "object"
+      },
+      "TermRenameRequest": {
+        "additionalProperties": true,
+        "properties": {
+          "new_name": {
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "TermRenamed": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "UploadResultBody": {
         "additionalProperties": false,
         "properties": {
@@ -619,7 +749,7 @@
     }
   },
   "info": {
-    "description": "ymux server daemon API — the client-SDK surface (version negotiation, Files, Logs). Streaming WebSocket frames are described in asyncapi.json (PHASE-77-DESIGN §4.4). Generated from the huma handlers (S4); the Insights metrics API is desktop-internal and documented separately.",
+    "description": "ymux server daemon API — the client-SDK surface (version negotiation, Files, Logs, Terminal). Streaming WebSocket frames are described in asyncapi.json (PHASE-77-DESIGN §4.4). Generated from the huma handlers (S4); the Insights metrics API is desktop-internal and documented separately.",
     "title": "ymux-server",
     "version": "2.10.0"
   },
@@ -1449,6 +1579,192 @@
         "summary": "Approve or deny a pending hook request",
         "tags": [
           "workspace"
+        ]
+      }
+    },
+    "/api/v2/term/sessions": {
+      "get": {
+        "operationId": "term-list",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Annotated"
+                  },
+                  "type": [
+                    "array",
+                    "null"
+                  ]
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List terminal (tmux) sessions",
+        "tags": [
+          "term"
+        ]
+      },
+      "post": {
+        "operationId": "term-create",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermCreated"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a terminal session",
+        "tags": [
+          "term"
+        ]
+      }
+    },
+    "/api/v2/term/sessions/{name}": {
+      "delete": {
+        "operationId": "term-kill",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermKilled"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Kill a terminal session",
+        "tags": [
+          "term"
+        ]
+      }
+    },
+    "/api/v2/term/sessions/{name}/rename": {
+      "post": {
+        "operationId": "term-rename",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "name",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TermRenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TermRenamed"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Rename a terminal session",
+        "tags": [
+          "term"
         ]
       }
     },

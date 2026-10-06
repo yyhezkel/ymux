@@ -1,13 +1,16 @@
 package term
 
-// service.go — /api/v2/term/*: list, create, rename, kill, attach.
+// service.go — /api/v2/term/*: the gate, the shared plumbing, and every raw
+// route. The four REST ops list/create/rename/kill live in huma.go as huma
+// operations (api's bearerMiddleware guards them); attach and the rest stay
+// raw here.
 //
 // Every route in this package sits behind ONE gate (see gate below) and that
 // gate demands auth.ScopeShellAttach. Listing is gated too, not just attach:
 // session names carry project and branch names, and a token that cannot open a
 // terminal has no reason to enumerate them.
 //
-// The routes are mounted raw rather than behind api's Bearer middleware,
+// The routes below are mounted raw rather than behind api's Bearer middleware,
 // because that middleware only knows the shared token and this package must
 // also accept a paired device's token — the same reason push mounts raw.
 
@@ -120,10 +123,6 @@ func (s *Service) SetScopeResolver(fn ScopeResolver) { s.scopes = fn }
 
 // RegisterRoutes mounts /api/v2/term/*.
 func (s *Service) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/v2/term/sessions", s.gate(s.handleList))
-	mux.HandleFunc("POST /api/v2/term/sessions", s.gate(s.handleCreate))
-	mux.HandleFunc("POST /api/v2/term/sessions/{name}/rename", s.gate(s.handleRename))
-	mux.HandleFunc("DELETE /api/v2/term/sessions/{name}", s.gate(s.handleKill))
 	mux.HandleFunc("GET /api/v2/term/sessions/{name}/attach", s.gate(s.handleAttach))
 	// Phase 101 (WEB-DESIGN B3): the live channel, the feed decision, and a
 	// session's hook policy — same gate (events.go explains why).
@@ -231,23 +230,6 @@ func failErr(w http.ResponseWriter, err error) {
 	}
 }
 
-func (s *Service) handleList(w http.ResponseWriter, _ *http.Request) {
-	sessions, err := s.tmux.List()
-	if err != nil {
-		logger.Error("tmux list failed", "err", err)
-		failErr(w, err)
-		return
-	}
-	if s.hooks != nil {
-		s.hooks.Retain(sessions)
-	}
-	meta := LoadMeta(s.home)
-	// Counts only — a session NAME can carry a branch or a client name, and a
-	// meta entry carries user-written labels (Rule #1).
-	logger.Info("terminal sessions listed", "sessions", len(sessions), "labelled", len(meta))
-	writeJSON(w, http.StatusOK, Annotate(sessions, meta))
-}
-
 // errSessionExists is a create whose name tmux already has.
 var errSessionExists = errors.New("session already exists")
 
@@ -327,90 +309,4 @@ func (s *Service) spawnSession(name, cwd, policy, workspaceID, paneID string, cm
 	}
 	s.hooks.add(e)
 	return *e, true, nil
-}
-
-func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Name        string `json:"name"`
-		Cwd         string `json:"cwd"`
-		Policy      string `json:"policy"`       // Phase 101: "none" (default) | "gate"
-		WorkspaceID string `json:"workspace_id"` // Phase 103: a browser workspace
-		PaneID      string `json:"pane_id"`      // Phase 109: the browser leaf this session fills
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Policy == "" {
-		body.Policy = policyNone
-	}
-	if !validPolicy(body.Policy) {
-		http.Error(w, `policy must be "none" or "gate"`, http.StatusBadRequest)
-		return
-	}
-	if body.WorkspaceID != "" && (s.hooks == nil || !s.hooks.webws.exists(body.WorkspaceID)) {
-		http.Error(w, "no such workspace", http.StatusBadRequest)
-		return
-	}
-	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID)
-	if errors.Is(err, errSessionExists) || errors.Is(err, errPaneInUse) {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
-	}
-	if errors.Is(err, errBadPaneID) {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	if err != nil {
-		failErr(w, err)
-		return
-	}
-	resp := map[string]any{"name": e.name, "display": e.name, "hooks": hooks}
-	if hooks {
-		resp["policy"] = e.policy
-		resp["pane_id"] = e.paneID
-		if e.workspaceID != "" {
-			resp["workspace_id"] = e.workspaceID
-		}
-	}
-	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (s *Service) handleRename(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		NewName string `json:"new_name"`
-	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
-	to := strings.TrimSpace(body.NewName)
-	from := r.PathValue("name")
-	if !ValidName(to) {
-		failErr(w, ErrBadName)
-		return
-	}
-	if s.tmux.Has(to) && to != from {
-		http.Error(w, "session already exists", http.StatusConflict)
-		return
-	}
-	if err := s.tmux.Rename(from, to); err != nil {
-		failErr(w, err)
-		return
-	}
-	if s.hooks != nil {
-		s.hooks.Rename(from, to)
-	}
-	// The session-meta entry is keyed by NAME, so a rename orphans it. The
-	// CLI's hooks re-key it on the session's next turn and its pruning drops
-	// the stale key, so this is self-healing rather than something to patch up
-	// from here — and writing that file from the daemon would put a second
-	// writer on it (the CLI's atomic tmp+rename assumes one).
-	writeJSON(w, http.StatusOK, map[string]any{"name": to})
-}
-
-func (s *Service) handleKill(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	if err := s.tmux.Kill(name); err != nil {
-		failErr(w, err)
-		return
-	}
-	if s.hooks != nil {
-		s.hooks.Remove(name)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
