@@ -1,0 +1,6 @@
+# Pinned so the CLI built in CI is byte-reproducible: 1.95.0 is the rustc
+# that built the committed app/src-tauri/resources/ymux-linux-x64.
+# Bump = change `channel` here AND every `toolchain:` input in
+# .github/workflows/*.yml together, then rebake the CLI blob.
+[toolchain]
+channel = "1.95.0"

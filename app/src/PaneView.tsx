@@ -8,6 +8,7 @@ import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSe
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
+import { DirPicker, pushRecentDir } from "./DirPicker";
 import { isMac } from "./platform";
 import { createLogger } from "./logger";
 
@@ -33,7 +34,6 @@ import {
   IconWarning,
   IconTerminal,
   IconRefresh,
-  IconClock,
   IconFolder,
   IconInfo,
   IconTrash,
@@ -417,92 +417,12 @@ export function PaneView(p: Props) {
     if (m === "claude_args") p.onConnect(p.pane.pane_id, { mode: "claude", claudeArgs: v });
   };
 
-  // Phase 65 (bug AA): "Open in directory" folder picker. Replaces the
-  // bare text input — browse the remote tree (SFTP dir-list) with
-  // drill-down + a recent-dirs shortcut list (per workspace,
-  // localStorage). Local (non-SSH) panes keep the text-input fallback,
-  // since file_list_remote needs an SSH session.
-  const [dirPicker, setDirPicker] = createSignal<{
-    path: string;
-    dirs: string[];
-    loading: boolean;
-    error: string | null;
-  } | null>(null);
-  const recentDirsKey = () => `ymux.recent-dirs.${p.workspaceId}`;
-  const loadRecentDirs = (): string[] => {
-    try {
-      const raw = localStorage.getItem(recentDirsKey());
-      const parsed: unknown = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed)
-        ? parsed.filter((x): x is string => typeof x === "string")
-        : [];
-    } catch {
-      return [];
-    }
-  };
-  const [recentDirs, setRecentDirs] = createSignal<string[]>([]);
-  const pushRecentDir = (dir: string) => {
-    const next = [dir, ...loadRecentDirs().filter((d) => d !== dir)].slice(0, 8);
-    try {
-      localStorage.setItem(recentDirsKey(), JSON.stringify(next));
-    } catch {
-      // quota / private mode — recents are best-effort
-    }
-    setRecentDirs(next);
-  };
-  const navigateDirPicker = async (path: string) => {
-    setDirPicker({ path, dirs: [], loading: true, error: null });
-    try {
-      const list = await invoke<{ name: string; is_dir: boolean }[]>(
-        "file_list_remote",
-        { workspaceId: p.workspaceId, path, showHidden: false },
-      );
-      const dirs = list
-        .filter((e) => e.is_dir)
-        .map((e) => e.name)
-        .sort((a, b) => a.localeCompare(b));
-      setDirPicker({ path, dirs, loading: false, error: null });
-    } catch (e) {
-      setDirPicker({ path, dirs: [], loading: false, error: String(e) });
-    }
-  };
-  const openDirPicker = async () => {
-    setRecentDirs(loadRecentDirs());
-    if (isLocalPane()) {
-      // Local pane: the host's native folder dialog (Finder sheet on
-      // macOS, Explorer on Windows) — the SFTP tree needs an SSH session.
-      const dir = await pickLocalFolder();
-      if (dir) chooseDir(dir);
-      return;
-    }
-    if (!isSsh()) {
-      // WSL pane: no SFTP and a host dialog would hand back a Windows
-      // path the distro can't cd to — keep the text input.
-      setSmartInput("");
-      setSmartModal("cwd");
-      return;
-    }
-    let start = "/";
-    try {
-      start = (await invoke<string>("file_home_remote", {
-        workspaceId: p.workspaceId,
-      })) || "/";
-    } catch {
-      start = "/";
-    }
-    void navigateDirPicker(start);
-  };
-  const dirPickerParent = (path: string): string => {
-    const trimmed = path.replace(/\/+$/, "");
-    const idx = trimmed.lastIndexOf("/");
-    if (idx <= 0) return "/";
-    return trimmed.slice(0, idx);
-  };
-  const dirPickerJoin = (path: string, name: string): string =>
-    path === "/" ? `/${name}` : `${path.replace(/\/+$/, "")}/${name}`;
+  // Wizard browse view: current path reported by the inline DirPicker
+  // (remote tree over the workspace's SSH session); null until it loads.
+  const [browsePath, setBrowsePath] = createSignal<string | null>(null);
   const chooseDir = (dir: string) => {
-    pushRecentDir(dir);
-    setDirPicker(null);
+    pushRecentDir(p.workspaceId, dir);
+    setBrowsePath(null);
     // v0.4.4-beta.2: the browser is now an inline VIEW of the new-connection
     // modal — feed the choice into ncDir and switch back to the form view
     // (the modal itself never closed).
@@ -516,7 +436,7 @@ export function PaneView(p: Props) {
   };
   // v0.4.4-beta.2: cancel the inline browser → back to the form (keep ncDir).
   const cancelBrowse = () => {
-    setDirPicker(null);
+    setBrowsePath(null);
     setDirPickForNewConn(false);
     setNcView("form");
   };
@@ -592,7 +512,7 @@ export function PaneView(p: Props) {
     return true;
   };
   // v0.4.4-beta.2: browse is now an INLINE view within the same modal (not a
-  // separate popup). Load the tree into dirPicker() and switch the body.
+  // separate popup). The tree is DirPicker rendered inline.
   // Native folder chooser for LOCAL panes. Returns null on cancel/error;
   // the dialog itself is the UI, so no inline browse view is needed.
   const pickLocalFolder = async (): Promise<string | null> => {
@@ -614,15 +534,15 @@ export function PaneView(p: Props) {
       // the form view (no SFTP tree to render).
       void pickLocalFolder().then((dir) => {
         if (dir) {
-          pushRecentDir(dir);
+          pushRecentDir(p.workspaceId, dir);
           setNcDir(dir);
         }
       });
       return;
     }
+    setBrowsePath(null);
     setDirPickForNewConn(true);
     setNcView("browse");
-    void openDirPicker();
   };
   // v0.4.4-beta.2: auto-load the Claude session list when "choose from list"
   // is picked while the modal is open (once; refresh via the list's ⟳).
@@ -2209,35 +2129,13 @@ export function PaneView(p: Props) {
                 </Show>
 
                 {/* ── BROWSE view (inline folder tree) ──────────────── */}
-                <Show when={ncView() === "browse" && dirPicker()}>
-                  <div class="nc-section">
-                    <div class="nc-browse-path" title={dirPicker()!.path}>{dirPicker()!.path}</div>
-                    <Show when={recentDirs().length > 0}>
-                      <div class="nc-recent">
-                        <For each={recentDirs()}>
-                          {(d) => (
-                            <button class="nc-recent-row" title={d} onClick={() => chooseDir(d)}><IconClock size={14} /> {d}</button>
-                          )}
-                        </For>
-                      </div>
-                    </Show>
-                    <Show when={dirPicker()!.error}>
-                      <p class="nc-muted err"><IconWarning size={13} /> {dirPicker()!.error}</p>
-                    </Show>
-                    <ul class="nc-dir-list">
-                      <Show when={dirPicker()!.path !== "/"}>
-                        <li class="nc-dir-item up" onClick={() => void navigateDirPicker(dirPickerParent(dirPicker()!.path))}><IconFolder size={14} /> ..</li>
-                      </Show>
-                      <For each={dirPicker()!.dirs}>
-                        {(name) => (
-                          <li class="nc-dir-item" onClick={() => void navigateDirPicker(dirPickerJoin(dirPicker()!.path, name))}><IconFolder size={14} /> {name}</li>
-                        )}
-                      </For>
-                      <Show when={!dirPicker()!.loading && dirPicker()!.dirs.length === 0 && !dirPicker()!.error}>
-                        <li class="nc-dir-empty">{t("connect.dirPicker.empty")}</li>
-                      </Show>
-                    </ul>
-                  </div>
+                <Show when={ncView() === "browse"}>
+                  <DirPicker
+                    inline
+                    workspaceId={p.workspaceId}
+                    onPick={chooseDir}
+                    onPathChange={setBrowsePath}
+                  />
                 </Show>
               </div>
 
@@ -2254,7 +2152,7 @@ export function PaneView(p: Props) {
                   }
                 >
                   <button class="nc-btn" onClick={cancelBrowse}>{t("connect.newConn.back")}</button>
-                  <button class="nc-btn primary" disabled={!dirPicker()} onClick={() => dirPicker() && chooseDir(dirPicker()!.path)}>
+                  <button class="nc-btn primary" disabled={browsePath() === null} onClick={() => { const dir = browsePath(); if (dir !== null) chooseDir(dir); }}>
                     {t("connect.dirPicker.useThis")}
                   </button>
                 </Show>
@@ -2264,16 +2162,9 @@ export function PaneView(p: Props) {
         </Portal>
       </Show>
 
-      {/* Phase 65 (bug AA): remote folder picker for "Open in directory". */}
-      {/* v0.4.4-beta.2: only the standalone "open dir" flow uses this popup;
-          the new-connection wizard renders the tree inline (ncView="browse"). */}
-      {/* The standalone directory picker that used to live here was
-          UNREACHABLE — its guard was `dirPicker() && !dirPickForNewConn()`
-          and the only caller of openDirPicker sets dirPickForNewConn
-          first. It is now app/src/DirPicker.tsx, with a live caller: the
-          workspace context menu's "pin project folder". The inline
-          browse view above (ncView() === "browse") is a second copy of
-          the same list with wizard chrome — see FOLLOWUPS. */}
+      {/* Remote folder picker: the new-connection wizard renders DirPicker
+          (app/src/DirPicker.tsx) inline in its browse view; the modal
+          variant serves the workspace context menu's "pin project folder". */}
 
       {/* v0.4.4-beta.2: standalone Claude session picker + tmux session picker
           removed — session resume lives in the wizard ("choose from list"),

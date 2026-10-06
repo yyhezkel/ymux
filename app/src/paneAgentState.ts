@@ -1,7 +1,8 @@
 // Phase 84.B: the traffic light shown on a pane header and on its tab.
 //
 // Green = Claude is working. Yellow = it finished, your move. Red = it is
-// blocked on you. Nothing at all = we don't know, which is the honest
+// blocked on you. A red square (failed) = the turn died on an API error,
+// nothing is pending. Nothing at all = we don't know, which is the honest
 // answer for a plain shell pane, a disconnected pane, or one whose state
 // is old enough to be untrustworthy.
 //
@@ -17,9 +18,10 @@ export type PaneAgentState =
   | "idle"
   | "running"
   | "done"
-  | "needs-input";
+  | "needs-input"
+  | "failed";
 
-export type TrafficLight = "green" | "yellow" | "red";
+export type TrafficLight = "green" | "yellow" | "red" | "failed";
 
 export interface AgentLightInput {
   state: PaneAgentState;
@@ -68,6 +70,8 @@ export function trafficLight(i: AgentLightInput): TrafficLight | null {
       return "green";
     case "done":
       return "yellow";
+    case "failed":
+      return "failed";
   }
 }
 
@@ -84,7 +88,26 @@ export function trafficLightKey(
       return "pane.agent.state.running";
     case "yellow":
       return "pane.agent.state.done";
+    case "failed":
+      return "pane.agent.state.failed";
   }
+}
+
+/** The focused pane's light, reduced to what the live region needs. */
+export interface AnnounceSnapshot {
+  paneId: string | null;
+  key: string | null;
+}
+
+/** i18n key to speak, or null for silence. Speaks only when the SAME focused
+ *  pane's key changed: focus moves and first sight of a pane stay quiet. */
+export function agentAnnounceKey(
+  prev: AnnounceSnapshot,
+  next: AnnounceSnapshot,
+): string | null {
+  if (next.paneId === null || next.key === null) return null;
+  if (prev.paneId !== next.paneId) return null;
+  return prev.key === next.key ? null : next.key;
 }
 
 /** M:SS, zero-padded seconds. Shared with the pane header's turn ticker. */

@@ -80,7 +80,7 @@ part with no IO: four files, each a **port of Rust that still runs on the deskto
 with the Rust tests translated under the same names.
 
 - `state.go` ← `lib.rs` `PaneAgentState` / `AgentRunState::apply_hook`. `Run.ApplyHook(subkind,
-  notificationType, now)` is the traffic-light table; `seq` bumps on every *mapped* hook,
+  notificationType, now)` is the traffic-light table (incl. `stop-failure` → `failed`, mirroring Rust); `seq` bumps on every *mapped* hook,
   `StateSince` only on a real change, an unmapped notification is a full no-op.
   `Run.Event(paneID)` is the `pane:agent-run` payload with identical JSON keys (nil
   pointers → `null`, like the Rust `Option`). `now` is a parameter so tests pin it.
@@ -144,11 +144,21 @@ When the PTY ends (the session was killed, or tmux detached this client) `attach
 sends `{"type":"exit"}` **and then a close frame with 1000**. Without that frame the
 browser saw 1006, the same code as a dropped network — found live 2026-10-05.
 
-`/api/v2/term/*` mounts **raw**, not behind `auth.Bearer`, for the same reason `push`
-does: that middleware only knows the shared token, and a paired device's token has to
-work too. `service.go`'s `gate` does both checks and **fails closed** — a Service with
-neither a shared token nor a scope resolver rejects everything, which is the opposite of
-the workspace subsystem's "no auth configured ⇒ open" convenience and deliberately so.
+The four REST ops (list/create/rename/kill) are **huma operations** (`term/huma.go`,
+`RegisterHuma`; ids `term-list|create|rename|kill`), so they are in the generated OpenAPI
+and `sdk-gen/ci-check.mjs` guards them. Auth is ONE point: `api/huma.go` `bearerMiddleware`
+accepts the shared token or a device token (`tokenOK`), then `opScopes` requires
+`shell:attach` of a device (the owner token bypasses scopes). Statuses: no/unknown token
+401, device without the grant 403, create 201, name clash 409. The token is read from
+the `Authorization` header only — no query-string token on these ops (that stays on the
+raw attach/events WebSockets, which are out of OpenAPI; WS is described by `asyncapi.json`).
+**Body caveat:** huma rejects unknown fields and a missing body by default, but the old raw
+handlers ignored both (the browser also sends `pane_id`/`cmd`). So the create/rename bodies
+are `required:"false"` with `additionalProperties:"true"` — do not tighten them, 422s would
+break the page and web clients. The other term routes (feed, events, history, webapp, ...)
+are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a Service with
+neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
+"no auth configured => open".
 
 **`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
 oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
@@ -176,10 +186,6 @@ a duration. `meta.go` reads `~/.ymux/session-meta.json` (the CLI owns writing it
 daemon never writes, so there is no second writer racing the CLI's atomic tmp+rename) and
 joins labels on with the `label > auto_name > claude_title > raw name` precedence.
 
-Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma ops, so
-they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
-Phase B moves them.
-
 **`term/hookreg.go` + `hookdispatch.go` (Phase 100, WEB-DESIGN B2) — the one piece of
 state, and why it is allowed.** A session created through `POST /api/v2/term/sessions`
 gets three SESSION-scoped variables (`tmux new-session -e`, which beat the desktop's
@@ -205,7 +211,7 @@ falls back to `last.env` (the desktop) exactly as before.
 - `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
-  prompt; `stop` → `RecordTurn` + `BriefFromStop`; `session-end` → run reset (seq+1) +
+  prompt; `stop` → `RecordTurn` + `BriefFromStop`; `stop-failure` → `StateFailed` (timer cleared, NO `RecordTurn`, state-only: early passive return like `notification`); `session-end` → run reset (seq+1) +
   `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
   is denied. A permission request follows the session's **policy** (Phase 101, below).
   `ping` answers; any other method is a JSON-RPC error.
@@ -243,8 +249,8 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
 - **`api` `hooks/forward` drops `term_` panes.** The CLI forwards every pre-tool-use to it
   regardless of where the RPC went; for a browser session that made a second, dead card
   on the phone (FOLLOWUPS P2, closed).
-- These routes are raw stdlib handlers like the rest of term, so they are not in the
-  OpenAPI spec either (the existing FOLLOWUPS P2 about term routes covers them).
+- These routes are raw stdlib handlers, so they are not in the OpenAPI spec (only the four
+  session ops above are).
 
 **`term/verbs.go` + `notes.go` + `ports.go` (Phase 102, WEB-DESIGN B4) — the small
 verbs.** `DispatchHook` falls through to `verb()` for the desktop's `dispatch()` arms a
