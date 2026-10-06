@@ -1197,6 +1197,7 @@ fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             });
             migrated = true;
         }
@@ -1543,6 +1544,7 @@ pub(crate) fn split_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1617,6 +1619,7 @@ pub(crate) fn split_pane_in(
                     diff_source: new_diff_s,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1635,6 +1638,7 @@ pub(crate) fn split_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 };
                 (
                     LayoutNode::Split {
@@ -1662,6 +1666,7 @@ pub(crate) fn split_pane_in(
                         diff_source,
                         smart_bidi,
                         diff_cwd,
+                        claude_running,
                     },
                     false,
                 )
@@ -1737,6 +1742,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1755,6 +1761,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }),
                 None,
             )
@@ -1837,6 +1844,7 @@ pub(crate) fn update_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1853,6 +1861,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1869,6 +1878,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             }
         }
@@ -6000,6 +6010,7 @@ fn workspace_reset_layout(
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
     }
     persist(&state)?;
@@ -7150,6 +7161,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -7647,6 +7659,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -8735,6 +8748,58 @@ fn pane_set_smart_bidi(
     log_debug("PTY", &format!(
         "[bidi] pane_set_smart_bidi: ws={} pane={} enabled={}",
         workspace_id, pane_id, enabled
+    ));
+    Ok(state.workspaces.lock().unwrap().clone())
+}
+
+// Persist "Claude is running in this pane" so a reattach to a persistent
+// session starts in the right bidi state before the first hook arrives.
+fn set_pane_claude_running_in_layout(node: &mut LayoutNode, target: &str, running: bool) -> bool {
+    match node {
+        LayoutNode::Pane {
+            pane_id,
+            claude_running,
+            ..
+        } if pane_id == target => {
+            *claude_running = Some(running);
+            true
+        }
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { first, second, .. } => {
+            set_pane_claude_running_in_layout(first, target, running)
+                || set_pane_claude_running_in_layout(second, target, running)
+        }
+    }
+}
+
+#[tauri::command]
+fn pane_set_claude_running(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    pane_id: String,
+    running: bool,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state.workspaces.lock().unwrap();
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        let layout = ws
+            .layout
+            .as_mut()
+            .ok_or_else(|| format!("workspace {workspace_id} has no layout"))?;
+        if !set_pane_claude_running_in_layout(layout, &pane_id, running) {
+            return Err(format!("no pane {pane_id} in workspace {workspace_id}"));
+        }
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_debug("PTY", &format!(
+        "[bidi] pane_set_claude_running: ws={} pane={} running={}",
+        workspace_id, pane_id, running
     ));
     Ok(state.workspaces.lock().unwrap().clone())
 }
@@ -12813,6 +12878,7 @@ pub fn run() {
             clear_debug_log_cmd,
             pane_set_identity,
             pane_set_smart_bidi,
+            pane_set_claude_running,
             workspace_browser::workspace_browser_show,
             workspace_browser::workspace_browser_hide,
             workspace_browser::workspace_browser_navigate,
@@ -13120,6 +13186,7 @@ mod pane_swap_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -13329,6 +13396,7 @@ mod migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -15761,6 +15829,7 @@ mod wsl_migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
