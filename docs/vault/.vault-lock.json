@@ -120,7 +120,7 @@
   },
   "frontend-lib": {
     "app/src/bidi.ts": "5b4085a91e52eba4197602919978224c2cee57424fa3133e2566283e7153ff1f",
-    "app/src/claudePricing.ts": "3c6e5fcb697728a9ec807262801973e9fb83fe1106c52469c9c77b1f759ff2fd",
+    "app/src/claudePricing.ts": "a83e3968d1fc0687f0f83af3947db44da3bd6db29c8452e5be90650d5fecc83d",
     "app/src/claudeRunning.ts": "97a644b08c096351e9dea945518bf3396112a44a54cfbeea7fa72afa1f26d6de",
     "app/src/clipboardText.ts": "8f6fdfe74bc46cf164e577b0b97fdb791d587b6ff88b8c7ce75036565717e682",
     "app/src/copyBidi.ts": "662eb7dedc786417e5921a69a5119a6b0b821fc5d9b3d3107eed386bad02ce8e",

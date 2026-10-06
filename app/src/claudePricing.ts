@@ -27,9 +27,9 @@ export interface ModelPrice {
   out: number;
   /**
    * Optional promotional rate, applied while `until` (a unix second) has not
-   * passed. Sonnet 5's launch pricing is the reason this exists — silently
-   * charging the standard rate for a call made under the intro rate overstates
-   * the bill by 50%.
+   * passed. The generic launch-rate mechanism: silently charging the standard
+   * rate for a call made under an intro rate overstates the cost. No row uses
+   * it now (Sonnet 5 is a flat 2/10 on the published page).
    */
   intro?: { in: number; out: number; until: number };
   /**
@@ -38,10 +38,9 @@ export interface ModelPrice {
    * rate and is flagged, rather than being invented.
    */
   fast?: { in: number; out: number };
+  /** Per-model cache-hit multiple of the input rate; absent = `CACHE_READ_MULT`. */
+  cacheReadMult?: number;
 }
-
-// 2026-08-31T23:59:59Z — the last moment Sonnet 5's intro pricing applies.
-const SONNET5_INTRO_UNTIL = Date.UTC(2026, 7, 31, 23, 59, 59) / 1000;
 
 /**
  * Keyed by model id prefix. Lookup takes the LONGEST matching prefix, so a
@@ -49,26 +48,24 @@ const SONNET5_INTRO_UNTIL = Date.UTC(2026, 7, 31, 23, 59, 59) / 1000;
  * without needing its own row.
  */
 export const PRICES: Record<string, ModelPrice> = {
+  "claude-fable-5-1": { in: 10, out: 50, cacheReadMult: 0.025 },
   "claude-fable-5": { in: 10, out: 50 },
+  "claude-mythos-5-1": { in: 10, out: 50, cacheReadMult: 0.025 },
   "claude-mythos-5": { in: 10, out: 50 },
-  "claude-opus-5-5": { in: 4, out: 20, fast: { in: 8, out: 40 } },
+  "claude-opus-5-5": { in: 4, out: 20, fast: { in: 8, out: 40 }, cacheReadMult: 0.05 },
   "claude-opus-5": { in: 5, out: 25, fast: { in: 10, out: 50 } },
   "claude-opus-4-8": { in: 5, out: 25, fast: { in: 10, out: 50 } },
   "claude-opus-4-7": { in: 5, out: 25 },
   "claude-opus-4-6": { in: 5, out: 25 },
   "claude-sonnet-5-5": { in: 2, out: 10 },
-  "claude-sonnet-5": {
-    in: 3,
-    out: 15,
-    intro: { in: 2, out: 10, until: SONNET5_INTRO_UNTIL },
-  },
+  "claude-sonnet-5": { in: 2, out: 10 },
   "claude-sonnet-4-6": { in: 3, out: 15 },
   "claude-haiku-4-5": { in: 1, out: 5 },
 };
 
-// Cache pricing is a multiple of the model's own input rate, identical across
-// models: a read is a tenth of an input token, a 5-minute write is 1.25x, and a
-// 1-hour write is 2x. The 5m/1h split is why the backends report them
+// Cache pricing is a multiple of the model's own input rate. Writes are the same
+// across models (5-minute 1.25x, 1-hour 2x); a read defaults to a tenth of an
+// input token, with per-model exceptions via `ModelPrice.cacheReadMult`. The 5m/1h split is why the backends report them
 // separately — folding them together would understate any long session.
 export const CACHE_READ_MULT = 0.1;
 export const CACHE_WRITE_5M_MULT = 1.25;
@@ -137,7 +134,7 @@ export function costOf(
   const usd =
     perM(tokens.in_tokens, rate.in) +
     perM(tokens.out_tokens, rate.out) +
-    perM(tokens.cache_read, rate.in * CACHE_READ_MULT) +
+    perM(tokens.cache_read, rate.in * (price.cacheReadMult ?? CACHE_READ_MULT)) +
     perM(tokens.cache_write_5m, rate.in * CACHE_WRITE_5M_MULT) +
     perM(tokens.cache_write_1h, rate.in * CACHE_WRITE_1H_MULT);
 
