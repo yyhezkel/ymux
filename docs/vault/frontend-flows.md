@@ -162,6 +162,7 @@ typed, and a typo produced a hotkey that silently never fired), and it is passed
 
 **`VersionManager.tsx` (228)** is the Updates tab's list: every published release,
 install any of them (including a downgrade, with a warning), and pick a release channel.
+The Install button is enabled by `dmg_url` on macOS and `nsis_url` elsewhere.
 Backed by `updater_list_versions` / `updater_install_version`.
 
 ## Invariants
