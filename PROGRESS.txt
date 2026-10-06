@@ -7917,3 +7917,4 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 
 2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
 2026-10-06 — ymux-app-src-terminalinstance-ts-2: closed FOLLOWUPS P2 (local pane Hebrew reversed under auto_per_line) as fixed by bc12388; docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-browserdevmode-ts: Dev Mode snapshot reports shot_error reason, TicketModal notice, headless-Chrome harness (4 PASS); vault frontend-panes.md updated, lock restamped; FOLLOWUPS P2 (transparent png) archived. Compiles untested until CI; not verified live.
