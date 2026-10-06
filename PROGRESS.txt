@@ -7878,6 +7878,7 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — rename-shim retirement (ticket ymux-crates-ymux-tunnel-src): emitted handshake tag flipped to YMUX-CHALLENGE (Rust + Go), WINMUX_* env dual-writes, CLI adopt_legacy_env/migrate_legacy_home_dir, legacy pipe listener, X-Winmux-Truncated and use_winmux_tmux_config alias dropped; read arms + folder migrations kept. CLAUDE.md rename section updated, FOLLOWUPS P1 archived, new P1 for server rebake + live smoke. Compiles untested until CI.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
+2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
 
 2026-10-06 — ticket ymux-app-src-app-tsx-2 t05: documented persisted claude_running (vault: crates, backend-core, frontend-shell, frontend-lib; DECISIONS stale-true entry; FOLLOWUPS status); fixed 2 stale lib.rs cites in backend-core; vault re-stamped. Live smoke pending.
 2026-10-06 — wizard browse view renders DirPicker inline (ticket ymux-app-src-paneview-tsx): DirPicker modal|inline union, PaneView duplicate list/recents removed (-20 lines), vault frontend-flows/frontend-shell updated, FOLLOWUPS P3 (PaneView.tsx:1794) archived. Compiles untested until CI.
@@ -7906,3 +7907,5 @@ FILES:
   M docs/vault/.vault-lock.json
 RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
 NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
+
+2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
