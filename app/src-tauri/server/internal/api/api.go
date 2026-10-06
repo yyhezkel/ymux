@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -109,7 +110,7 @@ func (s *Server) Handler() http.Handler {
 	// Insights keeps its raw legacy + /api/v2 stdlib handlers behind auth
 	// (desktop Monitor surface — not part of the generated SDK spec).
 	if s.deps.Insights != nil {
-		s.deps.Insights.RegisterRoutes(mux, authMW)
+		s.deps.Insights.RegisterRoutes(mux, s.insightsAuth)
 	}
 	// Files + Logs are already registered on the huma API above.
 	if s.deps.Workspace != nil {
@@ -152,4 +153,34 @@ func (s *Server) Run() error {
 		return err
 	}
 	return nil
+}
+
+// insightsAuth gates the Insights (Monitor) routes. The shared token passes,
+// as before. Since Phase 110 a paired device holding insights:read may READ
+// them — the browser's Monitor — which `auth.Bearer` (shared token only)
+// never allowed, so the scope existed but nothing honored it. Writes stay
+// owner-only: docker actions and hygiene/kill are POSTs, and WEB-DESIGN §7
+// keeps exec-like actions off device tokens.
+func (s *Server) insightsAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got != "" && got == s.token {
+			h(w, r)
+			return
+		}
+		if s.deps.Chat == nil || !s.tokenOK(got) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "owner token required", http.StatusForbidden)
+			return
+		}
+		scopes, admin, _ := s.deps.Chat.DeviceScopes(got)
+		if !admin && !auth.HasScope(scopes, auth.ScopeInsightsRead) {
+			http.Error(w, "missing scope: "+string(auth.ScopeInsightsRead), http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
 }

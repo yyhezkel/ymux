@@ -424,8 +424,12 @@ export function InsightsWindow(p: Props) {
           <Show when={err()}>
             <div class="wizard-test-result err" style="margin:10px">
               <div class="wizard-test-line">✗ {err()}</div>
-              <div class="wizard-test-meta">{t("insights.install_hint")}</div>
-              <Show when={p.onInstall}>
+              {/* Phase 110: the install hint/button is the desktop's add-on flow; a
+                  browser cannot install anything, and its errors already say why. */}
+              <Show when={backend.can("addons")}>
+                <div class="wizard-test-meta">{t("insights.install_hint")}</div>
+              </Show>
+              <Show when={p.onInstall && backend.can("addons")}>
                 <button
                   class="primary"
                   style="margin-top:8px"

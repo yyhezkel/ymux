@@ -112,7 +112,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
 - **Monitor** (Phase 110) — `insights_fetch` / `insights_docker_action` /
   `insights_hygiene_kill` fetch the daemon's insights paths same-origin (the desktop curls
   the same paths over SSH) and hand the body back as text; a 401/403 says the device may
-  not read insights (its scopes, not a bug).
+  not read insights (needs `insights:read`; daemon 2.11.0 honors it for GETs). The
+  add-on install hint is hidden without the `addons` capability.
 - **File Manager, remote side** (Phase 110, `web/files.ts`) — the daemon's Files API,
   sandboxed to its root ($HOME by default) with root-relative paths. `FilesBridge` learns
   the root's absolute path from `list("/").cwd`, translates absolute ↔ relative, and
