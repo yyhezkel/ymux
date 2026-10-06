@@ -654,14 +654,45 @@ pub async fn insights_local_docker_action(
     docker_action(&container_id, &action).await
 }
 
-/// `/analytics` — the Monitor's Analytics tab aggregates the metric history the
-/// remote daemon keeps in SQLite (7-day retention). A local workspace has no
-/// daemon and no store: `insights_local` samples on demand and persists
-/// nothing, so there is no history to roll up. Answer with an explicit marker
-/// rather than an error string, so the panel can explain itself instead of
-/// showing a raw "unsupported path" message.
-fn insights_local_analytics() -> Result<String, String> {
-    Ok(r#"{"unavailable":"local"}"#.to_string())
+/// `/analytics` — aggregates the local SQLite history the sampler writes
+/// (same report shape and 7-day retention as the remote daemon).
+async fn insights_local_analytics(query: &str) -> Result<String, String> {
+    let (since, until, points) = parse_analytics_query(query, unix_now());
+    let report = tokio::task::spawn_blocking(move || {
+        let store = crate::insights_store::Store::open_default()
+            .map_err(|e| format!("local metrics store unavailable: {e}"))?;
+        store
+            .analytics(since, until, points)
+            .map_err(|e| format!("local analytics query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("insights_local analytics: join: {e}"))??;
+    serde_json::to_string(&report).map_err(|e| format!("insights_local analytics: encode: {e}"))
+}
+
+const ANALYTICS_MAX_SPAN_S: i64 = 7 * 24 * 3600;
+const ANALYTICS_MIN_SPAN_S: i64 = 5 * 60;
+
+/// Clamp `/analytics` query params exactly as `handleAnalytics` in analytics.go.
+fn parse_analytics_query(query: &str, now: i64) -> (i64, i64, i64) {
+    let get = |key: &str| -> Option<i64> {
+        query.split('&').find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            if k == key { v.parse().ok() } else { None }
+        })
+    };
+    let until = match get("until") {
+        Some(u) if u > 0 && u <= now => u,
+        _ => now,
+    };
+    let mut since = match get("since") {
+        Some(s) if s > 0 => s,
+        _ => until - 24 * 3600,
+    };
+    since = since.max(until - ANALYTICS_MAX_SPAN_S);
+    since = since.min(until - ANALYTICS_MIN_SPAN_S);
+    let points = get("points").filter(|p| *p > 0).unwrap_or(120).clamp(20, 400);
+    (since, until, points)
 }
 
 // ─── Persistent sampler (feeds insights_store for /analytics) ─────────
@@ -834,7 +865,7 @@ pub async fn route_path(path: &str) -> Result<String, String> {
     };
     match base {
         "/current" => insights_local_current().await,
-        "/analytics" => insights_local_analytics(),
+        "/analytics" => insights_local_analytics(query).await,
         "/claude-usage" => crate::claude_usage_local::route(query),
         "/docker" => insights_local_docker().await,
         "/hygiene" => insights_local_hygiene().await,
@@ -898,6 +929,26 @@ mod tests {
         assert_eq!(pct_u32(-5.0), 0);
         assert_eq!(pct_u32(120.4), 100);
         assert_eq!(pct_u32(49.6), 50);
+    }
+
+    #[test]
+    fn route_analytics_clamps_query() {
+        // Pins: Go-parity clamps; a drift would make local ranges differ from remote.
+        let now = 1_000_000_000;
+        // absent → 24h window, 120 points
+        assert_eq!(parse_analytics_query("", now), (now - 86400, now, 120));
+        // future until → now; garbage ignored
+        assert_eq!(parse_analytics_query("until=9999999999&since=x", now), (now - 86400, now, 120));
+        // since older than 7d → clamped
+        let (s, _, _) = parse_analytics_query("since=1", now);
+        assert_eq!(s, now - 7 * 86400);
+        // since too close → 5 min min span
+        let (s, _, _) = parse_analytics_query(&format!("since={}", now - 10), now);
+        assert_eq!(s, now - 300);
+        // points clamps
+        assert_eq!(parse_analytics_query("points=5", now).2, 20);
+        assert_eq!(parse_analytics_query("points=9999", now).2, 400);
+        assert_eq!(parse_analytics_query("points=-3", now).2, 120);
     }
 
     #[test]
