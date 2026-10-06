@@ -96,9 +96,12 @@ func (s *Service) RegisterHuma(api huma.API) {
 		DefaultStatus: http.StatusCreated,
 		Tags:          []string{"term"}, Security: secured,
 	}, func(_ context.Context, in *struct {
-		Body TermCreateRequest `required:"false"`
+		Body *TermCreateRequest
 	}) (*struct{ Body TermCreated }, error) {
-		body := in.Body
+		var body TermCreateRequest // pointer Body = optional in huma; nil on empty body
+		if in.Body != nil {
+			body = *in.Body
+		}
 		if body.Policy == "" {
 			body.Policy = policyNone
 		}
@@ -125,9 +128,13 @@ func (s *Service) RegisterHuma(api huma.API) {
 		Tags:    []string{"term"}, Security: secured,
 	}, func(_ context.Context, in *struct {
 		Name string            `path:"name"`
-		Body TermRenameRequest `required:"false"`
+		Body *TermRenameRequest
 	}) (*struct{ Body TermRenamed }, error) {
-		to := strings.TrimSpace(in.Body.NewName)
+		var req TermRenameRequest // nil on empty body → empty name → 400
+		if in.Body != nil {
+			req = *in.Body
+		}
+		to := strings.TrimSpace(req.NewName)
 		from := in.Name
 		if !ValidName(to) {
 			return nil, humaErr(ErrBadName)
