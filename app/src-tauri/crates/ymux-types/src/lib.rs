@@ -273,6 +273,12 @@ pub enum LayoutNode {
         // all; v3 bumped for `intent`, which the user typed, not for this).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff_cwd: Option<String>,
+        // Per-pane "Claude is running in me" flag, persisted so a reattach
+        // to a persistent session starts in the right bidi state before the
+        // first hook fires. None = unknown/not running. View state: schema
+        // version did NOT bump (same reasoning as diff_cwd).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        claude_running: Option<bool>,
     },
     Split {
         split_id: String,
@@ -743,6 +749,7 @@ mod tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -758,7 +765,7 @@ mod tests {
         // pane_kind MUST be absent from the JSON.
         assert!(v.get("pane_kind").is_none());
         // browser / title / annotation / color / emoji / help_topic /
-        // diff_source / smart_bidi / diff_cwd all elided too.
+        // diff_source / smart_bidi / diff_cwd / claude_running all elided too.
         for f in [
             "browser",
             "title",
@@ -770,6 +777,7 @@ mod tests {
             "diff_source",
             "smart_bidi",
             "diff_cwd",
+            "claude_running",
         ] {
             assert!(v.get(f).is_none(), "field {f} should be elided");
         }
@@ -791,6 +799,7 @@ mod tests {
             diff_source: Some(DiffSource::Head),
             smart_bidi: None,
             diff_cwd: Some("/home/y/src/ymux-feature".into()),
+            claude_running: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["pane_kind"], "diff");
@@ -816,6 +825,30 @@ mod tests {
                 assert_eq!(pane_id, "old1");
                 assert!(matches!(pane_kind, PaneKind::Terminal));
             }
+            _ => panic!("expected Pane"),
+        }
+    }
+
+    #[test]
+    fn pane_claude_running_legacy_json_is_none_and_some_true_round_trips() {
+        // Pins: workspaces.json written before the field existed loads as
+        // None; Some(true) persists and survives a round trip. Breaking it
+        // loses the reattach bidi state or rejects old files.
+        let raw = json!({ "kind": "pane", "pane_id": "old2", "connection": { "type": "local" } });
+        let n: LayoutNode = serde_json::from_value(raw).unwrap();
+        match &n {
+            LayoutNode::Pane { claude_running, .. } => assert_eq!(*claude_running, None),
+            _ => panic!("expected Pane"),
+        }
+        let mut p = term_pane("p9", Some(Connection::Local { shell: None }));
+        if let LayoutNode::Pane { claude_running, .. } = &mut p {
+            *claude_running = Some(true);
+        }
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["claude_running"], true);
+        let back: LayoutNode = serde_json::from_value(v).unwrap();
+        match back {
+            LayoutNode::Pane { claude_running, .. } => assert_eq!(claude_running, Some(true)),
             _ => panic!("expected Pane"),
         }
     }
