@@ -1275,6 +1275,17 @@ fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
                 ));
             }
         }
+        // When neither the workspace nor any pane had a connection, the
+        // canonical-connection block above found nothing and the backfill
+        // just gave the panes `Local`. Take it now, or the NEXT load finds it
+        // and reports a migration again (a_non_git_pinned_folder_stays_a_
+        // header_across_reload: "a healed file migrates nothing").
+        if ws.connection.is_none() {
+            if let Some(conn) = ws.layout.as_ref().and_then(first_terminal_connection) {
+                ws.connection = Some(conn);
+                migrated = true;
+            }
+        }
     }
     // beta.3 (ws-dragdrop): backfill `sort_order` on any workspace or
     // group that never went through the reorder path. The pre-beta.3
@@ -1436,12 +1447,24 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     // workspaces.json stopped saving.
     let caller = std::panic::Location::caller();
     tracing::debug!("persist: called from {}:{}", caller.file(), caller.line());
+    persist_parts(&state.workspaces, &state.load_state, &state.secret_env)
+}
+
+/// `persist` over just the three fields it touches. Split out so tests build
+/// those directly: naming `AppState::default()` from test code drags tauri's
+/// webview runtime into the test binary, which then dies with
+/// STATUS_ENTRYPOINT_NOT_FOUND before any test runs (see tunnel_lease_tests).
+fn persist_parts(
+    workspaces: &Mutex<WorkspacesFile>,
+    load_state: &Mutex<Option<LoadState>>,
+    secret_env: &Mutex<secret_env::SecretEnvStore>,
+) -> Result<(), String> {
     // Secret env rows: move values into the store BEFORE the load-state gate so
     // no path (including a refused persist) leaves a value in `workspaces`.
-    let secret_err = reconcile_secret_env(state).err();
+    let secret_err = reconcile_secret_env(workspaces, secret_env).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
-    let load_state = *state.load_state.lock().map_err(|e| e.to_string())?;
+    let load_state = *load_state.lock().map_err(|e| e.to_string())?;
     match load_state {
         Some(LoadState::Loaded) => {}
         Some(LoadState::Failed) => {
@@ -1457,7 +1480,7 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
             return Err("persistence not yet initialized".into());
         }
     }
-    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
+    let file = workspaces.lock().map_err(|e| e.to_string())?.clone();
     save_to_disk(&file)?;
     match secret_err {
         Some(e) => Err(format!("secret env not saved: {e}")),
@@ -1474,9 +1497,12 @@ fn secret_env_path() -> Result<std::path::PathBuf, String> {
 
 /// Run `secret_env::reconcile` over the live workspaces; save the store when
 /// it changed. Error text never carries a value.
-fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
-    let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
-    let mut store = state.secret_env.lock().map_err(|e| e.to_string())?;
+fn reconcile_secret_env(
+    workspaces: &Mutex<WorkspacesFile>,
+    secret_env: &Mutex<secret_env::SecretEnvStore>,
+) -> Result<(), String> {
+    let mut file = workspaces.lock().map_err(|e| e.to_string())?;
+    let mut store = secret_env.lock().map_err(|e| e.to_string())?;
     if store.reconcile(&mut file.workspaces) {
         store.save(&secret_env_path()?)?;
     }
@@ -2669,7 +2695,11 @@ pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str)
     {
         let state = app.state::<AppState>();
         // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
-        if let Ok(mut map) = state.pane_status.lock() {
+        // The guard is bound before the `if let` so it drops before `state`:
+        // as the block's tail expression, the scrutinee temporary would
+        // outlive it (E0597).
+        let guard = state.pane_status.lock();
+        if let Ok(mut map) = guard {
             if text.is_empty() {
                 map.remove(pane_id);
             } else {
@@ -8797,8 +8827,11 @@ fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
     }
 }
 
+// Not `pub(crate)`: a command at the crate root with a visibility makes
+// `#[tauri::command]` re-export its `__cmd__` macro beside the macro itself
+// (E0255, "defined multiple times").
 #[tauri::command]
-pub(crate) fn pane_set_active(
+fn pane_set_active(
     state: State<'_, AppState>,
     workspace_id: String,
     pane_id: String,
@@ -12703,7 +12736,7 @@ pub fn run() {
                 Ok(file) => {
                     *state.workspaces.lock().map_err(|e| e.to_string())? = file;
                     // Plaintext secret values from a pre-flag file move into the store.
-                    if let Err(e) = reconcile_secret_env(&state) {
+                    if let Err(e) = reconcile_secret_env(&state.workspaces, &state.secret_env) {
                         log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
                     }
                     *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Loaded);
@@ -13822,6 +13855,7 @@ mod header_screen_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
         migrate_loaded(&mut f, "{}");
         assert!(by_id(&f, "docs").layout.is_none());
@@ -16163,6 +16197,7 @@ mod smart_bidi_seed_tests {
             diff_source: None,
             smart_bidi,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -16219,6 +16254,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: Some(true),
                 diff_cwd: None,
+                claude_running: None,
             }),
             second: Box::new(LayoutNode::Pane {
                 pane_id: "off".to_string(),
@@ -16234,6 +16270,7 @@ mod smart_bidi_seed_tests {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             }),
         };
         assert!(find_pane_smart_bidi(&t, "on"));
@@ -16349,6 +16386,160 @@ mod two_instance_save_tests {
         assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
         let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
         assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
+    }
+}
+
+#[cfg(test)]
+mod secret_env_persist_tests {
+    use super::*;
+    use ymux_types::{EnvVar, Workspace};
+
+    // Shared config dir under test-config-dir: serialise every test touching it.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    fn ev(k: &str, v: &str, secret: bool) -> EnvVar {
+        EnvVar {
+            key: k.into(),
+            value: v.into(),
+            secret,
+        }
+    }
+
+    fn ws(id: &str, parent: Option<&str>, env: Vec<EnvVar>) -> Workspace {
+        Workspace {
+            id: id.into(),
+            name: id.into(),
+            parent_id: parent.map(str::to_string),
+            env,
+            ..Default::default()
+        }
+    }
+
+    /// The three fields `persist_parts` touches — NOT `AppState::default()`,
+    /// which drags tauri into the test binary (STATUS_ENTRYPOINT_NOT_FOUND).
+    #[derive(Default)]
+    struct Parts {
+        workspaces: Mutex<WorkspacesFile>,
+        load_state: Mutex<Option<LoadState>>,
+        secret_env: Mutex<secret_env::SecretEnvStore>,
+    }
+
+    impl Parts {
+        fn reconcile(&self) -> Result<(), String> {
+            reconcile_secret_env(&self.workspaces, &self.secret_env)
+        }
+        fn persist(&self) -> Result<(), String> {
+            persist_parts(&self.workspaces, &self.load_state, &self.secret_env)
+        }
+    }
+
+    fn state_with(workspaces: Vec<Workspace>, load: Option<LoadState>) -> Parts {
+        let state = Parts::default();
+        state.workspaces.lock().unwrap().workspaces = workspaces;
+        *state.load_state.lock().unwrap() = load;
+        state
+    }
+
+    fn secret_path() -> PathBuf {
+        let p = secret_env_path().expect("secret path");
+        std::fs::create_dir_all(p.parent().expect("parent")).expect("mkdir");
+        p
+    }
+
+    fn clean(p: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(p);
+        let _ = std::fs::remove_file(p);
+        let _ = std::fs::remove_file(p.with_extension("json.tmp"));
+    }
+
+    // Pins: reconcile moves the secret value into the store, plain rows stay.
+    #[test]
+    fn reconcile_secret_env_moves_value_into_store() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let p = secret_path();
+        clean(&p);
+        let state = state_with(
+            vec![ws("h", None, vec![ev("TOKEN", "abc", true), ev("A", "1", false)])],
+            Some(LoadState::Loaded),
+        );
+        assert!(state.reconcile().is_ok());
+        let file = state.workspaces.lock().unwrap();
+        assert_eq!(file.workspaces[0].env[0].value, "");
+        assert_eq!(file.workspaces[0].env[1].value, "1");
+        assert_eq!(
+            state.secret_env.lock().unwrap().keys_for("h"),
+            vec!["TOKEN".to_string()]
+        );
+        drop(file);
+        clean(&p);
+    }
+
+    // Pins: store save runs only when reconcile changed it (a blocked path is untouched otherwise).
+    #[cfg(windows)]
+    #[test]
+    fn reconcile_secret_env_saves_only_when_store_changed() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let p = secret_path();
+        clean(&p);
+        std::fs::create_dir(&p).expect("blocker dir");
+        let state = state_with(vec![ws("h", None, vec![ev("A", "1", false)])], Some(LoadState::Loaded));
+        assert!(state.reconcile().is_ok());
+        state.workspaces.lock().unwrap().workspaces[0]
+            .env
+            .push(ev("TOKEN", "abc", true));
+        let err = state.reconcile().expect_err("save must fail");
+        assert!(err.contains("secret-env.json"), "path missing: {err}");
+        assert!(!err.contains("abc"), "value leaked in error");
+        clean(&p);
+    }
+
+    // Pins: reconcile runs before the LoadState gate, so a refused persist leaves no value.
+    #[test]
+    fn persist_reconciles_before_load_state_gate() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let p = secret_path();
+        clean(&p);
+        let state = state_with(vec![ws("h", None, vec![ev("TOKEN", "abc", true)])], None);
+        let err = state.persist().expect_err("gate must refuse");
+        assert_eq!(err, "persistence not yet initialized");
+        assert_eq!(state.workspaces.lock().unwrap().workspaces[0].env[0].value, "");
+        clean(&p);
+    }
+
+    // Pins: a store failure surfaces only after workspaces.json was saved.
+    #[cfg(windows)]
+    #[test]
+    fn persist_returns_secret_env_error_after_workspaces_save() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let p = secret_path();
+        clean(&p);
+        std::fs::create_dir(&p).expect("blocker dir");
+        let state = state_with(
+            vec![ws("persist-order-ws", None, vec![ev("TOKEN", "abc", true)])],
+            Some(LoadState::Loaded),
+        );
+        let err = state.persist().expect_err("store save must fail");
+        assert!(err.starts_with("secret env not saved: "), "got: {err}");
+        assert!(!err.contains("abc"), "value leaked in error");
+        // LAST_KNOWN three-way merge → containment, never equality.
+        let text = std::fs::read_to_string(config_path().expect("cfg")).expect("read workspaces.json");
+        assert!(text.contains("persist-order-ws"));
+        assert!(!text.contains("abc"), "value reached workspaces.json");
+        clean(&p);
+    }
+
+    // Pins: happy path returns Ok(()) when both saves succeed.
+    #[test]
+    fn persist_ok_when_secret_env_and_workspaces_save() {
+        let _g = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+        let p = secret_path();
+        clean(&p);
+        let state = state_with(
+            vec![ws("h", None, vec![ev("TOKEN", "abc", true)])],
+            Some(LoadState::Loaded),
+        );
+        assert_eq!(state.persist(), Ok(()));
+        clean(&p);
     }
 }
 

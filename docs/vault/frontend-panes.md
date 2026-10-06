@@ -323,13 +323,13 @@ topic and UI language, with a Copy button on every fenced block.
 
 **`components/PopoutTerminal.tsx` (150)** — the pop-out terminal window. Ctrl+wheel font
 zoom applies to popouts only (the grid stays Settings-driven); all open popouts share one
-zoom level, synced via the `popout:zoom` event and persisted in localStorage. RTL: the
+zoom level, synced via the `popout:zoom` event and persisted in localStorage. Theme/RTL: the
 fresh webview never ran App's settings bootstrap, so `onMount` reads the origin pane's
 profile from localStorage (`parsePopoutProfile(popoutProfileKey(sid))`), awaits
-`loadSettings()` → `setRtlProfiles(resolveRtlProfiles(...))` (failure logs the error kind
+`loadSettings()` → `applyTheme(s)` (CSS vars, terminal font + palette, RTL profiles; failure logs the error kind
 and keeps defaults), and only then constructs `TerminalInstance(..., profile)` — the
 renderer is fixed at construction. A `disposed` flag skips construction after cleanup.
-Theme and font family from settings are still not applied here. After attach it arms the tmux wheel proxy: it reads
+The sticky popout zoom (`setTerminalFontSize`) is applied after attach and overrides the Settings size. After attach it arms the tmux wheel proxy: it reads
 `ymux.popout.pane.<sid>` (seeded by `popOutPane` in App.tsx), calls `pane_persistence_list`
 and sets `ti.setTmuxScroll(armed)`. The decision is the pure `resolvePopoutTmuxArm` in `popoutWheelArm.ts`
 (zero imports, node-tested): a missing id or failed lookup (logged, tag
