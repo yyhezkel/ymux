@@ -1230,8 +1230,6 @@ pub(crate) struct LocalSetupInput {
     #[serde(default)]
     pub distro: Option<String>,
     #[serde(default)]
-    pub wsl_username: Option<String>,
-    #[serde(default)]
     pub workspace_name: Option<String>,
     #[serde(default)]
     pub create_workspace: bool,
@@ -1869,14 +1867,8 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                 // uid-1000 user as root + set it as the wsl.conf default,
                 // then terminate the distro so the default applies.
                 let user = sanitize_linux_username(
-                    input
-                        .wsl_username
-                        .as_deref()
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|s| s.to_string())
-                        .unwrap_or_else(|| {
-                            std::env::var("USERNAME").unwrap_or_else(|_| "ymux".into())
-                        })
+                    std::env::var("USERNAME")
+                        .unwrap_or_else(|_| "ymux".into())
                         .as_str(),
                 );
                 // Two things this script must NOT do, both learned the hard
@@ -2397,6 +2389,45 @@ mod tests {
     fn winget_no_upgrade_code_is_ok() {
         assert!(winget_already_ok(0x8A15_002Bu32 as i32));
         assert!(!winget_already_ok(1));
+    }
+
+    #[test]
+    fn local_setup_input_without_wsl_username() {
+        // Pins serde defaults: only `steps` is required; breaking it
+        // would reject minimal wizard payloads.
+        let min: LocalSetupInput = serde_json::from_str(r#"{"steps":["InstallGit"]}"#).unwrap();
+        assert_eq!(min.steps, vec!["InstallGit".to_string()]);
+        assert!(min.distro.is_none());
+        assert!(min.workspace_name.is_none());
+        assert!(min.workspace_cwd.is_none());
+        assert!(!min.create_workspace);
+
+        let full: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c"}"#,
+        )
+        .unwrap();
+        assert_eq!(full.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(full.workspace_name.as_deref(), Some("w"));
+        assert_eq!(full.workspace_cwd.as_deref(), Some("/c"));
+        assert!(full.create_workspace);
+
+        // `steps` has no default: an empty object must fail.
+        assert!(serde_json::from_str::<LocalSetupInput>("{}").is_err());
+    }
+
+    #[test]
+    fn local_setup_input_ignores_legacy_wsl_username() {
+        // An old client may still send wsl_username; no deny_unknown_fields,
+        // so it must be ignored, not an error.
+        let input: LocalSetupInput = serde_json::from_str(
+            r#"{"steps":["InstallGit"],"distro":"Ubuntu","workspace_name":"w","create_workspace":true,"workspace_cwd":"/c","wsl_username":"bob"}"#,
+        )
+        .unwrap();
+        assert_eq!(input.steps, vec!["InstallGit".to_string()]);
+        assert_eq!(input.distro.as_deref(), Some("Ubuntu"));
+        assert_eq!(input.workspace_name.as_deref(), Some("w"));
+        assert_eq!(input.workspace_cwd.as_deref(), Some("/c"));
+        assert!(input.create_workspace);
     }
 }
 
