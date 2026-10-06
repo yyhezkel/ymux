@@ -9,7 +9,7 @@
   "backend-core": {
     "app/src-tauri/src/config_lock.rs": "3785df0a43aa1ddb150b0d0b864fbd25fb1b75c817b7a63c6cabbb0b78ded206",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "6fdbbfb83e3f20a6e8a8b7790457d84f2c25de55cb266f7c2e5476d3ada86919",
+    "app/src-tauri/src/lib.rs": "dc04c16af8cb2005e7c652717ab05c107e4dff1bb7ed0fe6c9a43911a8f83b56",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "c603422947e0aeed687a97b6dab1632abbc924c9154a84c62a002ca8ec2f6a87",
