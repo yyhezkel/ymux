@@ -2,10 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"ymux-server/internal/files"
 	"ymux-server/internal/logs"
+	"ymux-server/internal/term"
 )
 
 // TestOpenAPISpecComplete is a unit-level drift guard: the generated spec must
@@ -17,6 +19,7 @@ func TestOpenAPISpecComplete(t *testing.T) {
 	s := NewServer("secret", 0, Deps{
 		Files: files.NewService(nil),
 		Logs:  logs.NewService(nil),
+		Term:  term.NewService("", ""),
 	})
 	raw, err := s.OpenAPISpec()
 	if err != nil {
@@ -43,10 +46,18 @@ func TestOpenAPISpecComplete(t *testing.T) {
 		"/api/v2/files/list", "/api/v2/files/read", "/api/v2/files/upload",
 		"/api/v2/files/download", "/api/v2/files/delete",
 		"/api/v2/logs/list", "/api/v2/logs/read", "/api/v2/logs/stream",
+		"/api/v2/term/sessions", "/api/v2/term/sessions/{name}",
+		"/api/v2/term/sessions/{name}/rename",
 	}
 	for _, p := range want {
 		if _, ok := doc.Paths[p]; !ok {
 			t.Errorf("generated spec missing path %s", p)
+		}
+	}
+	// The attach WebSocket is a raw route; it must never leak into the spec.
+	for p := range doc.Paths {
+		if strings.Contains(p, "/attach") {
+			t.Errorf("spec exposes %s; attach is WS-only", p)
 		}
 	}
 }
