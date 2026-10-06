@@ -102,7 +102,7 @@ import {
   type ShortcutActionId,
   type ShortcutTable,
 } from "./shortcuts";
-import { inTerminal, makeSelectAllBinding } from "./selectAllShortcut";
+import { inTerminal } from "./selectAllShortcut";
 import { makeSttRecorder, type SttRecorder } from "./stt";
 import {
   collectPanes,
@@ -3677,7 +3677,13 @@ function App() {
         if (text) pasteIntoActiveTerminal(text);
       }).catch((err) => log.warn("paste failed", err));
     } },
-    { id: "select_all", ...makeSelectAllBinding({ activePaneId, termFor: (pid) => terms.get(pid)?.term }) },
+    { id: "select_all",
+      when: (e) => inTerminal(e) && hasActivePane(),
+      run: (e) => {
+        e.preventDefault();
+        const pid = activePaneId();
+        if (pid) terms.get(pid)?.term.selectAll();
+      } },
     // Phase 17: Claude session summary.
     { id: "summarize_claude", run: (e) => { e.preventDefault(); void summarizeActivePane(); } },
 
