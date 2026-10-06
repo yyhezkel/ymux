@@ -35,8 +35,9 @@ every split Hebrew letter into U+FFFD. That was the mojibake bug fixed in `1bcb5
 
 Wraps Latin runs in Unicode bidi isolates (FSI `U+2068` / PDI `U+2069`) when they appear
 near Hebrew/Arabic, so `דוח-DEV.txt` renders in its logical position. **Default off**,
-toggled per pane (`pane_set_smart_bidi`); state lives in `AppState.bidi_filters`, lazily
-created on the first chunk per pane. `apply_to_pane` takes and returns `String`: `emit_data`
+toggled per pane (`pane_set_smart_bidi`); state lives in `AppState.bidi_filters`, seeded by
+`pane_connect` from the persisted `smart_bidi` before any spawn, else lazily created
+(off) on the first chunk per pane. `apply_to_pane` takes and returns `String`: `emit_data`
 feeds it the text `pty_decode` already reassembled, so a Hebrew char split across SSH reads is
 never cut into U+FFFD (a disabled pane returns the text as-is, no copy).
 

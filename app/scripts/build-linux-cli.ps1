@@ -45,7 +45,8 @@ if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
 # We force every release build through this script to apply consistent
 # --remap-path-prefix flags, so the build machine's paths never reach the
 # binary. That scrub covers paths only: a byte-identical binary also needs
-# the same rustc (pinned by rust-toolchain.toml), the same Cargo.lock and
+# the same rustc (pinned by rust-toolchain.toml and
+# src-tauri/rust-toolchain.toml, 1.95.0), the same Cargo.lock and
 # the same source.
 $cargoHome = if ($env:CARGO_HOME) { $env:CARGO_HOME } else { Join-Path $env:USERPROFILE ".cargo" }
 $rustupHome = if ($env:RUSTUP_HOME) { $env:RUSTUP_HOME } else { Join-Path $env:USERPROFILE ".rustup" }
