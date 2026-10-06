@@ -67,7 +67,7 @@
     "app/scripts/build-release.ps1": "c4e6fe10cd859a4f17166b57549b9fe0a2cfd9c6c9b4ae8c356e972408c9ad8a",
     "app/scripts/reset-local-setup.ps1": "b1379109edfcf7357468a2c737d0c1496f5fd4d7059c1755a982750f75176cba",
     "app/src-tauri/Cargo.toml": "6a5146ac72629dd56ffd8a380961cbfd077408f8f5b75f132d64b2f3d3885232",
-    "app/src-tauri/build.rs": "2737f787c88687e8a8b301e1873bef0305c55d8f038f907c61add76b30e4e999",
+    "app/src-tauri/build.rs": "7d4104386f05a6a4bad42bd1a41f69f4fd718116e259f50ad3d25dfaa9dbd677",
     "app/src-tauri/tauri.conf.json": "2e172c601a00a353dc71543cbc9dd30255d9c0f2e11078f34869abe84208fb33",
     "app/vite.config.ts": "8390a35f6f21304b51c20dc42f153bb50e4e37ca8bf0d4ebfcf8fd954ff10c8f",
     "rust-toolchain.toml": "78d570623e297e540719ee075118b60046145dbf071688064b96bde205906682",

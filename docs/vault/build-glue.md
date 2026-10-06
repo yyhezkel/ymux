@@ -159,6 +159,13 @@ later inherits `true` unless it opts out.
 `build.rs` runs `tauri_build`, which is what embeds `frontendDist` — the whole reason
 Rule #13 exists.
 
+`build.rs` calls `check_staged_resources()` first, before `emit_build_metadata()` and
+`tauri_build::build()`. It resolves `resources/` against `CARGO_MANIFEST_DIR` and accepts
+either `ymux-cli.exe` (Windows) or `ymux-cli` (macOS). If neither exists it prints
+`error: staged CLI missing` (both paths, the gitignored note, and "run `npm run build:linux-cli`
+from `app/`") to stderr and exits 1, so a fresh worktree fails with an actionable message
+rather than tauri's opaque resource error. Both paths are `rerun-if-changed`.
+
 The workspace also contains the eight `crates/ymux-*` members, the `cli` and `mcp`
 binaries.
 
