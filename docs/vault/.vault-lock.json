@@ -94,7 +94,7 @@
     "app/src-tauri/crates/ymux-core/src/log_writer.rs": "f664cf8098b2310c9068551f8381d441cbed774b1065f7144485843b841855a6",
     "app/src-tauri/crates/ymux-policy/src/lib.rs": "2176c18ab6c9cb515cbe10ab84179af8b7b93049e56cc5b873434c525c07fa9f",
     "app/src-tauri/crates/ymux-protocol/src/lib.rs": "48c14d3ed87410097ffb2d28fdf6d301b1ccf8cd230018bda88e90e8329574c8",
-    "app/src-tauri/crates/ymux-ssh/src/lib.rs": "b8f539507ac1f2be9f6bd70dfa5f49eddd2427a7dc47d81851323426b78c3d9e",
+    "app/src-tauri/crates/ymux-ssh/src/lib.rs": "ce31335f4cc1846ae58b0d630d23316d383f798abfec7072cc97066bc9e50c24",
     "app/src-tauri/crates/ymux-tunnel/src/lib.rs": "f1af5f50ee4c0946a8f4134210ab8f3dd0045752b29cf200e9df079f74365cfb",
     "app/src-tauri/crates/ymux-types/src/lib.rs": "433f73a7fb8549751c1054a25159545dc26126fdd4be1de804096ad8243403e4"
   },
