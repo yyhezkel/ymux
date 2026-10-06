@@ -20,6 +20,10 @@
 //!     with `FILE_SHARE_DELETE`, so a rename also succeeds while another
 //!     thread holds the file open — and that thread then keeps writing into
 //!     the rotated file.
+//!   * **Two processes.** The same race across two `ymux.exe` instances
+//!     sharing one config dir: both stat, both rename, and the second
+//!     clobbers the first's `debug.log.1`; the loser's open handle also keeps
+//!     appending into the rotated file.
 //!
 //! The worst amplifier was `log_sync`, which pulls up to 256 KiB × 3 files ×
 //! N hosts per cycle and used to submit them one line at a time.
@@ -31,6 +35,14 @@
 //! away; the writer drains, coalesces a batch into one buffer, and issues a
 //! single `write_all`. Rotation, prune and clear all run on that thread, so
 //! they are ordered against the lines around them and cannot race.
+//!
+//! **Across processes.** Within a process the thread orders everything; between
+//! processes `rotate` takes an exclusive `File::lock` on `debug.log.lock`
+//! around stat + rename only, and re-stats `debug.log` under it, so the second
+//! process to arrive finds a fresh file and does not rename. Each batch
+//! compares the handle's length with the path's and reopens on a mismatch,
+//! which is how a process notices another one rotated under it. Two stats per
+//! batch, none per line. If the lock cannot be taken it rotates unlocked.
 //!
 //! **Why a thread and not a `Mutex<File>`.** A mutex plus one `write_all`
 //! would fix the tearing, so it is worth being honest that this goes
@@ -258,7 +270,7 @@ impl LogWriter {
     /// Resolve the config dir once per batch, not per line. Cheap, keeps a
     /// `YMUX_CONFIG_DIR` change observable, and copes with the
     /// winmux → ymux migration landing mid-run.
-    fn ensure_open(&mut self) -> bool {
+    fn resolve_dir(&mut self) -> bool {
         let dir = match config_dir() {
             Ok(d) => d,
             Err(_) => return false,
@@ -268,26 +280,41 @@ impl LogWriter {
             self.dir = Some(dir);
             self.size = 0;
         }
-        if self.file.is_some() {
-            return true;
-        }
-        let path = match &self.dir {
-            Some(d) => d.join("debug.log"),
-            None => return false,
-        };
-        match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-            Ok(f) => {
-                self.size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                self.file = Some(f);
-                true
-            }
-            Err(_) => false,
-        }
+        true
     }
 
     fn write_batch(&mut self, bytes: &[u8]) {
-        if !self.ensure_open() {
-            return;
+        if self.resolve_dir() {
+            self.write_to_current(bytes);
+        }
+    }
+
+    /// Append one batch to `<dir>/debug.log`, first making sure the handle
+    /// still points at that path. Two stats per batch, never per line.
+    ///
+    /// A second process can rotate under us; our handle then names
+    /// `debug.log.1` and would keep appending there. The handle's length
+    /// differs from the path's (or the path is gone) exactly in that case.
+    fn write_to_current(&mut self, bytes: &[u8]) {
+        let path = match &self.dir {
+            Some(d) => d.join("debug.log"),
+            None => return,
+        };
+        if let Some(f) = &self.file {
+            let held = f.metadata().map(|m| m.len()).ok();
+            let on_disk = std::fs::metadata(&path).map(|m| m.len()).ok();
+            if held.is_none() || held != on_disk {
+                self.file = None;
+            }
+        }
+        if self.file.is_none() {
+            match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+                Ok(f) => {
+                    self.size = f.metadata().map(|m| m.len()).unwrap_or(0);
+                    self.file = Some(f);
+                }
+                Err(_) => return,
+            }
         }
         let ok = match self.file.as_mut() {
             Some(f) => f.write_all(bytes).is_ok(),
@@ -299,7 +326,11 @@ impl LogWriter {
             self.file = None;
             return;
         }
-        self.size += bytes.len() as u64;
+        // The real length, not `+= len`: another process may have appended.
+        self.size = match self.file.as_ref().map(|f| f.metadata()) {
+            Some(Ok(m)) => m.len(),
+            _ => self.size + bytes.len() as u64,
+        };
         if self.size > self.max_bytes {
             self.rotate();
         }
@@ -315,8 +346,23 @@ impl LogWriter {
         // then keep appending into debug.log.1. This line is the fix, not
         // tidiness.
         self.file = None;
+        // Held only across the stat + rename. Another process that also saw
+        // the cap exceeded waits here, then re-stats and finds a fresh file.
+        // AI-NOTE: fail-open — if the lock file cannot be opened or locked,
+        // rotate unlocked (the pre-lock behaviour) rather than let the log
+        // grow without bound; the writer thread must not log or panic here.
+        let _lock = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(dir.join("debug.log.lock"))
+            .ok()
+            .and_then(|f| f.lock().ok().map(|_| f));
         let primary = dir.join("debug.log");
-        if std::fs::rename(&primary, dir.join("debug.log.1")).is_err() {
+        let real = std::fs::metadata(&primary).map(|m| m.len()).unwrap_or(0);
+        if real > self.max_bytes
+            && std::fs::rename(&primary, dir.join("debug.log.1")).is_err()
+        {
             // Something else is holding debug.log.1 (an AV scanner, a second
             // instance). Truncate in place rather than grow without bound.
             // One attempt, no retry loop.
@@ -391,37 +437,10 @@ mod tests {
             }
         }
 
-        /// `ensure_open` re-resolves the process config dir; tests pin the
-        /// directory instead.
-        fn open_pinned(&mut self) -> bool {
-            if self.file.is_some() {
-                return true;
-            }
-            let path = match &self.dir {
-                Some(d) => d.join("debug.log"),
-                None => return false,
-            };
-            match std::fs::OpenOptions::new().create(true).append(true).open(&path) {
-                Ok(f) => {
-                    self.size = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                    self.file = Some(f);
-                    true
-                }
-                Err(_) => false,
-            }
-        }
-
+        /// `write_batch` re-resolves the process config dir; tests pin the
+        /// directory instead and call the same per-batch path.
         fn write_pinned(&mut self, bytes: &[u8]) {
-            if !self.open_pinned() {
-                panic!("could not open the test log");
-            }
-            if let Some(f) = self.file.as_mut() {
-                f.write_all(bytes).expect("test write");
-            }
-            self.size += bytes.len() as u64;
-            if self.size > self.max_bytes {
-                self.rotate();
-            }
+            self.write_to_current(bytes);
         }
     }
 
@@ -550,5 +569,51 @@ mod tests {
         let b = read(&second.join("debug.log"));
         assert!(b.contains("in-second"));
         assert!(!b.contains("in-first"), "the old file must not follow us");
+    }
+
+    #[test]
+    fn two_writers_rotating_never_clobber_the_rotated_file() {
+        let dir = tmpdir("two-writers-clobber");
+        let mut a = LogWriter::for_dir(&dir, 64);
+        let mut b = LogWriter::for_dir(&dir, 64);
+        // Pins the cross-process case: B's stale handle must not keep writing
+        // into the file A rotated aside, nor rename A's fresh log over it.
+        b.write_pinned(format!("B1-{}\n", "b".repeat(36)).as_bytes());
+        a.write_pinned(format!("A1-{}\n", "a".repeat(66)).as_bytes());
+        a.write_pinned(b"A2\n");
+        b.write_pinned(format!("B2-{}\n", "b".repeat(26)).as_bytes());
+        drop((a, b));
+        let rotated = read(&dir.join("debug.log.1"));
+        let current = read(&dir.join("debug.log"));
+        assert!(rotated.contains("A1-") && rotated.contains("B1-"), "got: {rotated:?}");
+        assert!(current.contains("A2") && current.contains("B2-"), "got: {current:?}");
+        let all = rotated + &current;
+        for tag in ["B1-", "A1-", "A2", "B2-"] {
+            assert_eq!(all.lines().filter(|l| l.starts_with(tag)).count(), 1, "{tag}");
+        }
+    }
+
+    #[test]
+    fn two_writers_interleave_and_every_line_survives_rotation() {
+        let dir = tmpdir("two-writers-interleave");
+        // 200 lines x 7 bytes = 1400; a 1000-byte cap rotates the shared file
+        // exactly once (only one rotated generation is kept).
+        let mut a = LogWriter::for_dir(&dir, 1000);
+        let mut b = LogWriter::for_dir(&dir, 1000);
+        for i in 0..100 {
+            a.write_pinned(format!("a-{i:04}\n").as_bytes());
+            b.write_pinned(format!("b-{i:04}\n").as_bytes());
+        }
+        drop((a, b));
+        assert!(dir.join("debug.log.1").exists(), "the cap must rotate once");
+        let all = read(&dir.join("debug.log.1")) + &read(&dir.join("debug.log"));
+        for i in 0..100 {
+            for p in ["a", "b"] {
+                let want = format!("{p}-{i:04}");
+                assert_eq!(all.lines().filter(|l| *l == want).count(), 1, "{want}");
+            }
+        }
+        // No torn or fused line.
+        assert!(all.lines().all(|l| l.len() == 6 && (l.starts_with("a-") || l.starts_with("b-"))));
     }
 }

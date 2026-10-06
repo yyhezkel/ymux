@@ -492,6 +492,101 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decided (Yossi):** **Q2 = (b), the `ymux-web` add-on.** Phase C4 builds the serving
   half in the daemon (`~/.ymux/server/www/current/` at `/`, diagnostic page at `/diag`);
   the add-on upload is Phase D. Until then a box is loaded by hand from the CI artifact.
+### 2026-10-06 — workspace Browser webview: zero app commands
+- **Context:** FOLLOWUPS P2 (capabilities/default.json LATENT). Investigation found ymux has no app ACL manifest, so Tauri 2.10.3 never ACL-checks app commands; the `Local`-context capability only gated plugin commands. The tunneled third-party page could invoke any app command.
+- **Options:** A) label-based guard denying all app commands to `workspace-browser-*` / B) add an app ACL manifest (`permissions/`, build.rs) / C) leave as latent.
+- **Decision:** A. `ipc_guard::guarded` wraps `invoke_handler` outermost; no legitimate caller exists in that webview. B deferred: large surface, touches build.rs.
+- **Outcome / Commit:** branch feature/ymux-app-src-tauri-capabilities. Compiles untested until CI.
+### 2026-10-06 — Zellij picker rows get session-meta names (reader wired now, writer unverified)
+- **Context:** FOLLOWUPS P2 "A ZELLIJ SESSION HAS NO auto_name": `parse_zellij_sessions` hardcoded `auto_name: None`; nothing joined session-meta onto zellij rows.
+- **Options:** A) wire the reader now, track the writer separately / B) wait until the writer is verified on Windows-local zellij / C) rename zellij sessions to carry the title.
+- **Decision:** A. `list_zellij_sessions` reads `~/.ymux/session-meta.json` (fallback `~/.winmux/`) and `apply_session_meta` joins by session name (`ymux-<pane>`), same precedence as tmux; frontend already ranks label > auto_name > claude_title > name. C rejected: renaming sessions is out of scope and breaks attach-by-name.
+- **Outcome:** reader in lib.rs, vault `backend-core.md` updated. Compiles untested until CI. Open P3 in FOLLOWUPS: CLI writer for Windows-local zellij panes and prune-vs-`tmux ls` unverified.
+
+### 2026-10-06 — Claude-running flag persisted per pane (`claude_running`); stale-true accepted
+- **Context:** FOLLOWUPS P2 (reattach to a persistent session starts in the wrong bidi state until the first hook).
+- **Decision:** persist `LayoutNode::Pane.claude_running` in workspaces.json; a restoring connect seeds the TUI signal from it. Written only on transitions (connect, any Claude hook, `session-end`).
+- **Trade-off (stale-true):** Claude died while the app was closed → persisted true → shell Hebrew renders reversed after reattach. Corrected by a `session-end` hook or a fresh non-restoring connect. The title detector is gone (ticket -ts-4); do not re-add one.
+- **Limitation (O4):** when `claude_running` is never written because the ymux Claude hooks are not installed, nothing corrects it — hooks are not installed → no signal beyond the wizard's `mode=claude`.
+
+### 2026-10-06 — `bidi_reorder`: caret pinned right + half-reordered repaints are the cursed cursor — DEFERRED, documented as a known limit
+- **Context:** Under `rtl_mode="bidi_reorder"` the caret stays pinned to the right instead of tracking the text, and a partial repaint can leave a line half-reordered. Cause: `flushPending` runs `reorderRtlForDisplay` (`app/src/bidi.ts`) on each rAF chunk of the byte stream, while the TUI positions its cursor and repaints regions in columns of the UNtransformed text — two coordinate systems that diverge. `normaliseIncomingToLogical` has the same fragment limit (it sees runs between ANSI escapes, not whole lines).
+- **Precedent:** terminal-wg's BiDi proposal (https://terminal-wg.pages.freedesktop.org/bidi/) names this problem "the cursed cursor". Root cause first written up in `PROGRESS.txt`, 2026-08-19 entry (the DECISIONS entry it promised never landed; `bidi.ts` points at it — this closes that dangling pointer). NOT VERIFIED LIVE.
+- **Options:** A) schedule whole-line reassembly + cursor tracking now / B) defer, document as a known limit / C) workaround, e.g. hide the caret under `bidi_reorder` — rejected: hides one symptom, the repaint glitch remains.
+- **Decision:** B — DEFERRED. No profile defaults to `bidi_reorder` any more (see the `settings.rs` comments on the local/remote defaults), so the cost lands only on users who opt in. A real fix is its own piece of work, not an RTL bugfix rider.
+- **Requirements for a real fix:** whole-line reassembly before reordering (buffer to a full visual line, not an ANSI-escape run), and cursor tracking through the transform (map original columns to reordered columns for every cursor-position sequence).
+- **Revisit when:** a profile default returns to `bidi_reorder`; a user needs it; or xterm.js gains native BiDi.
+- **Outcome:** docs only, no source change. Known limits listed in `docs/RTL-TEST.md` § `bidi_reorder` — known limits. FOLLOWUPS entry annotated.
+
+### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
+- **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
+- **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.
+- **Decision:** A. Handshake emits `YMUX-CHALLENGE` (Rust + Go together); `WINMUX_*` env dual-writes, CLI legacy adoption, legacy pipe listener, `X-Winmux-Truncated` and the `use_winmux_tmux_config` alias are gone. Readers (`WINMUX-RESPONSE`, env-file fallback, `default_pipe_name_legacy`) and the `%APPDATA%` / `~/.winmux` / `WINMUX_CONFIG_DIR` migrations stay: they cost nothing and a user can upgrade from any age.
+- **Outcome / Commit:** branch feature/ymux-crates-ymux-tunnel-src (fc83075..e213dc1). Compiles untested until CI; server blobs need a CI rebake + live smoke (FOLLOWUPS P1).
+
+### 2026-10-06 — Secret env rows (`EnvVar.secret`): values out of workspaces.json
+- **Context:** workspace env values lived in plaintext in `workspaces.json`, RPC replies and `last.env`.
+- **Options:** A) per-row `secret` flag, value in DPAPI-protected `secret-env.json` / B) whole-workspace vault / C) keep plaintext.
+- **Decision:** A. Secret values are blanked in `workspaces.json`, kept in `secret_env::SecretEnvStore`
+  (DPAPI on Windows, base64 blob per owner/key), delivered via `cmd.env` (local) or sshd `set_env` (SSH, before the
+  existing `set_env`), never typed, never in `last.env`. RPC `list/new/update-workspace` redact as a second layer.
+  Edit modal reads stored key names via `workspace_secret_env_keys`; empty value on a secret row = keep stored.
+- **Outcome / Commit:** branch feature/ymux-implament (93551ec..339f998). Compiles untested until CI.
+
+### 2026-10-05 — Phase 105: Context Rail
+- **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
+  do / choose / answer tasks in a persistent pane; answers are typed back without blocking
+  the agent). Yossi wants to see, per Claude session, *what it is about and where it
+  stands* without reading the scrollback.
+- **Considered and rejected:** a HITL task layer (tasks from a brief's `ask`, an answer
+  outbox typed into the pane when the agent is idle, a secret heuristic, a manual
+  decisions log). Dropped mid-implementation at Yossi's call: the useful part is the
+  *context*, not another place to answer questions — the pane already is that place.
+- **Decided (Yossi):**
+  1. The "where we stand" log comes from the existing `[ymux-brief]` — no LLM, zero
+     tokens. No brief → a degraded line, never invented content.
+  2. Persist per Claude `session_id` to disk (`<config_dir>/context/sessions/`, 30-day
+     retention). **This reverses the 2026-09-01 BRIEF decision that briefs live in memory
+     only** — for the per-session log and the session's first prompt. The Queue's
+     per-pane `AppState.briefs` stays in memory.
+  3. Auto-injection back into the agent stays in scope: Phase 105.C (SessionStart
+     `additionalContext` on compact/resume/startup, capped, toggle in Settings).
+  4. The rail shows the current workspace in full, plus a one-line strip for the other
+     workspaces that need you.
+- **2026-10-05 follow-up: focused pane only, others strip removed.** Yossi: each window
+  shows only its own context. The rail now renders a single card, for the session of
+  the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
+  pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
+  M other workspaces" strip are gone, together with their UI, i18n keys, model helper
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (105.C) is
+  unchanged.
+- **2026-10-05 follow-up: card modeled on HITL task card.** Yossi found the rail still
+  long and unclear and approved a layout modeled on tzafrir/human-in-the-loop's task
+  card. It shows fixed labels with one short line each: 🎯 goal + *Done when*, *Now*
+  (light + age), *Next*, *Waiting on you* (ask · rec), the last 3 ✔ deltas with clock
+  time, and "▸ N more · ▸ original prompt". The raw first prompt is no longer shown on
+  top.
+  - Two optional, **sticky** brief keys were added: `goal` and `done`. The agent writes
+    them once and again only on change. The store keeps the last non-empty value.
+  - Fallbacks: with no goal, the card shows the first prompt line (80 chars). With no
+    done, that line is omitted.
+  - The compact/resume injection digest uses the same shape.
+  - **Go parity deferred:** `server/internal/agent/brief.go` does not parse `goal` /
+    `done` yet. It would need a daemon rebake plus a version bump (BACKLOG).
+- **2026-10-05 follow-up: the workspace intent editor is removed from the rail.** This fixes the double 🎯. The intent stays on the Briefing card (Ctrl+Alt+Q) and in startup injection.
+- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, 103 then went to B5 (PR #60) and 104 to B6 (PR #61), so this is 105 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
+- **Outcome / Commit:** Phase 105.A (store + rail) on `claude/phase-103a-context-rail`;
+  105.C follows. Spec: `docs/CONTEXT.md`.
+- **105.C choices (made while implementing, no new user decision):**
+  - The transport is a new RPC method `context.inject`, not a reply field on
+    `feed.push`, because SessionStart must not touch the feed path at all.
+  - The CLI waits ~300 ms and fails open. `YMUX_CONTEXT_TIMEOUT_MS` raises the wait
+    for slow tunnels.
+  - `source=clear` injects nothing: the user just asked for a clean slate.
+  - On `startup`, closed sibling sessions are not listed.
+  - Hook spec bumped to 1.7.0. `manifest.json`'s `hooks.claude-code.version` is left
+    for the release cut (RELEASING.md § 4½), so the outdated-hooks banner does not
+    fire before a CLI that understands the hook ships.
 
 ### 2026-10-05 — B6 details: retention 100 rows, resume reuses the name, transcript found by id
 - **Decided (Claude, flagged to Yossi):** §4.2 left "N" open — **100** ended rows (and 90
@@ -738,7 +833,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decided — no PTY-output scraping fallback, now or later in this shape.** `osc_notify.rs` works because OSC 9/99/777 is a documented, stable protocol. There is no documented stdout marker for Claude Code's turn state; detecting it means pattern-matching TUI chrome — spinner glyphs, the "esc to interrupt" line, permission-box borders — which is undocumented, locale-dependent (we ship he/ar/ru), theme-dependent, and changes across releases. The failure mode is precisely the one the feature exists to eliminate: the heuristic quietly stops matching after an upstream release, the light **sticks on green**, and nobody notices because there is no error. **A wrong light is worse than no light.** A hookless pane gets no light plus the existing outdated-hooks banner. If a fallback is ever wanted it should be *cooperative* (something Claude Code itself invokes), not scraped.
 - **Decided — yellow does not decay on a timer.** "Claude finished and you have not dealt with it" is a lasting fact, and glancing at a strip of tabs to see who is done IS the use case; a `HOOK_PULSE_WINDOW_MS`-style decay would destroy it. That 4s decay is right for a *pulse* ("something just happened") and wrong for a *state*. The decay that exists is semantic and free: `idle_prompt` fires once Claude has actually been waiting, promoting Done → NeedsInput. Yellow means "just finished", red means "finished and now waiting on you". Yellow also does **not** clear on focus — the pulse clears on focus because a pulse is an unseen event; the light is the agent's current state, and conflating them produces a light that goes dark while Claude is still sitting there waiting.
 - **Decided — `PermissionRequest` stays unregistered.** It overlaps entirely with `Notification/permission_prompt` and with our own PreToolUse gate, and it is a *blocking* hook — registering it puts a second synchronous round-trip on the tool-call critical path for zero new information.
-- **Known lie, stated deliberately:** a turn that dies on an API error shows **yellow "your turn"**, because `StopFailure` is not registered. Logged in FOLLOWUPS; it is the largest remaining inaccuracy in v1.
+- **Known lie, stated deliberately:** a turn that dies on an API error shows **yellow "your turn"**, because `StopFailure` is not registered. Logged in FOLLOWUPS; it is the largest remaining inaccuracy in v1. **Resolved 2026-10-06** (ticket ymux-hooks-claude-code-json): `StopFailure` is registered (hooks 1.8.0), a turn that dies on an API error now turns the light `failed` (square shape), state-only with no card or toast. Not verified live.
 - **Not decided / deferred:** bumping `manifest.json`'s `hooks.claude-code.version` to 1.5.0. It is required for anyone to be told to re-sync, but doing it in the feature commit banners every current 0.4.5 user before a CLI exists that can honour it. It belongs in the release checklist.
 
 ### 2026-08-23 — The vault: MD pages that explain the code, with a CI freshness gate

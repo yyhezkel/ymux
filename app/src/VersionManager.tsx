@@ -1,6 +1,7 @@
 import { createSignal, For, Show, onMount } from "solid-js";
 import { backend } from "./backend";
 import { t } from "./i18n";
+import { isMac } from "./platform";
 import { IconRefresh, IconBadgePlus, IconClose, IconCircle, IconCheck, IconWarning } from "./icons";
 
 // Phase 71 — Settings → Updates version manager: list every published
@@ -18,6 +19,8 @@ interface ReleaseInfo {
   nsis_sha256: string | null;
   msi_url: string | null;
   msi_sha256: string | null;
+  dmg_url: string | null;
+  dmg_sha256: string | null;
 }
 
 // Compare X.Y.Z[-suffix]; a release (no suffix) outranks a prerelease.
@@ -156,7 +159,7 @@ export function VersionManager(p: {
                   >
                     <button
                       class={isDowngrade(r) ? "vm-downgrade" : "primary"}
-                      disabled={installing() || !r.nsis_url}
+                      disabled={installing() || !(isMac() ? r.dmg_url : r.nsis_url)}
                       onClick={(e) => {
                         e.stopPropagation();
                         setConfirmTarget(r);

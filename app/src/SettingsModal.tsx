@@ -830,6 +830,23 @@ export function SettingsModal(p: Props) {
                       }}
                     />
                   </label>
+                  {/* Phase 105.C: SessionStart context injection. Default ON,
+                      so anything but an explicit false reads as checked. */}
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.brief?.inject_context !== false}
+                      onChange={(e) =>
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          inject_context: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t("settings.brief.injectContext.label")}</span>
+                  </label>
+                  <p class="settings-hint">{t("settings.brief.injectContext.hint")}</p>
                 </section>
                 <section>
                   <label class="settings-checkbox">

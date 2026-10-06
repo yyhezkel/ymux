@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 # Phase 13.A pre-public hardening: a wrapper for `npm run tauri build` that
 # guarantees the developer-path scrub is applied to the app.exe inside the
 # MSI / NSIS. `build-linux-cli.ps1` sets RUSTFLAGS for the CLI bundles, but

@@ -1,5 +1,6 @@
 // Phase 24.D: claude_chat module deleted with the ClaudeChat pane.
 mod addons;
+mod agent_runs_store;
 mod bidi_filter;
 mod bootstrap_guard;
 mod brief;
@@ -9,7 +10,9 @@ mod workspace_browser;
 mod claude_log;
 mod claude_summary;
 mod claude_usage;
+mod config_lock;
 mod connect_wizard;
+mod context_store;
 mod dev;
 mod diff_pane;
 mod file_manager;
@@ -19,6 +22,8 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod insights_store;
+mod ipc_guard;
 mod ipc_meter;
 mod local_setup;
 mod local_wizard;
@@ -31,6 +36,7 @@ mod pty_decode;
 mod pty_emit;
 mod remote_bootstrap;
 mod rpc_server;
+mod secret_env;
 mod sessions_overview;
 mod settings;
 mod skills;
@@ -151,17 +157,29 @@ pub(crate) struct AppState {
     pub(crate) core: CoreState,
     pub(crate) workspaces: WorkspacesState,
     pub(crate) load_state: Arc<Mutex<Option<LoadState>>>,
+    /// Secret env row values (`EnvVar.secret`), keyed by env owner. Kept out
+    /// of `workspaces` by `secret_env::reconcile` — see `secret_env.rs`.
+    pub(crate) secret_env: Arc<Mutex<secret_env::SecretEnvStore>>,
     pub(crate) notifications: Arc<Mutex<Vec<NotificationItem>>>,
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
+    /// Active pane per workspace (workspace_id -> pane_id), pushed by the
+    /// frontend via `pane_set_active`. In-memory, last write wins. Taken
+    /// alone, never nested under another lock.
+    pub(crate) active_panes: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
     /// pane_id. turn-start = UserPromptSubmit hook, turn-end = Stop hook.
-    /// In-memory and session-scoped — the rolling average is a within-session
-    /// signal, meaningless after a restart, so it's never persisted.
+    /// Persisted on exit to `<config>/agent-runs.json` with each state's
+    /// timestamp and restored in setup; entries 6h or older, without a
+    /// timestamp, or for panes that no longer exist are dropped — see
+    /// `agent_runs_store.rs`.
     pub(crate) agent_runs: Arc<Mutex<HashMap<String, AgentRunState>>>,
     /// BRIEF: per-pane agent brief + last user prompt, keyed by RESOLVED
-    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
-    /// same rationale as agent_runs — see `brief.rs`.
+    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only
+    /// (unlike agent_runs, which is persisted) — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
+    /// Phase 105: per-Claude-session context (first prompt + brief log),
+    /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
+    pub(crate) context: context_store::ContextState,
     pub(crate) feed: Arc<Mutex<FeedStore>>,
     pub(crate) notes: Arc<Mutex<notes::NotesFile>>,
     // Phase 9.A: persistent app settings (theme, fonts, terminal, hooks, etc.)
@@ -180,15 +198,17 @@ pub(crate) struct AppState {
     pub(crate) claude_paths: Arc<Mutex<HashMap<String, String>>>,
     /// Phase 52 (BiDi 33B): per-pane PTY-stream bidi filter state. The
     /// filter type lives in `app` (not ymux-core) since it's a
-    /// feature concern, not core russh/sessions. Lazy-created on
-    /// first chunk per pane; toggled via `pane_set_smart_bidi`.
+    /// feature concern, not core russh/sessions. Seeded by `pane_connect`
+    /// from the persisted `smart_bidi`, lazy-created (off) on first chunk
+    /// otherwise; toggled via `pane_set_smart_bidi`.
     pub(crate) bidi_filters: bidi_filter::BidiFilterMap,
     /// Phase 53 (rebased): per-workspace child Webview for the
     /// floating Browser window. At most one Webview per workspace
     /// keyed by `workspace_id`. Lives only at runtime — never
     /// persisted to workspaces.json. `workspace_delete` also calls
-    /// `workspace_browser::cleanup_workspace_sessions` to remove the
-    /// matching `browser-sessions/<workspace_id>/` directory.
+    /// `workspace_browser::cleanup_workspace_sessions` to clear its
+    /// Browser state (tunnel cookies, macOS per-workspace data store,
+    /// legacy `browser-sessions/<workspace_id>/` directory).
     pub(crate) workspace_browsers: workspace_browser::WorkspaceBrowserMap,
     /// Phase 62.A (item D): serializes native Browser Webview creation.
     /// WebView2's `add_child` intermittently returns 0x8007139F
@@ -235,7 +255,8 @@ pub(crate) struct AppState {
 /// arrival order, which needs a single writer and a monotonic sequence.
 /// Third, a transition table here is unit-testable; a pile of derived
 /// signals is not.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum PaneAgentState {
     /// No hook has ever arrived for this pane. Renders nothing — a pane
     /// running a plain shell must not sprout a status light.
@@ -255,6 +276,9 @@ pub(crate) enum PaneAgentState {
     /// The agent is blocked on you — a permission prompt, an elicitation
     /// dialog, or it has gone idle waiting for a reply.
     NeedsInput,
+    /// The turn died on an API error (Claude Code `StopFailure`). Exits
+    /// via prompt/stop/notification/session-end like any other state.
+    Failed,
 }
 
 impl PaneAgentState {
@@ -264,6 +288,7 @@ impl PaneAgentState {
             PaneAgentState::Running => "running",
             PaneAgentState::Done => "done",
             PaneAgentState::NeedsInput => "needs-input",
+            PaneAgentState::Failed => "failed",
         }
     }
 }
@@ -357,6 +382,7 @@ impl AgentRunState {
         let next = match subkind {
             "user-prompt-submit" | "pre-tool-use" => PaneAgentState::Running,
             "stop" => PaneAgentState::Done,
+            "stop-failure" => PaneAgentState::Failed,
             "notification" => match notification_type {
                 Some(t) if NEEDS_INPUT_NOTIFICATIONS.contains(&t) => {
                     PaneAgentState::NeedsInput
@@ -376,6 +402,35 @@ impl AgentRunState {
         self.state = next;
         self.state_since = Some(std::time::SystemTime::now());
         true
+    }
+}
+
+#[cfg(test)]
+mod status_slot_tests {
+    use super::clear_if_current;
+    use std::collections::HashMap;
+
+    // Pins: a clear for the exact emitted text removes the slot.
+    #[test]
+    fn clears_on_match() {
+        let mut m = HashMap::from([("p".to_string(), "a".to_string())]);
+        assert!(clear_if_current(&mut m, "p", "a"));
+        assert!(m.is_empty());
+    }
+
+    // Pins: a newer status must survive an older timer (the bug this guards).
+    #[test]
+    fn keeps_newer_text() {
+        let mut m = HashMap::from([("p".to_string(), "new".to_string())]);
+        assert!(!clear_if_current(&mut m, "p", "old"));
+        assert_eq!(m.get("p").map(String::as_str), Some("new"));
+    }
+
+    // Pins: clearing an absent slot is a no-op, not a panic.
+    #[test]
+    fn absent_slot_is_noop() {
+        let mut m = HashMap::new();
+        assert!(!clear_if_current(&mut m, "p", "a"));
     }
 }
 
@@ -500,6 +555,28 @@ mod agent_run_tests {
         }
         assert_eq!(r.state_since, first, "state_since must not move");
         assert_eq!(r.seq, 6, "but every applied hook still advances seq");
+    }
+
+    #[test]
+    fn a_stop_failure_turns_the_light_failed() {
+        // A turn that died on an API error must not read as a clean Done;
+        // breaking this puts the yellow "done" light back on failures.
+        let mut r = AgentRunState::default();
+        r.apply_hook("user-prompt-submit", None);
+        assert!(r.apply_hook("stop-failure", None));
+        assert_eq!(r.state, PaneAgentState::Failed);
+        assert_eq!(r.state.as_str(), "failed");
+        assert!(!r.apply_hook("stop-failure", None), "already Failed");
+    }
+
+    #[test]
+    fn a_prompt_after_a_failure_resumes_running() {
+        // Failed is not sticky: the next prompt must clear it, or a retried
+        // turn would keep showing red.
+        let mut r = AgentRunState::default();
+        r.apply_hook("stop-failure", None);
+        assert!(r.apply_hook("user-prompt-submit", None));
+        assert_eq!(r.state, PaneAgentState::Running);
     }
 
     #[test]
@@ -867,31 +944,33 @@ pub(crate) fn remember_file_text(text: &str) {
     }
 }
 
-fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+/// Gate + reconcile + atomic write + base update for one workspaces.json
+/// save, with the file path and the three-way-merge base passed in so a
+/// test can run two "instances" (two bases) against one tempdir without
+/// touching `YMUX_CONFIG_DIR`. Returns the text that landed on disk.
+///
+/// `Refuse` returns `Err` before the tmp file is opened: a newer build owns
+/// the file and nothing of ours may touch it.
+fn write_workspaces_text(
+    path: &std::path::Path,
+    ours: &str,
+    last_known: &std::sync::Mutex<Option<String>>,
+) -> Result<String, String> {
     use std::io::Write as _;
 
-    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
-        log_warn("WORKSPACE", &format!(
-            "save_to_disk: writing empty state (workspaces=0). version={}",
-            file.version
-        ));
-    }
-
-    let path = config_path()?;
     let dir = path
         .parent()
         .ok_or_else(|| "no parent dir".to_string())?
         .to_path_buf();
     let tmp = dir.join(format!("workspaces.{}.tmp", std::process::id()));
-    let mut text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
 
     // Re-read before writing. The fast path — nobody else touched the
     // file — is the overwhelmingly common one and costs a single read.
     // The decision itself lives in `workspaces_merge::reconcile` so it is
     // testable without a GUI: an idle app never saves, so the interesting
     // path cannot be reached by launching one and waiting.
-    let base_text = LAST_KNOWN.lock().ok().and_then(|g| g.clone());
-    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    let base_text = last_known.lock().ok().and_then(|g| g.clone());
+    let on_disk = std::fs::read_to_string(path).unwrap_or_default();
 
     // The schema gate, in both directions. See WORKSPACES_SCHEMA_VERSION for
     // what this does and does not cover.
@@ -919,7 +998,8 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
                     "save_to_disk: workspaces.json was rewritten by an OLDER build \
                      (on disk v{}, we last wrote v{}). Fields that build does not \
                      know may have been dropped; the three-way merge below \
-                     restores what it can.",
+                     restores what it can. To stop two builds sharing one config \
+                     dir, start the older one with YMUX_CONFIG_DIR set to its own folder.",
                     disk_version.unwrap_or_default(),
                     WORKSPACES_SCHEMA_VERSION
                 ),
@@ -927,12 +1007,19 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         }
     }
 
-    let (reconciled, notes) =
-        workspaces_merge::reconcile(&text, base_text.as_deref(), &on_disk);
+    let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
     for n in &notes {
         log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
     }
-    text = reconciled;
+    if !notes.is_empty() {
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "save_to_disk: merged another writer's edits ({} note(s) above)",
+                notes.len()
+            ),
+        );
+    }
 
     {
         let mut f = std::fs::OpenOptions::new()
@@ -946,8 +1033,24 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync tmp: {e}"))?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    remember_file_text(&text);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    if let Ok(mut g) = last_known.lock() {
+        *g = Some(text.clone());
+    }
+    Ok(text)
+}
+
+fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
+        log_warn("WORKSPACE", &format!(
+            "save_to_disk: writing empty state (workspaces=0). version={}",
+            file.version
+        ));
+    }
+
+    let path = config_path()?;
+    let ours = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    let text = write_workspaces_text(&path, &ours, &LAST_KNOWN)?;
     // The tree shape goes in the line, not just the count. Two pinned
     // folders lost `parent_id` and `is_project_root` with nothing in the
     // log to say when or why — every writer mutates in place, serde
@@ -1063,25 +1166,45 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
         ));
     }
 
+    if migrate_loaded(&mut file, &text) {
+        log_info("WORKSPACE", "load_from_disk: migration ran — saving migrated layout");
+        match save_to_disk(&file) {
+            Ok(()) => log_info("WORKSPACE", "load_from_disk: migration save OK"),
+            Err(e) => log_warn("WORKSPACE", &format!("load_from_disk: migration save FAILED: {e}")),
+        }
+    }
+    Ok(file)
+}
+
+/// Every in-memory load migration, in order. Returns true when anything
+/// changed so the caller saves. Split out of `load_from_disk` so tests can
+/// drive the whole chain without a config dir.
+fn migrate_loaded(file: &mut WorkspacesFile, text: &str) -> bool {
     let mut migrated = false;
     // 2026-08-19: WSL workspaces become plain local ones. Runs FIRST so no
     // later pass has to know about a connection kind that no longer has a
     // spawn path behind it.
-    if migrate_wsl_workspaces(&mut file) > 0 {
+    if migrate_wsl_workspaces(file) > 0 {
         migrated = true;
     }
     // v2/v3 project folders become real workspaces before anything else
     // touches the tree, so the repair pass below sees the final shape.
-    if migrate_legacy_project_folders(&mut file, &text) > 0 {
+    if migrate_legacy_project_folders(file, text) > 0 {
         migrated = true;
     }
-    if normalize_parents(&mut file) > 0 {
+    if normalize_parents(file) > 0 {
+        migrated = true;
+    }
+    // A pinned non-git folder has a parent but neither other header marker,
+    // so the rule would read it as a screen: flag it from its children
+    // before anything classifies rows.
+    if flag_pinned_folders(file) > 0 {
         migrated = true;
     }
     // Phase 92: headers (roots, pinned folders) stop holding panes. After
     // the parent repair so `is_header` sees the final tree, before the
     // per-workspace loop so the backfill below sees the moved layouts.
-    if migrate_headers_to_screens(&mut file) > 0 {
+    if migrate_headers_to_screens(file) > 0 {
         migrated = true;
     }
     for ws in file.workspaces.iter_mut() {
@@ -1113,6 +1236,7 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
                 diff_source: None,
                 smart_bidi: None,
                 diff_cwd: None,
+                claude_running: None,
             });
             migrated = true;
         }
@@ -1158,17 +1282,10 @@ fn load_from_disk() -> Result<WorkspacesFile, String> {
     // we crystallize into consecutive 0..N-1 keys — per group_id scope
     // for workspaces, and across the group list for groups. Idempotent:
     // if every entry already has Some(_) this branch is a no-op.
-    if backfill_sort_orders(&mut file) {
+    if backfill_sort_orders(file) {
         migrated = true;
     }
-    if migrated {
-        log_info("WORKSPACE", "load_from_disk: migration ran — saving migrated layout");
-        match save_to_disk(&file) {
-            Ok(()) => log_info("WORKSPACE", "load_from_disk: migration save OK"),
-            Err(e) => log_warn("WORKSPACE", &format!("load_from_disk: migration save FAILED: {e}")),
-        }
-    }
-    Ok(file)
+    migrated
 }
 
 // beta.3 (ws-dragdrop): fill in any missing `sort_order` values with a
@@ -1319,9 +1436,12 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
     // workspaces.json stopped saving.
     let caller = std::panic::Location::caller();
     tracing::debug!("persist: called from {}:{}", caller.file(), caller.line());
+    // Secret env rows: move values into the store BEFORE the load-state gate so
+    // no path (including a refused persist) leaves a value in `workspaces`.
+    let secret_err = reconcile_secret_env(state).err();
     // SAFETY GATE: do not persist if load failed. We'd clobber existing data with our
     // empty default state.
-    let load_state = *state.load_state.lock().unwrap();
+    let load_state = *state.load_state.lock().map_err(|e| e.to_string())?;
     match load_state {
         Some(LoadState::Loaded) => {}
         Some(LoadState::Failed) => {
@@ -1337,8 +1457,42 @@ pub(crate) fn persist(state: &AppState) -> Result<(), String> {
             return Err("persistence not yet initialized".into());
         }
     }
-    let file = state.workspaces.lock().unwrap().clone();
-    save_to_disk(&file)
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
+    save_to_disk(&file)?;
+    match secret_err {
+        Some(e) => Err(format!("secret env not saved: {e}")),
+        None => Ok(()),
+    }
+}
+
+/// `<config>/secret-env.json`, beside workspaces.json.
+fn secret_env_path() -> Result<std::path::PathBuf, String> {
+    let path = config_path()?;
+    let dir = path.parent().ok_or_else(|| "no parent dir".to_string())?;
+    Ok(dir.join("secret-env.json"))
+}
+
+/// Run `secret_env::reconcile` over the live workspaces; save the store when
+/// it changed. Error text never carries a value.
+fn reconcile_secret_env(state: &AppState) -> Result<(), String> {
+    let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
+    let mut store = state.secret_env.lock().map_err(|e| e.to_string())?;
+    if store.reconcile(&mut file.workspaces) {
+        store.save(&secret_env_path()?)?;
+    }
+    Ok(())
+}
+
+/// Names (never values) of the secret rows that have a stored value.
+#[tauri::command]
+fn workspace_secret_env_keys(
+    state: State<'_, AppState>,
+    workspace_id: String,
+) -> Result<Vec<String>, String> {
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?;
+    let owner = secret_env::env_owner(&file.workspaces, &workspace_id)
+        .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+    Ok(state.secret_env.lock().map_err(|e| e.to_string())?.keys_for(&owner))
 }
 
 // ─── Tree operations ─────────────────────────────────────────────────────────
@@ -1429,6 +1583,7 @@ pub(crate) fn split_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 // Phase 50: extended to 5-tuple — Diff panes carry a
@@ -1503,6 +1658,7 @@ pub(crate) fn split_pane_in(
                     diff_source: new_diff_s,
                     smart_bidi: None,
                     diff_cwd: None,
+                    claude_running: None,
                 };
                 let original = LayoutNode::Pane {
                     pane_id,
@@ -1521,6 +1677,7 @@ pub(crate) fn split_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 };
                 (
                     LayoutNode::Split {
@@ -1548,6 +1705,7 @@ pub(crate) fn split_pane_in(
                         diff_source,
                         smart_bidi,
                         diff_cwd,
+                        claude_running,
                     },
                     false,
                 )
@@ -1623,6 +1781,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             // Last pane — can't remove; return unchanged whether or not target matches.
             let _ = pane_id == target;
@@ -1641,6 +1800,7 @@ fn close_pane_in(node: LayoutNode, target: &str) -> (Option<LayoutNode>, Option<
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }),
                 None,
             )
@@ -1723,6 +1883,7 @@ pub(crate) fn update_pane_in(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             if pane_id == target {
                 LayoutNode::Pane {
@@ -1739,6 +1900,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             } else {
                 LayoutNode::Pane {
@@ -1755,6 +1917,7 @@ pub(crate) fn update_pane_in(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 }
             }
         }
@@ -1893,7 +2056,7 @@ pub(crate) fn update_pane_auto_title(
     new_title: &str,
 ) {
     let changed = {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = lock_or_recover(&state.workspaces);
         let Some(ws_id) = find_workspace_for_pane(&file, pane_id) else {
             // Phase 81.G: this used to return in total silence, which is
             // why a permanently broken pane-header path looked like a
@@ -2319,7 +2482,7 @@ fn schedule_setup_injection(
         if bytes.is_empty() {
             return;
         }
-        let mut sessions = sessions.lock().unwrap();
+        let mut sessions = lock_or_recover(&sessions);
         if let Some(s) = sessions.get_mut(&session_id) {
             match s {
                 Session::Local(l) => {
@@ -2429,51 +2592,25 @@ fn emit_data(
     // of one character to the head of another.
     stream: &mut pty_decode::Utf8Stream,
     // Phase 35 (#1.2): OSC-notification side channel. The parser
-    // observes the RAW bytes (OSC sequences are ASCII, so this is
-    // independent of the utf8 reassembly below) and emits an
-    // `osc-notification` event per detected sequence. The byte stream
-    // forwarded to xterm.js is untouched.
+    // observes the DECODED text's bytes (OSC sequences are ASCII, so
+    // reassembly does not change them) and emits an `osc-notification`
+    // event per detected sequence. The text forwarded to xterm.js is
+    // untouched by it.
     pane_id: &str,
     osc: &mut osc_notify::OscNotifyParser,
     // Phase 52 (BiDi 33B): per-pane bidi filter map. When the pane's
-    // smart_bidi toggle is on, the chunk passes through `apply_to_pane`
-    // before being decoded as UTF-8 and emitted. When off, this is a
-    // memcpy (filter.enabled = false fast-path) and the bytes flow
-    // through unchanged.
+    // smart_bidi toggle is on, the DECODED text passes through
+    // `apply_to_pane` before being emitted, so the filter only ever sees
+    // whole characters. When off, the text moves through unchanged.
     bidi_filters: &bidi_filter::BidiFilterMap,
 ) {
-    for n in osc.feed(bytes) {
-        ipc_meter::record("emit:osc-notification");
-        let _ = app.emit(
-            "osc-notification",
-            serde_json::json!({
-                "pane_id": pane_id,
-                "title": n.title,
-                "body": n.body,
-                "kind": n.kind.as_str(),
-            }),
-        );
-    }
-
-    // Phase 52: optional bidi rewrite. Operates on raw bytes BEFORE
-    // UTF-8 reassembly so the filter's escape-sequence state machine
-    // sees ANSI/CSI/OSC/DCS verbatim. The filter is itself a no-op
-    // when smart_bidi is off for this pane.
-    //
-    // Note: unlike `stream` and `osc`, this state is keyed by pane and so
-    // is still SHARED across an SSH channel's stdout and stderr. Giving
-    // stderr its own entry would need a synthetic key, which would miss
-    // the per-pane smart_bidi toggle and silently leave stderr unfiltered
-    // — worse than the rare escape-splice it would prevent. Left shared
-    // deliberately; see FOLLOWUPS.
-    let filtered = bidi_filter::apply_to_pane(bidi_filters, pane_id, bytes);
-
-    // Incremental UTF-8 reassembly: an incomplete trailing character is
-    // carried to the next chunk (so Hebrew/emoji split across two reads
-    // survive), while bytes that can never become valid are replaced with
-    // U+FFFD and skipped. The skip is what keeps the pane alive — the old
-    // decoder stalled forever on a leading invalid byte.
-    let decoded = stream.push(&filtered);
+    // Incremental UTF-8 reassembly FIRST: an incomplete trailing character
+    // is carried to the next chunk (so Hebrew/emoji split across two reads
+    // survive the bidi filter instead of becoming U+FFFD), while bytes
+    // that can never become valid are replaced with U+FFFD and skipped.
+    // The skip is what keeps the pane alive — the old decoder stalled
+    // forever on a leading invalid byte.
+    let decoded = stream.push(bytes);
 
     if let Some(n) = decoded.first_invalid {
         // Rule #1: metadata only — counts and ids, never the bytes.
@@ -2490,17 +2627,56 @@ fn emit_data(
         );
     }
 
+    for n in osc.feed(decoded.text.as_bytes()) {
+        ipc_meter::record("emit:osc-notification");
+        let _ = app.emit(
+            "osc-notification",
+            serde_json::json!({
+                "pane_id": pane_id,
+                "title": n.title,
+                "body": n.body,
+                "kind": n.kind.as_str(),
+            }),
+        );
+    }
+
     if decoded.text.is_empty() {
         return;
     }
+
+    // Phase 52: optional bidi rewrite, on decoded text. The filter's
+    // escape-sequence state machine still sees ANSI/CSI/OSC/DCS verbatim
+    // (they are ASCII). It is a no-op when smart_bidi is off for this pane.
+    //
+    // Note: unlike `stream` and `osc`, this state is keyed by pane and so
+    // is still SHARED across an SSH channel's stdout and stderr. Giving
+    // stderr its own entry would need a synthetic key, which would miss
+    // the per-pane smart_bidi toggle and silently leave stderr unfiltered
+    // — worse than the rare escape-splice it would prevent. Left shared
+    // deliberately; see FOLLOWUPS.
+    let text = bidi_filter::apply_to_pane(bidi_filters, pane_id, decoded.text);
+
     // Batched: one flusher thread emits at most every 33 ms per session,
     // leading edge first (pty_emit.rs).
-    pty_emit::data(app, session_id, decoded.text);
+    pty_emit::data(app, session_id, text);
 }
 
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
 /// progress/errors. The frontend listens on `pane:status` events.
 pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str) {
+    // Mirror into AppState so a delayed clear can tell whether the slot still
+    // holds its own text. Lock is dropped before the emit.
+    {
+        let state = app.state::<AppState>();
+        // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
+        if let Ok(mut map) = state.pane_status.lock() {
+            if text.is_empty() {
+                map.remove(pane_id);
+            } else {
+                map.insert(pane_id.to_string(), text.to_string());
+            }
+        }
+    }
     let _ = app.emit(
         "pane:status",
         serde_json::json!({ "pane_id": pane_id, "text": text }),
@@ -2594,11 +2770,11 @@ pub(crate) struct PaneAgentSnapshot {
 /// Phase 84.B: every pane's agent state at once.
 ///
 /// Exists for the webview reload (F5, devtools reload, an HMR round in
-/// dev) — far more common than an app restart, and without this every
-/// light goes dark until the next hook happens to fire, which for an idle
-/// agent could be never. Deliberately NOT persisted to disk: restoring an
-/// eight-hour-old "running" after an app restart would be a lie, and the
-/// first hook restores the truth anyway.
+/// dev) — and without this every light goes dark until the next hook
+/// happens to fire, which for an idle agent could be never. The map is also
+/// persisted across an app restart with each state's timestamp; restore
+/// drops anything 6h or older, so an eight-hour-old "running" never comes
+/// back, and the first hook corrects the rest.
 #[tauri::command]
 fn pane_agent_states(
     state: State<'_, AppState>,
@@ -2647,11 +2823,36 @@ fn pane_briefs(
     Ok(briefs.clone())
 }
 
-/// Spawns a tokio task that clears a pane's status text after `secs` seconds.
-pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, secs: u64) {
+/// Removes the slot only when it still holds `expected`; true when cleared.
+pub(crate) fn clear_if_current(
+    map: &mut HashMap<String, String>,
+    pane_id: &str,
+    expected: &str,
+) -> bool {
+    if map.get(pane_id).map(String::as_str) == Some(expected) {
+        map.remove(pane_id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Spawns a tokio task that clears a pane's status text after `secs` seconds,
+/// but only if the pane still shows `expected` (a newer status must survive).
+pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, expected: String, secs: u64) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-        emit_pane_status_event(&app, &pane_id, "");
+        let cleared = match app.state::<AppState>().pane_status.lock() {
+            Ok(mut map) => clear_if_current(&mut map, &pane_id, &expected),
+            // AI-NOTE: poisoned lock → cannot verify the slot; keep the text.
+            Err(_) => false,
+        };
+        if cleared {
+            let _ = app.emit(
+                "pane:status",
+                serde_json::json!({ "pane_id": pane_id, "text": "" }),
+            );
+        }
     });
 }
 
@@ -2674,8 +2875,8 @@ fn cleanup_session_maps(
     pane_id: &str,
     session_id: &str,
 ) {
-    let _ = sessions.lock().unwrap().remove(session_id);
-    let mut p = pane_sessions.lock().unwrap();
+    let _ = lock_or_recover(&sessions).remove(session_id);
+    let mut p = lock_or_recover(&pane_sessions);
     if p.get(pane_id).map(|s| s.as_str()) == Some(session_id) {
         p.remove(pane_id);
     }
@@ -2772,6 +2973,9 @@ fn spawn_local_pty(
     // shell is spawned exactly as before and the attach line is typed into it
     // afterwards. zellij on Windows, tmux elsewhere; see the doc comment.
     persist_session: Option<String>,
+    // `EnvVar.secret` rows, resolved from the store: set on the child via
+    // `cmd.env` only — never typed, never logged.
+    secret_env: &[(String, String)],
 ) -> Result<String, String> {
     let pty_system = native_pty_system();
     let pair = pty_system
@@ -2841,10 +3045,6 @@ fn spawn_local_pty(
     // ymux-cli hook silently env-gated (main.rs `YMUX_PANE_ID unset`) and
     // the Ticker never fired outside manual injection.
     cmd.env("YMUX_PANE_ID", &pane_id);
-    // winmux → ymux rename bridge: a `ymux-cli.exe` still on PATH from a
-    // pre-rename install reads the old spelling and would otherwise
-    // env-gate itself out. Drop once 0.5.0 is the floor.
-    cmd.env("WINMUX_PANE_ID", &pane_id);
     // 2026-08-19: point zellij at ymux's own config; 2026-08-20: and at its
     // config DIRECTORY, which is how the single-pane layout gets found.
     //
@@ -2883,6 +3083,9 @@ fn spawn_local_pty(
             "zellij config: ymux-zellij.kdl + layouts/ymux.kdl NOT FOUND — \
              zellij keeps its own chrome, keybinds and mouse capture",
         ),
+    }
+    for (k, v) in secret_env {
+        cmd.env(k, v);
     }
     tracing::debug!("spawn_local_pty[{pane_id}]: injected hyperlink + YMUX_PANE_ID env vars");
     let mut child = pair
@@ -2937,7 +3140,7 @@ fn spawn_local_pty(
         emit_exit(&app_for_thread, &id_for_thread, None);
     });
 
-    state.core.sessions.lock().unwrap().insert(
+    lock_or_recover(&state.core.sessions).insert(
         id.clone(),
         Session::Local(LocalSession {
             writer,
@@ -2979,7 +3182,7 @@ fn spawn_local_pty(
                     );
                     return;
                 };
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                     use std::io::Write as _;
                     // Rule #1: a fixed control string built from a sanitized
@@ -3018,6 +3221,7 @@ fn spawn_local_pty(
             let sessions_clone = state.core.sessions.clone();
             let id_clone = id.clone();
             let pane_for_exec = pane_id.clone();
+            let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 crate::log_info("PTY", &format!(
@@ -3033,8 +3237,9 @@ fn spawn_local_pty(
                     &pane_for_exec,
                     use_ymux_tmux_conf,
                     "[ymux] tmux not installed — falling back to plain shell",
+                    &secret_keys,
                 );
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                     use std::io::Write as _;
                     let _ = l.writer.write_all(script.as_bytes());
@@ -3349,8 +3554,8 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             exited: line.contains("(EXITED"),
             label: None,
             claude_title: None,
-            // Phase 81.F: zellij sessions carry no session-meta join yet —
-            // the picker falls back to `name`, same as a pre-rename server.
+            // Filled by `apply_session_meta` in `list_zellij_sessions`; the
+            // picker falls back to `name` when no entry exists.
             auto_name: None,
             claude_session_id: None,
             origin: None,
@@ -3368,6 +3573,23 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
     // Newest first, matching parse_tmux_sessions' ordering contract.
     out.sort_by(|a, b| b.created.cmp(&a.created));
     out
+}
+
+/// 2026-10: join `session-meta.json` onto zellij rows by session name, same
+/// fields as the tmux join in `parse_tmux_sessions`. Garbled or empty JSON is
+/// no metadata, never an error; a session without an entry keeps its raw name.
+fn apply_session_meta(sessions: &mut [TmuxSessionInfo], meta_text: &str) {
+    let meta: SessionMetaFileMirror =
+        serde_json::from_str(meta_text.trim()).unwrap_or_default();
+    for s in sessions.iter_mut() {
+        if let Some(m) = meta.sessions.get(&s.name) {
+            s.label = m.label.clone();
+            s.claude_title = m.claude_title.clone();
+            s.auto_name = m.auto_name.clone();
+            s.claude_session_id = m.claude_session_id.clone();
+            s.origin = m.origin.clone();
+        }
+    }
 }
 
 /// `12m 30s` / `3h 4m 1s` / `5s` / `2days 1h` → seconds. Unknown units are
@@ -3404,26 +3626,29 @@ fn build_tmux_attach_script(
     pane_id: &str,
     use_ymux_tmux_conf: bool,
     fallback_msg: &str,
+    // Names only (never values): appended to tmux `update-environment` so a
+    // re-attach copies them from the attaching client's environment.
+    secret_keys: &[String],
 ) -> String {
     let mut script = String::new();
+    for k in secret_keys {
+        let q = shell_quote(k);
+        script.push_str(&format!(
+            "tmux show-options -gv update-environment 2>/dev/null | grep -qx {q} || tmux set-option -ga update-environment {q} 2>/dev/null; "
+        ));
+    }
     // Push the env vars into tmux's global environment so a re-attach to
     // a long-lived session sees the *current* YMUX_SOCKET_ADDR/
     // TUNNEL_TOKEN/PANE_ID rather than the stale ones from the original
     // creation. The `2>/dev/null` swallows the harmless "no server
     // running" message when this is the first attach.
     if !socket_addr.is_empty() {
-        // Both spellings: `YMUX_*` for the current CLI, `WINMUX_*` for a
-        // pre-rename `ymux-linux-x64` that a remote may still be running
-        // until the next bootstrap re-uploads it. The new CLI promotes
-        // WINMUX_* → YMUX_* at startup, so the pair is safe in either
-        // direction. Drop the legacy triple once 0.5.0 is the floor.
+        // YMUX_* only: the legacy WINMUX_* triple is no longer written. The
+        // CLI still READS WINMUX_* as a fallback, but nothing injects it.
         for (var, value) in [
             ("YMUX_SOCKET_ADDR", socket_addr),
-            ("WINMUX_SOCKET_ADDR", socket_addr),
             ("YMUX_TUNNEL_TOKEN", token),
-            ("WINMUX_TUNNEL_TOKEN", token),
             ("YMUX_PANE_ID", pane_id),
-            ("WINMUX_PANE_ID", pane_id),
         ] {
             script.push_str(&format!(
                 "tmux set-environment -g {} {} 2>/dev/null; ",
@@ -3576,7 +3801,7 @@ fn spawn_wsl_pty(
         emit_exit(&app_for_thread, &id_for_thread, None);
     });
 
-    state.core.sessions.lock().unwrap().insert(
+    state.core.sessions.lock().map_err(|e| e.to_string())?.insert(
         id.clone(),
         Session::Local(LocalSession {
             writer,
@@ -3647,8 +3872,9 @@ fn spawn_wsl_pty(
                 &pane_for_exec,
                 use_ymux_tmux_conf,
                 "[ymux] tmux not installed in WSL — falling back to plain shell",
+                &[],
             );
-            let mut sessions = sessions_clone.lock().unwrap();
+            let mut sessions = lock_or_recover(&sessions_clone);
             if let Some(Session::Local(l)) = sessions.get_mut(&id_clone) {
                 use std::io::Write as _;
                 let _ = l.writer.write_all(script.as_bytes());
@@ -4195,7 +4421,7 @@ async fn connect_and_authenticate(
         target,
         connect_res.is_ok()
     ));
-    let outcome = outcome_arc.lock().unwrap().clone();
+    let outcome = outcome_arc.lock().map_err(|e| e.to_string())?.clone();
 
     let mut handle = match connect_res {
         Ok(h) => h,
@@ -4248,6 +4474,9 @@ async fn spawn_ssh(
     // name. Passed through from pane_connect when the picker UI chose
     // a specific orphan session to attach to.
     tmux_session_name: Option<String>,
+    // Secret env rows (resolved values), delivered per channel via
+    // `set_env` and never typed, logged or written to `last.env`.
+    secret_env: &[(String, String)],
 ) -> Result<String, String> {
     log_debug("SSH", &format!(
         "spawn_ssh: entry ws={} pane={} target={}@{}:{}",
@@ -4348,20 +4577,14 @@ async fn spawn_ssh(
         Ok(remote_bootstrap::BootstrapStatus::Uploaded { bytes, sha256: _ }) => {
             state.bootstrap_guard.clear_failure(&hkey, &wanted_sha);
             set_cli_alignment(app, state, &workspace_id, bootstrap_guard::Alignment::Ok);
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("ymux installed ({} bytes)", bytes),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 3);
+            let msg = format!("ymux installed ({} bytes)", bytes);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 3);
         }
         Ok(remote_bootstrap::BootstrapStatus::UnsupportedArch(arch)) => {
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("remote arch '{}' not supported (no ymux binary)", arch),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("remote arch '{}' not supported (no ymux binary)", arch);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
         // We could not converge the remote onto our binary. The shell still
         // works; the CLI-dependent features do not, and this stays on screen
@@ -4398,8 +4621,9 @@ async fn spawn_ssh(
         }
         Err(e) => {
             tracing::warn!("remote bootstrap failed: {e}");
-            emit_pane_status_event(app, &pane_id, &format!("bootstrap failed: {e}"));
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("bootstrap failed: {e}");
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
     }
     drop(_boot_guard);
@@ -4408,7 +4632,7 @@ async fn spawn_ssh(
     // (`~/.ymux/log-level`, read by the Go server watcher + CLI hooks).
     // Best-effort — a failure never blocks the shell.
     {
-        let level = state.settings.lock().unwrap().logs.level.clone();
+        let level = state.settings.lock().map_err(|e| e.to_string())?.logs.level.clone();
         if let Err(e) = log_sync::push_log_level(&handle, &level).await {
             log_warn("LOGS", &format!("log-level push on connect failed: {e}"));
         }
@@ -4443,6 +4667,20 @@ async fn spawn_ssh(
         .channel_open_session()
         .await
         .map_err(|e| format!("channel_open_session: {e}"))?;
+
+    // Secret rows go first, with a reply awaited: sshd's AcceptEnv may refuse
+    // them, and the user must learn that. Names only in the status and log
+    // (Rule #2); the connect continues either way.
+    if !secret_env.is_empty() {
+        let refused = secret_env::deliver_ssh(&mut channel, secret_env).await;
+        if !refused.is_empty() {
+            log_warn("SSH", &format!(
+                "spawn_ssh[{pane_id}]: sshd refused secret env: {}",
+                refused.join(", ")
+            ));
+            emit_pane_status_event(app, &pane_id, &secret_env::refused_message(&refused));
+        }
+    }
 
     // Best-effort: try to set env vars on the shell. sshd's AcceptEnv may filter; if so,
     // the env-file fallback covers it.
@@ -4684,9 +4922,7 @@ async fn spawn_ssh(
         }
         // Phase 8.B: if this was the last SSH session for the workspace, tear
         // down all of its port forwards.
-        let still_alive = sessions_for_task
-            .lock()
-            .unwrap()
+        let still_alive = lock_or_recover(&sessions_for_task)
             .values()
             .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_for_task));
         if !still_alive {
@@ -4694,12 +4930,10 @@ async fn spawn_ssh(
             // Phase JJ: last SSH session for this workspace is gone — abort
             // the remote port-watcher task so it doesn't leak.
             let aborted = {
-                let mut tasks = port_watcher_tasks_for_task.lock().unwrap();
+                let mut tasks = lock_or_recover(&port_watcher_tasks_for_task);
                 tasks.remove(&workspace_for_task).map(|h| h.abort()).is_some()
             };
-            port_watchers_for_task
-                .lock()
-                .unwrap()
+            lock_or_recover(&port_watchers_for_task)
                 .remove(&workspace_for_task);
             port_watcher_release_owner(&hosts_for_task, &workspace_for_task);
             if aborted {
@@ -4723,7 +4957,7 @@ async fn spawn_ssh(
     } else {
         None
     };
-    state.core.sessions.lock().unwrap().insert(
+    state.core.sessions.lock().map_err(|e| e.to_string())?.insert(
         id.clone(),
         Session::Ssh(SshSession {
             tx: Some(tx),
@@ -4788,6 +5022,9 @@ async fn spawn_ssh(
         };
         let token_clone = token.as_str().to_string();
         let pane_for_exec = pane_id.clone();
+        // Secret names (never values) for tmux update-environment; owned so
+        // the 'static task can hold them.
+        let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
         // Phase tmux-conf: read the user's setting BEFORE we hand
         // control to the spawned task (state.settings is not Send-
         // safe to hold across await points). Default true so users
@@ -4824,9 +5061,10 @@ async fn spawn_ssh(
                 &pane_for_exec,
                 use_ymux_tmux_conf,
                 "[ymux] tmux not installed on remote — falling back to plain shell",
+                &secret_keys,
             );
             {
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(Session::Ssh(ssh)) = sessions.get_mut(&id_clone) {
                     let _ = ssh.try_send(SshCmd::Data(script.into_bytes()));
                 }
@@ -4844,7 +5082,7 @@ async fn spawn_ssh(
                 shell_quote(&machine_id()),
             );
             let handle = {
-                let sessions = sessions_clone.lock().unwrap();
+                let sessions = lock_or_recover(&sessions_clone);
                 match sessions.get(&id_clone) {
                     Some(Session::Ssh(ssh)) => Some(ssh.handle.clone()),
                     _ => None,
@@ -5325,14 +5563,14 @@ async fn spawn_port_watcher(
             .core
             .port_watchers
             .lock()
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .contains(workspace_id);
         if already {
             let alive = state
                 .core
                 .port_watcher_tasks
                 .lock()
-                .unwrap()
+                .map_err(|e| e.to_string())?
                 .get(workspace_id)
                 .map(|h| !h.is_finished())
                 .unwrap_or(false);
@@ -5344,12 +5582,12 @@ async fn spawn_port_watcher(
                 .core
                 .port_watcher_tasks
                 .lock()
-                .unwrap()
+                .map_err(|e| e.to_string())?
                 .remove(workspace_id)
             {
                 h.abort();
             }
-            state.core.port_watchers.lock().unwrap().remove(workspace_id);
+            state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
             log_debug("TUNNEL", &format!(
                 "port-watch[{workspace_id}]: stale slot, replacing with fresh watcher"
             ));
@@ -5358,7 +5596,7 @@ async fn spawn_port_watcher(
             .core
             .port_watchers
             .lock()
-            .unwrap()
+            .map_err(|e| e.to_string())?
             .insert(workspace_id.to_string());
     }
     // Phase JJ.2 (leak fix): the desktop-side dedup above only knows about
@@ -5396,14 +5634,14 @@ async fn spawn_port_watcher(
         log_warn("TUNNEL", &format!(
             "port-watch[{workspace_id}]: skipped — remote ymux CLI is not the build this desktop embeds"
         ));
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
         return Err("remote ymux CLI out of sync".into());
     }
     let mut wchan = match handle.channel_open_session().await {
         Ok(c) => c,
         Err(e) => {
             log_warn("TUNNEL", &format!("port-watch[{workspace_id}]: channel_open_session failed: {e}"));
-            state.core.port_watchers.lock().unwrap().remove(workspace_id);
+            state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
             return Err(format!("channel_open: {e}"));
         }
     };
@@ -5420,7 +5658,7 @@ async fn spawn_port_watcher(
     );
     if let Err(e) = wchan.exec(true, cmd.as_str()).await {
         log_warn("TUNNEL", &format!("port-watch[{workspace_id}]: exec failed: {e}"));
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        state.core.port_watchers.lock().map_err(|e| e.to_string())?.remove(workspace_id);
         return Err(format!("exec failed: {e}"));
     }
     let ws_guard = workspace_id.to_string();
@@ -5434,8 +5672,8 @@ async fn spawn_port_watcher(
                 _ => {}
             }
         }
-        watchers.lock().unwrap().remove(&ws_guard);
-        tasks.lock().unwrap().remove(&ws_guard);
+        lock_or_recover(&watchers).remove(&ws_guard);
+        lock_or_recover(&tasks).remove(&ws_guard);
         // Phase 86: subscribers stay; the next ensure from any of them
         // respawns and becomes owner.
         port_watcher_release_owner(&hosts, &ws_guard);
@@ -5446,7 +5684,7 @@ async fn spawn_port_watcher(
     state.core
         .port_watcher_tasks
         .lock()
-        .unwrap()
+        .map_err(|e| e.to_string())?
         .insert(workspace_id.to_string(), task);
     if let Some(hk) = hkey {
         let mut hosts = state.port_watcher_hosts.lock().map_err(|e| e.to_string())?;
@@ -5465,21 +5703,18 @@ async fn spawn_port_watcher(
 /// when no watcher is running.
 fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &str) {
     let aborted = {
-        let mut tasks = state.core.port_watcher_tasks.lock().unwrap();
+        let mut tasks = lock_or_recover(&state.core.port_watcher_tasks);
         tasks.remove(workspace_id).map(|h| {
             h.abort();
             true
         })
     };
     if aborted.is_some() {
-        state.core.port_watchers.lock().unwrap().remove(workspace_id);
+        lock_or_recover(&state.core.port_watchers).remove(workspace_id);
     }
     // Phase 86: leave the host's sharing group (drops ownership too).
     port_watcher_forget(&state.port_watcher_hosts, workspace_id);
-    state.core
-        .detected_ports
-        .lock()
-        .unwrap()
+    lock_or_recover(&state.core.detected_ports)
         .remove(workspace_id);
     let _ = app.emit(
         "port-detection-cleared",
@@ -5495,7 +5730,7 @@ fn find_ssh_handle_for_workspace(
     state: &AppState,
     workspace_id: &str,
 ) -> Option<Arc<client::Handle<SshClient>>> {
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().ok()?;
     for s in sessions.values() {
         if let Session::Ssh(ssh) = s {
             if ssh.workspace_id == workspace_id {
@@ -5521,7 +5756,7 @@ pub(crate) async fn open_auto_forward(
     remote_port: u16,
 ) -> Result<u16, String> {
     {
-        let m = state.core.forwards.lock().unwrap();
+        let m = state.core.forwards.lock().map_err(|e| e.to_string())?;
         if let Some(e) = m.get(&(workspace_id.to_string(), remote_port)) {
             return Ok(e.local_port);
         }
@@ -5570,13 +5805,11 @@ pub(crate) async fn open_auto_forward(
                 }
             }
         }
-        forwards_for_task
-            .lock()
-            .unwrap()
+        lock_or_recover(&forwards_for_task)
             .remove(&(ws_for_task, remote_port));
     });
 
-    state.core.forwards.lock().unwrap().insert(
+    state.core.forwards.lock().map_err(|e| e.to_string())?.insert(
         (workspace_id.to_string(), remote_port),
         ForwardEntry {
             local_port,
@@ -5642,7 +5875,7 @@ pub(crate) fn close_one_forward(
     remote_port: u16,
 ) {
     let removed = {
-        let mut m = state.core.forwards.lock().unwrap();
+        let mut m = lock_or_recover(&state.core.forwards);
         m.remove(&(workspace_id.to_string(), remote_port))
     };
     if let Some(mut e) = removed {
@@ -5661,7 +5894,7 @@ pub(crate) fn close_one_forward(
 
 /// Cancel every forward task whose key has the given workspace_id.
 pub(crate) fn close_workspace_forwards(forwards: &ForwardMap, workspace_id: &str) {
-    let mut m = forwards.lock().unwrap();
+    let mut m = lock_or_recover(&forwards);
     let keys: Vec<(String, u16)> = m
         .keys()
         .filter(|(w, _)| w == workspace_id)
@@ -5698,7 +5931,7 @@ fn layout_has_ssh_consumer_pane(node: &LayoutNode) -> bool {
 
 #[tauri::command]
 fn workspaces_load(state: State<'_, AppState>) -> Result<WorkspacesFile, String> {
-    let file = state.workspaces.lock().unwrap().clone();
+    let file = state.workspaces.lock().map_err(|e| e.to_string())?.clone();
     log_debug("WORKSPACE", &format!(
         "workspaces_load: returning {} workspaces, active={:?}",
         file.workspaces.len(),
@@ -5728,7 +5961,7 @@ fn workspace_create(
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
     log_info("WORKSPACE", &format!("created ws={root_id} with screen ws={screen_id}"));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 7.C: edit a workspace's mutable metadata fields. Each field is `Option`:
@@ -5753,7 +5986,7 @@ fn workspace_update(
     connection: Option<Connection>,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -5788,7 +6021,7 @@ fn workspace_update(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 37: rewrite the `connection` on every Terminal pane in the
@@ -5824,7 +6057,7 @@ fn workspace_reset_layout(
     workspace_id: String,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -5857,11 +6090,12 @@ fn workspace_reset_layout(
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         });
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 51.B1: first_terminal_connection_pub moved to ymux-core.
@@ -5975,7 +6209,8 @@ fn ancestors_of(file: &WorkspacesFile, id: &str) -> Vec<String> {
 /// command only persists. `is_project_root` is the probe's answer: true
 /// pins a git repo (worktrees listed beneath it), false pins a plain
 /// folder in the demoted state, with the sidebar's "Check for a git
-/// repository" as the promotion path after a later `git init`. The
+/// repository" as the promotion path after a later `git init`. Either way
+/// the row is stored `is_folder`, so it stays a header across reloads. The
 /// child inherits a CLONE of the parent's connection: the folder must
 /// keep working when the parent is disconnected, and the SSH handle is
 /// resolved per call by user@host:port anyway.
@@ -6043,6 +6278,7 @@ fn workspace_pin_project_folder(
             layout: None,
             parent_id: Some(parent_workspace_id.clone()),
             is_project_root,
+            is_folder: true,
             ..Default::default()
         };
         file.workspaces.push(folder.clone());
@@ -6058,7 +6294,7 @@ fn workspace_pin_project_folder(
             "pinned a project folder under ws={parent_workspace_id} as ws={new_id} (repo={is_project_root})"
         ),
     );
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Open one worktree of a project-folder workspace as its own child.
@@ -6114,7 +6350,7 @@ fn workspace_open_worktree(
             file.active_workspace_id = Some(existing);
             drop(file);
             persist(&state)?;
-            return Ok(state.workspaces.lock().unwrap().clone());
+            return Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone());
         }
 
         let id = new_workspace_id();
@@ -6131,7 +6367,7 @@ fn workspace_open_worktree(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 90.B: where a session row goes in the tree.
@@ -6171,12 +6407,34 @@ fn root_workspace_of(file: &WorkspacesFile, id: &str) -> String {
 // is a SCREEN — the only kind with a layout, the only kind that can be
 // active. Before this, the machine row was itself a screen, so a terminal
 // could be opened "on the server" directly OR as a row under it — two
-// ways to do one thing (Yossi, 2026-09-14). Derived, not stored:
-// `parent_id` and `is_project_root` already say everything.
+// ways to do one thing (Yossi, 2026-09-14). Derived from `parent_id` and
+// `is_project_root`, plus the stored `is_folder`: a pinned NON-git folder
+// has a parent and is not a project root, so only the flag identifies it.
 
 /// The one rule. Keep it in sync with `isHeader` in `app/src/wsTree.ts`.
 pub(crate) fn is_header(w: &Workspace) -> bool {
-    w.parent_id.is_none() || w.is_project_root
+    w.parent_id.is_none() || w.is_project_root || w.is_folder
+}
+
+/// Heal files written before `is_folder` existed: a row with a parent, no
+/// header flag, that is some row's parent can only be a pinned non-git
+/// folder (screens never have children). Idempotent — flagged rows are
+/// skipped, so a second run returns 0. O(n) via one set of parent ids.
+fn flag_pinned_folders(file: &mut WorkspacesFile) -> usize {
+    let parents: std::collections::HashSet<String> = file
+        .workspaces
+        .iter()
+        .filter_map(|w| w.parent_id.clone())
+        .collect();
+    let mut flagged = 0;
+    for w in file.workspaces.iter_mut() {
+        if w.parent_id.is_some() && !w.is_project_root && !w.is_folder && parents.contains(&w.id) {
+            w.is_folder = true;
+            flagged += 1;
+            log_info("WORKSPACE", &format!("migrate: ws={} is a pinned folder → is_folder", w.id));
+        }
+    }
+    flagged
 }
 
 const HEADER_HAS_NO_PANES: &str = "a header has no panes — open a screen under it";
@@ -6430,7 +6688,7 @@ fn workspace_new_screen(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 91.C: does ANY row on the same host already stand for `name`?
@@ -6571,7 +6829,7 @@ fn workspace_mirror_sessions(
         ),
     );
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 90.B: open a multiplexer session on a screen of its own — a
@@ -6632,7 +6890,7 @@ fn workspace_open_session(
         );
         let _ = app.emit("workspaces:changed", ());
     }
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Demote a workspace that turned out not to be a git repo.
@@ -6642,7 +6900,8 @@ fn workspace_open_session(
 /// and re-scans on every expand and every restart, asking a question
 /// whose answer will not change. Clearing the flag makes it an ordinary
 /// workspace that still opens panes in that directory — nothing is
-/// deleted, and re-pinning is how you undo it.
+/// deleted, and re-pinning is how you undo it. A pinned folder stays a
+/// header (`is_folder`); only the repo affordances go.
 #[tauri::command]
 fn workspace_set_project_root(
     state: State<'_, AppState>,
@@ -6671,7 +6930,7 @@ fn workspace_set_project_root(
         "WORKSPACE",
         &format!("ws={workspace_id} is_project_root={is_project_root}"),
     );
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Persisted collapse state of a workspace's subtree.
@@ -6699,7 +6958,7 @@ fn workspace_set_collapsed(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 84.A: flip a workspace between the split grid and the tab strip.
@@ -6982,6 +7241,7 @@ fn single_terminal_layout(conn: Connection) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -7479,6 +7739,7 @@ fn make_swap_placeholder_pane(pane_id: String) -> LayoutNode {
         diff_source: None,
         smart_bidi: None,
         diff_cwd: None,
+        claude_running: None,
     }
 }
 
@@ -7567,13 +7828,13 @@ fn workspace_rename(
     name: String,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             ws.name = name;
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 30: dedicated identity command for live preview. The full
@@ -7605,7 +7866,7 @@ async fn workspace_set_identity(
     }
     let updated: Workspace;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -7633,7 +7894,7 @@ async fn workspace_set_auto_port_forward(
 ) -> Result<Workspace, String> {
     let updated: Workspace;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -7762,7 +8023,7 @@ async fn list_detected_ports(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<Vec<DetectedPortInfo>, String> {
-    let m = state.core.detected_ports.lock().unwrap();
+    let m = state.core.detected_ports.lock().map_err(|e| e.to_string())?;
     let mut out: Vec<DetectedPortInfo> = m
         .get(&workspace_id)
         .map(|ports| {
@@ -7808,7 +8069,7 @@ async fn forward_port_start(
     remote_port: u16,
 ) -> Result<u16, String> {
     let addr = {
-        let m = state.core.detected_ports.lock().unwrap();
+        let m = state.core.detected_ports.lock().map_err(|e| e.to_string())?;
         m.get(&workspace_id)
             .and_then(|ports| ports.get(&remote_port))
             .map(|(addr, _family)| addr.clone())
@@ -7905,7 +8166,7 @@ async fn pane_set_identity(
     }
     let updated: PaneIdentity;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -7938,7 +8199,7 @@ fn workspace_delete(
     // teardown below is I/O (PTY kill, webview close, filesystem) and
     // must never run under the workspaces mutex.
     let (ids, panes_by_ws, deleted_parent) = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ids = collect_subtree_ids(&file, &workspace_id);
         let deleted_parent = file
             .workspaces
@@ -7981,7 +8242,7 @@ fn workspace_delete(
     // One retain, one reassignment, one persist. Doing this per id would
     // leave the tree half-removed if a later teardown panicked.
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces.retain(|w| !ids.contains(&w.id));
         if file
             .active_workspace_id
@@ -7996,7 +8257,7 @@ fn workspace_delete(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Every id in the subtree rooted at `workspace_id`, including itself.
@@ -8031,10 +8292,10 @@ fn teardown_workspace_runtime(
 ) {
     // Phase 53 (rebased): drop the workspace-level Browser Webview
     // (at most one per workspace, keyed by workspace_id) and delete
-    // the per-workspace browser-sessions directory (cookies /
-    // localStorage / cache). Sessions DO survive transient hide/show
-    // cycles; this is the only cleanup path that should wipe them.
-    let webview = state.workspace_browsers.lock().unwrap().remove(workspace_id);
+    // its login state (tunnel cookies, macOS per-workspace data store,
+    // legacy browser-sessions dir). State DOES survive transient
+    // hide/show cycles; this is the only cleanup path that wipes it.
+    let webview = lock_or_recover(&state.workspace_browsers).remove(workspace_id);
     if let Some(w) = webview {
         let _ = w.close();
     }
@@ -8042,7 +8303,7 @@ fn teardown_workspace_runtime(
     // which would otherwise outlive the workspace it belongs to. Its
     // `Destroyed` handler does the rest of the cleanup.
     workspace_browser::close_popout_window(app, workspace_id);
-    workspace_browser::cleanup_workspace_sessions(workspace_id);
+    workspace_browser::cleanup_workspace_sessions(app, workspace_id);
     // Drop the CLI-alignment verdict with the workspace it described.
     // Deliberately NOT dropped on mere disconnect: an unresolved skew should
     // outlive the connection, so the features it gates stay off until a
@@ -8071,8 +8332,8 @@ fn teardown_workspace_runtime(
     // once we are here.
     release_session_owners_of_workspace(workspace_id);
     for pane_id in panes_to_kill {
-        if let Some(sid) = state.core.pane_sessions.lock().unwrap().remove(pane_id) {
-            if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+        if let Some(sid) = lock_or_recover(&state.core.pane_sessions).remove(pane_id) {
+            if let Some(mut s) = lock_or_recover(&state.core.sessions).remove(&sid) {
                 kill_session_inner(&mut s);
             }
         }
@@ -8090,7 +8351,7 @@ fn workspace_set_active(
     workspace_id: Option<String>,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         // Phase 92: a header hands activation to its first screen; a header
         // with none is refused rather than shown as an empty area.
         let workspace_id = match workspace_id {
@@ -8111,7 +8372,7 @@ fn workspace_set_active(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Phase 49-B: anchor a workspace to a fresh git worktree.
@@ -8142,7 +8403,7 @@ fn workspace_create_worktree(
     }
     // Snapshot the source cwd while holding the lock briefly.
     let src_cwd = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter()
@@ -8186,7 +8447,7 @@ fn workspace_create_worktree(
     }
     // Stamp the workspace and re-anchor its cwd to the new worktree.
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             ws.cwd = Some(target.to_string_lossy().into_owned());
             ws.git_worktree = Some(target.clone());
@@ -8200,7 +8461,7 @@ fn workspace_create_worktree(
         branch_name,
     ));
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8220,7 +8481,7 @@ fn workspace_split(
     let kind = pane_kind.unwrap_or(PaneKind::Terminal);
     // Phase 92: a header has nothing to split.
     {
-        let file = state.workspaces.lock().unwrap();
+        let file = lock_or_recover(&state.workspaces);
         if file
             .workspaces
             .iter()
@@ -8252,7 +8513,7 @@ fn workspace_split(
         //   3. live SSH session bound to the workspace
         //   4. Local (only if all of the above are absent)
         let (layout_fallback, ws_conn) = {
-            let file = state.workspaces.lock().unwrap();
+            let file = lock_or_recover(&state.workspaces);
             let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
             (
                 ws.and_then(|w| w.layout.as_ref().and_then(first_terminal_connection)),
@@ -8266,7 +8527,7 @@ fn workspace_split(
         None
     };
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = lock_or_recover(&state.workspaces);
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 let (new_layout, _) = split_pane_in(
@@ -8283,7 +8544,7 @@ fn workspace_split(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(lock_or_recover(&state.workspaces).clone())
 }
 
 // ─── Phase 8.A: browser-pane commands ───────────────────────────────────────
@@ -8352,7 +8613,7 @@ fn workspace_close_pane(
     // here would leave those panes dead with no UI to reconnect.
     let keep_ssh_alive: bool;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8377,14 +8638,14 @@ fn workspace_close_pane(
     }
     if let Some(pid) = removed_pane {
         // Always unbind the pane from its session — the pane is gone.
-        let sid_opt = state.core.pane_sessions.lock().unwrap().remove(&pid);
+        let sid_opt = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pid);
         if let Some(sid) = sid_opt {
             // Decide whether to actually drop the session. If the
             // session is SSH AND the workspace still has a consumer
             // (file-manager / browser pane), keep it alive so those
             // panes stay functional. Otherwise drop and clean up.
             let is_ssh_for_workspace = {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 matches!(
                     sessions.get(&sid),
                     Some(Session::Ssh(ssh)) if ssh.workspace_id == workspace_id
@@ -8397,7 +8658,7 @@ fn workspace_close_pane(
                 // Leave the session in state.core.sessions; it has no pane
                 // binding now but `pick_ssh_handle_for_workspace`
                 // will still find it via its workspace_id.
-            } else if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+            } else if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
                 // Closing a pane is not killing its session. `kill_session_inner`
                 // is a detach on every backend, so a persistent session OUTLIVES
                 // the pane — deliberately, and symmetrically with SSH and WSL,
@@ -8425,7 +8686,7 @@ fn workspace_close_pane(
         }
     }
     persist(&state)?;
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8436,7 +8697,7 @@ fn workspace_set_split_ratio(
     ratio: f32,
 ) -> Result<(), String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(set_split_ratio_in(layout, &split_id, ratio));
@@ -8477,7 +8738,7 @@ fn workspace_distribute_evenly(
 ) -> Result<WorkspacesFile, String> {
     let count;
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8494,7 +8755,7 @@ fn workspace_distribute_evenly(
     log_debug("WORKSPACE", &format!(
         "workspace_distribute_evenly: ws={workspace_id} reset {count} split(s)"
     ));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // ─── Pane metadata (title / annotation) ─────────────────────────────────────
@@ -8521,6 +8782,38 @@ fn set_pane_smart_bidi_in_layout(node: &mut LayoutNode, target: &str, enabled: b
     }
 }
 
+/// Persisted `smart_bidi` of a pane; absent or unknown pane reads as off.
+fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
+    match node {
+        LayoutNode::Pane {
+            pane_id,
+            smart_bidi,
+            ..
+        } if pane_id == target => smart_bidi.unwrap_or(false),
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { first, second, .. } => {
+            find_pane_smart_bidi(first, target) || find_pane_smart_bidi(second, target)
+        }
+    }
+}
+
+#[tauri::command]
+pub(crate) fn pane_set_active(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    pane_id: String,
+) -> Result<(), String> {
+    if workspace_id.is_empty() || pane_id.is_empty() {
+        return Err("pane_set_active: empty workspace or pane id".into());
+    }
+    let mut map = state
+        .active_panes
+        .lock()
+        .map_err(|e| format!("pane_set_active: {e}"))?;
+    map.insert(workspace_id, pane_id);
+    Ok(())
+}
+
 #[tauri::command]
 fn pane_set_smart_bidi(
     state: State<'_, AppState>,
@@ -8530,7 +8823,7 @@ fn pane_set_smart_bidi(
     enabled: bool,
 ) -> Result<WorkspacesFile, String> {
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter_mut()
@@ -8553,7 +8846,59 @@ fn pane_set_smart_bidi(
         "[bidi] pane_set_smart_bidi: ws={} pane={} enabled={}",
         workspace_id, pane_id, enabled
     ));
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
+}
+
+// Persist "Claude is running in this pane" so a reattach to a persistent
+// session starts in the right bidi state before the first hook arrives.
+fn set_pane_claude_running_in_layout(node: &mut LayoutNode, target: &str, running: bool) -> bool {
+    match node {
+        LayoutNode::Pane {
+            pane_id,
+            claude_running,
+            ..
+        } if pane_id == target => {
+            *claude_running = Some(running);
+            true
+        }
+        LayoutNode::Pane { .. } => false,
+        LayoutNode::Split { first, second, .. } => {
+            set_pane_claude_running_in_layout(first, target, running)
+                || set_pane_claude_running_in_layout(second, target, running)
+        }
+    }
+}
+
+#[tauri::command]
+fn pane_set_claude_running(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    pane_id: String,
+    running: bool,
+) -> Result<WorkspacesFile, String> {
+    {
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        let layout = ws
+            .layout
+            .as_mut()
+            .ok_or_else(|| format!("workspace {workspace_id} has no layout"))?;
+        if !set_pane_claude_running_in_layout(layout, &pane_id, running) {
+            return Err(format!("no pane {pane_id} in workspace {workspace_id}"));
+        }
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    log_debug("PTY", &format!(
+        "[bidi] pane_set_claude_running: ws={} pane={} running={}",
+        workspace_id, pane_id, running
+    ));
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 #[tauri::command]
@@ -8566,7 +8911,7 @@ fn pane_set_title(
 ) -> Result<WorkspacesFile, String> {
     let normalized = title.filter(|s| !s.is_empty());
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(update_pane_in(layout, &pane_id, Some(normalized.clone()), None, None));
@@ -8615,7 +8960,7 @@ fn pane_set_title(
     }
 
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 /// Phase 23.I helper: look up the SSH session bound to a pane and
@@ -8707,7 +9052,7 @@ fn pane_set_annotation(
 ) -> Result<WorkspacesFile, String> {
     let normalized = annotation.filter(|s| !s.is_empty());
     {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         if let Some(ws) = file.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             if let Some(layout) = ws.layout.take() {
                 ws.layout = Some(update_pane_in(layout, &pane_id, None, Some(normalized), None));
@@ -8716,7 +9061,7 @@ fn pane_set_annotation(
     }
     persist(&state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok(state.workspaces.lock().unwrap().clone())
+    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // ─── Pane connect / disconnect ───────────────────────────────────────────────
@@ -8762,7 +9107,7 @@ async fn workspace_ensure_connected(
 
     // Resolve the workspace's canonical SSH target.
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -8795,7 +9140,7 @@ async fn workspace_ensure_connected(
             // Quick idempotency pre-check (a pane may have already
             // connected). If so, drop the spare handle now.
             {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 let already = sessions
                     .values()
                     .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_id));
@@ -8829,7 +9174,7 @@ async fn workspace_ensure_connected(
             // tunnel setup, drop the spare (its handle Drop tears the tunnel
             // down with it) — and let the lease roll the registration back,
             // which is what nothing did before.
-            let mut sessions = state.core.sessions.lock().unwrap();
+            let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
             let already = sessions
                 .values()
                 .any(|s| matches!(s, Session::Ssh(ssh) if ssh.workspace_id == workspace_id));
@@ -8909,8 +9254,8 @@ async fn pane_connect(
     // `setup_command` from the workspace so we can inject them after the shell is up.
     // Phase 23.I: also lift the pane's title so the persistent (tmux) flow can
     // derive a session name from it instead of the opaque pane-id default.
-    let (conn, cwd, ws_env, ws_setup, pane_title) = {
-        let file = state.workspaces.lock().unwrap();
+    let (conn, cwd, ws_env, ws_setup, pane_title, pane_smart_bidi) = {
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
             .iter()
@@ -8944,13 +9289,56 @@ async fn pane_connect(
                 }
             })?;
         let title = find_pane_title(layout, &pane_id);
+        let smart_bidi = find_pane_smart_bidi(layout, &pane_id);
         (
             conn,
             ws.cwd.clone(),
             ws.env.clone(),
             ws.setup_command.clone(),
             title,
+            smart_bidi,
         )
+    };
+
+    // Re-apply the persisted toggle to the runtime filter before any spawn,
+    // so the first chunk is filtered as the pane header shows.
+    bidi_filter::set_pane_enabled(&state.bidi_filters, &pane_id, pane_smart_bidi);
+    log_debug(
+        "PTY",
+        &format!("[bidi] pane_connect seed: pane={pane_id} enabled={pane_smart_bidi}"),
+    );
+
+    // A reconnect starts with a clean header: a stale status from the previous
+    // attempt must not outlive the problem it reported.
+    emit_pane_status_event(&app, &pane_id, "");
+
+    // Secret rows never reach the typed `export` path: split them off, resolve
+    // their values from the store by env owner. A name with no stored value is
+    // reported on the pane, never typed and never guessed.
+    let (ws_env, secret_names) = secret_env::split_env(&ws_env);
+    let (secret_rows, secret_missing): (Vec<(String, String)>, Vec<String>) = if secret_names.is_empty() {
+        (Vec::new(), Vec::new())
+    } else {
+        let owner = {
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
+            secret_env::env_owner(&file.workspaces, &workspace_id)
+        };
+        match owner {
+            Some(owner) => {
+                // Per key, so the rows that did resolve are still delivered.
+                let store = state.secret_env.lock().map_err(|e| e.to_string())?;
+                let mut found = Vec::new();
+                let mut missing = Vec::new();
+                for k in &secret_names {
+                    match store.resolve(&owner, std::slice::from_ref(k)) {
+                        Ok(mut row) => found.append(&mut row),
+                        Err(mut m) => missing.append(&mut m),
+                    }
+                }
+                (found, missing)
+            }
+            None => (Vec::new(), secret_names.clone()),
+        }
     };
 
     let effective_tmux_name: Option<String> =
@@ -8967,10 +9355,15 @@ async fn pane_connect(
     // shell that gets restarted, or a live `claude` that receives
     // `cd … && claude --resume …` as a chat message. Yossi's report, exactly.
     //
-    // WHEN THE HOST CANNOT BE ASKED the fallback is "not live" (first-connect
-    // case): an unreachable host has no session yet by definition, so assuming
-    // "live" would silently drop the command on every FIRST connect to an SSH
-    // workspace — a worse bug than the one this guards.
+    // WHEN THE HOST CANNOT BE ASKED (an SSH workspace with no live handle —
+    // the first connect, or after a drop) we ask it anyway: a temp handshake
+    // with THIS pane's credentials, one `tmux list-sessions`, then the handle
+    // is dropped. The old fallback assumed "not live" for fear of silently
+    // dropping the command on a first connect, and that assumption is exactly
+    // what typed `cd … && claude --resume …` into a running session. A
+    // handshake error is returned as-is, so App.tsx's passphrase / password /
+    // unknown-host prompts fire and retry with credentials; it happens before
+    // the prior-session kill below, so the old pane session survives it.
     //
     // Phase 91.G (2026-09-09): an EXPLICIT `tmux_session_name` no longer means
     // "live, no question asked". It used to — the only source was the picker,
@@ -9001,14 +9394,27 @@ async fn pane_connect(
             .unwrap_or_default()
             .iter()
             .any(|s| s.name == target_name)
+    } else if let Connection::Ssh {
+        host,
+        user,
+        port,
+        key_path,
+    } = &conn
+    {
+        probe_ssh_session_live(
+            host,
+            user,
+            *port,
+            key_path.as_deref(),
+            key_passphrase.as_deref(),
+            password.as_deref(),
+            accept_unknown_host.unwrap_or(false),
+            &target_name,
+        )
+        .await?
     } else {
-        log_debug(
-            "PTY",
-            &format!(
-                "attach-guard: cannot reach ws={workspace_id} to check '{target_name}'; \
-                 assuming it is not live (first-connect case)"
-            ),
-        );
+        // Invariant: workspace_sessions_reachable is true for every non-SSH
+        // workspace, so this arm is unreachable in practice.
         false
     };
 
@@ -9022,8 +9428,8 @@ async fn pane_connect(
     };
 
     // Kill any prior session for this pane.
-    if let Some(old_sid) = state.core.pane_sessions.lock().unwrap().remove(&pane_id) {
-        if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&old_sid) {
+    if let Some(old_sid) = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pane_id) {
+        if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&old_sid) {
             kill_session_inner(&mut s);
         }
     }
@@ -9096,12 +9502,29 @@ async fn pane_connect(
                 cols,
                 rows,
                 persist_name,
+                &secret_rows,
             )?
         }
         // Phase 80: WSL panes default to PERSISTENT (tmux) — persistence
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // A missing wsl.exe / distro otherwise dies silently inside the pty.
+            if let Some(msg) = local_setup::wsl_pane_problem(distro.as_deref()).await {
+                log_warn("PTY", &format!("WSL preflight failed for pane {pane_id}: {msg}"));
+                emit_pane_status_event(&app, &pane_id, &msg);
+                return Err(msg);
+            }
+            // No delivery path into a wsl.exe session: say so instead of
+            // silently dropping the rows.
+            if !secret_names.is_empty() {
+                log_warn("PTY", &format!("secret env not delivered to WSL pane {pane_id}: {}", secret_names.join(", ")));
+                emit_pane_status_event(
+                    &app,
+                    &pane_id,
+                    &format!("secret env not supported on WSL: {}", secret_names.join(", ")),
+                );
+            }
             let effective_persistent = match mode.as_deref() {
                 Some("tmux") => true,
                 Some("plain") => false,
@@ -9158,6 +9581,7 @@ async fn pane_connect(
                 rows,
                 effective_persistent,
                 effective_tmux_name.clone(),
+                &secret_rows,
             )
             .await?
         }
@@ -9165,8 +9589,20 @@ async fn pane_connect(
     state.core
         .pane_sessions
         .lock()
-        .unwrap()
+        .map_err(|e| e.to_string())?
         .insert(pane_id.clone(), session_id.clone());
+
+    if !secret_missing.is_empty() {
+        log_warn("PTY", &format!("secret env not set for pane {pane_id}: {}", secret_missing.join(", ")));
+        emit_pane_status_event(
+            &app,
+            &pane_id,
+            &format!(
+                "secret env not set: {} (re-enter in workspace settings)",
+                secret_missing.join(", ")
+            ),
+        );
+    }
 
     // 2026-08-23: is this pane actually multiplexer-wrapped? Read it off the
     // session the spawn arms just built rather than re-deriving
@@ -9174,7 +9610,7 @@ async fn pane_connect(
     // three cfg-split arms, and a fourth copy of the rule is a fourth chance
     // to disagree with the other three.
     let pane_is_persistent = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         match sessions.get(&session_id) {
             Some(Session::Local(l)) => l.tmux_session.is_some(),
             Some(Session::Ssh(s)) => s.tmux_session.is_some(),
@@ -9189,7 +9625,7 @@ async fn pane_connect(
     // reports no working directory at all.
     if pane_is_persistent {
         let (host_key, ws_cwd) = {
-            let file = state.workspaces.lock().unwrap();
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
             let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
             (
                 session_owner_host_key(ws.and_then(|w| w.connection.as_ref())),
@@ -9365,7 +9801,7 @@ async fn pane_connect(
                 } else {
                     tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
                 }
-                let mut sessions = sessions_clone.lock().unwrap();
+                let mut sessions = lock_or_recover(&sessions_clone);
                 if let Some(s) = sessions.get_mut(&session_id_clone) {
                     match s {
                         Session::Local(l) => {
@@ -9533,7 +9969,16 @@ async fn list_zellij_sessions() -> Vec<TmuxSessionInfo> {
     match tokio::time::timeout(std::time::Duration::from_secs(6), c.output()).await {
         Ok(Ok(out)) => {
             let text = String::from_utf8_lossy(&out.stdout).into_owned();
-            parse_zellij_sessions(&text)
+            let mut sessions = parse_zellij_sessions(&text);
+            // winmux -> ymux rename: current spelling first, pre-rename second.
+            if let Some(meta) = dirs::home_dir().and_then(|h| {
+                std::fs::read_to_string(h.join(".ymux").join("session-meta.json"))
+                    .or_else(|_| std::fs::read_to_string(h.join(".winmux").join("session-meta.json")))
+                    .ok()
+            }) {
+                apply_session_meta(&mut sessions, &meta);
+            }
+            sessions
         }
         Ok(Err(e)) => {
             log_debug("PTY", &format!("list_zellij_sessions: spawn failed: {e}"));
@@ -9609,7 +10054,7 @@ async fn list_workspace_tmux_sessions(
     // handle involved, and it works before any pane has connected (the
     // tmux server inside the distro is reachable whenever wsl.exe is).
     let wsl_distro: Option<Option<String>> = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -9639,7 +10084,7 @@ async fn list_workspace_tmux_sessions(
     #[cfg(windows)]
     {
         let is_local = {
-            let file = state.workspaces.lock().unwrap();
+            let file = state.workspaces.lock().map_err(|e| e.to_string())?;
             file.workspaces
                 .iter()
                 .find(|w| w.id == workspace_id)
@@ -9667,7 +10112,7 @@ async fn list_workspace_tmux_sessions(
     // reports `reachable: false` in that case and the caller must treat an
     // unreachable host as "might already be live", never as "safe to inject".
     let handle = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions
             .iter()
             .find_map(|(_sid, sess)| match sess {
@@ -9685,7 +10130,7 @@ async fn list_workspace_tmux_sessions(
             #[cfg(not(windows))]
             {
                 let is_local = {
-                    let file = state.workspaces.lock().unwrap();
+                    let file = state.workspaces.lock().map_err(|e| e.to_string())?;
                     file.workspaces
                         .iter()
                         .find(|w| w.id == workspace_id)
@@ -9712,7 +10157,7 @@ async fn list_workspace_tmux_sessions(
 /// empty list that means "unknown", not "empty".
 fn workspace_sessions_reachable(state: &AppState, workspace_id: &str) -> bool {
     let needs_handle = {
-        let file = state.workspaces.lock().unwrap();
+        let file = lock_or_recover(&state.workspaces);
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -9722,7 +10167,7 @@ fn workspace_sessions_reachable(state: &AppState, workspace_id: &str) -> bool {
     if !needs_handle {
         return true;
     }
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = lock_or_recover(&state.core.sessions);
     sessions
         .iter()
         .any(|(_sid, sess)| matches!(sess, Session::Ssh(s) if s.workspace_id == workspace_id))
@@ -9754,7 +10199,7 @@ async fn pane_list_tmux_sessions(
     // workspace can say whose it is instead of just "not yours". All three come
     // off the one lock this block already takes.
     let (host_key, ws_cwd, ws_names) = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file.workspaces.iter().find(|w| w.id == workspace_id);
         (
             session_owner_host_key(ws.and_then(|w| w.connection.as_ref())),
@@ -9825,7 +10270,7 @@ async fn pane_target_session_state(
     tmux_session_name: Option<String>,
 ) -> Result<TargetSessionState, String> {
     let pane_title = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -9929,6 +10374,54 @@ async fn list_tmux_sessions_via_handle(
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
     Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+}
+
+/// Pure verdict of the attach-only guard: is `target` a live session?
+/// A list error is "unknown", which the guard treats as live (fail-closed) —
+/// typing into an unknown session is the bug the guard exists to prevent.
+fn attach_guard_verdict(listed: Result<&[TmuxSessionInfo], &str>, target: &str) -> bool {
+    match listed {
+        Ok(sessions) => sessions.iter().any(|s| s.name == target),
+        Err(_) => true,
+    }
+}
+
+/// Attach-only guard probe for an SSH host with no live handle: temp
+/// handshake with the pane's credentials, one list, handle dropped.
+/// `Err` only on handshake failure (the caller returns it so the frontend
+/// can prompt); a list failure is logged by kind and judged fail-closed.
+#[allow(clippy::too_many_arguments)]
+async fn probe_ssh_session_live(
+    host: &str,
+    user: &str,
+    port: u16,
+    key_path: Option<&str>,
+    key_passphrase: Option<&str>,
+    password: Option<&str>,
+    accept_unknown_host: bool,
+    target: &str,
+) -> Result<bool, String> {
+    let hs = connect_and_authenticate(
+        host,
+        user,
+        port,
+        key_path,
+        key_passphrase,
+        password,
+        accept_unknown_host,
+    )
+    .await?;
+    let listed = list_tmux_sessions_via_handle(&hs.handle).await;
+    if let Err(e) = &listed {
+        log_warn(
+            "PTY",
+            &format!("attach-guard: list failed for '{target}' ({e}); treating as live"),
+        );
+    }
+    Ok(attach_guard_verdict(
+        listed.as_ref().map(|v| v.as_slice()).map_err(|e| e.as_str()),
+        target,
+    ))
 }
 
 /// `tmux list-sessions -F` format shared by every list path (SSH, WSL,
@@ -10092,7 +10585,7 @@ async fn pane_probe_tmux_sessions(
     // A pane that's already connected (or a sibling on the same workspace)
     // gives us a handle for free — no second handshake.
     let live = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions.iter().find_map(|(_sid, sess)| match sess {
             Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
             _ => None,
@@ -10105,7 +10598,7 @@ async fn pane_probe_tmux_sessions(
     // Resolve the pane's effective connection: its own first, then the
     // workspace's — the same precedence `pane_connect` uses.
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = match file.workspaces.iter().find(|w| w.id == workspace_id) {
             Some(w) => w,
             None => return Ok(None),
@@ -10706,7 +11199,7 @@ async fn tmux_rename_session(
         return Err("new name is the same as the old one".into());
     }
     let conn = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| w.id == workspace_id)
@@ -10721,7 +11214,7 @@ async fn tmux_rename_session(
     let ssh_handle = match &conn {
         Some(Connection::Ssh { .. }) => {
             let handle = {
-                let sessions = state.core.sessions.lock().unwrap();
+                let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
                 sessions
                     .iter()
                     .find_map(|(_sid, sess)| match sess {
@@ -10783,7 +11276,7 @@ async fn tmux_rename_session(
 
     // The multiplexer agreed. Now move everything ymux keys by the old name.
     {
-        let mut sessions = state.core.sessions.lock().unwrap();
+        let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         for sess in sessions.values_mut() {
             match sess {
                 Session::Ssh(s)
@@ -10806,7 +11299,7 @@ async fn tmux_rename_session(
     let label = rename_tmux_label(&workspace_id, &old_name, &new_name);
     // Phase 90.B: a session row in the tree is keyed by this name too.
     let rows_moved = {
-        let mut file = state.workspaces.lock().unwrap();
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let mut n = 0;
         for w in file.workspaces.iter_mut() {
             if conn_same_host(&w.connection, &conn)
@@ -10886,7 +11379,7 @@ async fn pane_list_claude_sessions(
     // Locate any live SSH handle for this workspace. The shell command runs
     // on the remote where Claude Code is actually installed.
     let handle_opt = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
         sessions
             .iter()
             .find_map(|(_sid, sess)| match sess {
@@ -11285,10 +11778,10 @@ fn pane_persistence_get(
     state: State<'_, AppState>,
     pane_id: String,
 ) -> Option<String> {
-    let sessions_map = state.core.pane_sessions.lock().unwrap();
+    let sessions_map = state.core.pane_sessions.lock().ok()?;
     let sid = sessions_map.get(&pane_id)?.clone();
     drop(sessions_map);
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().ok()?;
     match sessions.get(&sid) {
         Some(Session::Ssh(s)) => s.tmux_session.clone(),
         // Phase 80: WSL panes carry their tmux name on LocalSession.
@@ -11305,8 +11798,8 @@ fn pane_persistence_list(
     state: State<'_, AppState>,
 ) -> std::collections::HashMap<String, String> {
     let mut out = std::collections::HashMap::new();
-    let pane_sessions = state.core.pane_sessions.lock().unwrap().clone();
-    let sessions = state.core.sessions.lock().unwrap();
+    let pane_sessions = lock_or_recover(&state.core.pane_sessions).clone();
+    let sessions = lock_or_recover(&state.core.sessions);
     for (pane, sid) in pane_sessions {
         // Phase 80: Local sessions carry a tmux name too (WSL panes).
         let name = match sessions.get(&sid) {
@@ -11607,7 +12100,7 @@ pub(crate) async fn kill_pane_session_inner(
     state: &AppState,
     pane_id: &str,
 ) -> KillSessionOutcome {
-    let sid_opt = state.core.pane_sessions.lock().unwrap().get(pane_id).cloned();
+    let sid_opt = lock_or_recover(&state.core.pane_sessions).get(pane_id).cloned();
     let Some(sid) = sid_opt else {
         return KillSessionOutcome::new("no_session", "none", None);
     };
@@ -11616,7 +12109,7 @@ pub(crate) async fn kill_pane_session_inner(
     // Phase 80: WSL panes (Session::Local with a tmux name) kill their
     // session via wsl.exe instead of an SSH exec channel.
     let target = {
-        let sessions = state.core.sessions.lock().unwrap();
+        let sessions = lock_or_recover(&state.core.sessions);
         match sessions.get(&sid) {
             Some(Session::Ssh(s)) => match &s.tmux_session {
                 Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
@@ -11648,9 +12141,9 @@ pub(crate) async fn kill_pane_session_inner(
     // Unconditional: the PTY goes either way. A multiplexer session we failed
     // to destroy is reported through `outcome`, not by leaving a dead pane
     // wired up in the maps.
-    let sid = state.core.pane_sessions.lock().unwrap().remove(pane_id);
+    let sid = lock_or_recover(&state.core.pane_sessions).remove(pane_id);
     if let Some(sid) = sid {
-        if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+        if let Some(mut s) = lock_or_recover(&state.core.sessions).remove(&sid) {
             kill_session_inner(&mut s);
         }
     }
@@ -11662,7 +12155,7 @@ pub(crate) async fn kill_pane_session_inner(
     if matches!(outcome.result.as_str(), "killed" | "already_gone") {
         if let Some(name) = outcome.session.as_deref() {
             let host_key = {
-                let file = state.workspaces.lock().unwrap();
+                let file = lock_or_recover(&state.workspaces);
                 let conn = file
                     .workspaces
                     .iter()
@@ -11693,7 +12186,7 @@ async fn pane_disconnect(
     state: State<'_, AppState>,
     pane_id: String,
 ) -> Result<(), String> {
-    let sid = state.core.pane_sessions.lock().unwrap().remove(&pane_id);
+    let sid = state.core.pane_sessions.lock().map_err(|e| e.to_string())?.remove(&pane_id);
     let Some(sid) = sid else {
         return Ok(());
     };
@@ -11701,7 +12194,7 @@ async fn pane_disconnect(
     // Phase 7.C: if the workspace has a teardown_command, send it and give the
     // shell ~500ms to run it before we drop the channel.
     let teardown = {
-        let file = state.workspaces.lock().unwrap();
+        let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         file.workspaces
             .iter()
             .find(|w| {
@@ -11716,7 +12209,7 @@ async fn pane_disconnect(
     if let Some(t) = teardown {
         let bytes = format!("{}\r\n", t).into_bytes();
         {
-            let mut sessions = state.core.sessions.lock().unwrap();
+            let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
             if let Some(s) = sessions.get_mut(&sid) {
                 match s {
                     Session::Local(l) => {
@@ -11733,7 +12226,7 @@ async fn pane_disconnect(
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
 
-    if let Some(mut s) = state.core.sessions.lock().unwrap().remove(&sid) {
+    if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
         kill_session_inner(&mut s);
     }
     Ok(())
@@ -11742,7 +12235,7 @@ async fn pane_disconnect(
 // ─── Session-level commands (write/resize) ───────────────────────────────────
 
 pub(crate) fn write_to_session(state: &AppState, session_id: &str, data: &[u8]) -> Result<(), String> {
-    let mut sessions = state.core.sessions.lock().unwrap();
+    let mut sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
     let s = sessions
         .get_mut(session_id)
         .ok_or_else(|| format!("no such session {session_id}"))?;
@@ -11765,18 +12258,18 @@ fn pty_write(state: State<'_, AppState>, session_id: String, data: String) -> Re
 
 #[tauri::command]
 fn notifications_list(state: State<'_, AppState>) -> Vec<NotificationItem> {
-    state.notifications.lock().unwrap().clone()
+    lock_or_recover(&state.notifications).clone()
 }
 
 #[tauri::command]
 fn notifications_clear(state: State<'_, AppState>) -> Result<(), String> {
-    state.notifications.lock().unwrap().clear();
+    state.notifications.lock().map_err(|e| e.to_string())?.clear();
     Ok(())
 }
 
 #[tauri::command]
 fn pane_status_get(state: State<'_, AppState>) -> HashMap<String, String> {
-    state.pane_status.lock().unwrap().clone()
+    lock_or_recover(&state.pane_status).clone()
 }
 
 /// Phase 6.5: shared decision logic for feed items. Used both by the Tauri command
@@ -11795,7 +12288,7 @@ pub(crate) fn decide_feed(
         other => return Err(format!("unknown decision: {other}")),
     };
     let tx = {
-        let mut store = state.feed.lock().unwrap();
+        let mut store = state.feed.lock().map_err(|e| e.to_string())?;
         for item in store.items.iter_mut() {
             if item.request_id == request_id {
                 item.state = new_state.clone();
@@ -11815,7 +12308,7 @@ pub(crate) fn decide_feed(
 
 #[tauri::command]
 fn feed_list(state: State<'_, AppState>) -> Vec<FeedItem> {
-    state.feed.lock().unwrap().items.iter().cloned().collect()
+    lock_or_recover(&state.feed).items.iter().cloned().collect()
 }
 
 #[tauri::command]
@@ -11834,11 +12327,11 @@ fn feed_decide(
 // the `ymux doctor` CLI subcommand.
 pub(crate) fn build_doctor_snapshot(state: &AppState) -> serde_json::Value {
     use std::sync::atomic::Ordering;
-    let workspaces = state.workspaces.lock().unwrap().workspaces.clone();
+    let workspaces = lock_or_recover(&state.workspaces).workspaces.clone();
     let workspace_count = workspaces.len();
     // Count which workspaces have a live SSH session (any pane or the
     // headless Phase 41 entry counts).
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = lock_or_recover(&state.core.sessions);
     let mut ssh_connected = std::collections::HashSet::new();
     let mut pty_count = 0usize;
     for s in sessions.values() {
@@ -11935,7 +12428,7 @@ fn pty_resize(
     cols: u16,
     rows: u16,
 ) -> Result<(), String> {
-    let sessions = state.core.sessions.lock().unwrap();
+    let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
     let s = sessions
         .get(&session_id)
         .ok_or_else(|| format!("no such session {session_id}"))?;
@@ -12166,6 +12659,11 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
+            // Advisory lock + owner record so a second build on this dir
+            // names the first in the log. Never blocks boot.
+            if let Some(dir) = &cfg_dir {
+                config_lock::hold_for_process(dir);
+            }
 
             // Phase 53.G: was Phase 8.F.1 — the iframe-bridge
             // initialization script was the parent-side companion to
@@ -12197,36 +12695,49 @@ pub fn run() {
                 Ok(()) => log_debug("APP", "setup: system tray created"),
                 Err(e) => log_warn("APP", &format!("setup: tray init failed (continuing): {e}")),
             }
+            match secret_env_path().and_then(|p| secret_env::SecretEnvStore::load(&p)) {
+                Ok(store) => *state.secret_env.lock().map_err(|e| e.to_string())? = store,
+                Err(e) => log_warn("APP", &format!("setup: secret env load failed: {e} (starting empty)")),
+            }
             match load_from_disk() {
                 Ok(file) => {
-                    *state.workspaces.lock().unwrap() = file;
-                    *state.load_state.lock().unwrap() = Some(LoadState::Loaded);
+                    *state.workspaces.lock().map_err(|e| e.to_string())? = file;
+                    // Plaintext secret values from a pre-flag file move into the store.
+                    if let Err(e) = reconcile_secret_env(&state) {
+                        log_warn("APP", &format!("setup: secret env reconcile failed: {e}"));
+                    }
+                    *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Loaded);
                     log_info("APP", "setup: load_state = Loaded");
                 }
                 Err(e) => {
-                    *state.load_state.lock().unwrap() = Some(LoadState::Failed);
+                    *state.load_state.lock().map_err(|e| e.to_string())? = Some(LoadState::Failed);
                     log_error("APP", &format!(
                         "setup: load FAILED: {e} — load_state = Failed (persists will refuse)"
                     ));
                     tracing::warn!("workspaces load failed: {e}");
                 }
             }
+            // Agent lights: restore after workspaces load (unknown panes are dropped).
+            agent_runs_store::restore_into(&state);
             // Phase 7.B: load notes (best-effort; missing file is fine).
             match notes::load_notes_from_disk() {
                 Ok(nf) => {
                     let count = nf.notes.len();
-                    *state.notes.lock().unwrap() = nf;
+                    *state.notes.lock().map_err(|e| e.to_string())? = nf;
                     log_info("APP", &format!("setup: notes loaded ({count} notes)"));
                 }
                 Err(e) => {
                     log_warn("APP", &format!("setup: notes load failed: {e} (starting empty)"));
                 }
             }
+            // Phase 105: prune 30-day-old session context files and warm
+            // the cache, on a background thread.
+            context_store::startup(&state);
             // Phase 12.C: load recent paths history (or empty on first run).
             match local_wizard::load_recent_from_disk() {
                 Ok(rf) => {
                     let count = rf.entries.len();
-                    *state.recent_paths.lock().unwrap() = rf;
+                    *state.recent_paths.lock().map_err(|e| e.to_string())? = rf;
                     log_info("APP", &format!("setup: recent_paths loaded ({count} entries)"));
                 }
                 Err(e) => {
@@ -12237,7 +12748,7 @@ pub fn run() {
             match settings::load_from_disk() {
                 Ok(s) => {
                     log_info("APP", &format!("setup: settings loaded (theme.preset={})", s.theme.preset));
-                    *state.settings.lock().unwrap() = s;
+                    *state.settings.lock().map_err(|e| e.to_string())? = s;
                 }
                 Err(e) => {
                     log_warn("APP", &format!("setup: settings load failed: {e} (using defaults)"));
@@ -12249,7 +12760,7 @@ pub fn run() {
             // start the remote-log sync loop (pulls server/hooks/install
             // logs into the local debug.log every 60s).
             {
-                let logs = state.settings.lock().unwrap().logs.clone();
+                let logs = state.settings.lock().map_err(|e| e.to_string())?.logs.clone();
                 ymux_core::set_log_level(ymux_core::LogLevel::from_str(&logs.level));
                 prune_logs(logs.retention_days);
             }
@@ -12264,16 +12775,16 @@ pub fn run() {
             // != Loaded) so we never persist over a clobbered file.
             {
                 let load_ok =
-                    *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                    *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let already_done = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .migrations
                     .phase_39_auto_port_forward_default_flipped;
                 if load_ok && !already_done {
                     let changed = {
-                        let mut f = state.workspaces.lock().unwrap();
+                        let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                         disable_all_auto_port_forward(&mut f)
                     };
                     if changed > 0 {
@@ -12289,7 +12800,7 @@ pub fn run() {
                     // Mark done + persist settings (do this regardless of
                     // `changed` so the migration never re-runs).
                     let snapshot = {
-                        let mut s = state.settings.lock().unwrap();
+                        let mut s = state.settings.lock().map_err(|e| e.to_string())?;
                         s.migrations.phase_39_auto_port_forward_default_flipped = true;
                         s.clone()
                     };
@@ -12308,16 +12819,16 @@ pub fn run() {
             // load_state != Loaded.
             {
                 let load_ok =
-                    *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                    *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let already_done = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .migrations
                     .phase_53_remove_browser_filemanager_panes;
                 if load_ok && !already_done {
                     let changed = {
-                        let mut f = state.workspaces.lock().unwrap();
+                        let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                         rewrite_browser_filemanager_panes_to_terminal(&mut f)
                     };
                     if changed > 0 {
@@ -12331,7 +12842,7 @@ pub fn run() {
                         log_debug("APP", "migration phase_53: no legacy Browser/FileManager panes found");
                     }
                     let snapshot = {
-                        let mut s = state.settings.lock().unwrap();
+                        let mut s = state.settings.lock().map_err(|e| e.to_string())?;
                         s.migrations.phase_53_remove_browser_filemanager_panes = true;
                         s.clone()
                     };
@@ -12351,11 +12862,11 @@ pub fn run() {
             // never-touched workspaces. Silent — the user opted in via
             // the setting; no toast.
             {
-                let load_ok = *state.load_state.lock().unwrap() == Some(LoadState::Loaded);
+                let load_ok = *state.load_state.lock().map_err(|e| e.to_string())? == Some(LoadState::Loaded);
                 let ttl_days = state
                     .settings
                     .lock()
-                    .unwrap()
+                    .map_err(|e| e.to_string())?
                     .auto_destroy_empty_workspaces_days;
                 if load_ok {
                     if let Some(days) = ttl_days {
@@ -12366,7 +12877,7 @@ pub fn run() {
                                 .map(|d| d.as_secs())
                                 .unwrap_or(0);
                             let removed = {
-                                let mut f = state.workspaces.lock().unwrap();
+                                let mut f = state.workspaces.lock().map_err(|e| e.to_string())?;
                                 let before = f.workspaces.len();
                                 f.workspaces.retain(|w| {
                                     let stale = w.last_active_at > 0
@@ -12401,7 +12912,7 @@ pub fn run() {
             // never blocks startup; failures (offline, manifest missing, repo
             // private) just log to debug.log and emit nothing.
             {
-                let s = state.settings.lock().unwrap().clone();
+                let s = state.settings.lock().map_err(|e| e.to_string())?.clone();
                 if s.updates.check_on_startup {
                     let app_handle = app.handle().clone();
                     let state_clone: AppState = (*state).clone();
@@ -12419,12 +12930,15 @@ pub fn run() {
                 rpc_server::run(state_clone, app_handle).await;
             });
             log_info("APP", &format!("setup: rpc server spawned on {}", rpc_server::pipe_name()));
+            insights_local::spawn_sampler((*state).clone());
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
         // 2026-09-23: counted per command — see ipc_meter.rs.
-        .invoke_handler(ipc_meter::metered(tauri::generate_handler![
+        // 2026-10-06: outermost guard denies the workspace Browser webview — see ipc_guard.rs.
+        .invoke_handler(ipc_guard::guarded(ipc_meter::metered(tauri::generate_handler![
             clipboard_read_text,
+            pane_set_active,
             // Phase 68.B: add-on framework commands.
             addons::addon_list,
             addons::addon_install,
@@ -12460,6 +12974,7 @@ pub fn run() {
             workspaces_load,
             workspace_create,
             workspace_update,
+            workspace_secret_env_keys,
             workspace_rename,
             workspace_set_identity,
             // cmux-A A2: workspace groups (sidebar collapsible sections).
@@ -12484,6 +12999,7 @@ pub fn run() {
             clear_debug_log_cmd,
             pane_set_identity,
             pane_set_smart_bidi,
+            pane_set_claude_running,
             workspace_browser::workspace_browser_show,
             workspace_browser::workspace_browser_hide,
             workspace_browser::workspace_browser_navigate,
@@ -12520,6 +13036,8 @@ pub fn run() {
             workspace_set_intent,
             pane_agent_states,
             pane_briefs,
+            context_store::session_context_list,
+            context_store::session_context_get,
             worktrees::git_probe_worktrees,
             worktrees::project_folder_probe,
             worktrees::workspace_list_worktrees,
@@ -12653,7 +13171,7 @@ pub fn run() {
             // Unshipped-fivefer (#4): pop a terminal pane into its own window.
             popout_pane,
             ui_log_batch,
-        ]))
+        ])))
         // #2 (feedback): close-to-tray removed — closing the window quits
         // normally (the minimize-to-tray surprise was confusing). The tray
         // icon + badge stay for quick access; quit is either the window close
@@ -12664,11 +13182,25 @@ pub fn run() {
         // path Rule #4 exempts.
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                agent_runs_store::save_from(&app.state::<AppState>());
                 ymux_core::flush_log();
             }
         });
+}
+
+/// Lock a state mutex in a context that cannot return an error (spawned tasks,
+/// `()`-returning fns, iterator closures): a poisoned lock yields its inner
+/// value instead of panicking (Rule #4).
+pub(crate) fn lock_or_recover<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    match m.lock() {
+        Ok(g) => g,
+        Err(e) => {
+            ymux_core::log_warn("STATE", "mutex poisoned; recovering inner value");
+            e.into_inner()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -12789,6 +13321,7 @@ mod pane_swap_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -12998,6 +13531,7 @@ mod migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -13143,8 +13677,8 @@ mod header_screen_tests {
     // panes. The migration, the activation rule and the create shape.
     use super::{
         active_after_delete, create_root_with_screen, first_screen_of, is_header,
-        migrate_headers_to_screens, screen_or_self, unique_sibling_name, Connection,
-        CreateInput, LayoutNode, WorkspacesFile,
+        flag_pinned_folders, migrate_headers_to_screens, migrate_loaded, screen_or_self,
+        unique_sibling_name, Connection, CreateInput, LayoutNode, WorkspacesFile,
     };
 
     /// A pre-92 file: a root with panes (active), a pinned folder with a
@@ -13231,6 +13765,82 @@ mod header_screen_tests {
         assert_eq!(pane_id_of(shell.layout.as_ref().unwrap()), "p_app");
         // The worktree child carried sort_order 0, so the shell sorts below it.
         assert_eq!(shell.sort_order, Some(-1));
+    }
+
+    /// A srv root with a pinned NON-git folder (no is_project_root) that has a
+    /// shell child, as the pin command wrote it before `is_folder` existed.
+    fn non_git_folder_file() -> WorkspacesFile {
+        serde_json::from_str(
+            r#"{ "version": 4, "workspaces": [
+              { "id": "srv", "name": "runner", "sort_order": 0 },
+              { "id": "docs", "name": "docs", "parent_id": "srv", "cwd": "/srv/docs", "sort_order": 1 },
+              { "id": "sh", "name": "shell", "parent_id": "docs", "sort_order": 0,
+                "layout": { "kind": "pane", "pane_id": "p_sh" } }
+            ] }"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_non_git_pinned_folder_stays_a_header_across_reload() {
+        // Pins the bug: before is_folder, a reload read this folder as a screen.
+        let mut f = non_git_folder_file();
+        assert!(migrate_loaded(&mut f, "{}"));
+        assert!(by_id(&f, "docs").is_folder && is_header(by_id(&f, "docs")));
+        // Serialize + reload: the flag is stored, so nothing heals twice.
+        let text = serde_json::to_string(&f).unwrap();
+        let mut g: WorkspacesFile = serde_json::from_str(&text).unwrap();
+        assert!(is_header(by_id(&g, "docs")));
+        assert_eq!(flag_pinned_folders(&mut g), 0, "idempotent");
+        assert!(!migrate_loaded(&mut g, &text), "a healed file migrates nothing");
+    }
+
+    #[test]
+    fn load_backfill_never_grows_panes_on_a_non_git_folder() {
+        // The legacy "no layout → one pane" backfill must skip the folder.
+        let mut f = non_git_folder_file();
+        migrate_loaded(&mut f, "{}");
+        assert!(by_id(&f, "docs").layout.is_none());
+    }
+
+    #[test]
+    fn a_folder_the_old_backfill_grew_a_pane_onto_gets_it_moved() {
+        // Files already damaged by the bug: the folder holds a pane; it
+        // moves onto a screen under the folder and keeps its pane id.
+        let mut f = non_git_folder_file();
+        f.workspaces[1].layout = Some(LayoutNode::Pane {
+            pane_id: "p_grown".into(),
+            pane_kind: super::PaneKind::Terminal,
+            connection: None,
+            browser: None,
+            title: None,
+            auto_title: None,
+            annotation: None,
+            color: None,
+            emoji: None,
+            help_topic: None,
+            diff_source: None,
+            smart_bidi: None,
+            diff_cwd: None,
+        });
+        migrate_loaded(&mut f, "{}");
+        assert!(by_id(&f, "docs").layout.is_none());
+        let moved = f
+            .workspaces
+            .iter()
+            .filter(|w| w.parent_id.as_deref() == Some("docs") && w.layout.is_some())
+            .any(|w| pane_id_of(w.layout.as_ref().unwrap()) == "p_grown");
+        assert!(moved, "the grown pane now lives on a screen under the folder");
+    }
+
+    #[test]
+    fn a_childless_plain_screen_is_not_promoted() {
+        // A screen has a parent but no children: it must stay a screen, or
+        // every session row would turn into a header.
+        let mut f = non_git_folder_file();
+        assert_eq!(flag_pinned_folders(&mut f), 1, "only the folder with a child");
+        assert!(!by_id(&f, "sh").is_folder && !is_header(by_id(&f, "sh")));
+        assert!(!by_id(&f, "srv").is_folder, "roots are not flagged");
     }
 
     #[test]
@@ -13644,9 +14254,19 @@ mod tmux_attach_script_tests {
 
     const CONF: &str = include_str!("../resources/ymux-tmux.conf");
 
+    // Pins: secret NAMES reach tmux update-environment, VALUES never appear in the script.
+    #[test]
+    fn tmux_attach_script_lists_secret_names_never_values() {
+        let keys = vec!["API_KEY".to_string()];
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m", &keys);
+        assert!(s.contains("update-environment 'API_KEY'") || s.contains("update-environment API_KEY"));
+        assert!(s.contains("grep -qx"));
+        assert!(!s.contains("hunter2"));
+    }
+
     #[test]
     fn with_conf_chains_source_file_and_never_mouse_on() {
-        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m");
+        let s = build_tmux_attach_script("s", "", "", "p_1", true, "m", &[]);
         assert_eq!(
             s,
             format!(
@@ -13659,7 +14279,7 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn without_conf_appends_nothing() {
-        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m");
+        let s = build_tmux_attach_script("s", "", "", "p_1", false, "m", &[]);
         assert_eq!(
             s,
             format!(
@@ -13674,11 +14294,13 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn env_injection_precedes_exec() {
-        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m");
-        assert_eq!(s.matches("tmux set-environment -g ").count(), 6);
-        for var in ["YMUX_SOCKET_ADDR", "WINMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "WINMUX_TUNNEL_TOKEN", "YMUX_PANE_ID", "WINMUX_PANE_ID"] {
+        let s = build_tmux_attach_script("s", "127.0.0.1:1", "tok", "p_1", true, "m", &[]);
+        assert_eq!(s.matches("tmux set-environment -g ").count(), 3);
+        for var in ["YMUX_SOCKET_ADDR", "YMUX_TUNNEL_TOKEN", "YMUX_PANE_ID"] {
             assert!(s.contains(var), "missing {var}");
         }
+        // Legacy spelling is no longer written.
+        assert!(!s.contains("WINMUX_"), "legacy env leaked:\n{s}");
         let exec_at = s.find("exec tmux").expect("exec");
         let last_env = s.rfind("set-environment").expect("env");
         assert!(last_env < exec_at, "env injection must come before the exec");
@@ -13687,7 +14309,7 @@ mod tmux_attach_script_tests {
 
     #[test]
     fn session_name_is_shell_quoted() {
-        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m");
+        let s = build_tmux_attach_script("it's", "", "", "p_1", false, "m", &[]);
         assert!(s.contains(&format!("-s {} ", shell_quote("it's"))));
     }
 
@@ -14689,7 +15311,7 @@ mod zellij_tests {
     // Windows on 2026-08-19, not from the docs — the spike session Yossi left
     // running produced `spike [Created 12m 30s ago]` verbatim.
     use super::{
-        build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
+        apply_session_meta, build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
         pick_zellij_resources, sanitize_tmux_session_name_for_title,
         session_name_char_is_safe, zellij_args_delete_force, zellij_args_list,
         zellij_args_write_chars, zellij_spawn_error_outcome, KillSessionOutcome,
@@ -14890,6 +15512,42 @@ mod zellij_tests {
         );
         let names: Vec<&str> = out.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["newest", "middle", "older"]);
+    }
+
+    #[test]
+    fn zellij_sessions_join_session_meta() {
+        // Pins the name-keyed join; breaking it blanks zellij picker titles.
+        let mut out = parse_zellij_sessions("ymux-p1 [Created 5s ago]\n");
+        apply_session_meta(
+            &mut out,
+            r#"{"sessions":{"ymux-p1":{"label":"L","claude_title":"T","auto_name":"A","claude_session_id":"S","origin":"O"}}}"#,
+        );
+        assert_eq!(out[0].label.as_deref(), Some("L"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_session_id.as_deref(), Some("S"));
+        assert_eq!(out[0].origin.as_deref(), Some("O"));
+    }
+
+    #[test]
+    fn zellij_meta_fields_follow_picker_precedence() {
+        // Partial entries must stay partial so the frontend's
+        // label > auto_name > claude_title > name chain sees real gaps.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, r#"{"sessions":{"a":{"auto_name":"A","claude_title":"T"}}}"#);
+        assert!(out[0].label.is_none());
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        assert_eq!(out[0].claude_title.as_deref(), Some("T"));
+    }
+
+    #[test]
+    fn zellij_session_without_meta_keeps_raw_name() {
+        // Bad JSON and unknown names are no-ops, never errors.
+        let mut out = parse_zellij_sessions("a [Created 5s ago]\n");
+        apply_session_meta(&mut out, "{not json");
+        apply_session_meta(&mut out, r#"{"sessions":{"other":{"label":"X"}}}"#);
+        assert_eq!(out[0].name, "a");
+        assert!(out[0].label.is_none() && out[0].auto_name.is_none() && out[0].origin.is_none());
     }
 
     #[test]
@@ -15342,6 +16000,7 @@ mod wsl_migration_tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -15445,5 +16104,284 @@ mod wsl_migration_tests {
             serde_json::from_str(json).expect("a wsl connection must still parse");
         assert_eq!(f.workspaces.len(), 1);
         assert_eq!(migrate_wsl_workspaces(&mut f), 1);
+    }
+}
+
+#[cfg(test)]
+mod attach_guard_tests {
+    use super::{attach_guard_verdict, parse_tmux_sessions};
+
+    fn listed(names: &[&str]) -> Vec<super::TmuxSessionInfo> {
+        let text: String = names.iter().map(|n| format!("{n}|1|0|1|0|/x\n")).collect();
+        parse_tmux_sessions(&text)
+    }
+
+    #[test]
+    fn hit_is_live() {
+        // pins: a listed target must block injection
+        assert!(attach_guard_verdict(Ok(&listed(&["a", "work"])), "work"));
+    }
+
+    #[test]
+    fn miss_and_empty_are_not_live() {
+        // pins: a free name must still get its cd/command on first create
+        assert!(!attach_guard_verdict(Ok(&listed(&["a"])), "work"));
+        assert!(!attach_guard_verdict(Ok(&[]), "work"));
+    }
+
+    #[test]
+    fn list_error_is_live() {
+        // pins: fail-closed — unknown must never read as safe to inject
+        assert!(attach_guard_verdict(Err("exec: closed"), "work"));
+    }
+
+    #[test]
+    fn prefix_is_not_a_match() {
+        // pins: exact-name match; "work2" running must not mark "work" live
+        assert!(!attach_guard_verdict(Ok(&listed(&["work2"])), "work"));
+    }
+}
+
+#[cfg(test)]
+mod smart_bidi_seed_tests {
+    // pane_connect seeds the runtime bidi filter from this lookup; a wrong
+    // answer re-opens the "header on, filter off after restart" bug.
+    use super::{find_pane_smart_bidi, LayoutNode, PaneKind, SplitDirection};
+
+    fn pane(id: &str, smart_bidi: Option<bool>) -> LayoutNode {
+        LayoutNode::Pane {
+            pane_id: id.to_string(),
+            pane_kind: PaneKind::Terminal,
+            connection: None,
+            browser: None,
+            title: None,
+            auto_title: None,
+            annotation: None,
+            color: None,
+            emoji: None,
+            help_topic: None,
+            diff_source: None,
+            smart_bidi,
+            diff_cwd: None,
+        }
+    }
+
+    fn split(a: LayoutNode, b: LayoutNode) -> LayoutNode {
+        LayoutNode::Split {
+            split_id: "s".to_string(),
+            direction: SplitDirection::Horizontal,
+            ratio: 0.5,
+            first: Box::new(a),
+            second: Box::new(b),
+        }
+    }
+
+    #[test]
+    fn nested_some_true_is_true() {
+        let t = split(pane("a", None), split(pane("b", Some(true)), pane("c", None)));
+        assert!(find_pane_smart_bidi(&t, "b"));
+    }
+
+    #[test]
+    fn none_is_false() {
+        assert!(!find_pane_smart_bidi(&pane("a", None), "a"));
+    }
+
+    #[test]
+    fn some_false_is_false() {
+        assert!(!find_pane_smart_bidi(&pane("a", Some(false)), "a"));
+    }
+
+    #[test]
+    fn unknown_id_is_false() {
+        let t = split(pane("a", Some(true)), pane("b", Some(true)));
+        assert!(!find_pane_smart_bidi(&t, "zzz"));
+    }
+
+    // Pins the persisted-shape lookup on full Pane literals: Some(true) → on, None → off.
+    #[test]
+    fn struct_literal_some_true_and_none() {
+        let t = LayoutNode::Split {
+            split_id: "s".to_string(),
+            direction: SplitDirection::Horizontal,
+            ratio: 0.5,
+            first: Box::new(LayoutNode::Pane {
+                pane_id: "on".to_string(),
+                pane_kind: PaneKind::Terminal,
+                connection: None,
+                browser: None,
+                title: None,
+                auto_title: None,
+                annotation: None,
+                color: None,
+                emoji: None,
+                help_topic: None,
+                diff_source: None,
+                smart_bidi: Some(true),
+                diff_cwd: None,
+            }),
+            second: Box::new(LayoutNode::Pane {
+                pane_id: "off".to_string(),
+                pane_kind: PaneKind::Terminal,
+                connection: None,
+                browser: None,
+                title: None,
+                auto_title: None,
+                annotation: None,
+                color: None,
+                emoji: None,
+                help_topic: None,
+                diff_source: None,
+                smart_bidi: None,
+                diff_cwd: None,
+            }),
+        };
+        assert!(find_pane_smart_bidi(&t, "on"));
+        assert!(!find_pane_smart_bidi(&t, "off"));
+    }
+}
+
+#[cfg(test)]
+mod two_instance_save_tests {
+    // Two "instances" are two independent `Mutex<Option<String>>` bases
+    // (each process owns one `LAST_KNOWN`) over ONE file in a tempdir.
+    // No YMUX_CONFIG_DIR: it is process-global and parallel tests would race.
+    use super::{write_workspaces_text, WORKSPACES_SCHEMA_VERSION};
+    use serde_json::{json, Value};
+    use std::sync::Mutex;
+
+    fn doc(version: u32, workspaces: Value) -> String {
+        serde_json::to_string_pretty(&json!({
+            "version": version,
+            "active_workspace_id": null,
+            "workspaces": workspaces,
+        }))
+        .expect("json serializes")
+    }
+
+    fn ids(text: &str) -> Vec<String> {
+        let v: Value = serde_json::from_str(text).expect("file is json");
+        v["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .filter_map(|w| w["id"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    #[test]
+    fn two_instances_sharing_one_file_keep_both_edits() {
+        // Pins the merge path through the real writer: if the second save
+        // flattened the first, instance A's workspace would vanish.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let (a, b) = (Mutex::new(None), Mutex::new(None));
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let shared = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        write_workspaces_text(&path, &shared, &a).expect("A first save");
+        // B starts from the same file, as if launched after A's save.
+        *b.lock().expect("lock") = Some(shared.clone());
+
+        let a_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-a", "name": "a" }]));
+        write_workspaces_text(&path, &a_ours, &a).expect("A save");
+        let b_ours = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "from-b", "name": "b" }]));
+        let landed = write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let on_disk = std::fs::read_to_string(&path).expect("read back");
+        assert_eq!(on_disk, landed, "return value is what landed on disk");
+        let got = ids(&on_disk);
+        for want in ["shared", "from-a", "from-b"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+    }
+
+    #[test]
+    fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
+        // The original P1: an older build rewrote the file without
+        // `parent_id`; our next save must put the nesting back.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let base = Mutex::new(None);
+        let v = WORKSPACES_SCHEMA_VERSION;
+
+        let nested = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &nested, &base).expect("first save");
+
+        // Older build: lower schema version, nesting keys never written.
+        let older = doc(1, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app" },
+        ]));
+        std::fs::write(&path, older).expect("older build write");
+
+        let ours = doc(v, json!([
+            { "id": "srv", "name": "srv" },
+            { "id": "app", "name": "app-renamed", "parent_id": "srv", "is_project_root": true },
+        ]));
+        write_workspaces_text(&path, &ours, &base).expect("downgrade is a warning, not a refusal");
+
+        let after: Value = serde_json::from_str(&std::fs::read_to_string(&path).expect("read")).expect("json");
+        let app = &after["workspaces"][1];
+        assert_eq!(app["parent_id"], "srv", "nesting stripped: {app}");
+        assert_eq!(app["is_project_root"], true);
+        assert_eq!(app["name"], "app-renamed", "our edit still applies");
+    }
+
+    #[test]
+    fn a_newer_schema_on_disk_refuses_the_write() {
+        // A newer build owns the file: Err, and not one byte of it changes
+        // (nor a tmp file left behind).
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let newer = doc(WORKSPACES_SCHEMA_VERSION + 1, json!([{ "id": "x", "name": "x", "future_field": 1 }]));
+        std::fs::write(&path, &newer).expect("seed");
+        let base = Mutex::new(None);
+
+        let ours = doc(WORKSPACES_SCHEMA_VERSION, json!([{ "id": "x", "name": "ours" }]));
+        let err = write_workspaces_text(&path, &ours, &base).expect_err("must refuse");
+
+        assert!(err.contains("YMUX_CONFIG_DIR"), "remedy missing: {err}");
+        assert_eq!(std::fs::read_to_string(&path).expect("read"), newer, "file changed");
+        assert!(base.lock().expect("lock").is_none(), "base advanced on a refused save");
+        let leftovers = std::fs::read_dir(dir.path()).expect("ls").count();
+        assert_eq!(leftovers, 1, "a tmp file was opened before the refusal");
+    }
+}
+
+#[cfg(test)]
+mod lock_or_recover_tests {
+    use super::*;
+
+    fn poisoned() -> Arc<Mutex<Vec<u8>>> {
+        let m = Arc::new(Mutex::new(vec![1u8, 2, 3]));
+        let m2 = m.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = m2.lock().unwrap();
+            panic!("poison");
+        })
+        .join();
+        m
+    }
+
+    // Pins: a poisoned mutex still yields its data; breaking it brings back the Rule #4 panic.
+    #[test]
+    fn recovers_inner_data_from_poisoned_mutex() {
+        let m = poisoned();
+        assert!(m.is_poisoned());
+        assert_eq!(*lock_or_recover(&m), vec![1u8, 2, 3]);
+    }
+
+    // Pins: the command-path `map_err` form turns poison into Err(String), not a panic.
+    #[test]
+    fn map_err_form_returns_err_on_poison() {
+        fn f(m: &Mutex<Vec<u8>>) -> Result<usize, String> {
+            Ok(m.lock().map_err(|e| e.to_string())?.len())
+        }
+        assert!(f(&poisoned()).is_err());
+        assert_eq!(f(&Mutex::new(vec![9u8])), Ok(1));
     }
 }

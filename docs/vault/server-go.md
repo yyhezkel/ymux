@@ -80,7 +80,7 @@ part with no IO: four files, each a **port of Rust that still runs on the deskto
 with the Rust tests translated under the same names.
 
 - `state.go` ← `lib.rs` `PaneAgentState` / `AgentRunState::apply_hook`. `Run.ApplyHook(subkind,
-  notificationType, now)` is the traffic-light table; `seq` bumps on every *mapped* hook,
+  notificationType, now)` is the traffic-light table (incl. `stop-failure` → `failed`, mirroring Rust); `seq` bumps on every *mapped* hook,
   `StateSince` only on a real change, an unmapped notification is a full no-op.
   `Run.Event(paneID)` is the `pane:agent-run` payload with identical JSON keys (nil
   pointers → `null`, like the Rust `Option`). `now` is a parameter so tests pin it.
@@ -118,8 +118,8 @@ hooks, status) into the substrate.
 **`chat/chat_hookrpc.go`** — chat's `core.HookResolver`: `MatchHookHMAC` finds the
 mobile session whose token signed the nonce, `dispatchHook` answers its `feed.push`
 (policy `auto`/`block`/`gate`, the phone approves). Since Phase 100 the handshake itself
-lives in `hooks` (below); `hooks.ChallengeTag` still speaks the legacy
-`WINMUX-CHALLENGE` dialect on purpose; the Rust half is `CHALLENGE_TAG` in
+lives in `hooks` (below); `hooks.ChallengeTag` emits
+`YMUX-CHALLENGE` (WINMUX responses still accepted); the Rust half is `CHALLENGE_TAG` in
 `ymux-tunnel`. **Flip both together.**
 
 **`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
@@ -144,11 +144,21 @@ When the PTY ends (the session was killed, or tmux detached this client) `attach
 sends `{"type":"exit"}` **and then a close frame with 1000**. Without that frame the
 browser saw 1006, the same code as a dropped network — found live 2026-10-05.
 
-`/api/v2/term/*` mounts **raw**, not behind `auth.Bearer`, for the same reason `push`
-does: that middleware only knows the shared token, and a paired device's token has to
-work too. `service.go`'s `gate` does both checks and **fails closed** — a Service with
-neither a shared token nor a scope resolver rejects everything, which is the opposite of
-the workspace subsystem's "no auth configured ⇒ open" convenience and deliberately so.
+The four REST ops (list/create/rename/kill) are **huma operations** (`term/huma.go`,
+`RegisterHuma`; ids `term-list|create|rename|kill`), so they are in the generated OpenAPI
+and `sdk-gen/ci-check.mjs` guards them. Auth is ONE point: `api/huma.go` `bearerMiddleware`
+accepts the shared token or a device token (`tokenOK`), then `opScopes` requires
+`shell:attach` of a device (the owner token bypasses scopes). Statuses: no/unknown token
+401, device without the grant 403, create 201, name clash 409. The token is read from
+the `Authorization` header only — no query-string token on these ops (that stays on the
+raw attach/events WebSockets, which are out of OpenAPI; WS is described by `asyncapi.json`).
+**Body caveat:** huma rejects unknown fields and a missing body by default, but the old raw
+handlers ignored both (the browser also sends `pane_id`/`cmd`). So the create/rename bodies
+are `required:"false"` with `additionalProperties:"true"` — do not tighten them, 422s would
+break the page and web clients. The other term routes (feed, events, history, webapp, ...)
+are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a Service with
+neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
+"no auth configured => open".
 
 **`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
 oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
@@ -176,15 +186,12 @@ a duration. `meta.go` reads `~/.ymux/session-meta.json` (the CLI owns writing it
 daemon never writes, so there is no second writer racing the CLI's atomic tmp+rename) and
 joins labels on with the `label > auto_name > claude_title > raw name` precedence.
 
-Known gap, logged in FOLLOWUPS: the four REST ops are stdlib handlers, not huma ops, so
-they are **not** in the generated OpenAPI and the SDK drift-guard does not cover them.
-Phase B moves them.
-
 **`term/hookreg.go` + `hookdispatch.go` (Phase 100, WEB-DESIGN B2) — the one piece of
 state, and why it is allowed.** A session created through `POST /api/v2/term/sessions`
 gets three SESSION-scoped variables (`tmux new-session -e`, which beat the desktop's
 `set-environment -g`): `YMUX_SOCKET_ADDR` (the daemon's hook listener),
 `YMUX_TUNNEL_TOKEN` (32 random bytes, the HMAC key) and `YMUX_PANE_ID` (`term_<16 hex>`).
+(Chat `spawnEnv` likewise sets only the `YMUX_*` trio; the `WINMUX_*` duplicates are gone.)
 So `ymux claude-hook` in that session dials the **daemon**, not the desktop. The
 `HookRegistry` remembers token → session (in memory, keyed by name, following
 rename/kill and pruned against every `list`) and is term's `core.HookResolver`. It is
@@ -204,7 +211,7 @@ falls back to `last.env` (the desktop) exactly as before.
 - `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
-  prompt; `stop` → `RecordTurn` + `BriefFromStop`; `session-end` → run reset (seq+1) +
+  prompt; `stop` → `RecordTurn` + `BriefFromStop`; `stop-failure` → `StateFailed` (timer cleared, NO `RecordTurn`, state-only: early passive return like `notification`); `session-end` → run reset (seq+1) +
   `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
   is denied. A permission request follows the session's **policy** (Phase 101, below).
   `ping` answers; any other method is a JSON-RPC error.
@@ -242,8 +249,8 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
 - **`api` `hooks/forward` drops `term_` panes.** The CLI forwards every pre-tool-use to it
   regardless of where the RPC went; for a browser session that made a second, dead card
   on the phone (FOLLOWUPS P2, closed).
-- These routes are raw stdlib handlers like the rest of term, so they are not in the
-  OpenAPI spec either (the existing FOLLOWUPS P2 about term routes covers them).
+- These routes are raw stdlib handlers, so they are not in the OpenAPI spec (only the four
+  session ops above are).
 
 **`term/verbs.go` + `notes.go` + `ports.go` (Phase 102, WEB-DESIGN B4) — the small
 verbs.** `DispatchHook` falls through to `verb()` for the desktop's `dispatch()` arms a
@@ -447,10 +454,9 @@ It speaks **exactly what the Linux CLI speaks** — same endpoint, same HMAC
 challenge-response, same newline-delimited JSON-RPC — so it inherits an
 already-deployed server side instead of adding a protocol. The Rust counterparts are
 `cli/src/main.rs::perform_handshake` (the client half it mirrors) and
-`crates/ymux-tunnel/src/lib.rs` (the server half it talks to). The desktop still
-OPENS with the legacy `WINMUX` tag on purpose, so the client mirrors whichever tag it
-is addressed in and accepts either in the verdict; the day `CHALLENGE_TAG` flips,
-nothing here changes. The tests run a Go implementation of the server half written
+`crates/ymux-tunnel/src/lib.rs` (the server half it talks to). The desktop now
+OPENS with `YMUX`; the client still mirrors whichever tag it is addressed in and
+accepts either in the verdict, so a pre-flip desktop works unchanged. The tests run a Go implementation of the server half written
 from the wire spec, so a drift in either direction fails in CI rather than on a box
 where the only symptom is "the approval card never appears".
 
@@ -560,8 +566,8 @@ is watched from `~/.ymux/log-level`, which the desktop pushes (see
 **huma and the OpenAPI spec.** `files/huma.go`, `logs/huma.go`, and `api/huma.go` reflect
 request/response structs into the server's OpenAPI, so the spec cannot drift from the
 handlers. The wire contract is byte-for-byte identical to the stdlib handlers they
-replaced — same query params, status codes, headers (`X-Ymux-Truncated`,
-`Content-Disposition`), same JSON. `sdk-gen/ci-check.mjs` regenerates the spec straight
+replaced — same query params, status codes, headers (`X-Ymux-Truncated` only —
+the pre-rename `X-Winmux-Truncated` twin is gone, `Content-Disposition`), same JSON. `sdk-gen/ci-check.mjs` regenerates the spec straight
 out of the server and fails CI if the committed SDKs moved.
 
 ## Invariants

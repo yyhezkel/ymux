@@ -10,6 +10,7 @@ This file is read at the start of every Claude session working on ymux. Keep it 
 - `docs/RELEASING.md` — version cut process
 - `docs/DECISIONS.md` — **READ FIRST**: open threads + decisions log
 - `docs/ZELLIJ.md` — zellij's CLI + config surface as our 0.44.3 binary reports it; read before adding a verb, don't guess from zellij.dev
+- `docs/CONTEXT.md` — per-Claude-session context (first prompt + brief log, persisted) and the Context Rail; read before touching `context_store.rs` or `ContextRail.tsx`
 - `docs/BRIEF.md` — the agent-brief wire format (`[ymux-brief]`), the Queue panel and the Briefing card; read before touching the brief parser or its surfaces
 - `docs/COMPETITIVE-SCAN.md` — survey of the 8 GitHub projects named `winmux`, ideas inventory, Secrets Vault design (pre-rename doc, kept verbatim: it is about *other people's* repos and is what motivated the move to YMUX)
 - `docs/IDEAS-RANKING.md` — decision table for the ideas inventory (MUST / SHOULD / COULD)
@@ -17,6 +18,7 @@ This file is read at the start of every Claude session working on ymux. Keep it 
 ## Session workflow (memory arch)
 
 - **`git fetch` FIRST, every session — and again before every merge/push.** ymux is worked on from several machines and servers at once (Yossi's box, collaborators, cloud sessions), so `origin/main` moves while you work. Start with `git fetch origin && git status`; if `main` is behind, pull before touching anything. Re-fetch before any merge or push — a plan built on a stale tree is worse than no plan. This is not theoretical: on 2026-08-09 a collaborator's macOS port landed 5 commits on `origin/main` mid-session and was only noticed by accident at the end. Never assume the tree you started with is current.
+- **Fresh worktree or checkout: stage the CLI before any build.** `ymux-cli.exe` (mac: `ymux-cli`) under `app/src-tauri/resources/` is gitignored, so a new worktree lacks it. Run `npm run build:linux-cli` from `app/` first. `build.rs` fails fast with `error: staged CLI missing` and that same instruction, instead of the opaque tauri resource error. Builds themselves stay CI-only (Rule #17).
 - **PROGRESS.txt** — append after every significant change (timestamp, task, files, result). NEVER overwrite. Too big → rename `PROGRESS_OLD_<date>.txt`, start fresh.
 - **FOLLOWUPS.md / BACKLOG.md** — read both at session start. Open P0/P1 in FOLLOWUPS → surface before new work. Out-of-scope bug found in passing → one line to FOLLOWUPS (P0-P3, file:line, repro). Out-of-scope idea / mock-stub debt → BACKLOG. Never silently leave broken state. **FOLLOWUPS.md holds OPEN items only** — when one closes, move it to `FOLLOWUPS-ARCHIVE.md` with its full text plus a note saying how it closed; do not delete it and do not leave it in place as `[x]`. That archive is NOT read at session start, so nothing still needing action may be parked there. **Cite an entry by its text, never by `FOLLOWUPS.md:NN`** — the line numbers shift every time an item is added or archived, and two entries had already rotted into pointing at the wrong lines.
 - **Past-work lookup order** — before re-investigating: 1) `PROGRESS.txt` + `PROGRESS_OLD_*` 2) `FOLLOWUPS-ARCHIVE.md` (a closed entry keeps the root cause, which is often not the one first written down) 3) `git log --all --oneline --grep=<keyword>` 4) memory search 5) `docs/*.md` + this file.
@@ -79,17 +81,20 @@ See FOLLOWUPS.
 ## The winmux → YMUX rename (2026-08-18)
 
 The app was `winmux` until 0.4.5. **A `winmux` you find in the code is almost
-certainly load-bearing, not a leftover** — every one is a compat shim for an
+certainly load-bearing, not a leftover** — it is a read-side compat shim for an
 existing install or an already-provisioned remote, and each is commented as
-such. Do not "finish the rename" by deleting them; the removal is scheduled
-(FOLLOWUPS P1, one release after 0.5.0) and has to happen as a set.
+such. The write-side shims (wire tag, `WINMUX_*` env dual-write, legacy pipe
+listener, `X-Winmux-Truncated`, `use_winmux_tmux_config` alias, CLI
+`adopt_legacy_env`) were retired in ticket `ymux-crates-ymux-tunnel-src`; do not
+"finish the rename" by deleting the readers or migrations that remain.
 
-- **Still emits the legacy wire tag.** The handshake sends `WINMUX-CHALLENGE`
-  on purpose: a pre-rename remote CLI does a literal prefix match. Both ends
-  read *and mirror* either dialect (`CHALLENGE_TAG` in `crates/ymux-tunnel`,
-  `challengeTag` in `server/internal/chat/chat_hookrpc.go`) — flip both together.
+- **Emits `YMUX-CHALLENGE`, still reads both.** The handshake now sends the
+  YMUX tag (`CHALLENGE_TAG` in `crates/ymux-tunnel`, `ChallengeTag` in
+  `server/internal/hooks/hooks.go`). Both ends still accept `WINMUX-RESPONSE` /
+  `WINMUX-CHALLENGE` and mirror the peer's dialect, so an old client or CLI keeps
+  working. Never drop those read arms without checking for pre-rename remotes.
 - **Migrations that run once, on upgrade:** `%APPDATA%\winmux` → `ymux`
-  (`ymux-core::config_dir`), `~/.winmux` → `~/.ymux` (bootstrap + CLI), and
+  (`ymux-core::config_dir`), `~/.winmux` → `~/.ymux` (bootstrap only — the CLI no longer migrates), and
   the daemon's data dir. These stay long after the rest go.
 - **`"winmux"` does not contain `"ymux"`.** Two substring checks broke on
   exactly that and were fixed; if you add another, match both spellings.
@@ -101,7 +106,7 @@ such. Do not "finish the rename" by deleting them; the removal is scheduled
 
 - `ci-windows.yml` — cargo test + tsc + vite + the full Go server gate on
   every push/PR to `main`, as **three parallel jobs** (~3.5 min wall-clock
-  warm, was ~6 serial): `frontend` (parse-check, vault gate, tsc, `npm
+  warm, was ~6 serial): `frontend` (parse-check, vault gate + cite-checker tests, tsc, `npm
   test`, vite build), `rust` (stage CLI + `cargo test`, windows-latest,
   `shared-key: windows-dev`), and `go` — which runs on **ubuntu-latest** on
   purpose: `go vet` + `go test` there exercise linux, the platform the
@@ -125,7 +130,7 @@ such. Do not "finish the rename" by deleting them; the removal is scheduled
 - Steps that shell out to Windows PowerShell need `shell: cmd`. The default `run:` shell is pwsh, which rewrites `PSModulePath` for its children, so the 5.1 instance `build:linux-cli` spawns loses `Get-FileHash`.
 - `npm run build:linux-cli` must run before any cargo step on a fresh checkout — it stages the gitignored `ymux-cli.exe` the Tauri build script requires. It stages by **sha256, not mtime**: everything in `resources/` is pulled into the app crate with `include_bytes!`/`include_str!`, and Cargo's staleness check is mtime-based, so re-copying a byte-identical file used to force a full rebuild of the 9.4k-line lib.
 - **A `.ps1` in this repo must keep non-ASCII out of code lines.** Windows PowerShell 5.1 reads BOM-less UTF-8 as ANSI, so an em-dash inside a string literal decodes to a smart quote that the tokenizer accepts as a string delimiter — the file then fails to parse with a cascade of errors pointing at innocent lines. Em-dashes in `#` comments are fine (already all over `build-linux-cli.ps1`); inside `"..."` they are a build-breaker.
-- **Action pins are deliberate, and `.github/dependabot.yml` watches them.** All four workflows run node24-runtime majors (`checkout@v7`, `setup-node@v7`, `setup-go@v7`, `upload-artifact@v7`, `cache@v6`) on `node-version: 24` — Node 20 hit EOL 2026-04-30 and the old majors were being force-migrated by the runner. `actions/*` stay on floating majors; the two third-party actions are SHA-pinned. **`dtolnay/rust-toolchain` is pinned to the SHA of the `stable` BRANCH**, and its only tag (`v1`) is `master`, where `toolchain` is a required input with no default — a dependabot bump onto it switches branches silently, so every call site passes `toolchain: stable` explicitly and a bump PR touching it needs the SHA checked by hand. Every workflow is `permissions: contents: read`; nothing here writes to the repo.
+- **Action pins are deliberate, and `.github/dependabot.yml` watches them.** All four workflows run node24-runtime majors (`checkout@v7`, `setup-node@v7`, `setup-go@v7`, `upload-artifact@v7`, `cache@v6`) on `node-version: 24` — Node 20 hit EOL 2026-04-30 and the old majors were being force-migrated by the runner. `actions/*` stay on floating majors; the two third-party actions are SHA-pinned. **`dtolnay/rust-toolchain` is pinned to the SHA of the `stable` BRANCH**, and its only tag (`v1`) is `master`, where `toolchain` is a required input with no default — a dependabot bump onto it switches branches silently, so every call site passes `toolchain: 1.95.0` explicitly (equal to the `channel` in `rust-toolchain.toml`, which pins rustc so the Linux CLI blob is reproducible; bump all together) and a bump PR touching it needs the SHA checked by hand. Every workflow is `permissions: contents: read`; nothing here writes to the repo.
 
 ### Rebaking the server
 

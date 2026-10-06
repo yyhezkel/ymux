@@ -40,6 +40,10 @@ use ymux_types::{Connection, LayoutNode, PaneKind};
 /// debug builds, see `ymux-debug-test\run-ymux-debug.bat`); the
 /// pre-rename `WINMUX_CONFIG_DIR` is still honoured as a fallback so
 /// existing debug harnesses keep working.
+/// Under `cfg(test)` or the `test-config-dir` feature (enabled by every
+/// dependent's dev-dependencies, so their tests link it too) the fallback
+/// is `temp_dir()/ymux-test-config-<pid>` instead, so unit tests never
+/// write the real `%APPDATA%\ymux\debug.log`.
 /// Otherwise: `dirs::config_dir() / "ymux"` (≈ `%APPDATA%\ymux\`).
 /// The directory is created on demand.
 ///
@@ -59,6 +63,23 @@ pub fn config_dir() -> Result<PathBuf, String> {
         std::fs::create_dir_all(&p).map_err(|e| format!("create {:?}: {e}", p))?;
         return Ok(p);
     }
+    #[cfg(any(test, feature = "test-config-dir"))]
+    return test_config_dir();
+    #[cfg(not(any(test, feature = "test-config-dir")))]
+    real_config_dir()
+}
+
+/// Per-process scratch config dir for tests.
+#[cfg(any(test, feature = "test-config-dir"))]
+fn test_config_dir() -> Result<PathBuf, String> {
+    let p = std::env::temp_dir().join(format!("ymux-test-config-{}", std::process::id()));
+    std::fs::create_dir_all(&p).map_err(|e| format!("create {:?}: {e}", p))?;
+    Ok(p)
+}
+
+/// The real per-user dir, with the one-shot winmux → ymux migration.
+#[cfg_attr(any(test, feature = "test-config-dir"), allow(dead_code))]
+fn real_config_dir() -> Result<PathBuf, String> {
     let base = dirs::config_dir().ok_or_else(|| "no config dir available".to_string())?;
     let dir = base.join("ymux");
     // `Once`, not a plain `if !dir.exists()`: the log_* calls below route
@@ -404,6 +425,7 @@ pub fn backfill_terminal_connections(
             diff_source,
             smart_bidi,
             diff_cwd,
+            claude_running,
         } => {
             let needs_fix =
                 matches!(pane_kind, PaneKind::Terminal) && connection.is_none();
@@ -431,6 +453,7 @@ pub fn backfill_terminal_connections(
                     diff_source,
                     smart_bidi,
                     diff_cwd,
+                    claude_running,
                 },
                 needs_fix,
             )
@@ -770,35 +793,6 @@ pub fn pipe_name() -> String {
     format!(r"\\.\pipe\ymux-{}", user)
 }
 
-/// Pre-rename endpoint name, kept alive alongside `pipe_name` for one
-/// release.
-///
-/// The Windows installer leaves a `winmux-cli.exe` from an earlier
-/// install on PATH, and MCP host configs point at whatever binary they
-/// were set up with. Those dial `\\.\pipe\winmux-<user>` and have no way
-/// to learn otherwise, so the app answers on both names rather than
-/// letting every pre-rename integration fail at connect.
-///
-/// FOLLOWUPS P1: drop this and its listener once 0.5.0 is the floor.
-#[cfg(windows)]
-pub fn pipe_name_legacy() -> String {
-    let user = std::env::var("USERNAME")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| whoami::username());
-    format!(r"\\.\pipe\winmux-{}", user)
-}
-
-/// Unix counterpart of `pipe_name_legacy`.
-#[cfg(not(windows))]
-pub fn pipe_name_legacy() -> String {
-    let user = whoami::username();
-    std::env::temp_dir()
-        .join(format!("winmux-{user}.sock"))
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// Unix equivalent: a per-user Unix domain socket. `temp_dir()` honors
 /// TMPDIR, which on macOS is a per-user private directory — so the
 /// socket gets the same user-isolation the per-user pipe name gives
@@ -841,11 +835,6 @@ pub fn pipe_name_fallback() -> Option<String> {
 /// The socket paths to try, in order. Windows has exactly one name (the
 /// pipe namespace has no length problem), so this is a single-element list
 /// there and callers stay platform-agnostic.
-///
-/// Deliberately excludes `pipe_name_legacy()`: this list is "where THIS
-/// build's endpoint lives", walked by both the server and ymux-tunnel,
-/// which always ship together. The legacy name is a one-release compat
-/// shim for *foreign* pre-rename callers, so only the server binds it.
 pub fn pipe_names() -> Vec<String> {
     #[cfg(windows)]
     {
@@ -919,6 +908,7 @@ mod tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -1309,19 +1299,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
     }
 
-    #[test]
-    fn legacy_pipe_name_differs_from_the_current_one() {
-        // The compat listener is pointless if both resolve to one endpoint.
-        assert_ne!(pipe_name(), pipe_name_legacy());
-        assert!(pipe_name_legacy().contains("winmux"));
-    }
-
     // The fs-backed assertions share one test: YMUX_CONFIG_DIR and the
     // global level are process-wide, so splitting them would race under
     // the parallel test runner.
     //
     // Phase 80: writes are asynchronous now, so every read-back needs a
     // `flush_log()` first. Without it this test is a coin flip.
+    // Pins the test-only fallback: a test that unsets the env var must land
+    // in a per-pid temp dir, never the real profile.
+    #[test]
+    fn test_config_dir_is_per_pid_temp() {
+        let d = test_config_dir().expect("temp config dir");
+        assert!(d.starts_with(std::env::temp_dir()), "{d:?}");
+        assert!(d.ends_with(format!("ymux-test-config-{}", std::process::id())));
+        assert!(d.is_dir());
+    }
+
     #[test]
     fn log_at_format_threshold_and_raw_append() {
         let dir = std::env::temp_dir().join(format!("ymux-core-logtest-{}", std::process::id()));
