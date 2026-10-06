@@ -175,8 +175,12 @@ put logic there.
 
 `load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
 connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
-`normalize_parents`, **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
-backfills, `backfill_sort_orders`. Since Phase 92 the legacy "no layout → single pane"
+`normalize_parents`, **`flag_pinned_folders`** (sets `is_folder` on any row that has
+children but neither header flag — heals folders the old derived rule called screens;
+idempotent, logged per id), **`migrate_headers_to_screens` (Phase 92)**, the per-workspace
+backfills, `backfill_sort_orders`. That whole chain is `migrate_loaded(file, text)`, split
+out of `load_from_disk` so tests can run it on a parsed file; it saves only if it changed
+something. Since Phase 92 the legacy "no layout → single pane"
 backfill and the startup auto-destroy sweep both **skip headers** (`!is_header(ws)`) — a
 header is paneless by design, and either one would have re-grown or deleted it on the next
 load. Other files in the same dir, each with the same
@@ -186,7 +190,7 @@ tmux labels, session owners.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:8953](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:8991](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -205,7 +209,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
   `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2467](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2480](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
   flusher thread that sends `pty:data` on the leading edge after a quiet spell (keystroke
@@ -371,10 +375,12 @@ list command. The module owns what the picker never needed:
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
 - **Headers vs screens (Phase 92).** `is_header(w)` = `parent_id.is_none() ||
-  is_project_root`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
+  is_project_root || is_folder`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
   never panes (`layout: None`); every other workspace is a SCREEN, the only kind with a
-  layout and the only kind that can be active. Derived, never stored (mirror:
-  `isHeader` in `app/src/wsTree.ts`). What follows from it, all in lib.rs next to
+  layout and the only kind that can be active. `is_folder` is STORED, set by every
+  `workspace_pin_project_folder` (git or not) — a non-git folder has a parent and no
+  `is_project_root`, so a purely derived rule called it a screen and the backfill grew a
+  pane onto it (mirror: `isHeader` in `app/src/wsTree.ts`). What follows from it, all in lib.rs next to
   `root_workspace_of`: `screen_or_self` (a header hands activation to `first_screen_of` —
   its first non-header child in sidebar order — or errs when it has none) is applied by
   `workspace_set_active` AND the RPC `select-workspace` / `action.connect`;
