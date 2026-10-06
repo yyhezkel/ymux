@@ -77,6 +77,10 @@ Cross-builds the CLI and stages three files into `src-tauri/resources/`:
 - **Staging is by sha256, not mtime.** Everything in `resources/` is pulled into the app
   crate with `include_bytes!`/`include_str!` and Cargo's staleness check is mtime-based,
   so re-copying a byte-identical file used to force a full rebuild of the 9.4k-line lib.
+- **The path scrub is not reproducibility.** `RUSTFLAGS` `--remap-path-prefix` strips
+  developer paths from the binary; it does not make two builds byte-identical. The
+  compiler is pinned separately: `src-tauri/rust-toolchain.toml` and the four workflows'
+  `toolchain:` input all say `1.95.0` (keep them equal).
 - The musl cross-build links with `rust-lld` (`src-tauri/.cargo/config.toml`), so a
   Windows runner needs no external linker.
 - `remote-manifest.json` gets a fresh `built_at` every run. **That churn is cosmetic**
