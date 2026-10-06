@@ -67,7 +67,8 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
   the wizard offers retry/skip per step and a checkpoint is saved after every state
   change, so a second pass resumes.
 - Profiles persist in `%APPDATA%\ymux\provisioning-profiles.json`; original credentials
-  in `provisioning-secrets.json`.
+  in `provisioning-secrets.json`, wrapped by `secret_env::protect_b64` (DPAPI, no
+  PowerShell shell-out); off Windows that returns `Err` and nothing is written.
 
 **This is the file where Rule #3 (argv arrays, never string concatenation) is enforced
 most often.** It and `local_setup.rs` are the two paths that build remote commands from

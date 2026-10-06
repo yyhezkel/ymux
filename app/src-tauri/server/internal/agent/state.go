@@ -39,6 +39,9 @@ const (
 	StateDone State = "done"
 	// StateNeedsInput: the agent is blocked on the human.
 	StateNeedsInput State = "needs-input"
+	// StateFailed: the turn died on an API error (StopFailure hook). Exits
+	// via prompt/stop/notification/session-end like any other state.
+	StateFailed State = "failed"
 )
 
 // needsInputNotifications are Claude Code's documented notification_type
@@ -131,6 +134,8 @@ func (r *Run) ApplyHook(subkind, notificationType string, now time.Time) bool {
 		next = StateRunning
 	case "stop":
 		next = StateDone
+	case "stop-failure":
+		next = StateFailed
 	case "notification":
 		switch {
 		case needsInputNotifications[notificationType]:

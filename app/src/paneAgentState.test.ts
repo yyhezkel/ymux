@@ -38,6 +38,17 @@ test("the three colours map to the three states", () => {
   assert.equal(trafficLight(input({ state: "needs-input" })), "red");
 });
 
+test("a failed turn paints the failed light, but only while trustworthy", () => {
+  // StopFailure must not look like yellow "done"; a disconnected or stale
+  // failed pane is no evidence, same gates as every other state.
+  assert.equal(trafficLight(input({ state: "failed" })), "failed");
+  assert.equal(trafficLight(input({ state: "failed", connected: false })), null);
+  assert.equal(
+    trafficLight(input({ state: "failed", stateSince: NOW - STALE_AFTER_MS - 1 })),
+    null,
+  );
+});
+
 test("a disconnected pane shows nothing, whatever it last said", () => {
   // Otherwise a pane keeps displaying the state it had when its session
   // died, which reads as a live agent that is simply never finishing.
@@ -97,6 +108,7 @@ test("the tooltip key distinguishes our card from the agent's own ask", () => {
   assert.equal(trafficLightKey("red", false), "pane.agent.state.needs_input");
   assert.equal(trafficLightKey("green", false), "pane.agent.state.running");
   assert.equal(trafficLightKey("yellow", false), "pane.agent.state.done");
+  assert.equal(trafficLightKey("failed", false), "pane.agent.state.failed");
 });
 
 test("elapsed renders M:SS and never counts backwards", () => {

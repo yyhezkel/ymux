@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/src/local_wizard.rs
   - app/src-tauri/src/settings.rs
   - app/src-tauri/src/updater.rs
+  - app/src-tauri/src/updater/macos.rs
 ---
 
 # Setup wizards, settings, updates
@@ -141,10 +142,10 @@ seconds:
 4. **Test connect** — opens a real russh session and runs the same auth ladder the app
    uses, so a green test means the workspace will connect.
 
-## `updater.rs` (1,003) — check only
+## `updater.rs` — check, install (Windows NSIS / macOS dmg), version manager
 
-Fetches a remote `manifest.json`, compares versions, emits `update:available`. **No
-download or install** on the check path — that needs signing keys.
+**Check path** fetches a remote `manifest.json`, compares versions, emits
+`update:available`. It never downloads.
 
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.
@@ -153,6 +154,37 @@ Fetch is native `ureq` + rustls in-process since v0.2.3. Before that it shelled 
 PowerShell, which broke on machines where `powershell.exe` is intercepted by AV/EDR or
 running in Constrained Language Mode — the parser-error output (the script source echoed
 back) surfaced as the user-facing error message.
+
+**Install path** (`download_and_install_update`, `updater_install_version`) is split by
+`cfg(target_os)`; every error is an `Err(String)` returned before any exit is scheduled:
+
+- **Windows** — NSIS installer download, sha256 check, spawn, exit. Unchanged.
+- **macOS** — `Manifest::dmg_for_arch(mac_dmg_arch_tag(ARCH))` yields the per-arch
+  `dmg_x64_*` / `dmg_aarch64_*` url + sha256. No url → "falling back to manual download";
+  no sha (manifest path) → refuses unverified. `updater_install_version` uses
+  `ReleaseInfo.dmg_url` (sha optional, settings backup kept). Both call
+  `macos::install_dmg_and_relaunch`.
+- **Linux** — refusal string; no in-app update.
+
+`parse_releases_for_arch(body, arch)` picks the dmg asset by arch; `parse_releases`
+delegates with `std::env::consts::ARCH`.
+
+## `updater/macos.rs` — dmg mount, swap, relaunch
+
+`install_dmg_and_relaunch(app, url, expected_sha, label)`: `bundle_root_of(current_exe())`
+(must be inside a `.app`) → parent-dir writable precheck → download to
+`temp_dir()/ymux-update-<label>.dmg` → sha256 compare (mismatch deletes the dmg) →
+`/usr/bin/hdiutil attach -nobrowse -readonly` → exactly one `*.app` → clear stale
+`.ymux-update-staging.app` / `.ymux-update-old.app` → `/usr/bin/ditto` into staging →
+rename bundle→old, staging→bundle (second rename failing renames old back) →
+`hdiutil detach` on every post-attach path → best-effort `xattr -dr
+com.apple.quarantine` → best-effort cleanup → detached `/bin/sh` script (const
+`WAIT_THEN_OPEN`) waits for this pid to die, then `open`s the bundle → 800 ms →
+`flush_log` → `app.exit(0)`.
+
+Absolute tool paths, `.arg()` only (Rule #3). Rerun after a crash is safe: stale staging
+and old bundles are removed first. Compiles only in `build-macos-intel.yml`; **not run
+live** (Rule #14) — bundles are ad-hoc signed, not notarized.
 
 ## Invariants
 
@@ -169,6 +201,9 @@ back) surfaced as the user-facing error message.
   and run (and `lib.rs::migrate_wsl_workspaces` rewrites them to `Local` on load), but
   nothing creates new ones. `wsl_exec` survives because `worktrees.rs` still dispatches
   on it.
+- `LocalSetupInput` no longer has `wsl_username`; the `CreateWslUser` step handler
+  (kept for compat) derives the name from `$USERNAME` (fallback `ymux`). Old payloads that
+  still send the key deserialize fine (no `deny_unknown_fields`).
 - `CREATE_NO_WINDOW` is not optional — a missing flag is a console flash, not an error,
   so it fails review rather than CI.
 - `hidden_cmd` sets `kill_on_drop(true)`: tokio does NOT kill a child when a timeout

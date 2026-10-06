@@ -88,8 +88,6 @@ export function LocalSetupFlow(p: Props) {
   // result (missing → checked).
   const [checkedTools, setCheckedTools] = createSignal<Set<string>>(new Set());
   const [installLocalHooks, setInstallLocalHooks] = createSignal(true);
-  // The WSL persistent-environment group (tmux-backed panes).
-  const [wslUsername, setWslUsername] = createSignal("");
   // The persistence group. Windows gets persistence from the zellij tool
   // row instead, so this is the macOS tmux chain only.
   const [wslGroup, setWslGroup] = createSignal(true);
@@ -157,11 +155,6 @@ export function LocalSetupFlow(p: Props) {
       // the chain is guaranteed to fail — start it unchecked (and the
       // group checkbox is disabled below) instead of failing mid-run.
       if (mac && !r.winget.present && !r.mac?.tmux.present) setWslGroup(false);
-      if (!wslUsername().trim() && r.wsl.default_distro) {
-        // Existing distro → an existing user likely exists too; the
-        // backend only creates one when OOBE never ran.
-        setWslUsername("");
-      }
     } catch (e) {
       setInspectErr(String(e));
     } finally {
@@ -222,7 +215,6 @@ export function LocalSetupFlow(p: Props) {
         input: {
           steps,
           distro: mac ? null : (inspect()?.wsl.default_distro ?? null),
-          wsl_username: mac ? null : (wslUsername().trim() || null),
           workspace_name: workspaceName().trim() || null,
           create_workspace: true,
           workspace_cwd: workspaceCwd().trim() || null,

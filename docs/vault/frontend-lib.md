@@ -13,8 +13,10 @@ covers:
   - app/src/bidi.ts
   - app/src/copyBidi.ts
   - app/src/mouseRtl.ts
+  - app/src/popoutProfile.ts
   - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
+  - app/src/claudeRunning.ts
   - app/src/logger.ts
   - app/src/shortcuts.ts
   - app/src/stt.ts
@@ -22,6 +24,10 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+unowned:
+  - app/src/bindings/*.ts   # ts-rs generated
+  - app/src/*.test.ts   # tests are the spec, deliberately uncovered
+  - app/src/vite-env.d.ts   # vite type shim
 ---
 
 # Frontend library modules
@@ -184,6 +190,8 @@ modules the tests *are* the specification.
 matcher so the visual→logical pass protects escapes **exactly** the way this file does —
 one definition of "what an escape looks like".
 
+**Known limit (DEFERRED):** `bidi_reorder` has the terminal-wg "cursed cursor" — caret stays pinned right and a partial repaint can leave a line half-reordered, because the transform runs per rAF chunk while the TUI addresses untransformed columns. Fix needs whole-line reassembly + cursor tracking; see `docs/DECISIONS.md` and `docs/RTL-TEST.md` § `bidi_reorder` — known limits.
+
 **`copyBidi.ts` (185)** — visual→logical for text on its way to the **clipboard**.
 Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on screen but
 pastes correctly, while Claude Code renders correctly and pastes reversed — exactly
@@ -239,8 +247,11 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window that never loads settings still
+  again — the backend is authoritative, so a popout window (which loads settings only for the RTL profiles) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
+- **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
+  `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
+  hand-off of the origin pane's RTL profile to its popout window.
 - **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
   `dir` react together. A missing key returns the key itself.
@@ -249,6 +260,10 @@ past installs), `fontInstall`, and `fontUninstall`.
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
   positions divided by `devicePixelRatio` (WebView2 reports physical pixels, wry's macOS
   backend reports logical points).
+- **`claudeRunning.ts` (26)** — pure decisions for the persisted `claude_running` flag:
+  `tuiSignalOnConnect(mode, restoring, persisted)` (claude→true; non-restoring→false; restoring
+  with persisted true→true; else null = untouched) and `claudeRunningWrite(persisted, on)`
+  (null when no transition). App.tsx owns the invokes.
 - **`sessionRestore.ts` (102)** — remembers which tmux session each SSH pane was attached
   to, so the next start re-attaches instead of showing [Connect]. **localStorage on
   purpose**: per-machine, high-churn session state, the same class as window rects and
