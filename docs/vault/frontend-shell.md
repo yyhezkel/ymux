@@ -31,6 +31,8 @@ covers:
   - app/src/useNarrow.ts
   - app/src/icons.tsx
   - app/src/TechText.tsx
+unowned:
+  - app/src/tabsHarness.tsx   # Phase 84.F CSS harness, not part of the app
 ---
 
 # Frontend shell — App, sidebar, layout, panes, panel chrome
@@ -45,13 +47,15 @@ workspace/settings bootstrap runs in those windows:
 
 | label | renders | id |
 |---|---|---|
-| `popout-<sid>` | `<PopoutTerminal>` | terminal session |
+| `popout-<sid>` | `<PopoutTerminal>` | terminal session (origin profile via `ymux.popout.profile.<sid>`) |
 | `browser-popout-<ws>` | `<PopoutBrowser>` | workspace |
 
 The browser prefix deliberately does NOT start with `popout-`, so the two checks cannot
 collide — and neither can their capability globs, which are prefix-anchored too. The
 xterm CSS and `App.css` imports at the top are global on purpose: a popout that skipped
 them rendered unstyled, which read as a blank white window.
+`App.tsx` `popOutPane` writes `ti.profile` under `popoutProfileKey(sid)` before `popout_pane`;
+the `popout:closed` listener removes it first.
 
 ## `App.tsx` (5,566) — one component, ~50 signals
 
