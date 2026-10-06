@@ -145,6 +145,14 @@ func (r *HookRegistry) mint(name, addr, paneID string) (*hookEntry, map[string]s
 	return e, env, nil
 }
 
+// hasSession reports whether name is registered (Phase 111).
+func (r *HookRegistry) hasSession(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.byName[name]
+	return ok
+}
+
 // paneInUse reports whether a live session already carries paneID.
 func (r *HookRegistry) paneInUse(paneID string) bool {
 	r.mu.Lock()
@@ -209,6 +217,13 @@ func (r *HookRegistry) SetPolicy(name, policy string) bool {
 	}
 	e.policy = policy
 	logger.Info("hook policy set", "pane", e.paneID, "policy", policy)
+	// Phase 111: keep the session's own copy current, so a restart recovers
+	// the policy the user chose (RecoverHooks). Best-effort.
+	if r.tmux != nil {
+		if err := r.tmux.SetEnv(name, "YMUX_POLICY", policy); err != nil {
+			logger.Warn("could not record the policy in the session", "pane", e.paneID, "err", err)
+		}
+	}
 	return true
 }
 

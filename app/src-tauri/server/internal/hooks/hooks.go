@@ -28,6 +28,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,15 +54,21 @@ const (
 	ChallengeTag = TagLegacy
 )
 
-// Start binds an ephemeral localhost port and serves hook RPC connections for
-// the life of the process, matching callers against resolvers in order.
-// Every resolver that is also a core.AddrSink learns the bound address.
+// Start binds a localhost port and serves hook RPC connections for the life
+// of the process, matching callers against resolvers in order. Every
+// resolver that is also a core.AddrSink learns the bound address.
 // Best-effort: if the listen fails, hooks simply won't reach the daemon
 // (logged) and the rest of the server is unaffected.
-func Start(resolvers ...core.HookResolver) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		logger.Warn("RPC listen failed, hooks won't reach the daemon", "err", err)
+//
+// portFile (Phase 111), when non-empty, makes the port survive a restart: a
+// session's hooks find the daemon through YMUX_SOCKET_ADDR, fixed in the
+// environment of every process already running in it (claude included), so
+// a daemon that came back on a new port would leave all of them dialing a
+// dead one. The previous port is tried first; only if it is taken does the
+// listener fall back to an ephemeral one (and those sessions lose hooks).
+func Start(portFile string, resolvers ...core.HookResolver) {
+	ln := listenPreferred(portFile)
+	if ln == nil {
 		return
 	}
 	addr := ln.Addr().String()
@@ -79,6 +87,38 @@ func Start(resolvers ...core.HookResolver) {
 			go handleConn(conn, resolvers)
 		}
 	}()
+}
+
+// listenPreferred binds the port remembered in portFile, else an ephemeral
+// one, and records whichever it got. nil when nothing could be bound.
+func listenPreferred(portFile string) net.Listener {
+	if portFile != "" {
+		if b, err := os.ReadFile(portFile); err == nil {
+			if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 && p < 65536 {
+				ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(p)))
+				if err == nil {
+					return ln
+				}
+				logger.Warn("previous hook port unavailable; sessions started before this restart lose their hooks",
+					"port", p, "err", err)
+			}
+		}
+	}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		logger.Warn("RPC listen failed, hooks won't reach the daemon", "err", err)
+		return nil
+	}
+	if portFile != "" {
+		_, port, _ := net.SplitHostPort(ln.Addr().String())
+		tmp := portFile + ".tmp"
+		if err := os.WriteFile(tmp, []byte(port+"\n"), 0o600); err == nil {
+			_ = os.Rename(tmp, portFile)
+		} else {
+			logger.Warn("could not record the hook port", "err", err)
+		}
+	}
+	return ln
 }
 
 func handleConn(conn net.Conn, resolvers []core.HookResolver) {

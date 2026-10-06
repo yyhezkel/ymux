@@ -340,6 +340,12 @@ func (s *Service) spawnSession(name, cwd, policy, workspaceID, paneID string, cm
 				e, env = nil, nil
 			} else {
 				e.policy, e.workspaceID = policy, workspaceID
+				// Phase 111: what a restarted daemon needs to rebuild this
+				// entry lives with the session (RecoverHooks).
+				env["YMUX_POLICY"] = policy
+				if workspaceID != "" {
+					env["YMUX_WORKSPACE_ID"] = workspaceID
+				}
 			}
 		}
 	}

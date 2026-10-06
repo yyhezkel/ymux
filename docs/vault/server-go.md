@@ -334,6 +334,21 @@ a minted `term_<hex>`. `ValidPaneID`: 1–64 of `[A-Za-z0-9_-]` (it lands in an 
 and in hook payloads), else 400; an id a live session already carries → 409. Agent
 splits and resumes still mint.
 
+**Hook routing survives a restart (Phase 111, 2.12.0, `term/recover.go` + `hooks.Start`).**
+The registry is in memory, so a restart (every add-on update) used to leave browser sessions
+running with dead hooks — refused as unknown, no light, feed or gate. Two halves fix it:
+`hooks.Start(portFile, …)` re-binds the port recorded in `<data dir>/hook-port` (0600) before
+falling back to an ephemeral one — `YMUX_SOCKET_ADDR` is frozen in the environment of every
+process already running in a session, claude included, so a new port would orphan them all.
+Then `Service.RecoverHooks()` (main.go, after `SetDataDir`) reads each tmux session's own
+environment (`Tmux.Environment` = `show-environment`): a session whose `YMUX_SOCKET_ADDR`
+is this listener, with a 64-hex token and a valid pane id not already registered, is added
+back with `YMUX_POLICY` (written at create, and by `SetPolicy` via `set-environment`) and
+`YMUX_WORKSPACE_ID` (dropped if that workspace is gone). **Desktop sessions carry the same
+variable names pointed at the desktop's tunnel and are never claimed.** No new store and no
+token on disk: tmux already holds it for the hook processes; the env is never logged (only
+counts). Sessions created before 2.12.0 recover with policy `none`.
+
 **Session argv (Phase 110, 2.11.0).** The create body also takes `cmd` — an argv the
 session runs instead of a shell (a browser pane opened in "claude" mode). `sessionArgv`
 bounds it (≤ 32 args, ≤ 4096 bytes each, no NUL, non-empty argv[0]) and resolves a bare

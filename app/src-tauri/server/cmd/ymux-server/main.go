@@ -310,12 +310,16 @@ func main() {
 	if chatMgr != nil {
 		hookResolvers = append(hookResolvers, chatMgr)
 	}
-	hooks.Start(hookResolvers...)
+	hooks.Start(filepath.Join(*base, "hook-port"), hookResolvers...)
 	// Phase 102 (B4): notes persist next to the other stores, and the box's
 	// listening ports are detected for browser clients. Port watch starts
 	// after hooks.Start so the hook listener's own port is known and skipped.
 	termSvc.SetDataDir(*base)
 	termSvc.SetWebRoot(*base)
+	// Phase 111: sessions created before a restart get their hook routing
+	// back from their own tmux environment (same port, same token). After
+	// SetDataDir, so a recovered session's workspace can be checked.
+	termSvc.RecoverHooks()
 	termSvc.StartPortWatch(context.Background(), *port)
 
 	srv := api.NewServer(token, *port, api.Deps{
