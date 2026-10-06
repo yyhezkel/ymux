@@ -40,6 +40,8 @@ use ymux_core::http::get_with_retry;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Size keys (`msi_size`, `nsis_size`) are deliberately absent: the sha256
+/// check on install already rejects any altered download.
 #[derive(Clone, Serialize, Deserialize)]
 pub(crate) struct Manifest {
     pub version: String,
@@ -121,6 +123,8 @@ pub(crate) struct ManifestHook {
     pub version: String,
     #[serde(default)]
     pub url: Option<String>,
+    /// Parsed for forward-compat, read nowhere: no code compares it to
+    /// `APP_VERSION`. Enforcement would be a separate decision.
     #[serde(default)]
     pub min_ymux_version: Option<String>,
 }
