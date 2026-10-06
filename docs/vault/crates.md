@@ -51,8 +51,13 @@ The only crate `app` cannot function without. Three files:
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
   *list* because macOS caps `sun_path` at 104 bytes.
 
-**`log_writer.rs` (554)** — the queued writer behind the logger, and the reason
+**`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.
+Rotation is safe across two processes sharing a config dir: `rotate` closes its handle,
+takes `File::lock` on `debug.log.lock` around stat + rename only, and renames only if
+`debug.log` is still over the cap (fail-open unlocked if the lock can't be taken);
+`write_to_current` compares handle length to path length once per batch and reopens on a
+mismatch, so a process whose file another rotated aside stops appending to `debug.log.1`.
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
