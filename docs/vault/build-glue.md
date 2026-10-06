@@ -4,6 +4,7 @@ covers:
   - app/package.json
   - app/vite.config.ts
   - app/scripts/build-linux-cli.ps1
+  - rust-toolchain.toml
   - app/scripts/build-release.ps1
   - app/scripts/reset-local-setup.ps1
   - app/src-tauri/Cargo.toml
@@ -81,6 +82,10 @@ Cross-builds the CLI and stages three files into `src-tauri/resources/`:
   Windows runner needs no external linker.
 - `remote-manifest.json` gets a fresh `built_at` every run. **That churn is cosmetic**
   (Rule #12) — discard it unless the embedded sha256 actually moved.
+- **The `--remap-path-prefix` scrub covers paths only.** It keeps the build machine's
+  `$CARGO_HOME`/`$RUSTUP_HOME` out of `.rodata`; it does not make the binary
+  machine-independent. A byte-identical `ymux-linux-x64` also needs the same rustc (pinned
+  by `rust-toolchain.toml`), the same `Cargo.lock` and the same source.
 - macOS has no equivalent: `build-macos-intel.yml` stages a native `ymux-cli` itself,
   because this script is PowerShell-only.
 
@@ -91,6 +96,18 @@ with a cascade of errors pointing at innocent lines. Em-dashes in `#` comments a
 inside `"..."` they are a build-breaker. `ci-windows.yml` parse-checks these scripts in
 seconds, under `shell: powershell` (5.1) specifically because that is the shell whose
 encoding behaviour causes the bug.
+
+### The rustc pin (`rust-toolchain.toml`)
+
+Repo-root `rust-toolchain.toml` pins `channel = "1.95.0"`, the rustc that built the
+committed `ymux-linux-x64`, so CI and a dev box compile the CLI with the same compiler.
+Every `dtolnay/rust-toolchain` step (ci-windows, build-windows, build-macos-intel,
+warm-rust-cache) passes `toolchain: 1.95.0` explicitly; that value must equal `channel`.
+The action itself stays SHA-pinned to the `stable` branch (its `v1` tag is `master`,
+where `toolchain` is required). Bumping rustc = change the toml and all four workflow
+inputs together, then rebake the CLI blob with a release. Because the compiler is fixed,
+ci-windows's "Report staged-resource drift" notice (remote-manifest sha256 changed) now
+means the CLI source moved since the last rebake, not that CI's rustc differs.
 
 ## `app/src-tauri/Cargo.toml` and `build.rs`
 
