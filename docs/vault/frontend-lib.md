@@ -37,7 +37,7 @@ The non-component half of `app/src/`. Two things dominate: the terminal wrapper,
 
 ## `terminalInstance.ts` (1,954) — the xterm.js wrapper
 
-**Logging:** every failure/diagnostic site uses the file's `termLog = createLogger("TERM")` (Rule #9) — zero raw `console.*`; never log PTY content (Rule #1).
+**Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
