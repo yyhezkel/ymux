@@ -1,5 +1,6 @@
 // Phase 24.D: claude_chat module deleted with the ClaudeChat pane.
 mod addons;
+mod agent_runs_store;
 mod bidi_filter;
 mod bootstrap_guard;
 mod brief;
@@ -243,7 +244,8 @@ pub(crate) struct AppState {
 /// arrival order, which needs a single writer and a monotonic sequence.
 /// Third, a transition table here is unit-testable; a pile of derived
 /// signals is not.
-#[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Default, Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub(crate) enum PaneAgentState {
     /// No hook has ever arrived for this pane. Renders nothing — a pane
     /// running a plain shell must not sprout a status light.
