@@ -1,6 +1,6 @@
 {
   "backend-claude": {
-    "app/src-tauri/src/claude_log.rs": "5c2da4f93556ca6aae96a0cfba2bdeb07d339b5930249ceb71a647948587b1b4",
+    "app/src-tauri/src/claude_log.rs": "c81b10c8fe51d7484c2ef02643648c4eb3e9b5a4cedaac3bea7e190e6278b06a",
     "app/src-tauri/src/claude_summary.rs": "52d22f583b83bacd229d11733309a5ac9fcea0dc1231ddcfeb1b3f84612711bc",
     "app/src-tauri/src/claude_usage.rs": "57c87c2c494e783aab50a24fd6b268df110457f2399d3fa457986bd9dc7302b3",
     "app/src-tauri/src/claude_usage_local.rs": "b0f1abecd1e23d0fc8083e940509f70449bb04beefbe2bd98e79056e5b6b304e",
