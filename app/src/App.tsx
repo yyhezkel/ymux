@@ -982,6 +982,13 @@ function App() {
         String(settings()?.font.terminal_size_pt ?? 13),
       );
     }
+    // The popout window only knows its sid; hand it the pane id so it can ask
+    // pane_persistence_list whether to arm the tmux wheel proxy.
+    try {
+      localStorage.setItem(`ymux.popout.pane.${sid}`, paneId);
+    } catch (e) {
+      log.warn("popout pane-id seed failed", e);
+    }
     try {
       await invoke("popout_pane", {
         sessionId: sid,
