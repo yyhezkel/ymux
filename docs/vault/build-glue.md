@@ -174,7 +174,8 @@ binaries.
 ## `sdk-gen/` — the SDK drift-guard
 
 `ci-check.mjs` regenerates every spec and SDK from the current server source and fails if
-anything moved versus what is committed:
+anything moved versus what is committed — printing the `--stat` AND the diff itself (first
+200 lines), so the CI log shows what to fix without a local Go toolchain:
 
 1. `emit-specs.mjs` — runs `go run ./cmd/ymux-server openapi` and writes
    `sdk-gen/specs/{openapi,asyncapi,frames.schema}.json`
