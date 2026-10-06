@@ -276,6 +276,50 @@ fn finish(
     rep
 }
 
+/// Token field rule shared with Go's `tokenCount`: absent or null is 0, a JSON
+/// non-negative integer is itself, anything else (1.5, -1, "7", true) is Err.
+fn token_u64(obj: &serde_json::Value, key: &str) -> Result<u64, ()> {
+    match obj.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(0),
+        Some(n) => n.as_u64().ok_or(()),
+    }
+}
+
+/// The six token fields of one `message.usage` block, validated.
+#[derive(Default)]
+struct UsageTokens {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    w5: u64,
+    w1h: u64,
+}
+
+/// `usage` and `cache_creation` must each be an object when present and
+/// non-null; every token field inside must pass `token_u64`.
+fn parse_usage(usage: &serde_json::Value) -> Result<UsageTokens, ()> {
+    if !usage.is_object() {
+        return Err(());
+    }
+    let mut t = UsageTokens {
+        input: token_u64(usage, "input_tokens")?,
+        output: token_u64(usage, "output_tokens")?,
+        cache_read: token_u64(usage, "cache_read_input_tokens")?,
+        cache_write: token_u64(usage, "cache_creation_input_tokens")?,
+        ..Default::default()
+    };
+    match usage.get("cache_creation") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(cc) if cc.is_object() => {
+            t.w5 = token_u64(cc, "ephemeral_5m_input_tokens")?;
+            t.w1h = token_u64(cc, "ephemeral_1h_input_tokens")?;
+        }
+        Some(_) => return Err(()),
+    }
+    Ok(t)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn scan_file(
     path: &Path,
@@ -316,6 +360,18 @@ fn scan_file(
                 continue;
             }
         };
+        // Validate before the type filter, as Go's typed decode does: a bad
+        // token field on any line containing "usage" is one parse error.
+        let parsed = match v.get("message").and_then(|m| m.get("usage")) {
+            None | Some(serde_json::Value::Null) => UsageTokens::default(),
+            Some(u) => match parse_usage(u) {
+                Ok(t) => t,
+                Err(()) => {
+                    rep.parse_errors += 1;
+                    continue;
+                }
+            },
+        };
         if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
         }
@@ -345,15 +401,8 @@ fn scan_file(
             continue;
         }
 
-        let num = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
-        let cc = usage.get("cache_creation");
-        let sub = |k: &str| {
-            cc.and_then(|c| c.get(k))
-                .and_then(|n| n.as_u64())
-                .unwrap_or(0)
-        };
-        let (mut w5, w1h) = (sub("ephemeral_5m_input_tokens"), sub("ephemeral_1h_input_tokens"));
-        let cw = num("cache_creation_input_tokens");
+        let (mut w5, w1h) = (parsed.w5, parsed.w1h);
+        let cw = parsed.cache_write;
         // Older transcripts carry only the flat total. Attribute it to the
         // CHEAPER bucket, so an unknown split under-states rather than
         // over-states what the user is told they spent.
@@ -362,9 +411,9 @@ fn scan_file(
         }
         let tok = ClaudeTokens {
             calls: 1,
-            in_tokens: num("input_tokens"),
-            out_tokens: num("output_tokens"),
-            cache_read: num("cache_read_input_tokens"),
+            in_tokens: parsed.input,
+            out_tokens: parsed.output,
+            cache_read: parsed.cache_read,
             cache_write: cw,
             cache_write_5m: w5,
             cache_write_1h: w1h,
@@ -607,6 +656,47 @@ mod tests {
         let rep = scan(&tmp, now - 3600, now);
         assert_eq!(rep.parse_errors, 1);
         assert_eq!(rep.totals.calls, 1);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D4 parity with Go: a non-uint token field is one parse error and no call;
+    // null and absent are valid zeros.
+    #[test]
+    fn rejects_non_uint_token_fields() {
+        let now = chrono::Utc::now().timestamp();
+        let iso = chrono::DateTime::from_timestamp(now - 60, 0).expect("ts").to_rfc3339();
+        let mk = |usage: &str| {
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","usage":{usage}}}}}"#)
+        };
+        let bad = [
+            r#"{"input_tokens":1.5}"#,
+            r#"{"output_tokens":-1}"#,
+            r#"{"cache_read_input_tokens":"7"}"#,
+            r#"{"cache_creation_input_tokens":true}"#,
+            r#"{"cache_creation":{"ephemeral_5m_input_tokens":1.5}}"#,
+            r#"{"cache_creation":{"ephemeral_1h_input_tokens":-1}}"#,
+            r#"{"input_tokens":1e3}"#,
+            r#"{"cache_creation":"x"}"#,
+            r#""x""#,
+        ];
+        for (n, u) in bad.iter().enumerate() {
+            let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            write_transcript(&tmp, "p", "s1", &[mk(u)]);
+            let rep = scan(&tmp, now - 3600, now);
+            assert_eq!((rep.parse_errors, rep.totals.calls), (1, 0), "{u}");
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_transcript(
+            &tmp,
+            "p",
+            "s1",
+            &[mk(r#"{"input_tokens":null,"cache_creation":null}"#), mk(r#"{"output_tokens":4}"#)],
+        );
+        let rep = scan(&tmp, now - 3600, now);
+        assert_eq!((rep.parse_errors, rep.totals.calls, rep.totals.out_tokens), (0, 2, 4));
         let _ = std::fs::remove_dir_all(&tmp);
     }
 }

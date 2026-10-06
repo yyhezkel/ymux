@@ -25,11 +25,13 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -115,6 +117,28 @@ type ClaudeUsageReport struct {
 
 // ─── the transcript line we care about ──────────────────────────────────
 
+// tokenCount is a token field that must be absent, null, or a JSON
+// non-negative integer. Anything else (1.5, -1, "7", true) fails the decode, so
+// the caller counts one parse error and drops the line — the same rule the Rust
+// mirror applies with as_u64. Values above int64 max are rejected too, since
+// the report fields are int64.
+type tokenCount int64
+
+func (t *tokenCount) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if s == "null" {
+		*t = 0
+		return nil
+	}
+	// digits only: rejects sign, fraction, exponent, strings, bools
+	n, err := strconv.ParseUint(s, 10, 63)
+	if err != nil {
+		return fmt.Errorf("token field %s is not a non-negative integer", s)
+	}
+	*t = tokenCount(n)
+	return nil
+}
+
 type claudeLine struct {
 	Type        string `json:"type"`
 	Timestamp   string `json:"timestamp"`
@@ -124,13 +148,13 @@ type claudeLine struct {
 	Message     struct {
 		Model string `json:"model"`
 		Usage struct {
-			InputTokens         int64 `json:"input_tokens"`
-			OutputTokens        int64 `json:"output_tokens"`
-			CacheReadTokens     int64 `json:"cache_read_input_tokens"`
-			CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
+			InputTokens         tokenCount `json:"input_tokens"`
+			OutputTokens        tokenCount `json:"output_tokens"`
+			CacheReadTokens     tokenCount `json:"cache_read_input_tokens"`
+			CacheCreationTokens tokenCount `json:"cache_creation_input_tokens"`
 			CacheCreation       struct {
-				Ephemeral5m int64 `json:"ephemeral_5m_input_tokens"`
-				Ephemeral1h int64 `json:"ephemeral_1h_input_tokens"`
+				Ephemeral5m tokenCount `json:"ephemeral_5m_input_tokens"`
+				Ephemeral1h tokenCount `json:"ephemeral_1h_input_tokens"`
 			} `json:"cache_creation"`
 			Speed string `json:"speed"`
 		} `json:"usage"`
@@ -353,19 +377,19 @@ func scanClaudeFile(
 		}
 
 		u := l.Message.Usage
-		w5, w1h := u.CacheCreation.Ephemeral5m, u.CacheCreation.Ephemeral1h
+		w5, w1h := int64(u.CacheCreation.Ephemeral5m), int64(u.CacheCreation.Ephemeral1h)
 		// Older transcripts have only the flat total. Attribute it to the
 		// 5-minute bucket — the cheaper of the two, so an unknown split
 		// under-states rather than over-states the cost.
 		if w5 == 0 && w1h == 0 && u.CacheCreationTokens > 0 {
-			w5 = u.CacheCreationTokens
+			w5 = int64(u.CacheCreationTokens)
 		}
 		tok := ClaudeTokens{
 			Calls:      1,
-			In:         u.InputTokens,
-			Out:        u.OutputTokens,
-			CacheRead:  u.CacheReadTokens,
-			CacheWrite: u.CacheCreationTokens,
+			In:         int64(u.InputTokens),
+			Out:        int64(u.OutputTokens),
+			CacheRead:  int64(u.CacheReadTokens),
+			CacheWrite: int64(u.CacheCreationTokens),
 			CacheW5m:   w5,
 			CacheW1h:   w1h,
 		}

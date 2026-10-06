@@ -386,3 +386,49 @@ func TestScanInvalidUTF8LineIsOneParseError(t *testing.T) {
 		t.Fatalf("parse_errors=%d calls=%d, want 1/1", rep.ParseErrors, rep.Totals.Calls)
 	}
 }
+
+// A token field must be absent, null, or a non-negative integer; anything else
+// makes the whole line one parse error (D4, mirrors Rust as_u64). Breaking this
+// means Go and Rust would total the same transcript differently.
+func TestScanRejectsNonUintTokenFields(t *testing.T) {
+	now := time.Now()
+	ts := now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	mk := func(usage string) string {
+		return `{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","usage":` + usage + `}}`
+	}
+	bad := []string{
+		`{"input_tokens":1.5}`,
+		`{"output_tokens":-1}`,
+		`{"cache_read_input_tokens":"7"}`,
+		`{"cache_creation_input_tokens":true}`,
+		`{"cache_creation":{"ephemeral_5m_input_tokens":1.5}}`,
+		`{"cache_creation":{"ephemeral_1h_input_tokens":-1}}`,
+		`{"input_tokens":1e3}`,
+		`{"cache_creation":"x"}`,
+		`"x"`,
+	}
+	for _, u := range bad {
+		root := t.TempDir()
+		writeTranscript(t, root, "proj", "s1", []string{mk(u)}, now)
+		rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if rep.ParseErrors != 1 || rep.Totals.Calls != 0 {
+			t.Fatalf("%s: parse_errors=%d calls=%d, want 1/0", u, rep.ParseErrors, rep.Totals.Calls)
+		}
+	}
+	// null and absent are valid zeros
+	root := t.TempDir()
+	writeTranscript(t, root, "proj", "s1", []string{
+		mk(`{"input_tokens":null,"cache_creation":null}`),
+		mk(`{"output_tokens":4}`),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 0 || rep.Totals.Calls != 2 || rep.Totals.Out != 4 {
+		t.Fatalf("parse_errors=%d calls=%d out=%d, want 0/2/4", rep.ParseErrors, rep.Totals.Calls, rep.Totals.Out)
+	}
+}
