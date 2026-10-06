@@ -255,7 +255,8 @@ files land in `%LOCALAPPDATA%\Microsoft\Windows\Fonts` and register under HKCU, 
 needs no elevation on Windows 10 1809+. `settings::list_system_fonts` reads that same
 hive, so an install is visible in the picker immediately. Exists because flagging
 unavailable families with ⚠️ was only half an answer — the user still had to go find a
-`.ttf`.
+`.ttf`. Catalog assets pin upstream release tags plus sha256, never a moving branch;
+MesloLGS NF uses the powerlevel10k-media tag `v2.3.3`.
 
 **`font_uninstall` is the mirror, and how it finds the files is the interesting part.**
 Which files belong to a catalog entry is derived from the CATALOG, not recorded at
