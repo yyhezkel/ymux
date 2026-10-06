@@ -132,6 +132,11 @@ out of this crate.
 RSA-aware `PrivateKey` wrapper). Functions that take a `Handle<SshClient>` plus
 credentials and return a result — nothing that needs `AppState`.
 
+`try_authenticate` step 3 (default keys `~/.ssh/id_{ed25519,ecdsa,rsa}`) takes its paths
+from the pure `default_key_paths(Option<String>)`. With neither `USERPROFILE` nor `HOME`
+set it gets `None`, logs "step 3 skipped, no home dir" and falls through to step 4
+(password) — it no longer returns `Err` and aborts the ladder.
+
 ## `ymux-tunnel` (527) — the reverse tunnel
 
 Bridges a remote-forwarded TCP channel to the local RPC endpoint. The preamble is an

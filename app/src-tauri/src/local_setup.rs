@@ -1255,7 +1255,7 @@ pub(crate) struct LocalSetupResult {
     /// (`InstallTmuxLocal` → `DeployTmuxConfLocal`) — true means it ran
     /// clean; a Local workspace is still created when no chain step was
     /// requested at all.
-    pub wsl_chain_ok: bool,
+    pub persistence_chain_ok: bool,
 }
 
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -2191,7 +2191,7 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
         workspace_name: None,
         failed_steps: failed_steps.clone(),
         skipped_steps,
-        wsl_chain_ok: chain_ok,
+        persistence_chain_ok: chain_ok,
     };
     if !failed_steps.is_empty() {
         log_warn(

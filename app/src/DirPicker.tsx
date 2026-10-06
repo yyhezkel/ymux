@@ -137,7 +137,8 @@ export function DirPicker(p: Props) {
   });
 
   const choose = (dir: string) => {
-    pushRecentDir(p.workspaceId, dir);
+    // inline consumer owns recents (PaneView.chooseDir)
+    if (!p.inline) pushRecentDir(p.workspaceId, dir);
     p.onPick(dir);
   };
 
