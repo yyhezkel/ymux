@@ -7918,4 +7918,6 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 
 2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
 2026-10-06 — ymux-app-src-terminalinstance-ts-2: closed FOLLOWUPS P2 (local pane Hebrew reversed under auto_per_line) as fixed by bc12388; docs-only, no source touched. NOT VERIFIED LIVE.
+
+2026-10-06 — ymux-app-src-tauri-src-28 (close-wsl-followup-obsolete): moved FOLLOWUPS P3 `is_local_workspace` WSL-routing entry to FOLLOWUPS-ARCHIVE.md as closed-obsolete (WSL removed; migrate_wsl_workspaces rewrites Wsl→Local on load). Docs-only, no source touched. Not verified live.
 2026-10-06 — ymux-app-src-tauri-src-22: closed FOLLOWUPS P2 (WSL elevation English-substring detection) as fixed by 65d6fdc; WSL install unreachable since 2026-08-19. Docs-only, no source touched. NOT VERIFIED LIVE.
