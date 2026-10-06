@@ -22,6 +22,7 @@ mod fonts;
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
 mod insights_local;
+mod insights_store;
 mod ipc_guard;
 mod ipc_meter;
 mod local_setup;
@@ -161,6 +162,10 @@ pub(crate) struct AppState {
     pub(crate) secret_env: Arc<Mutex<secret_env::SecretEnvStore>>,
     pub(crate) notifications: Arc<Mutex<Vec<NotificationItem>>>,
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
+    /// Active pane per workspace (workspace_id -> pane_id), pushed by the
+    /// frontend via `pane_set_active`. In-memory, last write wins. Taken
+    /// alone, never nested under another lock.
+    pub(crate) active_panes: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
     /// pane_id. turn-start = UserPromptSubmit hook, turn-end = Stop hook.
     /// Persisted on exit to `<config>/agent-runs.json` with each state's
@@ -397,6 +402,35 @@ impl AgentRunState {
         self.state = next;
         self.state_since = Some(std::time::SystemTime::now());
         true
+    }
+}
+
+#[cfg(test)]
+mod status_slot_tests {
+    use super::clear_if_current;
+    use std::collections::HashMap;
+
+    // Pins: a clear for the exact emitted text removes the slot.
+    #[test]
+    fn clears_on_match() {
+        let mut m = HashMap::from([("p".to_string(), "a".to_string())]);
+        assert!(clear_if_current(&mut m, "p", "a"));
+        assert!(m.is_empty());
+    }
+
+    // Pins: a newer status must survive an older timer (the bug this guards).
+    #[test]
+    fn keeps_newer_text() {
+        let mut m = HashMap::from([("p".to_string(), "new".to_string())]);
+        assert!(!clear_if_current(&mut m, "p", "old"));
+        assert_eq!(m.get("p").map(String::as_str), Some("new"));
+    }
+
+    // Pins: clearing an absent slot is a no-op, not a panic.
+    #[test]
+    fn absent_slot_is_noop() {
+        let mut m = HashMap::new();
+        assert!(!clear_if_current(&mut m, "p", "a"));
     }
 }
 
@@ -2630,6 +2664,19 @@ fn emit_data(
 /// Emits a transient status text for a pane. Used by remote-bootstrap to surface
 /// progress/errors. The frontend listens on `pane:status` events.
 pub(crate) fn emit_pane_status_event(app: &AppHandle, pane_id: &str, text: &str) {
+    // Mirror into AppState so a delayed clear can tell whether the slot still
+    // holds its own text. Lock is dropped before the emit.
+    {
+        let state = app.state::<AppState>();
+        // AI-NOTE: poisoned lock → skip the mirror; the event itself still goes out.
+        if let Ok(mut map) = state.pane_status.lock() {
+            if text.is_empty() {
+                map.remove(pane_id);
+            } else {
+                map.insert(pane_id.to_string(), text.to_string());
+            }
+        }
+    }
     let _ = app.emit(
         "pane:status",
         serde_json::json!({ "pane_id": pane_id, "text": text }),
@@ -2776,11 +2823,36 @@ fn pane_briefs(
     Ok(briefs.clone())
 }
 
-/// Spawns a tokio task that clears a pane's status text after `secs` seconds.
-pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, secs: u64) {
+/// Removes the slot only when it still holds `expected`; true when cleared.
+pub(crate) fn clear_if_current(
+    map: &mut HashMap<String, String>,
+    pane_id: &str,
+    expected: &str,
+) -> bool {
+    if map.get(pane_id).map(String::as_str) == Some(expected) {
+        map.remove(pane_id);
+        true
+    } else {
+        false
+    }
+}
+
+/// Spawns a tokio task that clears a pane's status text after `secs` seconds,
+/// but only if the pane still shows `expected` (a newer status must survive).
+pub(crate) fn schedule_status_clear(app: AppHandle, pane_id: String, expected: String, secs: u64) {
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
-        emit_pane_status_event(&app, &pane_id, "");
+        let cleared = match app.state::<AppState>().pane_status.lock() {
+            Ok(mut map) => clear_if_current(&mut map, &pane_id, &expected),
+            // AI-NOTE: poisoned lock → cannot verify the slot; keep the text.
+            Err(_) => false,
+        };
+        if cleared {
+            let _ = app.emit(
+                "pane:status",
+                serde_json::json!({ "pane_id": pane_id, "text": "" }),
+            );
+        }
     });
 }
 
@@ -4505,20 +4577,14 @@ async fn spawn_ssh(
         Ok(remote_bootstrap::BootstrapStatus::Uploaded { bytes, sha256: _ }) => {
             state.bootstrap_guard.clear_failure(&hkey, &wanted_sha);
             set_cli_alignment(app, state, &workspace_id, bootstrap_guard::Alignment::Ok);
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("ymux installed ({} bytes)", bytes),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 3);
+            let msg = format!("ymux installed ({} bytes)", bytes);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 3);
         }
         Ok(remote_bootstrap::BootstrapStatus::UnsupportedArch(arch)) => {
-            emit_pane_status_event(
-                app,
-                &pane_id,
-                &format!("remote arch '{}' not supported (no ymux binary)", arch),
-            );
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("remote arch '{}' not supported (no ymux binary)", arch);
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
         // We could not converge the remote onto our binary. The shell still
         // works; the CLI-dependent features do not, and this stays on screen
@@ -4555,8 +4621,9 @@ async fn spawn_ssh(
         }
         Err(e) => {
             tracing::warn!("remote bootstrap failed: {e}");
-            emit_pane_status_event(app, &pane_id, &format!("bootstrap failed: {e}"));
-            schedule_status_clear(app.clone(), pane_id.clone(), 5);
+            let msg = format!("bootstrap failed: {e}");
+            emit_pane_status_event(app, &pane_id, &msg);
+            schedule_status_clear(app.clone(), pane_id.clone(), msg, 5);
         }
     }
     drop(_boot_guard);
@@ -8740,6 +8807,23 @@ fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
 }
 
 #[tauri::command]
+pub(crate) fn pane_set_active(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    pane_id: String,
+) -> Result<(), String> {
+    if workspace_id.is_empty() || pane_id.is_empty() {
+        return Err("pane_set_active: empty workspace or pane id".into());
+    }
+    let mut map = state
+        .active_panes
+        .lock()
+        .map_err(|e| format!("pane_set_active: {e}"))?;
+    map.insert(workspace_id, pane_id);
+    Ok(())
+}
+
+#[tauri::command]
 fn pane_set_smart_bidi(
     state: State<'_, AppState>,
     app: AppHandle,
@@ -9233,6 +9317,10 @@ async fn pane_connect(
         &format!("[bidi] pane_connect seed: pane={pane_id} enabled={pane_smart_bidi}"),
     );
 
+    // A reconnect starts with a clean header: a stale status from the previous
+    // attempt must not outlive the problem it reported.
+    emit_pane_status_event(&app, &pane_id, "");
+
     // Secret rows never reach the typed `export` path: split them off, resolve
     // their values from the store by env owner. A name with no stored value is
     // reported on the pane, never typed and never guessed.
@@ -9430,6 +9518,12 @@ async fn pane_connect(
         // is the point of the smart local setup. mode="plain" still
         // forces a bare shell, mirroring the SSH mode override.
         Connection::Wsl { distro } => {
+            // A missing wsl.exe / distro otherwise dies silently inside the pty.
+            if let Some(msg) = local_setup::wsl_pane_problem(distro.as_deref()).await {
+                log_warn("PTY", &format!("WSL preflight failed for pane {pane_id}: {msg}"));
+                emit_pane_status_event(&app, &pane_id, &msg);
+                return Err(msg);
+            }
             // No delivery path into a wsl.exe session: say so instead of
             // silently dropping the rows.
             if !secret_names.is_empty() {
@@ -12845,6 +12939,7 @@ pub fn run() {
                 rpc_server::run(state_clone, app_handle).await;
             });
             log_info("APP", &format!("setup: rpc server spawned on {}", rpc_server::pipe_name()));
+            insights_local::spawn_sampler((*state).clone());
             log_debug("APP", "─── setup() done ───");
             Ok(())
         })
@@ -12852,6 +12947,7 @@ pub fn run() {
         // 2026-10-06: outermost guard denies the workspace Browser webview — see ipc_guard.rs.
         .invoke_handler(ipc_guard::guarded(ipc_meter::metered(tauri::generate_handler![
             clipboard_read_text,
+            pane_set_active,
             // Phase 68.B: add-on framework commands.
             addons::addon_list,
             addons::addon_install,

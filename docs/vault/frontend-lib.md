@@ -342,7 +342,7 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   queries so an assistant with shell access can slice the data itself. **No URL in it on
   purpose**: neither store is exposed over HTTP outside `127.0.0.1`, and nothing here
   suggests changing that — these are local reads on a box the user already has a session
-  on. `local` picks desktop paths over remote ones.
+  on. `local` picks desktop paths over remote ones; the metrics block keeps the same schema and queries for local, pointed at `insights-local.db` (`%APPDATA%\ymux` / `~/Library/Application Support/ymux`) — there is no "no history" variant any more.
 
 ## Invariants
 

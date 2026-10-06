@@ -134,6 +134,8 @@ browser webviews depend on. Bumping tauri means verifying `add_child`'s signatur
 multi-webview shape still compile — push the bump and let CI type-check it (Rule #17),
 then smoke-test the workspace Browser.
 
+`mainBinaryName` is top-level in Tauri 2 and set only in `tauri.macos.conf.json` (`"ymux"`, so the macOS executable is `Contents/MacOS/ymux`, not the cargo package name `app`); `tauri.conf.json` must stay without it or Windows `app.exe` (hardcoded in `build-windows.yml`) breaks.
+
 `windows-sys` carries `Win32_Security_Cryptography` for `CryptProtectData` /
 `CryptUnprotectData` in `secret_env.rs` (secret env rows; see `backend-core.md`).
 
