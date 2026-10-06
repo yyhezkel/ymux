@@ -464,6 +464,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — workspace Browser webview: zero app commands
+- **Context:** FOLLOWUPS P2 (capabilities/default.json LATENT). Investigation found ymux has no app ACL manifest, so Tauri 2.10.3 never ACL-checks app commands; the `Local`-context capability only gated plugin commands. The tunneled third-party page could invoke any app command.
+- **Options:** A) label-based guard denying all app commands to `workspace-browser-*` / B) add an app ACL manifest (`permissions/`, build.rs) / C) leave as latent.
+- **Decision:** A. `ipc_guard::guarded` wraps `invoke_handler` outermost; no legitimate caller exists in that webview. B deferred: large surface, touches build.rs.
+- **Outcome / Commit:** branch feature/ymux-app-src-tauri-capabilities. Compiles untested until CI.
 ### 2026-10-06 — Zellij picker rows get session-meta names (reader wired now, writer unverified)
 - **Context:** FOLLOWUPS P2 "A ZELLIJ SESSION HAS NO auto_name": `parse_zellij_sessions` hardcoded `auto_name: None`; nothing joined session-meta onto zellij rows.
 - **Options:** A) wire the reader now, track the writer separately / B) wait until the writer is verified on Windows-local zellij / C) rename zellij sessions to carry the title.
