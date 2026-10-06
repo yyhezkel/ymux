@@ -34,8 +34,9 @@ writes on its own, add it to that carry list.
 
 `HookType` is the canonical enum of Claude Code hook types, serialized in the settings
 file, and it is what `rpc_server`'s `hook_toast_enabled` / `hook_toast_should_sound`
-consult per hook. `list_system_fonts` reads the HKCU font hive — the same hive
-`fonts.rs` installs into, so a font install shows up in the picker immediately.
+consult per hook. `list_system_fonts` reads the HKLM then HKCU font hives in-process via
+`winreg` (no PowerShell; both unreadable → `None`, baseline assumed installed) — HKCU is the
+hive `fonts.rs` installs into, so a font install shows up in the picker immediately.
 
 Presets (`settings.preset`, `settings.get-presets`) are exposed over RPC as well as
 Tauri.

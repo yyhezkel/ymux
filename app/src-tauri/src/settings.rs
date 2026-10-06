@@ -2271,41 +2271,17 @@ pub(crate) fn list_system_fonts() -> Result<FontFamilies, String> {
     })
 }
 
-/// Static PowerShell source for {@link enumerate_windows_fonts}. Both font
-/// hives, machine-wide first. HKCU is where a per-user (no-admin) install
-/// lands — including the one this app performs — and reading only HKLM used
-/// to make those fonts invisible to the picker forever.
-#[cfg(target_os = "windows")]
-const ENUM_FONTS_PS: &str = "\
-$ErrorActionPreference = 'SilentlyContinue'; \
-foreach ($k in @( \
-  'HKLM:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts', \
-  'HKCU:\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Fonts' \
-)) { \
-  if (Test-Path $k) { \
-    Get-ItemProperty $k | Get-Member -MemberType NoteProperty | \
-    Where-Object { $_.Name -notmatch '^PS' } | ForEach-Object { $_.Name } \
-  } \
-}";
-
-#[cfg(target_os = "windows")]
-fn enumerate_windows_fonts() -> Option<Vec<String>> {
-    // Spawn a tiny PowerShell call rather than pulling in winreg as a dep.
-    // Output is one registry value name per line, e.g. "Cascadia Code
-    // (TrueType)". Best-effort: errors → None. The command is a fixed
-    // literal — no interpolation of anything user-supplied (Rule #3).
-    use std::process::Command;
-    let out = Command::new("powershell")
-        .args(["-NoProfile", "-NonInteractive", "-Command", ENUM_FONTS_PS])
-        .output()
-        .ok()?;
-    if !out.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&out.stdout);
+/// Registry value names → font families: strips the format tag the registry
+/// appends ("Cascadia Code (TrueType)"), splits packed bitmap entries
+/// ("MS Sans Serif 8,10,12 & MS Serif"), and adds the bare family for every
+/// variant face ("Cascadia Code Regular" → "Cascadia Code") so the picker can
+/// show one row per family. The suffixed form is kept too: it is what
+/// `family_is_installed` matches against for a family whose regular face
+/// isn't separately registered.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn font_families_from_value_names(names: &[String]) -> Vec<String> {
     let mut families: Vec<String> = Vec::new();
-    for line in text.lines() {
-        // Strip the format tag the registry appends to the value name.
+    for line in names {
         let mut name = line.trim();
         for tag in [
             " (TrueType)",
@@ -2321,8 +2297,6 @@ fn enumerate_windows_fonts() -> Option<Vec<String>> {
         if name.is_empty() {
             continue;
         }
-        // Bitmap .fon entries pack several faces into one value name
-        // ("MS Sans Serif 8,10,12 & MS Serif"); split them back apart.
         for part in name.split('&') {
             let part = part.trim();
             if !part.is_empty() {
@@ -2330,16 +2304,58 @@ fn enumerate_windows_fonts() -> Option<Vec<String>> {
             }
         }
     }
-    // Add the bare family for every variant face ("Cascadia Code Regular" →
-    // "Cascadia Code") so the picker can show one row per family. The
-    // suffixed form is kept too: it is what `family_is_installed` matches
-    // against for a family whose regular face isn't separately registered.
     let stripped_forms: Vec<String> = families
         .iter()
         .filter_map(|name| strip_style_suffix(name))
         .collect();
     families.extend(stripped_forms);
-    Some(families)
+    families
+}
+
+/// Join the two hive reads, machine-wide (HKLM) first. HKCU is where a
+/// per-user (no-admin) install lands — including the one this app performs —
+/// and reading only HKLM used to make those fonts invisible to the picker.
+/// `None` only when neither hive was readable.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn merge_hive_reads(
+    hklm: Option<Vec<String>>,
+    hkcu: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    match (hklm, hkcu) {
+        (None, None) => None,
+        (a, b) => {
+            let mut out = a.unwrap_or_default();
+            out.extend(b.unwrap_or_default());
+            Some(out)
+        }
+    }
+}
+
+/// Value names under one hive's Fonts key; `None` when the key is missing or
+/// unreadable.
+#[cfg(target_os = "windows")]
+fn read_font_hive(hive: winreg::HKEY) -> Option<Vec<String>> {
+    use winreg::enums::KEY_READ;
+    use winreg::RegKey;
+    let key = RegKey::predef(hive)
+        .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts", KEY_READ)
+        .ok()?;
+    Some(
+        key.enum_values()
+            .filter_map(|v| v.ok())
+            .map(|(name, _)| name)
+            .collect(),
+    )
+}
+
+#[cfg(target_os = "windows")]
+fn enumerate_windows_fonts() -> Option<Vec<String>> {
+    use winreg::enums::{HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE};
+    let names = merge_hive_reads(
+        read_font_hive(HKEY_LOCAL_MACHINE),
+        read_font_hive(HKEY_CURRENT_USER),
+    )?;
+    Some(font_families_from_value_names(&names))
 }
 
 /// Drop trailing style/weight words from a face name, yielding the family
@@ -2531,6 +2547,7 @@ mod font_tests {
         extends_family, family_is_installed, list_system_fonts, looks_monospace,
         strip_style_suffix,
     };
+    use super::{font_families_from_value_names, merge_hive_reads};
 
     fn installed() -> Vec<String> {
         vec![
@@ -2539,6 +2556,44 @@ mod font_tests {
             "JetBrains Mono ExtraBold".to_string(),
             "Segoe UI".to_string(),
         ]
+    }
+
+    #[test]
+    fn parses_registry_value_names() {
+        // Pins tag stripping, '&' split and bare-family expansion; breaking it hides fonts.
+        let names: Vec<String> = [
+            "Cascadia Code Regular (TrueType)",
+            "MS Sans Serif 8,10,12 & MS Serif (VGA res)",
+            " (TrueType)",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let got = font_families_from_value_names(&names);
+        assert!(got.contains(&"Cascadia Code Regular".to_string()));
+        assert!(got.contains(&"Cascadia Code".to_string()));
+        assert!(got.contains(&"MS Sans Serif 8,10,12".to_string()));
+        assert!(got.contains(&"MS Serif".to_string()));
+        assert!(got.iter().all(|n| !n.is_empty()));
+    }
+
+    #[test]
+    fn merges_hklm_before_hkcu() {
+        // Pins hive order and single-hive tolerance.
+        let a = Some(vec!["A".to_string()]);
+        let b = Some(vec!["B".to_string()]);
+        assert_eq!(
+            merge_hive_reads(a.clone(), b.clone()),
+            Some(vec!["A".to_string(), "B".to_string()])
+        );
+        assert_eq!(merge_hive_reads(None, b.clone()), b);
+        assert_eq!(merge_hive_reads(a.clone(), None), a);
+    }
+
+    #[test]
+    fn both_hives_unreadable_yields_none() {
+        // Pins the None that tells the caller to assume the baseline installed.
+        assert_eq!(merge_hive_reads(None, None), None);
     }
 
     #[test]
