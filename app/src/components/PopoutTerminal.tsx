@@ -1,6 +1,7 @@
 import { onCleanup, onMount } from "solid-js";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import {
   TerminalInstance,
   setRtlProfiles,
@@ -9,6 +10,7 @@ import {
 import { loadSettings, resolveRtlProfiles } from "../settings";
 import { parsePopoutProfile, popoutProfileKey } from "../popoutProfile";
 import { createLogger } from "../logger";
+import { resolvePopoutTmuxArm } from "../popoutWheelArm";
 
 const log = createLogger("POPOUT");
 
@@ -85,6 +87,15 @@ export function PopoutTerminal(props: { sessionId: string }) {
     setTerminalFontSize(sizePt);
     requestAnimationFrame(() => ti?.fitAndResize(true));
     ti.focus();
+
+    // Arm the tmux wheel proxy when the origin pane is tmux-persisted. The
+    // pane id arrives via localStorage (App.tsx popOutPane); a missing key or
+    // failed lookup leaves the proxy unarmed (plain shell keeps xterm wheel).
+    void resolvePopoutTmuxArm(
+      localStorage.getItem(`ymux.popout.pane.${props.sessionId}`),
+      () => invoke<Record<string, string>>("pane_persistence_list"),
+      (m, e) => log.warn(m, e),
+    ).then((armed) => ti?.setTmuxScroll(armed));
 
     // Ctrl+wheel zoom. Capture phase + non-passive so we beat xterm's own
     // viewport wheel handler and can preventDefault — a plain (no-Ctrl) wheel
