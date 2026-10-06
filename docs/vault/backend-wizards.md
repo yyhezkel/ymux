@@ -116,6 +116,7 @@ wizard: the `winget` slot describes Homebrew, and the WSL chain is replaced by t
 persistence chain (`InstallTmuxLocal` → `DeployTmuxConfLocal`). The wizard shows a
 persistence group **only on macOS** — on Windows zellij is an ordinary tool row, so a
 group would offer the same install twice.
+`LocalSetupResult.persistence_chain_ok` (was `wsl_chain_ok`) reports whether that chain succeeded; the ts-rs binding mirrors the name.
 
 ## `local_wizard.rs` (439) — the two small local affordances
 
