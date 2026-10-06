@@ -162,6 +162,7 @@
   "pane.agent.state.done": "كلود انتهى — دورك",
   "pane.agent.state.needs_input": "كلود ينتظر ردك",
   "pane.agent.state.waiting_approval": "بانتظار موافقتك",
+  "pane.agent.state.failed": "واجه كلود خطأ في API",
   "pane.agent.tooltip.elapsed": "{state} · ‎{time}‎",
   "pane.connect.persistent_hint": "تغليف الصدفة بـ tmux حتى تستأنف عمليات إعادة الاتصال نفس الجلسة",
   "pane.meta.title_placeholder": "عنوان (مثال: محاولة العثور على خطأ X)",

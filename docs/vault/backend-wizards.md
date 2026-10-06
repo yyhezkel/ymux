@@ -169,6 +169,9 @@ back) surfaced as the user-facing error message.
   and run (and `lib.rs::migrate_wsl_workspaces` rewrites them to `Local` on load), but
   nothing creates new ones. `wsl_exec` survives because `worktrees.rs` still dispatches
   on it.
+- `LocalSetupInput` no longer has `wsl_username`; the `CreateWslUser` step handler
+  (kept for compat) derives the name from `$USERNAME` (fallback `ymux`). Old payloads that
+  still send the key deserialize fine (no `deny_unknown_fields`).
 - `CREATE_NO_WINDOW` is not optional — a missing flag is a console flash, not an error,
   so it fails review rather than CI.
 - `hidden_cmd` sets `kill_on_drop(true)`: tokio does NOT kill a child when a timeout
