@@ -103,7 +103,7 @@
     "app/src/ConfirmDeleteWorkspace.tsx": "c1c406ea66b2c0344dfe9fe84a0657e3aca1b71d5a6e1f091a792f5251e83779",
     "app/src/ConnectExistingFlow.tsx": "bb821445a7ad661fcb74faeaa280b24a7bb716490bdc574ef221557372f4fda4",
     "app/src/CreateWorkspaceModal.tsx": "23e7e97c10367c0a95d5c1301f3f09cd3df7032eccbd892bba2410d59d1fbf4d",
-    "app/src/DirPicker.tsx": "9e51f33bd4d764a2041f5a4ca787f5117242d8d0fff386975664cb14b1267d2c",
+    "app/src/DirPicker.tsx": "51075cd5da4153ee9e5ad70cde017a1c7316f6ed3caf0a12b87a863ea33063ac",
     "app/src/LocalSetupFlow.tsx": "e782c039ed19de6ebc349710f44933eb0b9bade59ed5814e344a3c0bca781992",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
     "app/src/ProjectFolderModal.tsx": "017a431e50b533ba339c627ba130fdc1e17566e4232acc00c35f97664479f36c",

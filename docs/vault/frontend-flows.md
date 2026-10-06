@@ -101,7 +101,8 @@ the names to `storedSecretKeys` (failure → logged, editor still usable):
   `inline` (the `PaneView` wizard's browse view) renders the wizard's `nc-*` markup,
   reports each navigation through `onPathChange`, and is the only remaining caller of
   `file_home_remote` / `file_list_remote`. The props are a discriminated union, so an
-  inline picker without `onPathChange` is a type error.
+  inline picker without `onPathChange` is a type error. The modal picker writes recents
+  itself in `choose`; the inline consumer (`PaneView.chooseDir`) owns them.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
 ## `SettingsModal.tsx` (1,869)
