@@ -11,6 +11,7 @@ covers:
   - app/src/paneAgentState.ts
   - app/src/queueModel.ts
   - app/src/paneTitle.ts
+  - app/src/windowPaneName.ts
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
   - app/src/BriefingCard.tsx
@@ -458,6 +459,8 @@ and hydrated by `pane_briefs`.
 shared by the strip, the overview and "Open") and the pane display-label precedence
 (`title → auto_title → workspace name → connection`), lifted out of PaneTabs so
 the tab strip, the Queue panel and the Briefing card call one function.
+The OS window title uses a separate helper, `windowPaneName.ts` (`title → auto_title →
+described connection`, no workspace-name step; `App.tsx` falls back to `ws.name` on null).
 
 **`cwdShort.ts`** (Phase 91.E) — `shortenCwd(path, sshUser, maxLen = 34)` for the card's path
 line: `/home/<u>` (the connection's user, or any user when there is none), `/root` for an
