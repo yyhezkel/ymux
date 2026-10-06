@@ -279,9 +279,10 @@ jobs:
         run: cargo test --workspace
 
       # The staging script rewrites remote-manifest.json with a fresh
-      # built_at every run. Per CLAUDE.md #12 that churn is cosmetic — but
-      # a changed sha256 means the CLI binary actually moved, which is
-      # worth seeing in the log rather than discovering at release time.
+      # built_at every run. Per CLAUDE.md #12 that churn is cosmetic. The
+      # compiler is pinned (rust-toolchain.toml), so a changed sha256 means
+      # the CLI source moved since the last release rebake — worth seeing
+      # in the log rather than discovering at release time.
       - name: Report staged-resource drift
         if: always()
         working-directory: app
@@ -289,7 +290,7 @@ jobs:
         run: |
           $diff = git diff --unified=0 -- src-tauri/resources/remote-manifest.json
           if ($diff -match '"sha256"') {
-            Write-Host "::notice::remote-manifest sha256 changed — the staged CLI binary differs from the committed one"
+            Write-Host "::notice::remote-manifest sha256 changed — the CLI source changed since the last release rebake (compiler is pinned), so the staged binary differs from the committed one"
             Write-Host $diff
           } else {
             Write-Host "remote-manifest: timestamp-only churn (expected)"
