@@ -29,6 +29,7 @@ import {
   prunePaneSessions,
   rememberPaneSession,
 } from "./sessionRestore";
+import { claudeRunningWrite, tuiSignalOnConnect } from "./claudeRunning";
 import { pruneFmPaths } from "./fmPaths";
 import { FeedPanel } from "./FeedPanel";
 import { NotesModal } from "./NotesModal";
@@ -2263,6 +2264,22 @@ function App() {
     return needsInjection ? ws.cwd : null;
   };
 
+  // Persist the Claude-running flag, only on a transition.
+  const syncClaudeRunning = (paneId: string, on: boolean) => {
+    for (const w of file().workspaces) {
+      const node = w.layout ? findPane(w.layout, paneId) : null;
+      if (!node) continue;
+      const running = claudeRunningWrite(node.claude_running, on);
+      if (running === null) return;
+      invoke("pane_set_claude_running", {
+        workspaceId: w.id,
+        paneId,
+        running,
+      }).catch((e) => log.warn(`pane_set_claude_running failed: ${e}`));
+      return;
+    }
+  };
+
   const connectPane = async (paneId: string, opts: ConnectOpts = {}) => {
     const ws = activeWs();
     if (!ws) return;
@@ -2274,12 +2291,20 @@ function App() {
     // detected. Claude Code writes RTL pre-reordered, so the pane must not
     // bidi it a second time.
     //
-    // A RESTORE is left alone rather than cleared. Re-attaching to a
-    // persistent session says nothing about what is running inside it — that
-    // is the whole point of persistence — so clearing here would throw away a
-    // signal a hook may have already delivered.
-    if (opts.mode === "claude") ti.setTuiSignal(true);
-    else if (!opts.restoring) ti.setTuiSignal(false);
+    // A RESTORE is not cleared. Re-attaching to a persistent session says
+    // nothing about what is running inside it, so the persisted
+    // `claude_running` flag seeds the signal instead. Stale-true (Claude died
+    // while the app was closed) stays reversed until a session-end hook or a
+    // fresh non-restoring connect corrects it.
+    const connectSignal = tuiSignalOnConnect(
+      opts.mode,
+      !!opts.restoring,
+      ws.layout ? findPane(ws.layout, paneId)?.claude_running : null,
+    );
+    if (connectSignal !== null) {
+      ti.setTuiSignal(connectSignal);
+      if (!opts.restoring) syncClaudeRunning(paneId, connectSignal);
+    }
     // Phase 90.B: a session row (`Workspace.tmux_session`) exists FOR one
     // session, and activation never auto-connects panes — so a plain
     // [Connect] on its first pane must attach to that session rather than
@@ -4043,9 +4068,14 @@ function App() {
         // Not just session-start: the case that matters most is re-attaching
         // to a persistent zellij session where Claude never stopped, so no
         // session-start ever fires. `stop` lands after every reply, so the
-        // state corrects itself on the first interaction. Measured need —
-        // Yossi's log had `tui=0` on panes that had Claude running in them.
-        if (f.pane_id) setPaneTuiSignal(f.pane_id, f.subkind !== "session-end");
+        // state corrects itself on the first interaction. The flag is also
+        // persisted (`claude_running`) so a reattach starts right without
+        // waiting for that hook; session-end clears a stale true.
+        if (f.pane_id) {
+          const running = f.subkind !== "session-end";
+          setPaneTuiSignal(f.pane_id, running);
+          syncClaudeRunning(f.pane_id, running);
+        }
         // Every hook is recorded in the Notification Center history; feedToNotif
         // carries the workspace_id so the entry shows which workspace it's from.
         pushNotif(feedToNotif(f));
