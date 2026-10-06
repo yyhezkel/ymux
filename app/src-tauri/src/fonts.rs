@@ -125,28 +125,28 @@ const CATALOG: &[CatalogEntry] = &[
         license: "Apache License 2.0",
         assets: &[
             FontAsset {
-                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/master/MesloLGS%20NF%20Regular.ttf",
+                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/v2.3.3/MesloLGS%20NF%20Regular.ttf",
                 sha256: "d97946186e97f8d7c0139e8983abf40a1d2d086924f2c5dbf1c29bd8f2c6e57d",
                 bytes: 2_594_368,
                 zip: None,
                 save_as: "MesloLGS NF Regular.ttf",
             },
             FontAsset {
-                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/master/MesloLGS%20NF%20Bold.ttf",
+                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/v2.3.3/MesloLGS%20NF%20Bold.ttf",
                 sha256: "b6c0199cf7c7483c8343ea020658925e6de0aeb318b89908152fcb4d19226003",
                 bytes: 2_603_868,
                 zip: None,
                 save_as: "MesloLGS NF Bold.ttf",
             },
             FontAsset {
-                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/master/MesloLGS%20NF%20Italic.ttf",
+                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/v2.3.3/MesloLGS%20NF%20Italic.ttf",
                 sha256: "6f357bcbe2597704e157a915625928bca38364a89c22a4ac36e7a116dcd392ef",
                 bytes: 2_553_260,
                 zip: None,
                 save_as: "MesloLGS NF Italic.ttf",
             },
             FontAsset {
-                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/master/MesloLGS%20NF%20Bold%20Italic.ttf",
+                url: "https://raw.githubusercontent.com/romkatv/powerlevel10k-media/v2.3.3/MesloLGS%20NF%20Bold%20Italic.ttf",
                 sha256: "56b4131adecec052c4b324efb818dd326d586dbc316fc68f98f1cae2eb8d1220",
                 bytes: 2_561_984,
                 zip: None,
