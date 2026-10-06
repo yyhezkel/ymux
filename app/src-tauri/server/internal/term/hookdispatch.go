@@ -137,6 +137,12 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	passive := map[string]any{"request_id": p.RequestID, "decision": "passive"}
 	// The desktop's early returns: a prompt is turn bookkeeping, a
 	// notification or stop-failure is a state signal only — none ever makes a card.
+	if p.Subkind == "notification" && pl.NotificationType != "idle_prompt" && r.notify != nil {
+		// Phase 114: Claude asking for something is worth a notification
+		// even though it makes no card. idle_prompt follows a stop, whose
+		// card already sent one.
+		r.notify(attentionNote(p, pane, session))
+	}
 	if p.Subkind == "user-prompt-submit" || p.Subkind == "notification" || p.Subkind == "stop-failure" {
 		return passive
 	}
@@ -190,6 +196,9 @@ func (r *HookRegistry) addCard(p feedPushParams, pane, session string, stopBrief
 	ch := r.feed.add(entry)
 	logger.Info("feed item added", "request", reqID, "pane", pane, "subkind", p.Subkind, "blocking", blocking)
 	r.hub.publish("feed:item-added", func(lang string) any { return r.feed.viewOf(entry, lang) })
+	if n, ok := noteForCard(entry); ok && r.notify != nil {
+		r.notify(n)
+	}
 	return entry.item, ch
 }
 

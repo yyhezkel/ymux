@@ -10,7 +10,8 @@
 //!   `AssetResolver::iter` (whose bytes are brotli-compressed), the contents
 //!   from `AssetResolver::get` (decompressed; no CSP is configured, so
 //!   index.html comes back untouched). Only what the daemon serves is kept:
-//!   `index.html`, `assets/`, `fonts/`. The label is
+//!   `index.html`, `assets/`, `fonts/`, and the PWA's `sw.js`,
+//!   `manifest.webmanifest`, `icons/` (Phase 114). The label is
 //!   `<app version>-<sha256 of the set, 8 hex>`.
 //! - install / update upload the set over one SFTP session into
 //!   `~/.ymux/server/www/<label>.tmp-<pid>/`, move it to `<label>/`, swap the
@@ -54,9 +55,13 @@ pub(crate) fn label() -> Option<&'static str> {
     BUNDLE.get().map(|b| b.label.as_str())
 }
 
-/// Only what the daemon serves (webapp.go routes: `/`, `/assets/…`, `/fonts/…`).
+/// Only what the daemon serves (webapp.go routes: `/`, `/assets/…`, `/fonts/…`,
+/// and since Phase 114 the PWA's `/icons/…`, `/sw.js`, `/manifest.webmanifest`).
 fn shipped(rel: &str) -> bool {
-    rel == "index.html" || rel.starts_with("assets/") || rel.starts_with("fonts/")
+    matches!(rel, "index.html" | "sw.js" | "manifest.webmanifest")
+        || rel.starts_with("assets/")
+        || rel.starts_with("fonts/")
+        || rel.starts_with("icons/")
 }
 
 /// A relative path safe to put in a remote shell string and an SFTP path:
@@ -263,6 +268,9 @@ mod tests {
         assert!(shipped("index.html"));
         assert!(shipped("assets/index-abc.js"));
         assert!(shipped("fonts/x.woff2"));
+        assert!(shipped("sw.js"));
+        assert!(shipped("manifest.webmanifest"));
+        assert!(shipped("icons/icon-192.png"));
         assert!(!shipped("tauri.svg"));
         assert!(!shipped("vite.svg"));
     }

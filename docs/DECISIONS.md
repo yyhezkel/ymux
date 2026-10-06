@@ -465,6 +465,17 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — Phase E: the PWA gets real Web Push (FCM/autopush), not just in-tab notifications
+- **Decided (Yossi):** "E1+E2 together" — the installable PWA **and** background
+  notifications via Web Push, delivered even with the app closed. Accepted trade-off:
+  the daemon POSTs to the push service the browser picked (FCM on Chrome/Android), which
+  departs from internal/push's "no Firebase" rule. The payload is encrypted end to end
+  (RFC 8291); the service sees endpoint, size and timing only. The phone's own push WS
+  is unchanged.
+- **Decided (Claude):** stdlib crypto, no web-push dependency; notify on gate, Claude's
+  Notification hook (not idle_prompt) and stop, so the default `none` policy is not
+  silent; the service worker has no fetch handler / cache.
+
 ### 2026-10-06 — Phase D: the web add-on ships the embedded frontend, updates on connect; shell:attach is a device checkbox
 - **Decided (Claude, verified in tauri 2.10.3 source):** the `ymux-web` add-on uploads
   the frontend already embedded in the desktop binary (`AssetResolver::iter` for the list,

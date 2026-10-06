@@ -41,6 +41,7 @@ import {
 } from "../layoutOps";
 import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
+import { startPwa } from "./web/pwa";
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
 import { splitArgs } from "./web/argv";
@@ -174,6 +175,15 @@ export class WebBackend implements Backend {
     await this.reloadWorkspaces();
     await this.events.start();
     await this.seedRestoreHints();
+    // Phase 114: the PWA side — never blocks the boot.
+    void startPwa({
+      lang: () => (this.settingsCache.i18n?.language === "he" ? "he" : "en"),
+      onGateResolved: (cb) =>
+        this.bus.on("feed:item-resolved", (e) => {
+          const id = (e.payload as { request_id?: unknown } | null)?.request_id;
+          if (typeof id === "string") cb(id);
+        }),
+    });
   }
 
   /**

@@ -15,6 +15,7 @@ covers:
   - app/src-tauri/server/internal/logging/*.go
   - app/src-tauri/server/internal/logs/*.go
   - app/src-tauri/server/internal/push/*.go
+  - app/src-tauri/server/internal/webpush/*.go
   - app/src-tauri/server/internal/term/*.go
   - app/src-tauri/server/internal/workspace/*.go
   - app/src-tauri/server/go.mod
@@ -63,14 +64,15 @@ dependency arrow points one way, so there is no cycle to break later.
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
 | `config` | 469 | API token, filesystem paths, the log janitor (size cap + age prune), and the one-time data-dir migration |
 | `core` | 110 | the leaf interface package |
-| `desktop` | 290 | the daemon's only OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96) |
+| `desktop` | 290 | an OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96). The other one is `webpush` |
 | `files` | 682 | the Files API (`/api/v2/files/*`) |
 | `hooks` | 178 | the hook-RPC endpoint: localhost listener + the Phase-66 challenge/response, asking each `core.HookResolver` (chat, term) whose token signed it (Phase 100) |
 | `insights` | 2,653 | sampler, store, Docker, the hygiene reaper, and the two Phase-84 rollups |
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), and serving the web bundle + the browser settings document (108) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), and the PWA's files + Web Push notifications (114) |
+| `webpush` | 418 | Phase 114 (WEB-DESIGN E): Web Push to a browser's push service — RFC 8291 encryption, RFC 8292 VAPID, the subscriptions file. Stdlib only; the second OUTBOUND client |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -394,11 +396,48 @@ ci-windows `ymux-web` artifact.
 - `GET /assets/{file...}` (immutable, a year — vite hashes those names) and
   `GET /fonts/{file...}` (a day). A name containing `..`, `\` or a leading-dot segment is
   a 404 before any stat.
+- Phase 114 (the PWA): `GET /icons/{file...}` (a day), and `GET /sw.js` +
+  `GET /manifest.webmanifest` (`handleWebTopFile`, `no-cache` — the browser re-checks the
+  worker itself and a cached copy would pin the previous one; the manifest gets
+  `application/manifest+json`, which Go's MIME table lacks). The CSP adds
+  `worker-src 'self'; manifest-src 'self'`. All 404 without a bundle.
 - **No `/{path...}` catch-all, on purpose:** the shared mux carries method-less `/api/...`
   patterns, and a method-qualified catch-all beside them is a registration-time conflict
   panic in Go 1.22 routing.
 - Public, like the diagnostic page: static code, no secrets, and the app's login screen is
   how a browser gets a token in the first place.
+
+**`webpush/` + `term/webpush.go` (Phase 114, WEB-DESIGN E, 2.14.0) — notifications for the
+browser app, also when it is closed.** Yossi 2026-10-06 chose real Web Push over
+"notifications only while open", knowing it means the daemon POSTs to the browser's push
+service (FCM for Chrome, autopush, Apple). That service sees the endpoint, size and timing;
+the content is encrypted for the subscribing browser only. `internal/push` (the phone's
+own WebSocket) is untouched.
+- `webpush.go` is the protocol, stdlib only: `LoadOrCreateKeys` (`<data>/vapid.pem`, P-256,
+  0600 — a new key orphans every subscription), `encrypt` (RFC 8291 key schedule over
+  `crypto/hkdf`, one aes128gcm record, pinned to the RFC's Appendix A vector byte for
+  byte), `authorization` (an ES256 JWT for the endpoint's origin, 12 h), `Send` (TTL /
+  Urgency / Topic headers, returns the service's status). `MaxPayload` is 3993 bytes.
+- `store.go` is `<data>/webpush.json`: `{device_id, lang, subscription, created_ms}`,
+  upsert by endpoint, at most 64 records, tmp + rename, 0600.
+- Routes (behind `term.gate`, so `shell:attach`): `GET /api/v2/webpush/key`,
+  `POST` / `DELETE /api/v2/webpush/subscriptions` (PushSubscription JSON + `lang`; a
+  caller removes only its own record), `POST /api/v2/webpush/test` (one notification to
+  the caller's own browsers). 503 when the key could not be loaded. The owner token's
+  records belong to `"owner"`.
+- What notifies: a **gate** card (blocking; Approve/Deny in the notification — the
+  service worker answers via `feed/{id}/decide`), Claude's own **Notification** hook
+  (`attention`; `idle_prompt` skipped, the stop already said it) and a **stop** card
+  (`done`). Fired from `addCard` / `feedPush` through `HookRegistry.notify`, sent from a
+  goroutine — a hook never waits on the network. Gate: TTL 10 min, urgency high, Topic
+  = request id; done collapses per pane. Text is rendered per record's language, with
+  the session's browser-workspace name appended to the title.
+- Before every send the device must still be active with `shell:attach`
+  (`chat.ActiveDeviceScopes`); otherwise, or on a 404/410 from the push service, the
+  record is dropped. `main.go` wires it with `SetWebPush` **before** `hooks.Start`, so
+  `notify` is set before any hook can read it.
+- Logs: kind, device, status and the push service's HOST — never the endpoint or the
+  card text (Rule #1).
 
 **`term/settings.go` (Phase 108, WEB-DESIGN C4) — the browser's settings.** Decided
 2026-10-05: one document on the daemon, shared by every browser. `GET /api/v2/settings` →

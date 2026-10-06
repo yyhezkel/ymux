@@ -608,6 +608,20 @@ daemon restart, since every add-on update restarts it.
   `NormalizeScopes` validation the PUT already has.
 - Then one desktop release carrying C1 + C3 + D, smoked once on Windows + Mac.
 
+### 8.4 Phase E — as built (2026-10-06, Phase 114, daemon 2.14.0)
+
+Yossi chose real Web Push alongside the installable PWA (DECISIONS 2026-10-06).
+- **Installable:** `app/public/manifest.webmanifest` + `icons/`, `<link rel="manifest">`;
+  the daemon serves `/manifest.webmanifest`, `/sw.js`, `/icons/*` on named routes (still
+  no catch-all) and the CSP adds `worker-src` / `manifest-src 'self'`. The D1 add-on
+  ships those files too.
+- **Push:** the daemon's VAPID key + subscriptions file (`internal/webpush`, stdlib RFC
+  8291/8292); `/api/v2/webpush/{key,subscriptions,test}` behind `shell:attach`. It
+  notifies on a gate (Approve / Deny right in the notification), Claude's Notification
+  hook, and a stop. The browser asks for permission from a banner (WebPushPrompt).
+- **Not done:** offline shell (deliberately no SW cache), iOS (push only for an installed
+  home-screen app — untested), tapping a notification focuses the app but not the pane.
+
 ## 9. Questions (tracked in `docs/DECISIONS.md`)
 
 - **Q1 truth model — DECIDED 2026-09-10:** server-native workspaces; tmux

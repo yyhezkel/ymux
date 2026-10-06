@@ -32,6 +32,8 @@ export function forgetToken(): void {
   } catch {
     /* nothing to forget */
   }
+  // Phase 114: the service worker keeps its own copy for notification actions.
+  navigator.serviceWorker?.controller?.postMessage({ type: "auth", token: "" });
 }
 
 export function deviceId(): string {

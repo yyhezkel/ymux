@@ -2,8 +2,9 @@
 // logger.ts must load BEFORE the console monkeypatch below — it captures the
 // original console fns so logger output is never forwarded twice.
 import { enqueueLog } from "./logger";
-import { backend, initBackend } from "./backend";
+import { backend, initBackend, isBrowserHost } from "./backend";
 import { WebLogin } from "./WebLogin";
+import { WebPushPrompt } from "./WebPushPrompt";
 import { applyI18nSettings } from "./i18n";
 import { render } from "solid-js/web";
 // Global stylesheets live at the entry point so BOTH the main <App> and the
@@ -106,5 +107,10 @@ void (async () => {
     );
   } else {
     render(() => <App />, document.getElementById("root") as HTMLElement);
+    // Phase 114: the notifications banner, browser only, outside App's tree.
+    if (isBrowserHost) {
+      const host = document.body.appendChild(document.createElement("div"));
+      render(() => <WebPushPrompt />, host);
+    }
   }
 })();

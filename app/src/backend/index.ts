@@ -25,6 +25,9 @@ const inTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window
 
 const web: WebBackend | null = inTauri ? null : new WebBackend();
 
+/** A tab served by the daemon (not the desktop shell). */
+export const isBrowserHost = !inTauri;
+
 export const backend: Backend = web ?? new TauriBackend();
 
 /**

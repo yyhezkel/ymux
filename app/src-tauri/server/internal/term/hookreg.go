@@ -95,6 +95,10 @@ type HookRegistry struct {
 
 	// C4 (Phase 108): the browser's settings document (settings.go).
 	settings *settingsStore
+
+	// E (Phase 114): sends a notification to subscribed browsers
+	// (webpush.go). Set once at boot, before the hook listener starts.
+	notify func(webNote)
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called

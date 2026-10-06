@@ -104,7 +104,8 @@ frontend shipped is **the one embedded in this desktop binary** (Tauri `frontend
 `init()` at app setup takes the file list from `AssetResolver::iter` (whose bytes are
 brotli-compressed — never upload those) and the contents from `AssetResolver::get`
 (decompressed; no CSP is configured, so `index.html` is untouched), keeping `index.html`,
-`assets/`, `fonts/`. Its label `<app version>-<sha256 8 hex>` is the add-on's version —
+`assets/`, `fonts/`, and since Phase 114 the PWA's `sw.js`, `manifest.webmanifest` and
+`icons/` — exactly the daemon's routes. Its label `<app version>-<sha256 8 hex>` is the add-on's version —
 `addons.rs registry()` substitutes it for the crate's `"embedded"` placeholder. No
 tarball in `resources/` (a `cargo test` without a fresh vite build would fail on it) and
 no second build: version-aligned by construction. A dev build on `devUrl` has no

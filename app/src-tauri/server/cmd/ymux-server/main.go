@@ -300,6 +300,13 @@ func main() {
 		logger.Warn("terminal API: chat disabled, only the shared token is accepted")
 	}
 	logger.Info("terminal API enabled", "device_scopes", chatAPI != nil)
+	// Phase 114 (E): Web Push for the browser app. Before hooks.Start — the
+	// registry's notify hook is set here and read by every hook after.
+	if chatAPI != nil {
+		termSvc.SetWebPush(*base, chatAPI.ResolveToken, chatAPI.ActiveDeviceScopes)
+	} else {
+		termSvc.SetWebPush(*base, nil, nil)
+	}
 
 	// Hook RPC (Phase 100): one listener, two kinds of caller. term's registry
 	// answers for tmux sessions a browser created; chat (when its store opened)

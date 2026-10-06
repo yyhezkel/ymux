@@ -39,7 +39,8 @@ unowned:
 # Frontend shell — App, sidebar, layout, panes, panel chrome
 
 **SolidJS**, not React. Signals and `createEffect`, no virtual DOM, no hooks rules.
-`index.tsx` (121 lines) mounts `<App/>` — **unless the window label says otherwise**.
+`index.tsx` (116 lines) mounts `<App/>` (plus, in a browser tab, the Phase 114
+notifications banner `WebPushPrompt` in its own root beside it) — **unless the window label says otherwise**.
 It is the whole router, and there is no other one: no query params, no `location.search`
 anywhere in the tree. A built app's asset protocol serves a blank page for any suffixed
 path (`index.html?x`, `index.html#x`), so every pop-out URL is a clean `index.html` and

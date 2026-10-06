@@ -32,6 +32,7 @@ covers:
   - app/src/backend/web/*.ts
   - app/src/layoutOps.ts
   - app/src/WebLogin.tsx
+  - app/src/WebPushPrompt.tsx
 unowned:
   - app/src/bindings/*.ts   # ts-rs generated
   - app/src/*.test.ts   # tests are the spec, deliberately uncovered
@@ -128,6 +129,21 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   binary), write and create (upload), delete, and download — which in a browser goes to
   the browser's own download (`download.ts` calls `web_download`; there is no Save
   dialog or local path). Rename / mkdir / copy / zip have no daemon op yet and reject.
+- **PWA + notifications** (Phase 114, WEB-DESIGN E) — `web/pwa.ts`. `init()` ends with
+  `startPwa` (never awaited): registers `/sw.js` (`app/public/sw.js`, served as-is — not a
+  vite module), posts the device token + language to the worker (it cannot read
+  localStorage; `forgetToken` posts an empty one), and when permission is already
+  granted re-sends the subscription (re-subscribing if the daemon's VAPID key changed),
+  so a daemon that lost its record heals on the next load. `enablePush` is the only call
+  that asks for permission — from a click, in `WebPushPrompt.tsx` (a fixed banner
+  index.tsx mounts beside `<App>` in a browser only; "Not now" is remembered per
+  browser) — then subscribes and asks the daemon for a test notification. A
+  `feed:item-resolved` closes that gate's notification. The worker has **no fetch
+  handler and no cache** (a cached shell outlives a bundle update); it shows the push,
+  takes it straight down when an app window is focused, answers Approve/Deny with
+  `POST /api/v2/feed/{id}/decide` (on failure it focuses the app), and re-subscribes on
+  `pushsubscriptionchange`. `app/public/manifest.webmanifest` + `icons/` make it
+  installable ("Add to Home Screen").
 - **"claude" mode** (Phase 110) — `pane_connect` with `mode: "claude"` creates the
   session with `cmd: ["claude", ...splitArgs(claudeArgs)]` (`web/argv.ts`: whitespace
   and quotes only, nothing evaluated; `argv.test.ts`). A custom `cmd` string still opens

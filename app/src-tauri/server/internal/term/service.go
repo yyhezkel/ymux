@@ -55,6 +55,10 @@ type Service struct {
 	// webRoot is <data dir>/www/current, the installed web bundle (Phase 108,
 	// webapp.go); "" serves the diagnostic page at `/`.
 	webRoot string
+
+	// webpush sends the browser's notifications (Phase 114, webpush.go);
+	// nil until SetWebPush.
+	webpush *webPusher
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
@@ -142,6 +146,11 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("DELETE /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	// Phase 104 (B6): session history — ended rows, their transcript, resume.
+	// Phase 114 (E): Web Push subscriptions for the browser's notifications.
+	mux.HandleFunc("GET /api/v2/webpush/key", s.gate(s.handleWebPushKey))
+	mux.HandleFunc("POST /api/v2/webpush/subscriptions", s.gate(s.handleWebPushSubs))
+	mux.HandleFunc("DELETE /api/v2/webpush/subscriptions", s.gate(s.handleWebPushSubs))
+	mux.HandleFunc("POST /api/v2/webpush/test", s.gate(s.handleWebPushTest))
 	mux.HandleFunc("GET /api/v2/settings", s.gate(s.handleSettings))
 	mux.HandleFunc("PUT /api/v2/settings", s.gate(s.handleSettings))
 	mux.HandleFunc("GET /api/v2/term/history", s.gate(s.handleHistory))
