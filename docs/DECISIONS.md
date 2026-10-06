@@ -464,6 +464,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-06 — workspace Browser webview: zero app commands
+- **Context:** FOLLOWUPS P2 (capabilities/default.json LATENT). Investigation found ymux has no app ACL manifest, so Tauri 2.10.3 never ACL-checks app commands; the `Local`-context capability only gated plugin commands. The tunneled third-party page could invoke any app command.
+- **Options:** A) label-based guard denying all app commands to `workspace-browser-*` / B) add an app ACL manifest (`permissions/`, build.rs) / C) leave as latent.
+- **Decision:** A. `ipc_guard::guarded` wraps `invoke_handler` outermost; no legitimate caller exists in that webview. B deferred: large surface, touches build.rs.
+- **Outcome / Commit:** branch feature/ymux-app-src-tauri-capabilities. Compiles untested until CI.
+
 ### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
 - **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
 - **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.

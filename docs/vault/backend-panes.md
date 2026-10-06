@@ -109,12 +109,16 @@ false. These two were the only ones.
 the child, and that was wrong; Phase 82.E corrected it in place. `tauri::manager::webview`
 prepends `__TAURI_INTERNALS__` and the invoke bootstrap to **every** webview's init
 scripts, external URLs included, so an `invoke` function does reach the tunneled page.
-What actually denies it is the capability layer: a remote page's origin is
-`Origin::Remote`, every capability in `capabilities/` declares a `Local` execution
-context, so `Origin::matches` fails and each command is refused. **`capabilities/default.json`
-is scoped to `windows: ["main"]` and this webview lives in the `main` window** — adding a
-`remote` context there would hand a third-party service the app's whole command surface.
-Don't.
+The capability layer does **not** deny it: ymux has no app ACL manifest (`build.rs` is a
+bare `tauri_build::build()`, no `permissions/`), and Tauri 2.10.3 `Webview::on_message`
+ACL-checks app (non-plugin) commands only when one exists. Capabilities gate plugin
+commands only, so every app command was reachable from the tunneled page. What denies it
+now is `ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
+starts with `WEBVIEW_LABEL_PREFIX` (`workspace-browser-`) is rejected with
+`ymux: command <cmd> is not available to the workspace Browser webview`, warn-logged once
+per label (names only). It reads the label, never capabilities, so editing
+`capabilities/*.json` cannot reopen it. This webview has no legitimate caller (ticket bridge
+= navigation, `browser_diag.js` = `document.title`).
 
 The Dev-Mode inspect script still talks back through navigation
 (`location.href = "ymux-ticket:<base64url>"`, decoded by `handle_ticket_navigation`,
@@ -284,8 +288,9 @@ bug-report file IO. The commands and RPC handlers themselves live in `lib.rs` an
   wry's default to `true` process-wide; the `.devtools(false)` opt-outs on the main window
   and popouts in `lib.rs` are what keep PTY output out of an inspector. See
   `backend-core.md` § Gotchas.
-- `capabilities/default.json` stays `Local`-context only. A `remote` context would expose
-  the command surface to whatever the Browser is pointed at.
+- The workspace Browser webview gets **zero** app commands via `ipc_guard`, not via
+  capabilities. Keep `WEBVIEW_LABEL_PREFIX` the single source of the `workspace-browser-`
+  label (`webview_label` uses it); renaming the label without it silently disarms the guard.
 
 ## Read the source when
 
