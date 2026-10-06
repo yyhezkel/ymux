@@ -132,16 +132,15 @@ struct TicketCapture {
 /// inspect script talks back through the one hook that does exist —
 /// navigation.
 ///
-/// Correction (Phase 82.E): the injection is not what protects us.
-/// `tauri::manager::webview` prepends `__TAURI_INTERNALS__` and the
-/// invoke bootstrap to EVERY webview's init scripts, external URLs
-/// included — so an `invoke` function does reach the tunneled page. What
-/// denies it is the capability layer: a remote page's origin is
-/// `Origin::Remote`, and every capability in `capabilities/` declares a
-/// `Local` execution context, so `Origin::matches` fails and every
-/// command is refused. Note `capabilities/default.json` is scoped to
-/// `windows: ["main"]` and this webview lives in the `main` window, so
-/// adding a `remote` context there would expose it. Don't.
+/// Correction (Phase 82.E): the injection is not what protects us, and
+/// neither is the capability layer. `tauri::manager::webview` prepends
+/// `__TAURI_INTERNALS__` and the invoke bootstrap to EVERY webview's init
+/// scripts, external URLs included, so an `invoke` function reaches the
+/// tunneled page. In 2.10.3 `Webview::on_message` ACL-checks only plugin
+/// commands unless an app ACL manifest exists, and ymux has none (bare
+/// `tauri_build::build()`), so capabilities never gate app commands.
+/// What denies them is `ipc_guard::guarded`, which rejects every app
+/// command from a `WEBVIEW_LABEL_PREFIX` label before the dispatcher.
 ///
 /// The script sets `location.href = "ymux-ticket:<base64url>"`. This
 /// handler decodes it, emits `browser:ticket-captured`, and returns
@@ -263,10 +262,13 @@ fn decode_diag(encoded: &str) -> Result<String, String> {
 /// workspace).
 pub(crate) type WorkspaceBrowserMap = Arc<Mutex<HashMap<String, Webview>>>;
 
+/// Label prefix of every workspace Browser webview; `ipc_guard` keys on it.
+pub(crate) const WEBVIEW_LABEL_PREFIX: &str = "workspace-browser-";
+
 fn webview_label(workspace_id: &str) -> String {
     // Tauri webview labels are constrained to [a-zA-Z-/:_].
     // workspace_id is `w_<hex>` which is alnum+underscore — safe.
-    format!("workspace-browser-{workspace_id}")
+    format!("{WEBVIEW_LABEL_PREFIX}{workspace_id}")
 }
 
 /// Phase 85.C: the OS window a popped-out Browser lives in.
