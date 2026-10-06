@@ -7879,6 +7879,7 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
 
+2026-10-06 — shortcuts placebo rows (ticket ymux-app-src-shortcuts-ts): select_all wired to terminal selectAll in App.tsx; find deprecated + hidden (DEPRECATED_SHORTCUT_IDS), Rust field kept; 4 vault pages updated, lock restamped; FOLLOWUPS PLACEBO UI entry archived. Compiles untested until CI.
 2026-10-06 — capabilities hardening (ticket ymux-app-src-tauri-capabilities): ipc_guard.rs label-based guard outermost in invoke_handler denies all app commands to workspace-browser-* webviews (no app ACL manifest => capabilities never gated app commands); WEBVIEW_LABEL_PREFIX shared; ipc_guard_tests; vault backend-core/backend-panes + lock; FOLLOWUPS capabilities/default.json LATENT entry archived; DECISIONS entry. Compiles untested until CI.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
 2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
@@ -7917,3 +7918,6 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 
 2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
 2026-10-06 — ymux-app-src-terminalinstance-ts-2: closed FOLLOWUPS P2 (local pane Hebrew reversed under auto_per_line) as fixed by bc12388; docs-only, no source touched. NOT VERIFIED LIVE.
+
+2026-10-06 — ymux-app-src-tauri-src-28 (close-wsl-followup-obsolete): moved FOLLOWUPS P3 `is_local_workspace` WSL-routing entry to FOLLOWUPS-ARCHIVE.md as closed-obsolete (WSL removed; migrate_wsl_workspaces rewrites Wsl→Local on load). Docs-only, no source touched. Not verified live.
+2026-10-06 — ymux-app-src-tauri-src-22: closed FOLLOWUPS P2 (WSL elevation English-substring detection) as fixed by 65d6fdc; WSL install unreachable since 2026-08-19. Docs-only, no source touched. NOT VERIFIED LIVE.

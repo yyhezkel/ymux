@@ -142,10 +142,10 @@ delete a font a running app has open, so the `failed` list gets its own message.
 installed flag lives on the catalog and the row would otherwise not appear or disappear
 until Settings was reopened.
 
-**The Shortcuts tab is 28 recordable rows in five labelled groups**, driven by
+**The Shortcuts tab is 27 recordable rows in five labelled groups**, driven by
 `SHORTCUT_GROUPS` from `shortcuts.ts` — the group list is the UI's row order, and a
 unit test asserts it covers every action id exactly once, so a binding cannot exist in
-the schema with no row. `ShortcutRow` is the click-to-record picker: focus it, press
+the schema with no row (deprecated ids such as `find` are excluded from both). `ShortcutRow` is the click-to-record picker: focus it, press
 the combination, `formatEvent` stores the canonical accelerator, Esc cancels. It
 **calls `stopPropagation`**, and that is not optional — `App.tsx` listens for keydown
 on `window` in the bubble phase, so without it the combination being *recorded* also
