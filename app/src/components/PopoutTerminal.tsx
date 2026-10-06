@@ -1,7 +1,11 @@
 import { onCleanup, onMount } from "solid-js";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { invoke } from "@tauri-apps/api/core";
 import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
+import { createLogger } from "../logger";
+
+const log = createLogger("POPOUT");
 
 // Ctrl+wheel font zoom — pop-out windows only (the grid stays Settings-driven).
 // All open popouts share one zoom level, synced via the `popout:zoom` event and
@@ -60,6 +64,20 @@ export function PopoutTerminal(props: { sessionId: string }) {
     setTerminalFontSize(sizePt);
     requestAnimationFrame(() => ti?.fitAndResize(true));
     ti.focus();
+
+    // Arm the tmux wheel proxy when the origin pane is tmux-persisted. The
+    // pane id arrives via localStorage (App.tsx popOutPane); a missing key or
+    // failed lookup leaves the proxy unarmed (plain shell keeps xterm wheel).
+    void (async () => {
+      try {
+        const paneId = localStorage.getItem(`ymux.popout.pane.${props.sessionId}`);
+        if (!paneId) return;
+        const m = await invoke<Record<string, string>>("pane_persistence_list");
+        ti?.setTmuxScroll(!!m?.[paneId]);
+      } catch (e) {
+        log.warn("popout wheel-proxy arm failed", e);
+      }
+    })();
 
     // Ctrl+wheel zoom. Capture phase + non-passive so we beat xterm's own
     // viewport wheel handler and can preventDefault — a plain (no-Ctrl) wheel
