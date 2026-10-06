@@ -10,3 +10,6 @@
 - Staging command: `app/package.json:12` `build:linux-cli` (PowerShell `scripts/build-linux-cli.ps1`)
 - Prerequisite doc: `CLAUDE.md` Session workflow "Fresh worktree" bullet + CI section — run before any cargo step on a fresh checkout
 - Builds/tests CI-only: `CLAUDE.md` Rule #17
+
+## Notes
+- [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
