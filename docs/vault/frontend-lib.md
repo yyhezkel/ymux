@@ -252,7 +252,7 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window (which loads settings only for the RTL profiles) still
+  again — the backend is authoritative, so a popout window (which loads settings and runs `applyTheme`) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
 - **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
   `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage

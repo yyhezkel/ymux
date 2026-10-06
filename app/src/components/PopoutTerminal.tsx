@@ -2,12 +2,8 @@ import { onCleanup, onMount } from "solid-js";
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { invoke } from "@tauri-apps/api/core";
-import {
-  TerminalInstance,
-  setRtlProfiles,
-  setTerminalFontSize,
-} from "../terminalInstance";
-import { loadSettings, resolveRtlProfiles } from "../settings";
+import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
+import { applyTheme, loadSettings } from "../settings";
 import { parsePopoutProfile, popoutProfileKey } from "../popoutProfile";
 import { createLogger } from "../logger";
 import { resolvePopoutTmuxArm } from "../popoutWheelArm";
@@ -35,9 +31,9 @@ function readPopoutFontPt(): number {
 // contract as an in-grid pane) and taps the app-wide `pty:data` / `pty:exit`
 // streams filtered to its own session.
 //
-// RTL: the fresh webview never ran App's settings bootstrap, so onMount loads
-// settings itself (setRtlProfiles BEFORE the constructor -- the renderer is
-// fixed at construction) and reads the origin pane's profile from
+// Theme/RTL: the fresh webview never ran App's settings bootstrap, so onMount
+// loads settings itself (applyTheme BEFORE the constructor -- the renderer is
+// fixed at construction and the font/theme/RTL caches feed it) and reads the origin pane's profile from
 // localStorage (written by App.tsx before popout_pane).
 //
 // Ownership while open: this window drives input + resize (pty_write /
@@ -71,7 +67,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
     const profile = parsePopoutProfile(localStorage.getItem(popoutProfileKey(props.sessionId)));
     try {
       const s = await loadSettings();
-      setRtlProfiles(resolveRtlProfiles(s.terminal));
+      applyTheme(s);
     } catch (e) {
       // AI-NOTE: settings unreadable → built-in defaults
       log.warn(`settings load failed: ${e instanceof Error ? e.name : typeof e}`);
