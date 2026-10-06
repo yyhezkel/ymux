@@ -66,9 +66,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
   let disposed = false;
 
   onMount(async () => {
-    const profile = parsePopoutProfile(
-      localStorage.getItem(popoutProfileKey(props.sessionId)),
-    );
+    const profile = parsePopoutProfile(localStorage.getItem(popoutProfileKey(props.sessionId)));
     try {
       const s = await loadSettings();
       setRtlProfiles(resolveRtlProfiles(s.terminal));

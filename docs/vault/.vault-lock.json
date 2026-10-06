@@ -167,7 +167,7 @@
     "app/src/browserDevMode.ts": "9304deba9ae698af8de14418c123f17ec09f0e75eb08d59d68d71ffb11c01a8d",
     "app/src/claudeUsageFmt.ts": "c95cc7f4cd4785b9be2ad38f8a33f44528a64f54f8285b28733440f7cb13ec16",
     "app/src/components/PopoutBrowser.tsx": "9af44521996e349141089620ebc031be0f4261d5b732e1fa132209a2ba6977a7",
-    "app/src/components/PopoutTerminal.tsx": "98c6706d5c357ed31278576beb4bd7a73afeedac518c236e589afa1e789404e3",
+    "app/src/components/PopoutTerminal.tsx": "f46cec11c4c66eefbb6b6e823c0632f54b9ccd39c6ae473539e5afef50a9ff84",
     "app/src/diffModel.ts": "7c06189aaf325fba90aca553ebb2b6d9b0dfc66c905d4776346a2f03b5970516",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
