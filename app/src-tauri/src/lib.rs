@@ -875,31 +875,33 @@ pub(crate) fn remember_file_text(text: &str) {
     }
 }
 
-fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+/// Gate + reconcile + atomic write + base update for one workspaces.json
+/// save, with the file path and the three-way-merge base passed in so a
+/// test can run two "instances" (two bases) against one tempdir without
+/// touching `YMUX_CONFIG_DIR`. Returns the text that landed on disk.
+///
+/// `Refuse` returns `Err` before the tmp file is opened: a newer build owns
+/// the file and nothing of ours may touch it.
+fn write_workspaces_text(
+    path: &std::path::Path,
+    ours: &str,
+    last_known: &std::sync::Mutex<Option<String>>,
+) -> Result<String, String> {
     use std::io::Write as _;
 
-    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
-        log_warn("WORKSPACE", &format!(
-            "save_to_disk: writing empty state (workspaces=0). version={}",
-            file.version
-        ));
-    }
-
-    let path = config_path()?;
     let dir = path
         .parent()
         .ok_or_else(|| "no parent dir".to_string())?
         .to_path_buf();
     let tmp = dir.join(format!("workspaces.{}.tmp", std::process::id()));
-    let mut text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
 
     // Re-read before writing. The fast path — nobody else touched the
     // file — is the overwhelmingly common one and costs a single read.
     // The decision itself lives in `workspaces_merge::reconcile` so it is
     // testable without a GUI: an idle app never saves, so the interesting
     // path cannot be reached by launching one and waiting.
-    let base_text = LAST_KNOWN.lock().ok().and_then(|g| g.clone());
-    let on_disk = std::fs::read_to_string(&path).unwrap_or_default();
+    let base_text = last_known.lock().ok().and_then(|g| g.clone());
+    let on_disk = std::fs::read_to_string(path).unwrap_or_default();
 
     // The schema gate, in both directions. See WORKSPACES_SCHEMA_VERSION for
     // what this does and does not cover.
@@ -927,7 +929,8 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
                     "save_to_disk: workspaces.json was rewritten by an OLDER build \
                      (on disk v{}, we last wrote v{}). Fields that build does not \
                      know may have been dropped; the three-way merge below \
-                     restores what it can.",
+                     restores what it can. To stop two builds sharing one config \
+                     dir, start the older one with YMUX_CONFIG_DIR set to its own folder.",
                     disk_version.unwrap_or_default(),
                     WORKSPACES_SCHEMA_VERSION
                 ),
@@ -935,12 +938,19 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         }
     }
 
-    let (reconciled, notes) =
-        workspaces_merge::reconcile(&text, base_text.as_deref(), &on_disk);
+    let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
     for n in &notes {
         log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
     }
-    text = reconciled;
+    if !notes.is_empty() {
+        log_info(
+            "WORKSPACE",
+            &format!(
+                "save_to_disk: merged another writer's edits ({} note(s) above)",
+                notes.len()
+            ),
+        );
+    }
 
     {
         let mut f = std::fs::OpenOptions::new()
@@ -954,8 +964,24 @@ fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
         f.sync_all().map_err(|e| format!("fsync tmp: {e}"))?;
     }
 
-    std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    remember_file_text(&text);
+    std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    if let Ok(mut g) = last_known.lock() {
+        *g = Some(text.clone());
+    }
+    Ok(text)
+}
+
+fn save_to_disk(file: &WorkspacesFile) -> Result<(), String> {
+    if file.workspaces.is_empty() && file.active_workspace_id.is_none() {
+        log_warn("WORKSPACE", &format!(
+            "save_to_disk: writing empty state (workspaces=0). version={}",
+            file.version
+        ));
+    }
+
+    let path = config_path()?;
+    let ours = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
+    let text = write_workspaces_text(&path, &ours, &LAST_KNOWN)?;
     // The tree shape goes in the line, not just the count. Two pinned
     // folders lost `parent_id` and `is_project_root` with nothing in the
     // log to say when or why — every writer mutates in place, serde
