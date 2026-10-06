@@ -67,7 +67,7 @@ always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:ex
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.
 
-**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (`lastOsc52`, set in the write-only provider) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
+**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (private `lastOsc52`, set in the write-only provider, read via `getLastOsc52()`) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
 
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
