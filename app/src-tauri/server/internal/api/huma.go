@@ -29,6 +29,10 @@ var opScopes = map[string]auth.Scope{
 	"workspace-create-session": auth.ScopeSessionWrite,
 	"workspace-get-session":    auth.ScopeSessionRead,
 	"session-resolve-hook":     auth.ScopeHookApprove,
+	"term-list":                auth.ScopeShellAttach,
+	"term-create":              auth.ScopeShellAttach,
+	"term-rename":              auth.ScopeShellAttach,
+	"term-kill":                auth.ScopeShellAttach,
 }
 
 // newHumaAPI builds the shared huma API on the given mux: security scheme,
@@ -37,7 +41,7 @@ var opScopes = map[string]auth.Scope{
 func (s *Server) newHumaAPI(mux *http.ServeMux) huma.API {
 	cfg := huma.DefaultConfig("ymux-server", core.Version)
 	cfg.Info.Description = "ymux server daemon API — the client-SDK surface " +
-		"(version negotiation, Files, Logs). Streaming WebSocket frames are " +
+		"(version negotiation, Files, Logs, Terminal). Streaming WebSocket frames are " +
 		"described in asyncapi.json (PHASE-77-DESIGN §4.4). Generated from the " +
 		"huma handlers (S4); the Insights metrics API is desktop-internal and " +
 		"documented separately."
@@ -61,6 +65,9 @@ func (s *Server) newHumaAPI(mux *http.ServeMux) huma.API {
 	}
 	if s.deps.Logs != nil {
 		s.deps.Logs.RegisterHuma(api)
+	}
+	if s.deps.Term != nil {
+		s.deps.Term.RegisterHuma(api)
 	}
 	s.registerMobileOps(api) // pairing/redeem + workspace list/get-session/create-session
 	return api

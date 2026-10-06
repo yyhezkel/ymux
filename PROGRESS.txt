@@ -7878,17 +7878,24 @@ Compiles untested — CI is the gate (Rule #17); live smoke pending.
 2026-10-06 — rename-shim retirement (ticket ymux-crates-ymux-tunnel-src): emitted handshake tag flipped to YMUX-CHALLENGE (Rust + Go), WINMUX_* env dual-writes, CLI adopt_legacy_env/migrate_legacy_home_dir, legacy pipe listener, X-Winmux-Truncated and use_winmux_tmux_config alias dropped; read arms + folder migrations kept. CLAUDE.md rename section updated, FOLLOWUPS P1 archived, new P1 for server rebake + live smoke. Compiles untested until CI.
 
 2026-10-06 — FOLLOWUPS P0 2026-09-23 (macOS IPC flood) updated: fix is merged to main (PR #49 a56184b + aece6a2 pty_emit coalescer), not a branch. Still [~]: live checks (1)-(5) on the MacBookPro14,3 remain for a human (Rule #14). Docs-only.
+
+2026-10-06 — capabilities hardening (ticket ymux-app-src-tauri-capabilities): ipc_guard.rs label-based guard outermost in invoke_handler denies all app commands to workspace-browser-* webviews (no app ACL manifest => capabilities never gated app commands); WEBVIEW_LABEL_PREFIX shared; ipc_guard_tests; vault backend-core/backend-panes + lock; FOLLOWUPS capabilities/default.json LATENT entry archived; DECISIONS entry. Compiles untested until CI.
+2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
 2026-10-06 — ticket ymux-app-scripts-build-linux-2: rust-toolchain.toml pins rustc 1.95.0, all four dtolnay steps use toolchain: 1.95.0, ps1 header + ci drift notice reworded (scrub = paths only), build-glue vault page updated + re-stamped, both duplicate FOLLOWUPS P2 (ymux-linux-x64 CI build != committed) archived. Not run: CI (Rule #17).
 
 2026-10-06 — ticket ymux-app-src-app-tsx-2 t05: documented persisted claude_running (vault: crates, backend-core, frontend-shell, frontend-lib; DECISIONS stale-true entry; FOLLOWUPS status); fixed 2 stale lib.rs cites in backend-core; vault re-stamped. Live smoke pending.
 2026-10-06 — wizard browse view renders DirPicker inline (ticket ymux-app-src-paneview-tsx): DirPicker modal|inline union, PaneView duplicate list/recents removed (-20 lines), vault frontend-flows/frontend-shell updated, FOLLOWUPS P3 (PaneView.tsx:1794) archived. Compiles untested until CI.
 
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
+2026-10-06 close P2 .claude/worktrees entry -> archive (FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md) ticket ymux-claude-worktrees
+2026-10-06 — ymux-app-src-tauri-server: term list/create/rename/kill moved to huma ops (shell:attach via bearerMiddleware/opScopes), spec + TS/Kotlin regenerated, vault server-go.md updated, FOLLOWUPS: P2 annotated, P1 rebake + c5/c6 port note added. Server blobs NOT rebaked. Compiles untested until CI.
 2026-10-06 — ymux-app-src-tauri-src-7: closed FOLLOWUPS P3 (persisted smart_bidi not re-applied after restart) → archived; pane_connect now seeds bidi_filters via find_pane_smart_bidi + set_pane_enabled (14622c0). Compiles untested until CI; NOT VERIFIED LIVE.
 2026-10-06 — ymux-hooks-claude-code-json: StopFailure hook (v1.8.0) + PaneAgentState::Failed / Go StateFailed + failed light square; FOLLOWUPS 'traffic light one known lie' archived, DECISIONS known-lie bullet marked resolved. Go blobs still need rebake. Compiles untested until CI. NOT VERIFIED LIVE.
+2026-10-06 — ymux-app-src-tauri-crates-2: ymux-core config_dir test-only temp default (feature test-config-dir); vault crates.md updated, FOLLOWUPS P2 closed to archive. Not run locally (Rule #17); CI verifies.
 2026-10-06 — macOS in-app update (ticket ymux-app-src-tauri-src-19): updater/macos.rs dmg mount-swap-relaunch, per-arch dmg manifest/release parsing, install commands routed on macOS, VersionManager Install gate on dmg_url. Vault (backend-wizards, frontend-flows) + RELEASING §4¼ updated. Compiles untested until CI; NOT VERIFIED LIVE on a Mac.
 2026-10-06 — ymux-app-src-tauri-src-2: stored is_folder on Workspace; is_header/isHeader read it; pin writes it; flag_pinned_folders load migration; vault (backend-core, crates, frontend-shell) synced, FOLLOWUP 'Pinning a NON-git folder' archived. Compiles untested until CI.
 
+2026-10-06 — ymux-app-src-tauri-src-11: agent_runs persisted to agent-runs.json (save on Exit, restore in setup, 6h cutoff); vault backend-core.md + lock + FOLLOWUPS updated. Compiles untested until CI. NOT VERIFIED LIVE.
 2026-10-06 — ymux-app-src-tauri-src-17: two-builds-one-config-dir. save_to_disk body extracted to write_workspaces_text, new config_lock.rs (OS lock + owner file + pre-rename scan, wired in setup()), two_instance_save_tests. Docs: backend-core/backend-panes vault, CONTRIBUTING § two builds side by side, FOLLOWUPS P2 reduced to the live run, BACKLOG lock half marked done. Compiles untested until CI; NOT VERIFIED LIVE.
 2026-10-06 — popout RTL profile (ticket ymux-app-src-components-popoutterminal-2): popoutProfile.ts key/parse helper; App.tsx writes ti.profile to localStorage before popout_pane and removes it on popout:closed; PopoutTerminal loads settings → setRtlProfiles before constructing TerminalInstance with the origin profile. Vault pages + lock restamped. Compiles untested until CI.
 2026-10-06 — ymux-app-src-bidi-ts: recorded bidi_reorder cursed-cursor limit as DEFERRED in DECISIONS, annotated FOLLOWUPS entry. Docs-only, no source touched. NOT VERIFIED LIVE.
@@ -7907,3 +7914,6 @@ FILES:
   M docs/vault/.vault-lock.json
 RESULT: compiles-untested (CI only, Rule #17), NOT VERIFIED LIVE
 NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_bidi on
+
+2026-10-06 — agent light aria-live (ticket ymux-app-src-agentlight-tsx): agentAnnounceKey rule + single polite .sr-only region in App.tsx for the focused pane; vault frontend-shell.md updated, lock restamped, FOLLOWUPS P3 line edited in place. Compiles untested until CI; no screen-reader run.
+2026-10-06 — ymux-app-src-terminalinstance-ts-2: closed FOLLOWUPS P2 (local pane Hebrew reversed under auto_per_line) as fixed by bc12388; docs-only, no source touched. NOT VERIFIED LIVE.

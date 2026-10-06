@@ -11,7 +11,7 @@ import { NotificationCenter, NotifHeaderActions, type NotifItem } from "./Notifi
 import { WelcomeScreen } from "./WelcomeScreen";
 import { LayoutView } from "./LayoutView";
 import { PaneTabs } from "./PaneTabs";
-import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgentState";
+import { agentAnnounceKey, trafficLight, trafficLightKey, type AnnounceSnapshot, type PaneAgentState, type TrafficLight } from "./paneAgentState";
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
@@ -984,6 +984,13 @@ function App() {
         String(settings()?.font.terminal_size_pt ?? 13),
       );
     }
+    // The popout window only knows its sid; hand it the pane id so it can ask
+    // pane_persistence_list whether to arm the tmux wheel proxy.
+    try {
+      localStorage.setItem(`ymux.popout.pane.${sid}`, paneId);
+    } catch (e) {
+      log.warn("popout pane-id seed failed", e);
+    }
     // Hand the origin pane's RTL profile to the popout webview (same origin).
     localStorage.setItem(popoutProfileKey(sid), ti.profile);
     try {
@@ -1285,6 +1292,26 @@ function App() {
     }
     return out;
   };
+  // Screen-reader announcement of the FOCUSED pane's light. The decision is
+  // agentAnnounceKey() alone; this only feeds it and speaks the result. Empty
+  // string first, text on the next frame, so a repeated phrase is re-read.
+  const [announceText, setAnnounceText] = createSignal("");
+  let announcePrev: AnnounceSnapshot = { paneId: null, key: null };
+  let announceRaf = 0;
+  createEffect(() => {
+    const pid = activePaneId();
+    const row = allPaneAgentRows().find((r) => r.paneId === pid);
+    const next: AnnounceSnapshot = {
+      paneId: pid ?? null,
+      key: row?.light ? trafficLightKey(row.light, row.waitingOnPermission) : null,
+    };
+    const spoken = agentAnnounceKey(announcePrev, next);
+    announcePrev = next;
+    if (spoken === null) return;
+    cancelAnimationFrame(announceRaf);
+    setAnnounceText("");
+    announceRaf = requestAnimationFrame(() => setAnnounceText(t(spoken)));
+  });
   const paneAgentLights = (): Record<string, TrafficLight | null> => {
     const wsId = activeWs()?.id;
     const out: Record<string, TrafficLight | null> = {};
@@ -4508,6 +4535,7 @@ function App() {
       class="app"
       style={{ "grid-template-columns": `${sidebarPx()}px minmax(0, 1fr) ${railPx()}px` }}
     >
+      <div class="sr-only" aria-live="polite" aria-atomic="true">{announceText()}</div>
       {/* v0.4.4 (Task 1): headless auto-connect indicator — shown while a
           secondary panel arms the workspace's SSH handle in the background. */}
       <Show when={connectingWs()}>
