@@ -188,7 +188,8 @@ a wide argument list because every connection mode funnels through it: `persiste
   `request_shell`, channel-pump task. Next to the background `check_remote_hooks` it also
   spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
   add-on is brought to this desktop's frontend in the background. `setup()` calls
-  `web_addon::init` to read the embedded frontend once.
+  `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
+  `pairing::mobile_pairing_set_shell`, Phase 113.)
 - `emit_data` ([lib.rs:2370](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string. Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

@@ -50,7 +50,12 @@ interface PairedDevice {
   status: string;
   last_seen: number;
   last_ip: string;
+  /** Stored grants: "all", "" or a JSON array (daemon chat_pairing.go). */
+  scopes?: string;
 }
+
+/** Phase 113: `shell:attach` is never implied by "all" — only an explicit grant. */
+const hasShell = (d: PairedDevice): boolean => (d.scopes ?? "").includes('"shell:attach"');
 
 function fmtWhen(unix: number): string {
   if (!unix) return "—";
@@ -260,6 +265,20 @@ export function MobilePairing(p: { workspaceId?: string }) {
     }
   };
 
+  // Phase 113 (Web & devices): grant / withdraw a paired browser's terminal.
+  const setShell = async (id: string, enabled: boolean) => {
+    if (enabled && !window.confirm(t("mobile.shell.confirm"))) {
+      await refreshDevices(); // put the checkbox back
+      return;
+    }
+    try {
+      await backend.call("mobile_pairing_set_shell", { workspaceId: ws(), deviceId: id, enabled });
+    } catch (e) {
+      setErr(String(e));
+    }
+    await refreshDevices();
+  };
+
   const rename = async (id: string, current: string) => {
     const name = window.prompt(t("mobile.rename_prompt"), current);
     if (name == null) return;
@@ -414,6 +433,15 @@ export function MobilePairing(p: { workspaceId?: string }) {
               <span class="mob-dev-meta settings-hint">
                 {d.status} · {fmtWhen(d.last_seen)}{d.last_ip ? ` · ${d.last_ip}` : ""}
               </span>
+              <label class="mob-dev-shell settings-checkbox" title={t("mobile.shell.hint")}>
+                <input
+                  type="checkbox"
+                  checked={hasShell(d)}
+                  disabled={d.status !== "active"}
+                  onChange={(e) => void setShell(d.device_id, e.currentTarget.checked)}
+                />
+                <span>{t("mobile.shell.label")}</span>
+              </label>
               <span class="mob-dev-actions">
                 <button onClick={() => void rename(d.device_id, d.device_name)}>{t("common.rename")}</button>
                 <button onClick={() => void revoke(d.device_id)}>{t("mobile.revoke")}</button>

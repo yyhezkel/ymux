@@ -356,6 +356,11 @@ bounds it (≤ 32 args, ≤ 4096 bytes each, no NUL, non-empty argv[0]) and reso
 `claude` to the daemon's absolute path; it lands after `--` in `tmux new-session`, never
 in a shell (Rule #3).
 
+**Browser-pairing approve validates scopes (Phase 113, 2.13.0).**
+`POST /api/pairing/requests/{id}/approve` used to store the request's `scopes` list
+verbatim; it now goes through `auth.NormalizeScopes` like `PUT /api/v2/devices/{id}/scopes`
+(unknown names dropped, duplicates collapsed, an ordinary full set folded to "all").
+
 **Insights auth (Phase 110).** The Insights routes (legacy `/current` … and
 `/api/v2/insights/*`) were behind `auth.Bearer` — the shared token only — so a device's
 `insights:read` grant existed but nothing honored it, and the browser's Monitor got 401.

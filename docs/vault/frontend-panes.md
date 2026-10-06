@@ -203,7 +203,10 @@ reports a LISTEN port → a row appears with **[Forward]** → the backend opens
 flips to **[Open] [Stop]**. Stop tears the tunnel down; the row reverts to detected-only,
 or disappears when `port.closed` fires.
 
-**`MobilePairing.tsx` (428)** — the Monitor's Mobile tab. Drives the nginx-proxy install
+**`MobilePairing.tsx` (428)** — the Monitor's Mobile tab, labelled **"Web & devices"**
+since Phase 113: each device row also has a **Terminal access** checkbox (checked when
+the stored scopes name `shell:attach` — never implied by "all"; disabled unless the device
+is active; granting asks for confirmation) → `mobile_pairing_set_shell`. Drives the nginx-proxy install
 and the daemon's pairing endpoints via the `mobile_pairing_*` commands. Host and port are
 used **only** to render the URL card.
 

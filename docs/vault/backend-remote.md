@@ -124,7 +124,7 @@ embedded `index.html` and the add-on reports itself unavailable.
 - Paths come from our own build and pass `safe_rel` (no `..`, plain charset) before they
   reach a remote string.
 
-## `pairing.rs` (231) — mobile
+## `pairing.rs` (231) — mobile, and Web & devices (Phase 113)
 
 Drives the `nginx-proxy` add-on install (domain + Cloudflare token) and the daemon's
 `/api/pairing/*` endpoints, curled over the workspace SSH session the same way
@@ -135,6 +135,15 @@ It persists remote-side only in `/etc/ymux/cloudflare.ini` (mode 600, root) beca
 certbot's auto-renew needs it. The domain marker lives at
 `~/.ymux/server/mobile-domain` — note `server`, not `insights`; Phase 77 renamed that
 directory and migrates it in place on first 2.0 boot.
+
+**Terminal access (Phase 113).** `mobile_pairing_set_shell(workspace, device, enabled)`
+grants or withdraws `shell:attach` on a paired device — the checkbox in the device list
+(Monitor → "Web & devices"). Read-modify-write of the owner endpoint
+`/api/v2/devices/{id}/scopes`: the daemon's GET already expands "all" into the explicit
+list, so `with_shell` only adds/removes the one name and no copy of the Go scope
+vocabulary lives here; the PUT normalizes; the reply is checked for the change.
+`daemon_curl`'s allow-list grew by exactly that route (`is_device_scopes_path`, one valid
+device id) — nothing else under `/api/v2/` is reachable through it.
 
 ## Invariants
 

@@ -12465,6 +12465,7 @@ pub fn run() {
             pairing::mobile_pairing_list_devices,
             pairing::mobile_pairing_revoke,
             pairing::mobile_pairing_rename,
+            pairing::mobile_pairing_set_shell,
             workspaces_load,
             workspace_create,
             workspace_update,

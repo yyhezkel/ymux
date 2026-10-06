@@ -6126,7 +6126,7 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
 }
 .mob-url-row button { cursor: pointer; white-space: nowrap; }
 .mob-devices { display: flex; flex-direction: column; gap: 4px; }
-.mob-dev { display: grid; grid-template-columns: 1.2fr 1.6fr auto; align-items: center; gap: 8px;
+.mob-dev { display: grid; grid-template-columns: 1.2fr 1.6fr auto auto; align-items: center; gap: 8px;
   padding: 6px 8px; border: 1px solid var(--w-border, #2a2e44); border-radius: 5px; font-size: 12px; }
 .mob-dev-actions { display: flex; gap: 4px; }
 .mob-dev-actions button, .mob-pair button { cursor: pointer; }

@@ -82,10 +82,13 @@ import (
 // reclaims its previous port and browser sessions are re-registered from
 // their own tmux environment.
 //
+// 2.13.0 (Phase 113, WEB-DESIGN D2): the browser-pairing approve endpoint
+// validates its scopes with auth.NormalizeScopes, like the PUT does.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.12.0"
+const Version = "2.13.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

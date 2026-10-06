@@ -8,7 +8,7 @@
   },
   "backend-core": {
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "58d4da4ac00f08034a67872abb8eb55c2accb22975521169fd8079addd4a009f",
+    "app/src-tauri/src/lib.rs": "cc6985b60946ab44d60b86bba4e7fa904ee6ddcd0b9ca7606ba0bb41d50f798f",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
@@ -31,7 +31,7 @@
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "c48a281c4fbd412256e42f270fcb4665411e57b343d6d14b5435f0207ddc15f0",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
-    "app/src-tauri/src/pairing.rs": "ff7be6b012d2a73b005158d26e3557b015cee0c6f0dec22dd0a523a6c3d01b69",
+    "app/src-tauri/src/pairing.rs": "e9eb2e82df82efd3ce793177a3c80a502ce261d14c551355b85b91fb4dd79664",
     "app/src-tauri/src/provisioning.rs": "4c90c2685815e8cdfd5d9ef204ceabd012eaeba39f597f4209620da1a16f2f87",
     "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd",
     "app/src-tauri/src/web_addon.rs": "b73bd521d5607f0c6dc25d1fd7445d064e02a4fe1ed2c23d8b85b61167ed3a7b"
@@ -81,7 +81,7 @@
     "app/src-tauri/cli/src/session_meta.rs": "bdb0ebdafbea7909b183c78299471fad2b37a99d6b218a44fe6b9732ee72adcd"
   },
   "crates": {
-    "app/src-tauri/crates/ymux-addons/src/lib.rs": "6780594762757689a9041462d7b75935588860e2e3c3700b8fa5c739199a135d",
+    "app/src-tauri/crates/ymux-addons/src/lib.rs": "7e1c2b110789c70d0fd002d21946d07b0c5efb39475053d3eaaba137193c0559",
     "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "404e02208ea32cb11ef3e0b6f90ecc29fc41ab480a5e740f3e3842bd7b88b85c",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "76eb09970d1f1e5eb412e17971e87c6a0255f62a6c8a19db88a77a6d1540f9b4",
@@ -164,7 +164,7 @@
     "app/src/InsightsClaudeCost.tsx": "8fbed1c564bcd47873325a1def73727180dd422813c5f647301839ccef227085",
     "app/src/InsightsWindow.tsx": "4ad251bc4fe1ea964ae310d93a0dd91e1415c986ba908faf5b0b44198516d4ba",
     "app/src/MarkdownViewer.tsx": "741b441ce2d13bcdc831ee35aa03f8afbb0c61c510c1725970aaf6a189c6fb78",
-    "app/src/MobilePairing.tsx": "c77da6327b1babfe8ceede5392fb7460412a6c3f238d0315d4a8f5685b6da23c",
+    "app/src/MobilePairing.tsx": "a750d452f36b4359a73a4e4471676a4804b04fe03510c4406cb20265bf252f6d",
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "52971e77ee3bc3bc2f49954dc12f568268982d6981143971dc5cccc5ffc976e5",
     "app/src/QueuePanel.tsx": "401716a6a25f6b5ce73cbcac68f9b2a51f608c82cd6af4bd16f4577000c43ee3",
@@ -234,7 +234,7 @@
     "app/src-tauri/server/internal/chat/bridge.go": "e9e97a1ee6eeb761c9e0ebb45221fcaacc97575e6ec66d0c0687e5ce6aa01abf",
     "app/src-tauri/server/internal/chat/bridge_test.go": "e56583b10cc996e44457afe1a7ccc6c26d8fd42475cbe2addc4b63412702b0d1",
     "app/src-tauri/server/internal/chat/chat_api.go": "a4cd1e3b87cc4af38652574d7447dc7c58d8318d4516d1d5ffeec9cc2726ee5b",
-    "app/src-tauri/server/internal/chat/chat_browser_pairing.go": "b1a076b366404179dc2f9a3fb97e22928db9ee40afd97baea2c279a9d291950d",
+    "app/src-tauri/server/internal/chat/chat_browser_pairing.go": "df13facff2e12dc1d78df5eab52c6f6cad7eacd1dc4dd7cb6a81815eccf845fc",
     "app/src-tauri/server/internal/chat/chat_browser_pairing_test.go": "ead9d31325d66c8c44fc7bab2599ef7d5f43b5105ceaacf8b6e47d8c0f5e521b",
     "app/src-tauri/server/internal/chat/chat_helpers.go": "ac24ad161bdc7fa9b2598265b342630f13b75b6ce986b617f37fa858ac2aa6ce",
     "app/src-tauri/server/internal/chat/chat_hookrpc.go": "4013fdea4582e27bae8ed1bf23564ab11c5a4e31d2dcf60c0e6313d97ad3cb13",
@@ -254,7 +254,7 @@
     "app/src-tauri/server/internal/config/migrate_test.go": "a64a6c4fa4ef76a1e0a1adf9fd93382226a98be5c885f923d3dbf57dc00a7b2b",
     "app/src-tauri/server/internal/config/path.go": "b1502f1b80dca133a60813459dfbf70345d7a3d980f9c17f55d496f19e4ad476",
     "app/src-tauri/server/internal/config/path_test.go": "942056634580d15dfd6ee84155e02244d0e4c25d261387588521d25f2aeb5117",
-    "app/src-tauri/server/internal/core/core.go": "6bdd37ce4ebad438c9d2bb08f62803dd91fa260bf85b9fd051aae3f32e7d0e77",
+    "app/src-tauri/server/internal/core/core.go": "281432464e9613d900410f2e4f8900d64559ae9b12a9737eb448ea9a9be44386",
     "app/src-tauri/server/internal/desktop/desktop.go": "c7ce9b8a1e8b8a9144366bb37a673be4bc212044ff8ebf365a5b266a5e527d72",
     "app/src-tauri/server/internal/desktop/desktop_test.go": "7c18d9c81a3113b9e06c5888bf5a899f4338bae95e9786a2ffff46bf28ff1ae0",
     "app/src-tauri/server/internal/files/huma.go": "35f1cf33b44011cca7b8d9db8c6b06d32024165cb9a6f1f3abd3748be9c681ab",

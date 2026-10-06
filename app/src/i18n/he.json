@@ -810,7 +810,7 @@
   "insights.title": "Server Insights",
   "insights.tab.metrics": "מדדים",
   "insights.tab.analytics": "אנליטיקה",
-  "insights.tab.mobile": "מובייל",
+  "insights.tab.mobile": "דפדפן ומכשירים",
   "insights.tab.logs": "לוגים",
   "insights.tab.health": "ניקיון",
   "hygiene.refresh": "רענון",
@@ -1369,5 +1369,8 @@
   "web.login.denied": "הבקשה נדחתה או לא נענתה.",
   "web.login.no_shell": "המכשיר הזה מחובר, אבל לא קיבל הרשאת טרמינל (shell:attach). תן אותה מ-ymux בדסקטופ ורענן.",
   "web.login.device": "מכשיר:",
-  "web.login.forget": "התנתק"
+  "web.login.forget": "התנתק",
+  "mobile.shell.label": "גישת טרמינל",
+  "mobile.shell.hint": "מאפשר למכשיר הזה לפתוח shell בשרת (shell:attach). כבוי כברירת מחדל; ביטול המכשיר מסיר מיד.",
+  "mobile.shell.confirm": "לתת למכשיר הזה טרמינל בשרת? מי שמחזיק את ה-token שלו מקבל כאן shell."
 }

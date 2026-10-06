@@ -802,7 +802,7 @@
   "insights.title": "Server Insights",
   "insights.tab.metrics": "Metrics",
   "insights.tab.analytics": "Analytics",
-  "insights.tab.mobile": "Mobile",
+  "insights.tab.mobile": "Web & devices",
   "insights.tab.logs": "Logs",
   "insights.tab.health": "Cleanup",
   "hygiene.refresh": "Refresh",
@@ -1369,5 +1369,8 @@
   "web.login.denied": "The request was denied or not answered.",
   "web.login.no_shell": "This device is signed in, but it has not been granted terminal access (shell:attach). Grant it from ymux on your desktop, then reload.",
   "web.login.device": "Device:",
-  "web.login.forget": "Sign out"
+  "web.login.forget": "Sign out",
+  "mobile.shell.label": "Terminal access",
+  "mobile.shell.hint": "Lets this device open a shell on the server (shell:attach). Off by default; a revoke removes it at once.",
+  "mobile.shell.confirm": "Give this device a terminal on the server? Anyone holding its token gets a shell here."
 }
