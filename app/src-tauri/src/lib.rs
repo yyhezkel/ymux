@@ -161,12 +161,14 @@ pub(crate) struct AppState {
     pub(crate) pane_status: Arc<Mutex<HashMap<String, String>>>,
     /// issue #4 (ymux-tools Ticker): per-pane current-turn timing, keyed by
     /// pane_id. turn-start = UserPromptSubmit hook, turn-end = Stop hook.
-    /// In-memory and session-scoped — the rolling average is a within-session
-    /// signal, meaningless after a restart, so it's never persisted.
+    /// Persisted on exit to `<config>/agent-runs.json` with each state's
+    /// timestamp and restored in setup; entries 6h or older, without a
+    /// timestamp, or for panes that no longer exist are dropped — see
+    /// `agent_runs_store.rs`.
     pub(crate) agent_runs: Arc<Mutex<HashMap<String, AgentRunState>>>,
     /// BRIEF: per-pane agent brief + last user prompt, keyed by RESOLVED
-    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only,
-    /// same rationale as agent_runs — see `brief.rs`.
+    /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only
+    /// (unlike agent_runs, which is persisted) — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
     /// Phase 105: per-Claude-session context (first prompt + brief log),
     /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
@@ -2641,11 +2643,11 @@ pub(crate) struct PaneAgentSnapshot {
 /// Phase 84.B: every pane's agent state at once.
 ///
 /// Exists for the webview reload (F5, devtools reload, an HMR round in
-/// dev) — far more common than an app restart, and without this every
-/// light goes dark until the next hook happens to fire, which for an idle
-/// agent could be never. Deliberately NOT persisted to disk: restoring an
-/// eight-hour-old "running" after an app restart would be a lie, and the
-/// first hook restores the truth anyway.
+/// dev) — and without this every light goes dark until the next hook
+/// happens to fire, which for an idle agent could be never. The map is also
+/// persisted across an app restart with each state's timestamp; restore
+/// drops anything 6h or older, so an eight-hour-old "running" never comes
+/// back, and the first hook corrects the rest.
 #[tauri::command]
 fn pane_agent_states(
     state: State<'_, AppState>,
@@ -12348,6 +12350,8 @@ pub fn run() {
                     tracing::warn!("workspaces load failed: {e}");
                 }
             }
+            // Agent lights: restore after workspaces load (unknown panes are dropped).
+            agent_runs_store::restore_into(&state);
             // Phase 7.B: load notes (best-effort; missing file is fine).
             match notes::load_notes_from_disk() {
                 Ok(nf) => {
@@ -12807,8 +12811,9 @@ pub fn run() {
         // path Rule #4 exempts.
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
-        .run(|_app, event| {
+        .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                agent_runs_store::save_from(&app.state::<AppState>());
                 ymux_core::flush_log();
             }
         });
