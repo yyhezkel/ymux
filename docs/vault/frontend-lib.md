@@ -109,6 +109,21 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   live: `{"theme":"dark"}` replaced the theme object and `applyTheme` crashed
   (`webDefaults.test.ts`). `log_dir_path` answers `""` (the console is the log).
   A 409 on save re-saves on the newer version: the whole document wins, as on the desktop.
+- **Monitor** (Phase 110) — `insights_fetch` / `insights_docker_action` /
+  `insights_hygiene_kill` fetch the daemon's insights paths same-origin (the desktop curls
+  the same paths over SSH) and hand the body back as text; a 401/403 says the device may
+  not read insights (its scopes, not a bug).
+- **File Manager, remote side** (Phase 110, `web/files.ts`) — the daemon's Files API,
+  sandboxed to its root ($HOME by default) with root-relative paths. `FilesBridge` learns
+  the root's absolute path from `list("/").cwd`, translates absolute ↔ relative, and
+  refuses paths outside it in words. Wired: home, list, read (NUL in the first 8 KB =
+  binary), write and create (upload), delete, and download — which in a browser goes to
+  the browser's own download (`download.ts` calls `web_download`; there is no Save
+  dialog or local path). Rename / mkdir / copy / zip have no daemon op yet and reject.
+- **"claude" mode** (Phase 110) — `pane_connect` with `mode: "claude"` creates the
+  session with `cmd: ["claude", ...splitArgs(claudeArgs)]` (`web/argv.ts`: whitespace
+  and quotes only, nothing evaluated; `argv.test.ts`). A custom `cmd` string still opens
+  a shell.
 - **New workspace** — App's `openNewWorkspace()`: the desktop opens the wizard; the
   browser (no wizard targets) creates `workspace N` directly.
 - `web/` cannot import `logger.ts` (cycle through `backend`), so it uses `console.*` — the

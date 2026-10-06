@@ -374,3 +374,19 @@ func TestEventsSocket(t *testing.T) {
 		}
 	}
 }
+
+func TestGateCardFallbackTitleIsHumanized(t *testing.T) {
+	// Phase 110, seen live: Claude Code's PreToolUse carries tool_name +
+	// tool_input, the CLI looks for command/tool, falls back to
+	// "agent: pre-tool-use" and the card showed raw JSON.
+	payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "date +%s"}}
+	title, summary := cardText("pre-tool-use", "agent: pre-tool-use", `{"cwd":"/x"}`, payload, nil, "en")
+	if title != "Claude wants to run: Bash" || summary != "date +%s" {
+		t.Errorf("got %q / %q", title, summary)
+	}
+	// A title the CLI did derive stays the approval prompt.
+	title, summary = cardText("pre-tool-use", "Run `ls` ?", "s", payload, nil, "en")
+	if title != "Run `ls` ?" || summary != "s" {
+		t.Errorf("derived title changed: %q / %q", title, summary)
+	}
+}

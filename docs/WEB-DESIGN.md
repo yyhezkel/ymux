@@ -570,6 +570,12 @@ groups / order of a browser workspace, `backend:resync` re-seeding the lights.
   name) — a hidden-by-caps button should never reach it; if one does, it is a C3 bug.
 
 ##### C6 — WebBackend: the ymux surfaces
+**Phase 110**, daemon 2.11.0. As built (vault frontend-lib § The browser arm): Monitor via
+same-origin insights fetches; the File Manager's remote side over the Files API (no
+rename / mkdir / copy / zip / upload-from-machine yet — FOLLOWUPS); "claude" mode panes
+run claude as the session's argv; the gate card's fallback title is humanized on the
+daemon. Not in it: claude quota (`claude_usage_fetch` is a CLI probe over SSH on the
+desktop), session history UI (none on the desktop either yet), IndexedDB feed history.
 - feed_decide (WS frame), feed history persisted in IndexedDB, notes CRUD,
   notifications clear, history + transcript + resume (Sessions panel), files via
   `/api/v2/files/*`, insights / claude usage via the existing daemon routes,

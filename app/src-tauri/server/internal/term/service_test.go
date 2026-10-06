@@ -237,3 +237,29 @@ func TestShellAttachIsNotInAllScopes(t *testing.T) {
 		t.Error("an explicit grant was not honoured")
 	}
 }
+
+func TestCreateRunsAnArgv(t *testing.T) {
+	// Phase 110: a browser pane opened in "claude" mode. argv after `--`,
+	// never a shell string, and a bare `claude` becomes the resolved path.
+	s, calls := testService(func(args []string) ([]byte, error) {
+		if args[0] == "has-session" {
+			return nil, exitErr()
+		}
+		return nil, nil
+	})
+	s.claudeBin = "/opt/claude/bin/claude"
+	w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{"name":"c1","cmd":["claude","--model","x; rm -rf ~"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	argv := lastCreate(t, calls)
+	tail := strings.Join(argv[len(argv)-4:], "|")
+	if tail != "--|/opt/claude/bin/claude|--model|x; rm -rf ~" {
+		t.Errorf("argv tail = %q", tail)
+	}
+	for _, bad := range []string{`{"name":"c2","cmd":[""]}`, `{"name":"c3","cmd":["a\u0000b"]}`} {
+		if w := do(s, "POST", "/api/v2/term/sessions", "owner-token", bad); w.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", bad, w.Code)
+		}
+	}
+}

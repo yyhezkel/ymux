@@ -21,6 +21,7 @@ package term
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"ymux-server/internal/agent"
@@ -172,6 +173,14 @@ var cardSubkinds = map[string]bool{
 // cardText is the desktop's card-text rule for one language. title/summary
 // are what the CLI sent; brief is the stop's parsed brief, nil otherwise.
 func cardText(subkind, title, summary string, payload map[string]any, brief *agent.Brief, lang string) (string, string) {
+	// Phase 110: the CLI derives a gate card's title from payload.command /
+	// payload.tool, but Claude Code sends tool_name + tool_input, so it falls
+	// back to "agent: pre-tool-use" with the raw hook JSON as the summary.
+	// Seen live in the browser. Only that fallback is humanized — a title the
+	// CLI did derive is still the approval prompt, untouched.
+	if subkind == "pre-tool-use" && strings.HasPrefix(title, "agent: ") {
+		return agent.Humanize(subkind, payload, "", lang)
+	}
 	if !cardSubkinds[subkind] {
 		return title, summary
 	}

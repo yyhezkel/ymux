@@ -43,6 +43,8 @@ import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
+import { splitArgs } from "./web/argv";
+import { FilesBridge, LARGE_FILE_BYTES } from "./web/files";
 import { PtySessions } from "./web/pty";
 import type {
   Backend,
@@ -111,6 +113,7 @@ export class WebBackend implements Backend {
   readonly caps: ReadonlySet<Capability> = new Set<Capability>();
   readonly bus = new EventBus();
   private pty = new PtySessions(this.bus);
+  private files = new FilesBridge();
   private events: EventsSocket;
   private hello: Hello | null = null;
   private ws: WebWS[] = [];
@@ -389,6 +392,10 @@ export class WebBackend implements Backend {
       // A fresh pane, or one whose session ended: (re)create it carrying the
       // leaf's own pane id.
       const want = name || derivedName(w, paneId);
+      // "claude" mode runs claude as the session's program (daemon 2.11.0);
+      // a custom `cmd` string is not split into an argv here, so it opens a
+      // shell like the default mode.
+      const cmd = str(a.mode) === "claude" ? ["claude", ...splitArgs(str(a.claudeArgs))] : undefined;
       let created: { name: string };
       try {
         created = await api<{ name: string }>("POST", "/api/v2/term/sessions", {
@@ -396,6 +403,7 @@ export class WebBackend implements Backend {
           cwd: str(a.cwdOverride),
           workspace_id: wsId,
           pane_id: paneId,
+          cmd,
         });
       } catch (e) {
         // The name is taken by an unrelated session: let the daemon mint one.
@@ -404,6 +412,7 @@ export class WebBackend implements Backend {
           cwd: str(a.cwdOverride),
           workspace_id: wsId,
           pane_id: paneId,
+          cmd,
         });
       }
       name = created.name;
@@ -591,5 +600,47 @@ export class WebBackend implements Backend {
       return api("PATCH", `/api/v2/notes/${encodeURIComponent(str(a.id))}`, body);
     },
     notes_delete: (a) => api("DELETE", `/api/v2/notes/${encodeURIComponent(str(a.id))}`),
+
+    // Monitor (Phase 110): the desktop curls these same daemon paths over SSH;
+    // here they are same-origin. The body is handed back as text, like Rust.
+    insights_fetch: (a) => this.insights("GET", str(a.path)),
+    insights_docker_action: (a) =>
+      this.insights("POST", `/docker/${encodeURIComponent(str(a.containerId))}/action`, { cmd: str(a.action) }),
+    insights_hygiene_kill: (a) => this.insights("POST", "/hygiene/kill", { pids: Array.isArray(a.pids) ? a.pids : [] }),
+
+    // File Manager, remote side (Phase 110, web/files.ts).
+    file_home_remote: () => this.files.home(),
+    file_list_remote: (a) => this.files.list(str(a.path)),
+    file_read_remote: (a) => this.files.read(str(a.path)),
+    file_write_remote: async (a) => {
+      await this.files.write(str(a.path), str(a.text));
+      return null;
+    },
+    file_create_remote: async (a) => {
+      await this.files.write(str(a.path), "");
+      return null;
+    },
+    file_delete_remote: async (a) => {
+      await this.files.remove(str(a.path));
+      return null;
+    },
+    file_large_threshold: async () => LARGE_FILE_BYTES,
+    web_download: async (a) => {
+      await this.files.download(str(a.remotePath), str(a.name));
+      return null;
+    },
   };
+
+  /** A daemon insights path (same allow-list shape as Rust's safe_api_path). */
+  private async insights(method: string, path: string, body?: unknown): Promise<string> {
+    if (!/^\/[A-Za-z0-9/_\-?=&.,]*$/.test(path)) throw new Error("invalid insights path");
+    const r = await fetch(path, {
+      method,
+      headers: { Authorization: `Bearer ${getToken()}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (r.status === 401 || r.status === 403) throw new Error("this device is not allowed to read server insights");
+    if (!r.ok) throw new Error(`insights daemon returned HTTP ${r.status}`);
+    return r.text();
+  }
 }

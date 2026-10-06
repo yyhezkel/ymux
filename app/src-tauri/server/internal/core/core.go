@@ -74,10 +74,14 @@ import (
 // 2.10.0 (Phase 109, WEB-DESIGN C5): a session create takes the caller's
 // `pane_id`, so a browser layout leaf and its tmux session's hooks share one id.
 //
+// 2.11.0 (Phase 110, WEB-DESIGN C6): a session create takes an argv (`cmd`, a
+// browser pane in "claude" mode), and a gate card whose CLI title fell back to
+// "agent: pre-tool-use" is humanized from tool_name / tool_input.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.10.0"
+const Version = "2.11.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value

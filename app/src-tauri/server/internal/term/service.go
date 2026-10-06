@@ -256,6 +256,30 @@ var (
 	errPaneInUse = errors.New("pane_id is already carried by a live session")
 )
 
+// sessionArgv vets a create's optional argv (Phase 110). Bounded so a
+// request cannot park megabytes in tmux's argv; NUL is refused because it
+// would truncate an argument. A bare `claude` resolves to the daemon's
+// absolute path — the tmux server's PATH is not the daemon's (history.go).
+func (s *Service) sessionArgv(cmd []string) ([]string, error) {
+	if len(cmd) == 0 {
+		return nil, nil
+	}
+	if len(cmd) > 32 {
+		return nil, errors.New("cmd: at most 32 arguments")
+	}
+	out := make([]string, len(cmd))
+	for i, a := range cmd {
+		if len(a) > 4096 || strings.ContainsRune(a, 0) || (i == 0 && strings.TrimSpace(a) == "") {
+			return nil, errors.New("cmd: invalid argument")
+		}
+		out[i] = a
+	}
+	if out[0] == "claude" {
+		out[0] = s.claudeBinary()
+	}
+	return out, nil
+}
+
 // ValidPaneID is the shape a caller-chosen pane id may take (Phase 109). It
 // lands in the session's environment and in hook payloads, so it is kept to a
 // plain token: no spaces, quotes, separators or control characters.
@@ -336,6 +360,9 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		Policy      string `json:"policy"`       // Phase 101: "none" (default) | "gate"
 		WorkspaceID string `json:"workspace_id"` // Phase 103: a browser workspace
 		PaneID      string `json:"pane_id"`      // Phase 109: the browser leaf this session fills
+		// Phase 110: an argv the session runs instead of a shell — a browser
+		// pane opened in "claude" mode. argv, never a shell string (Rule #3).
+		Cmd []string `json:"cmd"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Policy == "" {
@@ -349,7 +376,12 @@ func (s *Service) handleCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such workspace", http.StatusBadRequest)
 		return
 	}
-	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID)
+	cmd, err := s.sessionArgv(body.Cmd)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID, cmd...)
 	if errors.Is(err, errSessionExists) || errors.Is(err, errPaneInUse) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return

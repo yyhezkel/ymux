@@ -334,6 +334,19 @@ a minted `term_<hex>`. `ValidPaneID`: 1–64 of `[A-Za-z0-9_-]` (it lands in an 
 and in hook payloads), else 400; an id a live session already carries → 409. Agent
 splits and resumes still mint.
 
+**Session argv (Phase 110, 2.11.0).** The create body also takes `cmd` — an argv the
+session runs instead of a shell (a browser pane opened in "claude" mode). `sessionArgv`
+bounds it (≤ 32 args, ≤ 4096 bytes each, no NUL, non-empty argv[0]) and resolves a bare
+`claude` to the daemon's absolute path; it lands after `--` in `tmux new-session`, never
+in a shell (Rule #3).
+
+**Gate card text fallback (Phase 110).** `cardText` normally leaves a `pre-tool-use`
+card alone — the CLI's title IS the approval prompt. But the CLI derives that title from
+`payload.command` / `payload.tool`, while Claude Code sends `tool_name` + `tool_input`,
+so it falls back to `agent: pre-tool-use` with the raw hook JSON as the summary (seen
+live in the browser). Exactly that fallback is now humanized (`Claude wants to run: Bash`
+/ the command); a title the CLI did derive is untouched.
+
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a
 symlink to `www/<version>/`, holding the desktop's own vite build. Nothing here uploads or

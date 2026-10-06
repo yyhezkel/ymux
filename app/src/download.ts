@@ -38,6 +38,12 @@ export async function saveRemoteFileAs(
   suggestedName: string,
   defaultDir?: string,
 ): Promise<string | null> {
+  // Phase 110: a browser has no local paths and no Save dialog — the file
+  // goes to the browser's own download, and there is no path to return.
+  if (backend.kind === "web") {
+    await backend.call("web_download", { remotePath, name: suggestedName });
+    return suggestedName;
+  }
   const dir = defaultDir ?? lastDir() ?? "";
   const defaultPath = dir
     ? `${dir.replace(/[\\/]+$/, "")}/${suggestedName}`
