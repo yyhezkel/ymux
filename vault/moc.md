@@ -17,6 +17,7 @@
 
 ## Notes
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
+- [pane-close-cleanup](pane-close-cleanup.md) — what each pane-retire path drops (sessions, watchers, agent_runs, briefs)
 
 ## Test facts
 - `npm test` = `node --experimental-strip-types --test "src/*.test.ts"` (`app/package.json:16`) → needs node ≥22.6; pipeline host node v20.20.2 rejects the flag → frontend unit tests prove on CI only; outcome checks = grep-structural
