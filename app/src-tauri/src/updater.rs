@@ -63,12 +63,43 @@ pub(crate) struct Manifest {
     pub nsis_sha256: Option<String>,
     #[serde(default)]
     pub min_supported_version: Option<String>,
+    // macOS per-arch dmg (keys already published in manifest.json).
+    #[serde(default)]
+    pub dmg_x64_url: Option<String>,
+    #[serde(default)]
+    pub dmg_x64_sha256: Option<String>,
+    #[serde(default)]
+    pub dmg_aarch64_url: Option<String>,
+    #[serde(default)]
+    pub dmg_aarch64_sha256: Option<String>,
     /// Phase 18: per-agent hook spec versions. Map keyed by agent
     /// id (`"claude-code"`, `"codex"`, `"gemini"`). Pre-18 manifests
     /// without this field load fine — the desktop's hooks-outdated
     /// check just no-ops.
     #[serde(default)]
     pub hooks: std::collections::BTreeMap<String, ManifestHook>,
+}
+
+impl Manifest {
+    /// (url, sha256) of the dmg for an arch tag from `mac_dmg_arch_tag`;
+    /// unknown tag → (None, None).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))] // macOS install arm only
+    pub(crate) fn dmg_for_arch(&self, tag: &str) -> (Option<String>, Option<String>) {
+        match tag {
+            "x64" => (self.dmg_x64_url.clone(), self.dmg_x64_sha256.clone()),
+            "aarch64" => (self.dmg_aarch64_url.clone(), self.dmg_aarch64_sha256.clone()),
+            _ => (None, None),
+        }
+    }
+}
+
+/// Rust `ARCH` const → dmg asset/manifest arch tag.
+pub(crate) fn mac_dmg_arch_tag(arch: &str) -> Option<&'static str> {
+    match arch {
+        "x86_64" => Some("x64"),
+        "aarch64" => Some("aarch64"),
+        _ => None,
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -696,6 +727,9 @@ pub(crate) struct ReleaseInfo {
     pub nsis_sha256: Option<String>,
     pub msi_url: Option<String>,
     pub msi_sha256: Option<String>,
+    /// dmg for the RUNNING arch (`*_x64.dmg` / `*_aarch64.dmg`).
+    pub dmg_url: Option<String>,
+    pub dmg_sha256: Option<String>,
 }
 
 // GitHub releases API — only the fields we use.
@@ -789,14 +823,23 @@ async fn fetch_releases() -> Result<Vec<ReleaseInfo>, String> {
 /// Pure parse of a GitHub releases JSON body → ReleaseInfo list (drafts
 /// dropped). Split out so it's unit-testable without a network call.
 fn parse_releases(body: &str) -> Result<Vec<ReleaseInfo>, String> {
+    parse_releases_for_arch(body, std::env::consts::ARCH)
+}
+
+/// `parse_releases` with the arch injected (platform-neutral tests).
+fn parse_releases_for_arch(body: &str, arch: &str) -> Result<Vec<ReleaseInfo>, String> {
     let raw: Vec<GhRelease> =
         serde_json::from_str(body).map_err(|e| format!("parse releases: {e}"))?;
+    let dmg_suffix = mac_dmg_arch_tag(arch).map(|t| format!("_{t}.dmg"));
     Ok(raw
         .into_iter()
         .filter(|r| !r.draft)
         .map(|r| {
             let nsis = r.assets.iter().find(|a| a.name.ends_with("-setup.exe"));
             let msi = r.assets.iter().find(|a| a.name.ends_with(".msi"));
+            let dmg = dmg_suffix
+                .as_deref()
+                .and_then(|s| r.assets.iter().find(|a| a.name.ends_with(s)));
             ReleaseInfo {
                 version: r.tag_name.trim_start_matches('v').to_string(),
                 tag: r.tag_name.clone(),
@@ -808,6 +851,8 @@ fn parse_releases(body: &str) -> Result<Vec<ReleaseInfo>, String> {
                 nsis_sha256: nsis.and_then(|a| strip_sha256(&a.digest)),
                 msi_url: msi.map(|a| a.browser_download_url.clone()),
                 msi_sha256: msi.and_then(|a| strip_sha256(&a.digest)),
+                dmg_url: dmg.map(|a| a.browser_download_url.clone()),
+                dmg_sha256: dmg.and_then(|a| strip_sha256(&a.digest)),
             }
         })
         .collect())
@@ -815,7 +860,68 @@ fn parse_releases(body: &str) -> Result<Vec<ReleaseInfo>, String> {
 
 #[cfg(test)]
 mod version_manager_tests {
-    use super::{parse_releases, strip_sha256};
+    use super::{mac_dmg_arch_tag, parse_releases, parse_releases_for_arch, strip_sha256, Manifest};
+
+    const DMG_RELEASES: &str = r#"[{
+      "tag_name": "v0.5.0", "html_url": "https://x", "assets": [
+        {"name": "ymux_0.5.0_x64.dmg", "browser_download_url": "https://x/x64.dmg", "digest": "sha256:aa11"},
+        {"name": "ymux_0.5.0_aarch64.dmg", "browser_download_url": "https://x/arm.dmg", "digest": "sha256:bb22"}
+      ]}]"#;
+
+    // Pins arch→asset selection: x64 host must never get the arm dmg.
+    #[test]
+    fn picks_x64_dmg() {
+        let r = &parse_releases_for_arch(DMG_RELEASES, "x86_64").unwrap()[0];
+        assert_eq!(r.dmg_url.as_deref(), Some("https://x/x64.dmg"));
+        assert_eq!(r.dmg_sha256.as_deref(), Some("aa11"));
+    }
+
+    // Pins the aarch64 arm of the selection.
+    #[test]
+    fn picks_aarch64_dmg() {
+        let r = &parse_releases_for_arch(DMG_RELEASES, "aarch64").unwrap()[0];
+        assert_eq!(r.dmg_url.as_deref(), Some("https://x/arm.dmg"));
+        assert_eq!(r.dmg_sha256.as_deref(), Some("bb22"));
+    }
+
+    // Pins: unknown arch or release without a dmg → None, never a wrong asset.
+    #[test]
+    fn missing_or_unknown_arch_dmg_is_none() {
+        let r = &parse_releases_for_arch(DMG_RELEASES, "riscv64").unwrap()[0];
+        assert!(r.dmg_url.is_none() && r.dmg_sha256.is_none());
+        let none = r#"[{"tag_name": "v1.0.0", "html_url": "https://x", "assets": []}]"#;
+        let r = &parse_releases_for_arch(none, "x86_64").unwrap()[0];
+        assert!(r.dmg_url.is_none() && r.dmg_sha256.is_none());
+    }
+
+    // Pins the ARCH→tag map the installer depends on.
+    #[test]
+    fn arch_tag_map() {
+        assert_eq!(mac_dmg_arch_tag("x86_64"), Some("x64"));
+        assert_eq!(mac_dmg_arch_tag("aarch64"), Some("aarch64"));
+        assert_eq!(mac_dmg_arch_tag("arm"), None);
+    }
+
+    // Pins backward compat: pre-dmg manifests must still deserialize.
+    #[test]
+    fn old_manifest_without_dmg_keys_loads() {
+        let m: Manifest = serde_json::from_str(r#"{"version": "0.4.0"}"#).unwrap();
+        assert_eq!(m.dmg_for_arch("x64"), (None, None));
+        assert_eq!(m.dmg_for_arch("aarch64"), (None, None));
+    }
+
+    // Pins Manifest::dmg_for_arch picks the matching pair only.
+    #[test]
+    fn manifest_dmg_for_arch() {
+        let m: Manifest = serde_json::from_str(
+            r#"{"version": "0.5.0", "dmg_x64_url": "u1", "dmg_x64_sha256": "s1",
+                "dmg_aarch64_url": "u2", "dmg_aarch64_sha256": "s2"}"#,
+        )
+        .unwrap();
+        assert_eq!(m.dmg_for_arch("x64"), (Some("u1".into()), Some("s1".into())));
+        assert_eq!(m.dmg_for_arch("aarch64"), (Some("u2".into()), Some("s2".into())));
+        assert_eq!(m.dmg_for_arch("x86"), (None, None));
+    }
 
     #[test]
     fn strips_sha256_prefix() {
