@@ -196,11 +196,11 @@
     "app/src/floatingWindow.tsx": "0b5843811789291de50f35007a3633cf378c4af905d75797b8001698a313d787",
     "app/src/icons.tsx": "73c22f387100db90b5ae976faf25939326c0ddc9fe61a0f8634864062d46a32f",
     "app/src/index.tsx": "792a07888310b1771ab037f0c2ef51db17c437cc7499c4f3b82bb92a5b400877",
-    "app/src/paneAgentState.ts": "c34e3186e0a583b52143348b07d728b5dbd2589606c2d58cd4363aa0dc3c2ea5",
+    "app/src/paneAgentState.ts": "906d432166cd3da173f874cbbdff79a1144265884f296a3767e73ab4b0631606",
     "app/src/paneDrag.ts": "fbee1649b629dbf59ecd65aca186d7a5f8986254daa80a769ad8290d9dbf6e7f",
     "app/src/paneTitle.ts": "83828e3dc673da021dfb955a2ca0a428c52be6e7f59576cdafe99c730c4fb9b6",
     "app/src/panels.ts": "4422e55ca152e8b0e4984607ebee5e7b7a64960a9b96c8b1d6c0b93de57f87ed",
-    "app/src/queueModel.ts": "0a8ae3322b2b25a2c2f20e55aff6b02db5c529efcaacf05fc67bff498842fe05",
+    "app/src/queueModel.ts": "358956abae45960035c68c4ed2651883b59f4fe15e4cf05ff742a48389eef6ef",
     "app/src/useNarrow.ts": "778590346d2ea176aa7dca92bbbb4b5bfb832de8227c54488884e08999e9402a",
     "app/src/wsTree.ts": "60ad27badb4b7e98a9ecbd80ca14b8c89b74973055528d5fe0fc526e1d0f395a"
   },

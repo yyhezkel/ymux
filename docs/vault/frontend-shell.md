@@ -402,7 +402,8 @@ and the tab's X land on the same neighbour.
 
 **`paneAgentState.ts` (102)** — **pure and Solid-free on purpose.** `trafficLight()` is
 the single verdict that both the pane header and the tab strip call, so the two cannot
-disagree about what colour a pane is. Unit-tested in `paneAgentState.test.ts`. It only
+disagree about what colour a pane is. `failed` (StopFailure, API-error turn) is a fourth
+light, painted as a red square; `queueStatus` maps it to `stuck`. Unit-tested in `paneAgentState.test.ts`. It only
 decides how to *paint* a state; the transition table is owned by the backend
 (`PaneAgentState::apply_hook` in `lib.rs`, arriving as the `pane:agent-run` event) — see
 `backend-core.md`.
