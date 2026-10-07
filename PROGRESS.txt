@@ -7987,3 +7987,5 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Daemon term/claudetools.go: /api/v2/claude/usage (cache/backoff/single probe), /api/v2/claude/summarize (note tagged summary), /api/v2/term/sessions/summarize; --tools "" + --no-session-persistence on every model call reading untrusted text; prompts never from the request.
 - Browser: presets generated from settings.rs (presets.gen.ts + webPresets.test.ts guard); usage/summarize/overview wired; Logs show the daemon's log; small desktop-only knobs answered instead of rejected. Tickets/skills stay gated (by design).
 - tsc clean; Go → CI. Not verified live yet.
+
+[2026-10-08] "ymux in the browser" + Phase F parity: the chain #62→#79 merged into main (one merge of yos/f5-web-tools, main merged in first). Desktop smoke on the head's builds: Yossi "נראה סבבה". FOLLOWUPS P1s for the chain + F1 archived.
