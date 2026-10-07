@@ -21,6 +21,14 @@ data class Annotated(
 )
 
 @Serializable
+data class ArchiveBody(
+    val cwd: String,
+    val format: String,
+    val names: List<String>,
+    val output: String
+)
+
+@Serializable
 data class ClientInfo(
     @SerialName("client_id") val clientId: String,
     @SerialName("device_name") val deviceName: String,
@@ -130,6 +138,12 @@ data class LineEvent(
 )
 
 @Serializable
+data class MoveBody(
+    val from: String,
+    val to: String
+)
+
+@Serializable
 data class OkBody(
     val ok: Boolean
 )
@@ -144,6 +158,11 @@ data class PairingRedeemResponse(
     @SerialName("default_workspace_id") val defaultWorkspaceId: String,
     @SerialName("device_id") val deviceId: String,
     @SerialName("long_term_token") val longTermToken: String
+)
+
+@Serializable
+data class PathBody(
+    val path: String
 )
 
 @Serializable
