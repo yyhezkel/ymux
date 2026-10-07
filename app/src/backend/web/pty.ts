@@ -27,9 +27,13 @@ export class PtySessions {
 
   constructor(private bus: EventBus) {}
 
-  /** Attach to tmux session `name`; resolves with the session id once open. */
-  open(name: string, cols: number, rows: number): Promise<string> {
-    const sid = `web_${Date.now().toString(36)}_${(this.seq++).toString(36)}`;
+  /**
+   * Attach to tmux session `name`; resolves with the session id once open.
+   * `sid` pins the id — a popout window reuses the opener's, which is the
+   * only id PopoutTerminal knows.
+   */
+  open(name: string, cols: number, rows: number, sid?: string): Promise<string> {
+    sid = sid ?? `web_${Date.now().toString(36)}_${(this.seq++).toString(36)}`;
     const ws = new WebSocket(
       wsUrl(`/api/v2/term/sessions/${encodeURIComponent(name)}/attach`, { cols, rows }),
     );

@@ -125,6 +125,15 @@ type Args = Record<string, unknown>;
 type Handler = (a: Args) => Promise<unknown>;
 
 const ACTIVE_KEY = "ymux.web.activeWorkspace";
+/** Popout windows (F1): `/?popout=<sid>`; the opener stores sid → tmux name here. */
+const POPOUT_KEY = (sid: string) => `ymux.web.popout.${sid}`;
+const popoutSid = ((): string | null => {
+  try {
+    return new URLSearchParams(location.search).get("popout");
+  } catch {
+    return null;
+  }
+})();
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 const num = (v: unknown, d: number): number => (typeof v === "number" && Number.isFinite(v) ? v : d);
 
@@ -166,7 +175,8 @@ export class WebBackend implements Backend {
   version = "";
 
   readonly host: HostShell = {
-    windowLabel: () => "main",
+    // index.tsx routes `popout-<sid>` to PopoutTerminal, as on the desktop.
+    windowLabel: () => (popoutSid ? `popout-${popoutSid}` : "main"),
     setTitle: async (title) => {
       document.title = title;
     },
@@ -215,6 +225,20 @@ export class WebBackend implements Backend {
     await this.events.start();
     await this.seedRestoreHints();
     await font;
+    if (popoutSid) {
+      // A popout window: its own tmux client on the opener's session, under
+      // the opener's sid (PopoutTerminal's only handle). tmux redraws on the
+      // first resize, so nothing before the attach is lost.
+      let name = "";
+      try {
+        name = localStorage.getItem(POPOUT_KEY(popoutSid)) ?? "";
+      } catch {
+        /* no storage */
+      }
+      if (!name) throw new Error("this popout's session is unknown — open it again from the pane");
+      await this.pty.open(name, 80, 24, popoutSid);
+      return;
+    }
     // Phase 114: the PWA side — never blocks the boot.
     void startPwa({
       lang: () => (this.settingsCache.i18n?.language === "he" ? "he" : "en"),
@@ -809,6 +833,35 @@ export class WebBackend implements Backend {
 
     // panes / PTY
     pane_connect: (a) => this.connect(a),
+    // "Open in a separate window": a browser window on the same tmux session
+    // (a second tmux client). The pane hides until the window closes, then
+    // `popout:closed` brings it back — App.tsx's desktop flow, unchanged.
+    popout_pane: async (a) => {
+      const sid = str(a.sessionId);
+      const pane = [...this.paneSid].find(([, s]) => s === sid)?.[0];
+      const name = pane ? this.paneSession.get(pane) : undefined;
+      if (!name) throw new Error("this pane has no session to pop out");
+      try {
+        localStorage.setItem(POPOUT_KEY(sid), name);
+      } catch {
+        throw new Error("the browser's storage is unavailable");
+      }
+      const w = Math.min(screen.availWidth, Math.max(480, num(a.cols, 100) * 9 + 40));
+      const h = Math.min(screen.availHeight, Math.max(320, num(a.rows, 30) * 19 + 60));
+      const win = window.open(`/?popout=${encodeURIComponent(sid)}`, `ymux-popout-${sid}`, `popup=yes,width=${w},height=${h}`);
+      if (!win) throw new Error("the browser blocked the popup window — allow popups for this site");
+      const timer = window.setInterval(() => {
+        if (!win.closed) return;
+        window.clearInterval(timer);
+        try {
+          localStorage.removeItem(POPOUT_KEY(sid));
+        } catch {
+          /* gone with the storage */
+        }
+        this.bus.emit("popout:closed", sid);
+      }, 1000);
+      return null;
+    },
     pane_disconnect: async (a) => {
       this.disconnect(str(a.paneId));
       return null;

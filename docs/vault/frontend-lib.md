@@ -129,6 +129,13 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `pane_list_tmux_sessions` stamps the picker's scope like lib.rs `annotate_scope_with`
   (no owners file): `owned` = a pane of this workspace holds the session (or the row is
   that session), `in_cwd` = its path is under `projectPath`.
+- **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
+  blocker's null becomes a readable error) after storing `ymux.web.popout.<sid>` = the
+  pane's tmux session; a 1 s poll on `win.closed` emits `popout:closed`, so App.tsx's
+  desktop hide / re-attach flow runs unchanged. In the new window `host.windowLabel()` is
+  `popout-<sid>` (index.tsx renders `PopoutTerminal`) and `init()` attaches its own tmux
+  client under the opener's sid (`PtySessions.open(name, cols, rows, sid)`), the only id
+  PopoutTerminal knows.
 - **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
   the required groups, merged one level deep; restore-on-start ON, update checks OFF).
   A stored non-object where the default is a group is **ignored**, not merged — found
