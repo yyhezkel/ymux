@@ -1373,7 +1373,7 @@ export function FileManagerPane(p: Props) {
                     onContextMenu={(ev) => openCtxMenu("local", e, ev)}
                   >
                     <span class="fm-icon">{e.is_dir ? <IconFolder size={14} /> : e.is_link ? <IconLink size={14} /> : <IconFile size={14} />}</span>
-                    <span class="fm-name" dir="auto"><TechText text={e.name} /></span>
+                    <span class="fm-name"><bdi><TechText text={e.name} /></bdi></span>
                     <span class="fm-size">{e.is_dir ? "" : fmtSize(e.size)}</span>
                     <span class="fm-time">{fmtTime(e.modified)}</span>
                   </div>
@@ -1422,7 +1422,7 @@ export function FileManagerPane(p: Props) {
                       onContextMenu={(ev) => openCtxMenu("remote", e, ev)}
                     >
                       <span class="fm-icon">{e.is_dir ? <IconFolder size={14} /> : e.is_link ? <IconLink size={14} /> : <IconFile size={14} />}</span>
-                      <span class="fm-name" dir="auto"><TechText text={e.name} /></span>
+                      <span class="fm-name"><bdi><TechText text={e.name} /></bdi></span>
                       <span class="fm-size">{e.is_dir ? "" : fmtSize(e.size)}</span>
                       <span class="fm-time">{fmtTime(e.modified)}</span>
                     </div>

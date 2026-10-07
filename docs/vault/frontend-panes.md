@@ -155,7 +155,7 @@ after an `await` in the async `onMount` has no owner and never runs.
 In a browser (`!can("fileManagerLocal")`) everything local stays out: `refreshLocal`
 returns early (the toolbar ⟳ and post-transfer refreshes used to ask for `file_list_local`
 and paint an error), and "paste to local" / "upload the selected local file" are not
-rendered; download stays. Names render in `dir="auto"` spans and the path input is
+rendered; download stays. Names render inside `<bdi>` (direction isolated, cell alignment kept — `dir="auto"` on the span pushed LTR names to the far edge) and the path input is
 `dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
 as `bun.`, on the desktop too.
 **`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
