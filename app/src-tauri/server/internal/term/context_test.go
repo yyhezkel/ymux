@@ -1,6 +1,7 @@
 package term
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +23,9 @@ func TestContextStoreModel(t *testing.T) {
 	c, err := st.apply(contextEvent{sessionID: "s1", wsID: "w1", paneID: "p1", cwd: "/srv", prompt: "fix the bug"})
 	if err != nil || c == nil || *c.FirstPrompt != "fix the bug" || c.Version != 1 {
 		t.Fatalf("first prompt = %+v %v", c, err)
+	}
+	if b, _ := json.Marshal(c); !strings.Contains(string(b), `"log":[]`) {
+		t.Fatalf("a fresh record's log must be [] not null: %s", b)
 	}
 	if c, _ = st.apply(contextEvent{sessionID: "s1", prompt: "second"}); c != nil {
 		t.Fatalf("a later prompt wrote: %+v", c)

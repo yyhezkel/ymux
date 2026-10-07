@@ -158,6 +158,9 @@ func newContextStore(dir string) *contextStore {
 			logger.Warn("context file unreadable; session left alone", "session", id)
 			continue
 		}
+		if c.Log == nil {
+			c.Log = []ContextLogEntry{}
+		}
 		s.sessions[id] = &c
 	}
 	logger.Info("context store loaded", "sessions", len(s.sessions), "pruned", pruned)
@@ -175,7 +178,8 @@ func (s *contextStore) apply(ev contextEvent) (*SessionContext, error) {
 	if s.broken[ev.sessionID] {
 		return nil, errors.New("context file unreadable")
 	}
-	next := SessionContext{Schema: 1, SessionID: ev.sessionID}
+	// Log is never nil: the rail reads log.length, and a nil slice is null.
+	next := SessionContext{Schema: 1, SessionID: ev.sessionID, Log: []ContextLogEntry{}}
 	if cur := s.sessions[ev.sessionID]; cur != nil {
 		next = *cur
 		next.Log = append([]ContextLogEntry{}, cur.Log...)
