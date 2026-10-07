@@ -3,7 +3,7 @@
     "app/src-tauri/src/claude_log.rs": "c81b10c8fe51d7484c2ef02643648c4eb3e9b5a4cedaac3bea7e190e6278b06a",
     "app/src-tauri/src/claude_summary.rs": "52d22f583b83bacd229d11733309a5ac9fcea0dc1231ddcfeb1b3f84612711bc",
     "app/src-tauri/src/claude_usage.rs": "181960f12c54aab276cf614b1f089d9634dd63e98bedc250231290c0fee3296a",
-    "app/src-tauri/src/claude_usage_local.rs": "a0fba4190814efe0e907609dfe7b3c2fa2713f65f570401037ae1c234383ab6c",
+    "app/src-tauri/src/claude_usage_local.rs": "8abc9c596560fd1d2d533beace861944a4125e98db447dde919696bae412f32f",
     "app/src-tauri/src/insights_local.rs": "15b9060bb4675cdf501315d29334101c2850e34a797b24391cbf64b9c7a603ec",
     "app/src-tauri/src/insights_store.rs": "50144c52bf9baa7ffb9403e6a1eaf7120fd6db82d7d9f0d47076ea074031152b"
   },
