@@ -200,6 +200,14 @@ func TestRenameBadNameIs400(t *testing.T) {
 	}
 }
 
+func TestRenameEmptyBodyIs400(t *testing.T) {
+	// Optional body must reach the handler (not 422) and fail name validation (400), as pre-port.
+	s, _ := testService(ok(""))
+	if w := do(s, "POST", "/api/v2/term/sessions/api/rename", "", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want 400 (body %s)", w.Code, w.Body.String())
+	}
+}
+
 func TestRenameToTakenNameIs409(t *testing.T) {
 	s, _ := testService(ok("")) // has-session succeeds ⇒ target taken
 	if w := do(s, "POST", "/api/v2/term/sessions/api/rename", "", `{"new_name":"web"}`); w.Code != http.StatusConflict {

@@ -79,6 +79,26 @@ against a 5-minute write's 1.25x, and collapsing them understates a long session
 **Rule #1 by construction:** it reads `message.model`, `message.usage`, the timestamp,
 the session id and the cwd. It never reads message content, and it logs only counts.
 
+**No file cap.** There is no `MAX_FILES`; every `.jsonl` in the window is scanned, and
+mtime-pruned files still count in `skipped_files`. `scan` returns
+`Result<ClaudeUsageReport, String>` (route() propagates with `?`).
+
+**Parity policy, Go = Rust (D1-D9):**
+
+| # | rule |
+|---|---|
+| D1 | no file cap; `scanned_files` == every file in window |
+| D2 | an oversized line costs nothing but itself — later lines still count (Go reads with `bufio.Reader`, no Scanner limit) |
+| D3 | invalid UTF-8 line → one `parse_errors`, scan continues |
+| D4 | token fields are non-negative integers; null/absent → 0; float, negative, string, bool → `parse_errors`, no call |
+| D5 | assistant line with no/null `usage` → skipped, not an error |
+| D6 | missing or non-string timestamp → `parse_errors` |
+| D7 | walk follows symlinks (dirs and files); only regular files named `*.jsonl` count |
+| D8 | `since`/`until` accept unix seconds or RFC3339 (`%2B` decoded); `parse_when` returns `0` for a missing or unparseable value (no `Option`), which `route` clamps |
+| D9 | missing root → empty report; any other unreadable root → error (Rust `Err`, Go 500) |
+
+Walk order is deliberately not unified.
+
 ## `claude_log.rs` (693) — alive on purpose, unused on purpose
 
 Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three

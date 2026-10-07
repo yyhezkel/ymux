@@ -67,9 +67,7 @@ put logic there.
   watcher's exec channel ends or the lease drops so the next `try_ensure_port_watcher`
   from any sibling re-spawns. Taken alone, never nested under another lock. Everything else — `workspaces`, `load_state`, `notifications`,
   `pane_status`, `active_panes` (workspace_id → active pane_id, set by the `pane_set_active`
-  command, in-memory, last write wins, taken alone; the command is a private `fn` — a
-  `pub(crate)` `#[tauri::command]` at the crate root is E0255, its `__cmd__` macro
-  defined twice), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
+  command via the pure `set_active_pane` helper, which rejects empty ids with `pane_set_active: empty workspace or pane id`; in-memory, last write wins, taken alone), `agent_runs`, `feed`, `notes`, `settings`, `recent_paths`,
   `console_buffer`, `claude_paths`, `bidi_filters`, `workspace_browsers`,
   `browser_create_lock`, `bootstrap_guard`, `tunnel_registry` — is app-shell concern and
   lives on the outer struct. **Reach russh state through `state.core.<field>`.**
@@ -113,6 +111,9 @@ put logic there.
   table and it is the **single owner** of the state machine; the frontend only paints
   what it is handed. `Failed` (`"failed"`) is entered by subkind `stop-failure` (turn died
   on an API error) and exits like any state, e.g. the next `user-prompt-submit` → Running.
+  The entry is removed, and an Unknown `pane:agent-run` emitted (seq+1), by
+  `clear_pane_agent_run` on `workspace_close_pane` and workspace-delete teardown
+  (`teardown_workspace_runtime`); no emit when the pane had no entry.
   `NEEDS_INPUT_NOTIFICATIONS` and `RESUMED_NOTIFICATIONS` list the
   `notification_type` values that mean "blocked on the user" and "unblocked". A `stop`
   arriving after a notification still wins, an unmapped notification changes nothing,
@@ -165,9 +166,9 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1012](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1078](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:953](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:989](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.

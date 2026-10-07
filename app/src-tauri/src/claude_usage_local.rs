@@ -107,7 +107,6 @@ pub struct ClaudeUsageReport {
 /// Hourly buckets, always. The desktop rolls them up into LOCAL days itself,
 /// which is the only way a day boundary lands where the reader expects it.
 const SERIES_STEP: i64 = 3600;
-const MAX_FILES: u32 = 2000;
 const ROW_LIMIT: usize = 20;
 
 fn projects_dir() -> Option<PathBuf> {
@@ -162,8 +161,9 @@ impl Agg {
     }
 }
 
-/// Scan the transcript tree for one window.
-pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
+/// Scan the transcript tree for one window. A missing root is an empty report;
+/// any other failure to read it is an error (same policy as the Go scanner).
+pub fn scan(root: &Path, since: i64, until: i64) -> Result<ClaudeUsageReport, String> {
     let t0 = std::time::Instant::now();
     let mut rep = ClaudeUsageReport {
         since,
@@ -194,7 +194,10 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
     // is an empty report, not an error.
     let dirs_iter = match std::fs::read_dir(root) {
         Ok(d) => d,
-        Err(_) => return finish(rep, buckets, &by_model, &by_project, &by_session, t0),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0));
+        }
+        Err(e) => return Err(format!("read claude projects dir: {e}")),
     };
 
     for dir in dirs_iter.flatten() {
@@ -207,20 +210,29 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
         };
         for f in files.flatten() {
             let path = f.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("jsonl") {
-                continue;
-            }
-            if rep.scanned_files >= MAX_FILES {
-                rep.skipped_files += 1;
+            // ends_with, not extension(): a file named exactly `.jsonl` has no
+            // extension in Rust's eyes but counts on the Go side.
+            if !f.file_name().to_string_lossy().ends_with(".jsonl") {
                 continue;
             }
             // The mtime prune: a transcript's mtime is its LAST append, so a
             // file older than the window cannot hold an in-window line and is
             // never opened. This is what keeps a 240 MB tree affordable.
-            let fresh = f
-                .metadata()
+            // fs::metadata follows symlinks (target's mtime); a dangling link
+            // errors and counts as skipped. A dir named x.jsonl is no transcript.
+            let meta = match std::fs::metadata(&path) {
+                Ok(m) => m,
+                Err(_) => {
+                    rep.skipped_files += 1;
+                    continue;
+                }
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let fresh = meta
+                .modified()
                 .ok()
-                .and_then(|m| m.modified().ok())
                 .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| d.as_secs() as i64 >= since)
                 .unwrap_or(false);
@@ -242,7 +254,7 @@ pub fn scan(root: &Path, since: i64, until: i64) -> ClaudeUsageReport {
         }
     }
 
-    finish(rep, buckets, &by_model, &by_project, &by_session, t0)
+    Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0))
 }
 
 fn finish(
@@ -279,6 +291,50 @@ fn finish(
     rep.projects = by_project.tok.len();
     rep.took_ms = t0.elapsed().as_millis() as u64;
     rep
+}
+
+/// Token field rule shared with Go's `tokenCount`: absent or null is 0, a JSON
+/// non-negative integer is itself, anything else (1.5, -1, "7", true) is Err.
+fn token_u64(obj: &serde_json::Value, key: &str) -> Result<u64, ()> {
+    match obj.get(key) {
+        None | Some(serde_json::Value::Null) => Ok(0),
+        Some(n) => n.as_u64().ok_or(()),
+    }
+}
+
+/// The six token fields of one `message.usage` block, validated.
+#[derive(Default)]
+struct UsageTokens {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+    cache_write: u64,
+    w5: u64,
+    w1h: u64,
+}
+
+/// `usage` and `cache_creation` must each be an object when present and
+/// non-null; every token field inside must pass `token_u64`.
+fn parse_usage(usage: &serde_json::Value) -> Result<UsageTokens, ()> {
+    if !usage.is_object() {
+        return Err(());
+    }
+    let mut t = UsageTokens {
+        input: token_u64(usage, "input_tokens")?,
+        output: token_u64(usage, "output_tokens")?,
+        cache_read: token_u64(usage, "cache_read_input_tokens")?,
+        cache_write: token_u64(usage, "cache_creation_input_tokens")?,
+        ..Default::default()
+    };
+    match usage.get("cache_creation") {
+        None | Some(serde_json::Value::Null) => {}
+        Some(cc) if cc.is_object() => {
+            t.w5 = token_u64(cc, "ephemeral_5m_input_tokens")?;
+            t.w1h = token_u64(cc, "ephemeral_1h_input_tokens")?;
+        }
+        Some(_) => return Err(()),
+    }
+    Ok(t)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -321,6 +377,18 @@ fn scan_file(
                 continue;
             }
         };
+        // Validate before the type filter, as Go's typed decode does: a bad
+        // token field on any line containing "usage" is one parse error.
+        let parsed = match v.get("message").and_then(|m| m.get("usage")) {
+            None | Some(serde_json::Value::Null) => UsageTokens::default(),
+            Some(u) => match parse_usage(u) {
+                Ok(t) => t,
+                Err(()) => {
+                    rep.parse_errors += 1;
+                    continue;
+                }
+            },
+        };
         if v.get("type").and_then(|t| t.as_str()) != Some("assistant") {
             continue;
         }
@@ -332,9 +400,10 @@ fn scan_file(
             Some(m) if !m.is_empty() => m.to_string(),
             _ => continue,
         };
+        // Absent or null usage: nothing to count, not an error (Go parity).
         let usage = match msg.get("usage") {
-            Some(u) => u,
-            None => continue,
+            Some(u) if !u.is_null() => u,
+            _ => continue,
         };
         let ts = match v.get("timestamp").and_then(|t| t.as_str()) {
             Some(s) => match chrono::DateTime::parse_from_rfc3339(s) {
@@ -344,21 +413,18 @@ fn scan_file(
                     continue;
                 }
             },
-            None => continue,
+            // Missing or non-string timestamp: same parse error as Go (D6).
+            None => {
+                rep.parse_errors += 1;
+                continue;
+            }
         };
         if ts < since || ts > until {
             continue;
         }
 
-        let num = |k: &str| usage.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
-        let cc = usage.get("cache_creation");
-        let sub = |k: &str| {
-            cc.and_then(|c| c.get(k))
-                .and_then(|n| n.as_u64())
-                .unwrap_or(0)
-        };
-        let (mut w5, w1h) = (sub("ephemeral_5m_input_tokens"), sub("ephemeral_1h_input_tokens"));
-        let cw = num("cache_creation_input_tokens");
+        let (mut w5, w1h) = (parsed.w5, parsed.w1h);
+        let cw = parsed.cache_write;
         // Older transcripts carry only the flat total. Attribute it to the
         // CHEAPER bucket, so an unknown split under-states rather than
         // over-states what the user is told they spent.
@@ -367,9 +433,9 @@ fn scan_file(
         }
         let tok = ClaudeTokens {
             calls: 1,
-            in_tokens: num("input_tokens"),
-            out_tokens: num("output_tokens"),
-            cache_read: num("cache_read_input_tokens"),
+            in_tokens: parsed.input,
+            out_tokens: parsed.output,
+            cache_read: parsed.cache_read,
             cache_write: cw,
             cache_write_5m: w5,
             cache_write_1h: w1h,
@@ -420,11 +486,11 @@ fn scan_file(
 /// corrected rather than turned into an error.
 pub fn route(query: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
-    let mut until = parse_i64(query, "until").unwrap_or(0);
+    let mut until = parse_when(query, "until");
     if until <= 0 || until > now {
         until = now;
     }
-    let mut since = parse_i64(query, "since").unwrap_or(0);
+    let mut since = parse_when(query, "since");
     if since <= 0 {
         since = until - 24 * 3600;
     }
@@ -438,8 +504,8 @@ pub fn route(query: &str) -> Result<String, String> {
     }
 
     let rep = match projects_dir() {
-        Some(root) => scan(&root, since, until),
-        None => scan(Path::new(""), since, until),
+        Some(root) => scan(&root, since, until)?,
+        None => scan(Path::new(""), since, until)?,
     };
     crate::log_debug(
         "MONITOR",
@@ -451,14 +517,49 @@ pub fn route(query: &str) -> Result<String, String> {
     serde_json::to_string(&rep).map_err(|e| format!("serialize claude usage: {e}"))
 }
 
-fn parse_i64(q: &str, key: &str) -> Option<i64> {
-    for pair in q.split('&') {
+/// Query value as unix seconds: integer or RFC3339, anything else 0. Mirrors
+/// Go `parseWhen` so a `+02:00` offset sent either way lands on the same second.
+fn parse_when(q: &str, key: &str) -> i64 {
+    let raw = q.split('&').find_map(|pair| {
         let mut it = pair.splitn(2, '=');
-        if it.next() == Some(key) {
-            return it.next().and_then(|v| v.parse().ok());
-        }
+        (it.next().map(percent_decode).as_deref() == Some(key)).then(|| it.next().unwrap_or(""))
+    });
+    let v = match raw {
+        Some(r) => percent_decode(r),
+        None => return 0,
+    };
+    if let Ok(n) = v.parse::<i64>() {
+        return n;
     }
-    None
+    chrono::DateTime::parse_from_rfc3339(&v)
+        .map(|t| t.timestamp())
+        .unwrap_or(0)
+}
+
+/// Go `url.Query` decoding: `%XX` bytes and `+` as space; a malformed escape
+/// stays literal.
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'+' => out.push(b' '),
+            b'%' => {
+                let hex = s.get(i + 1..i + 3).and_then(|h| u8::from_str_radix(h, 16).ok());
+                match hex {
+                    Some(v) => {
+                        out.push(v);
+                        i += 2;
+                    }
+                    None => out.push(b'%'),
+                }
+            }
+            c => out.push(c),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 #[cfg(test)]
@@ -501,7 +602,7 @@ mod tests {
                 line(now - 300, "s1", "/home/y/a", "claude-opus-5", 10, 20, 40, 0),
             ],
         );
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.totals.calls, 2);
         assert_eq!(rep.totals.in_tokens, 110);
         assert_eq!(rep.totals.out_tokens, 220);
@@ -519,7 +620,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let now = chrono::Utc::now().timestamp();
         write_transcript(&tmp, "p", "s", &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
-        let rep = scan(&tmp, now - 3600, now);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!(rep.by_model.len(), 1);
         assert_eq!(rep.by_model[0].key, "claude-opus-5");
         assert_eq!(rep.by_model[0].speed, "standard");
@@ -528,13 +629,47 @@ mod tests {
 
     #[test]
     fn missing_root_is_an_empty_report_not_a_panic() {
-        let rep = scan(Path::new("/definitely/not/here"), 0, 1);
+        let rep = scan(Path::new("/definitely/not/here"), 0, 1).expect("scan");
         assert_eq!(rep.totals.calls, 0);
         assert!(rep.series.is_empty());
         // Empty vectors must serialize as [] so the client can map without a guard.
         let json = serde_json::to_string(&rep).expect("serialize");
         assert!(json.contains(r#""series":[]"#), "{json}");
         assert!(json.contains(r#""by_model":[]"#), "{json}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_root_is_an_error() {
+        use std::os::unix::fs::PermissionsExt;
+        // Pins Go parity (D9): a root that exists but cannot be read is an error, not an empty report.
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-unread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).expect("mkdir");
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o000)).expect("chmod");
+        // Running as root still reads the dir; nothing to pin then.
+        if std::fs::read_dir(&tmp).is_ok() {
+            std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+            let _ = std::fs::remove_dir_all(&tmp);
+            return;
+        }
+        let res = scan(&tmp, 0, 1);
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let _ = std::fs::remove_dir_all(&tmp);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn parse_when_accepts_rfc3339() {
+        // Pins Go parity: RFC3339 (Z, escaped offset) equals unix seconds; garbage is 0.
+        let z = chrono::DateTime::parse_from_rfc3339("2026-10-06T00:00:00Z").expect("ts").timestamp();
+        assert_eq!(parse_when("since=2026-10-06T00:00:00Z", "since"), z);
+        assert_eq!(parse_when("since=2026-10-06T02:00:00%2B02:00", "since"), z);
+        assert_eq!(parse_when("a=1&until=2026-10-06T00:00:00Z", "until"), z);
+        assert_eq!(parse_when("since=garbage", "since"), 0);
+        assert_eq!(parse_when("since=%zz", "since"), 0);
+        assert_eq!(parse_when("until=5", "since"), 0);
+        assert_eq!(parse_when("since=1700000000", "since"), 1_700_000_000);
     }
 
     #[test]
@@ -545,5 +680,179 @@ mod tests {
         let until = v["until"].as_i64().unwrap_or(0);
         assert!(since < until, "empty window {since}..{until}");
         assert!(until - since <= 365 * 86400);
+    }
+
+    // Past the old 2000-file cap every in-window file must still be scanned.
+    #[test]
+    fn scan_has_no_file_cap() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nocap-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..2001 {
+            write_transcript(&tmp, "p", &format!("s{i}"), &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
+        }
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!(rep.scanned_files, 2001);
+        assert_eq!(rep.totals.calls, 2001);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // mtime-pruned files still land in skipped_files once the cap is gone.
+    #[test]
+    fn scan_counts_every_file_in_window() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-every-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        for i in 0..2001 {
+            let p = write_transcript(&tmp, "p", &format!("s{i}"), &[line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0)]);
+            if i % 2 == 1 {
+                let old = std::time::SystemTime::now() - std::time::Duration::from_secs(72 * 3600);
+                File::options().write(true).open(&p).expect("open").set_modified(old).expect("mtime");
+            }
+        }
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!(rep.scanned_files, 1001);
+        assert_eq!(rep.skipped_files, 1000);
+        assert_eq!(rep.totals.calls, 1001);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // Parity pin with Go: a line past 8 MiB must not hide the usage line after it.
+    #[test]
+    fn scan_keeps_lines_after_oversized_line() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-bigline-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        let big = format!(r#"{{"type":"user","content":"{}"}}"#, "x".repeat(9 * 1024 * 1024));
+        write_transcript(&tmp, "p", "s1", &[big, line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)]);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!(rep.totals.calls, 1);
+        assert_eq!(rep.totals.in_tokens, 5);
+        assert_eq!(rep.parse_errors, 0);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // Parity pin with Go: an invalid-UTF-8 line is one parse error, dropped;
+    // the usage line after it still counts.
+    #[test]
+    fn invalid_utf8_line_is_one_parse_error() {
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-utf8-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let now = chrono::Utc::now().timestamp();
+        let p = write_transcript(&tmp, "p", "s1", &[]);
+        let mut f = File::options().append(true).open(&p).expect("open");
+        f.write_all(b"{\"type\":\"assistant\",\"usage\":\"\xff\xfe\"}\n").expect("write");
+        writeln!(f, "{}", line(now - 60, "s1", "/p", "claude-opus-5", 5, 6, 0, 0)).expect("write");
+        drop(f);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!(rep.parse_errors, 1);
+        assert_eq!(rep.totals.calls, 1);
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D4 parity with Go: a non-uint token field is one parse error and no call;
+    // null and absent are valid zeros.
+    #[test]
+    fn rejects_non_uint_token_fields() {
+        let now = chrono::Utc::now().timestamp();
+        let iso = chrono::DateTime::from_timestamp(now - 60, 0).expect("ts").to_rfc3339();
+        let mk = |usage: &str| {
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","usage":{usage}}}}}"#)
+        };
+        let bad = [
+            r#"{"input_tokens":1.5}"#,
+            r#"{"output_tokens":-1}"#,
+            r#"{"cache_read_input_tokens":"7"}"#,
+            r#"{"cache_creation_input_tokens":true}"#,
+            r#"{"cache_creation":{"ephemeral_5m_input_tokens":1.5}}"#,
+            r#"{"cache_creation":{"ephemeral_1h_input_tokens":-1}}"#,
+            r#"{"input_tokens":1e3}"#,
+            r#"{"cache_creation":"x"}"#,
+            r#""x""#,
+        ];
+        for (n, u) in bad.iter().enumerate() {
+            let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-{}-{n}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&tmp);
+            write_transcript(&tmp, "p", "s1", &[mk(u)]);
+            let rep = scan(&tmp, now - 3600, now).expect("scan");
+            assert_eq!((rep.parse_errors, rep.totals.calls), (1, 0), "{u}");
+            let _ = std::fs::remove_dir_all(&tmp);
+        }
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-ok-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_transcript(
+            &tmp,
+            "p",
+            "s1",
+            &[mk(r#"{"input_tokens":null,"cache_creation":null}"#), mk(r#"{"output_tokens":4}"#)],
+        );
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!((rep.parse_errors, rep.totals.calls, rep.totals.out_tokens), (0, 2, 4));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D5 parity with Go: an assistant line whose usage is null (or only
+    // mentioned in content) is skipped silently, not counted and not an error.
+    #[test]
+    fn skips_assistant_without_usage() {
+        let now = chrono::Utc::now().timestamp();
+        let iso = chrono::DateTime::from_timestamp(now - 60, 0).expect("ts").to_rfc3339();
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nousage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let lines = [
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","usage":null}}}}"#),
+            format!(r#"{{"type":"assistant","timestamp":"{iso}","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5","content":"mentions \"usage\""}}}}"#),
+        ];
+        write_transcript(&tmp, "p", "s1", &lines);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!((rep.totals.calls, rep.parse_errors), (0, 0));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D6 parity with Go: an assistant line with a missing or non-string
+    // timestamp is one parse error, not a silent skip.
+    #[test]
+    fn missing_timestamp_is_parse_error() {
+        let now = chrono::Utc::now().timestamp();
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-nots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let usage = r#""usage":{"input_tokens":1,"output_tokens":2}"#;
+        let lines = [
+            format!(r#"{{"type":"assistant","sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5",{usage}}}}}"#),
+            format!(r#"{{"type":"assistant","timestamp":123,"sessionId":"s","cwd":"/p","message":{{"model":"claude-opus-5",{usage}}}}}"#),
+        ];
+        write_transcript(&tmp, "p", "s1", &lines);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!((rep.parse_errors, rep.totals.calls), (2, 0));
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // D7 parity with Go: symlinked dirs/files are followed, a file named
+    // exactly `.jsonl` counts, a dir named x.jsonl and a dangling link do not.
+    #[cfg(unix)]
+    #[test]
+    fn walk_follows_symlinks_and_dot_jsonl() {
+        use std::os::unix::fs::symlink;
+        let now = chrono::Utc::now().timestamp();
+        let base = std::env::temp_dir().join(format!("ymux-cu-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let root = base.join("root");
+        let outside = base.join("outside");
+        let l = line(now - 60, "s", "/p", "claude-opus-5", 1, 1, 0, 0);
+        write_transcript(&root, "real", "a", &[l.clone()]);
+        write_transcript(&root, "real", "", &[l.clone()]); // ".jsonl"
+        let target = write_transcript(&outside, "o", "t", &[l]);
+        let real = root.join("real");
+        assert!(symlink(&target, real.join("ln.jsonl")).is_ok());
+        assert!(symlink(outside.join("gone"), real.join("dead.jsonl")).is_ok());
+        assert!(std::fs::create_dir(real.join("x.jsonl")).is_ok());
+        assert!(symlink(&real, root.join("link")).is_ok());
+        assert!(symlink(outside.join("gone"), root.join("deaddir")).is_ok());
+        let rep = scan(&root, now - 3600, now).expect("scan");
+        assert_eq!(
+            (rep.scanned_files, rep.totals.calls, rep.skipped_files),
+            (6, 6, 2)
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

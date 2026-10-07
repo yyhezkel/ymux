@@ -3,6 +3,7 @@ vault: frontend-lib
 covers:
   - app/src/terminalInstance.ts
   - app/src/termMenuCopy.ts
+  - app/src/selectAllShortcut.ts
   - app/src/types.ts
   - app/src/settings.ts
   - app/src/claudePricing.ts
@@ -274,6 +275,8 @@ bindings. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
 always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.
+
+**`selectAllShortcut.ts`** (pure, zero-import, unit-tested): `inTerminal(e)` (target inside `.terminal-container`, also used by `toggle_sidebar_soft`) and `makeSelectAllBinding({ activePaneId, termFor })` (`App.tsx` wires only its `when`; `run` stays inline), whose `when` is `inTerminal && active pane` and whose `run` does `preventDefault` then `termFor(pid)?.selectAll()`.
 
 **Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (private `lastOsc52`, set in the write-only provider, read via `getLastOsc52()`) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled).
 

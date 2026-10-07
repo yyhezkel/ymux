@@ -13,6 +13,14 @@
 
 ## Pipeline how-tos
 - [howto/run-committed-server-blob.md](howto/run-committed-server-blob.md): query the committed Go daemon on a side port without building (Rule #17)
+- [howto/redeploy-server-blob.md](howto/redeploy-server-blob.md): detect a stale deployed daemon + redeploy the committed blob
 
 ## Notes
+- [phase92-headers-screens](phase92-headers-screens.md) — Phase 92 header/screen symbols, RPC select, delete landing: file:line anchors
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
+- [pane-close-cleanup](pane-close-cleanup.md) — what each pane-retire path drops (sessions, watchers, agent_runs, briefs)
+
+## Test facts
+- `npm test` = `node --experimental-strip-types --test "src/*.test.ts"` (`app/package.json:16`) → needs node ≥22.6; pipeline host node v20.20.2 rejects the flag → frontend unit tests prove on CI only; outcome checks = grep-structural
+- Go `*_test.go` NOT unowned: `docs/vault/server-go.md:14` covers `internal/insights/*.go` (glob incl. tests; lock e.g. `docs/vault/.vault-lock.json` key `insights/claudeusage_test.go`) → a Go test edit needs `server-go.md` in the same diff + `node scripts/vault-check.mjs --write`
+- Pure-module pattern: zero-import `app/src/<x>.ts` + `<x>.test.ts` (e.g. `termMenuCopy.ts`); new module must be added to a `docs/vault/*.md` `covers:` list
