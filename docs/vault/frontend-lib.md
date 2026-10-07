@@ -130,8 +130,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   (no owners file): `owned` = a pane of this workspace holds the session (or the row is
   that session), `in_cwd` = its path is under `projectPath`.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
-  blocker's null becomes a readable error) after storing `ymux.web.popout.<sid>` = the
-  pane's tmux session; a 1 s poll on `win.closed` emits `popout:closed`, so App.tsx's
+  blocker's null becomes a readable error), then DETACHES this window's own tmux client
+  (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the
+  pane's tmux session; a 1 s poll on `win.closed` re-attaches under the same sid and emits `popout:closed`, so App.tsx's
   desktop hide / re-attach flow runs unchanged. In the new window `host.windowLabel()` is
   `popout-<sid>` (index.tsx renders `PopoutTerminal`) and `init()` attaches its own tmux
   client under the opener's sid (`PtySessions.open(name, cols, rows, sid)`), the only id

@@ -160,6 +160,7 @@ than a white window.
 **"New workspace" in a browser** (`openNewWorkspace`, web branch) skips the wizard — the
 browser has no wizard targets — and creates `workspace N` directly, N counted over ROOTS
 (a root comes with its screens since Phase 115) and bumped past any name in use.
+`popOutPane` toasts a failed `popout_pane` (in a browser: a blocked popup) instead of only logging it.
 
 **Pinning a project folder no longer requires git.** `pinProjectFolder` calls
 `project_folder_probe` (hard error only for a missing directory or a dead SSH host),

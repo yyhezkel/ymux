@@ -851,6 +851,10 @@ export class WebBackend implements Backend {
       const h = Math.min(screen.availHeight, Math.max(320, num(a.rows, 30) * 19 + 60));
       const win = window.open(`/?popout=${encodeURIComponent(sid)}`, `ymux-popout-${sid}`, `popup=yes,width=${w},height=${h}`);
       if (!win) throw new Error("the browser blocked the popup window — allow popups for this site");
+      // This window lets go of the session while the popout holds it: two
+      // tmux clients of different sizes would frame this one with tmux's dot
+      // fill. close() is a detach (no pty:exit); the sid stays mapped.
+      this.pty.close(sid);
       const timer = window.setInterval(() => {
         if (!win.closed) return;
         window.clearInterval(timer);
@@ -859,7 +863,11 @@ export class WebBackend implements Backend {
         } catch {
           /* gone with the storage */
         }
-        this.bus.emit("popout:closed", sid);
+        // Re-attach under the same sid, then let App re-arm the pane.
+        void this.pty
+          .open(name, num(a.cols, 80), num(a.rows, 24), sid)
+          .catch(() => this.bus.emit("pty:exit", { session_id: sid, reason: "session ended" }))
+          .finally(() => this.bus.emit("popout:closed", sid));
       }, 1000);
       return null;
     },

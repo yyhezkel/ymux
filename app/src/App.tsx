@@ -1030,6 +1030,7 @@ function App() {
       }
     } catch (e) {
       log.error("popout_pane failed", e);
+      flashSummaryToast("err", String(e)); // e.g. the browser blocked the popup
     }
   };
 
