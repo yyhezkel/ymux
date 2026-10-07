@@ -7967,3 +7967,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Browser: web/localfiles.ts — pickPaths (file input) + onDragDrop (window drag events) hand out webfile:<n>/<name> tokens; file_upload / pane_upload_dropped (→ ~/ymux-drops) swap them back; all FM remote ops wired; file_open_remote → browser download.
 - Also on F1 earlier today: popout windows (popout_pane), main-red fix PR #75 (merged).
 - tsc clean locally; Go → CI. Not verified live yet.
+
+[2026-10-07 18:30] Phase 117 — WEB-DESIGN F3: panes in the browser (yos/f3-web-panes, stacked on F2 #76; daemon 2.17.0)
+- Browser: pane identity / smart bidi / claude_running on the leaf; pane_set_active no-op; sessions_kill_by_name; pane_probe_tmux_sessions; smart bidi = web/bidiFilter.ts (port of bidi_filter.rs, 9 tests pass locally on node 22) in PtySessions after decode.
+- Daemon: GET /api/v2/claude/sessions (resume picker, port of the local transcript scan); term/context.go — the Context Rail store (port of context_store.rs), GET /api/v2/context/sessions + context:changed; agent brief parses goal/done. Injection (105.C) not ported.
+- tsc clean; Go → CI. Not verified live yet.

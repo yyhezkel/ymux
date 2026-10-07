@@ -99,6 +99,9 @@ type HookRegistry struct {
 	// E (Phase 114): sends a notification to subscribed browsers
 	// (webpush.go). Set once at boot, before the hook listener starts.
 	notify func(webNote)
+
+	// F3 (Phase 117): per-Claude-session context for the rail (context.go).
+	context *contextStore
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
@@ -107,7 +110,7 @@ type HookRegistry struct {
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
 		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore(""),
-		settings: newSettingsStore("")}
+		settings: newSettingsStore(""), context: newContextStore("")}
 }
 
 // SetHookAddr implements core.AddrSink.

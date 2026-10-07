@@ -140,6 +140,17 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
   one request, not a tracked transfer. The notifications banner (`.web-push-prompt`) sits at
   z-index 30, under panels and their confirm toasts, which it used to cover.
+- **Panes, F3** (Phase 117) — `pane_set_identity` / `pane_set_smart_bidi` /
+  `pane_set_claude_running` patch the layout leaf (the daemon keeps leaf fields opaque);
+  `pane_set_active` is a no-op (the desktop's only reader is the SSH ticket lookup);
+  `sessions_kill_by_name` kills through a holding pane or the DELETE route;
+  `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
+  `session_context_list` read the daemon (`/api/v2/claude/sessions`,
+  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
+  one filter per attach and applies it after the streaming TextDecoder — the desktop's
+  decode → filter order; `connect` seeds it from the leaf's `smart_bidi`, the toggle flips
+  it live. A popout's own attach starts with it off.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

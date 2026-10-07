@@ -12,6 +12,7 @@
 // character split across two frames must not become two U+FFFD.
 // Rule #1: nothing here logs bytes — only session ids and close codes.
 
+import { BidiFilter } from "./bidiFilter";
 import { wsUrl } from "./api";
 import type { EventBus } from "./events";
 
@@ -19,6 +20,8 @@ interface Live {
   ws: WebSocket;
   decoder: TextDecoder;
   ended: boolean;
+  /** Phase 117 (F3): smart bidi, per attach (off unless the leaf says so). */
+  bidi: BidiFilter;
 }
 
 export class PtySessions {
@@ -38,7 +41,7 @@ export class PtySessions {
       wsUrl(`/api/v2/term/sessions/${encodeURIComponent(name)}/attach`, { cols, rows }),
     );
     ws.binaryType = "arraybuffer";
-    const entry: Live = { ws, decoder: new TextDecoder("utf-8"), ended: false };
+    const entry: Live = { ws, decoder: new TextDecoder("utf-8"), ended: false, bidi: new BidiFilter(false) };
     this.live.set(sid, entry);
     return new Promise<string>((resolve, reject) => {
       let opened = false;
@@ -57,7 +60,8 @@ export class PtySessions {
           if (f.type === "exit") this.end(sid, "session ended");
           return;
         }
-        const data = entry.decoder.decode(new Uint8Array(ev.data as ArrayBuffer), { stream: true });
+        // Decode first, then filter — the desktop's order (pty_decode → bidi).
+        const data = entry.bidi.process(entry.decoder.decode(new Uint8Array(ev.data as ArrayBuffer), { stream: true }));
         if (data) this.bus.emit("pty:data", { session_id: sid, data });
       };
       ws.onclose = (ev) => {
@@ -81,6 +85,11 @@ export class PtySessions {
     if (e && e.ws.readyState === WebSocket.OPEN && cols > 0 && rows > 0) {
       e.ws.send(JSON.stringify({ type: "resize", cols, rows }));
     }
+  }
+
+  /** Smart bidi on / off for one attach (pane_set_smart_bidi, or the leaf at connect). */
+  setBidi(sid: string, on: boolean): void {
+    this.live.get(sid)?.bidi.setEnabled(on);
   }
 
   /** Detach without ending the tmux session (the desktop's pane_disconnect). */

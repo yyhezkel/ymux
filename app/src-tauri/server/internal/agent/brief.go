@@ -70,6 +70,10 @@ type Brief struct {
 	Rec       *string     `json:"rec"`
 	Next      *string     `json:"next"`
 	Delta     *string     `json:"delta"`
+	// Phase 117 (F3): the sticky goal / finish criterion (brief.rs, Phase
+	// 105) — usually absent; the Context Rail keeps the last non-empty one.
+	Goal      *string     `json:"goal,omitempty"`
+	Done      *string     `json:"done,omitempty"`
 	Degraded  bool        `json:"degraded"`
 	UpdatedMs int64       `json:"updated_ms"`
 }
@@ -90,7 +94,7 @@ type BriefEntry struct {
 // ParsedBrief is the fields as the agent wrote them. Status is nil when
 // absent or unrecognised; the caller defaults it.
 type ParsedBrief struct {
-	Task, Ask, Rec, Next, Delta *string
+	Task, Ask, Rec, Next, Delta, Goal, Done *string
 	Status                      *BriefStatus
 }
 
@@ -184,6 +188,10 @@ func ParseBrief(msg string) (ParsedBrief, bool) {
 			out.Next = strPtr(value)
 		case "delta":
 			out.Delta = strPtr(value)
+		case "goal":
+			out.Goal = strPtr(value)
+		case "done", "done-when", "done_when", "done when":
+			out.Done = strPtr(value)
 		}
 	}
 	return out, true
@@ -206,6 +214,8 @@ func BriefFromStop(lastAssistantMessage, autoTitle *string, updatedMs int64) Bri
 				Rec:       p.Rec,
 				Next:      p.Next,
 				Delta:     p.Delta,
+				Goal:      p.Goal,
+				Done:      p.Done,
 				UpdatedMs: updatedMs,
 			}
 			if b.Task == nil {

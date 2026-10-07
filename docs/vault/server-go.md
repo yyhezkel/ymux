@@ -584,6 +584,25 @@ resolvers exist and **no longer only when chat.db opened** — a failed chat sto
 cost browser sessions their hooks. hooks → core, chat → core, term → core: still no
 cycle.
 
+**`term/context.go` + `claudesessions.go` (Phase 117, WEB-DESIGN F3) — the browser's
+Context Rail and resume picker.** `context.go` ports `context_store.rs` (docs/CONTEXT.md):
+one `SessionContext` per Claude session id, fed from `feedPush` AFTER `r.mu` is released
+(file I/O) — the first prompt only while empty (≤ 2000 chars), a `turn` line per Stop from
+the stop brief (degraded included), a `closed` line per SessionEnd with the payload's
+`reason`; goal / done sticky (last non-empty). `ws_id` is the hook entry's browser
+workspace, `cwd` the payload's; an empty value never erases a known one. Files
+`<data>/context/sessions/<id>.json` (atomic, id `[A-Za-z0-9_-]{1,128}`, a corrupt file is
+never overwritten and its session refused, > 30 days pruned at load), log capped at 200,
+`version` bumps per write, `context:changed {session_id, ws_id}` on the hub,
+`GET /api/v2/context/sessions?ws_id=` newest activity first. Injection back into the agent
+(105.C, `context.inject`) is NOT ported. `agent/brief.go` gained the sticky `goal` /
+`done` keys (`done-when`, `done_when`, `done when` too) — parity with brief.rs.
+`claudesessions.go` ports `pane_list_claude_sessions`' local path: `GET
+/api/v2/claude/sessions?limit=&project_path=` over `~/.claude/projects/*/*.jsonl`, newest
+first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
+assistant line via `extractTextField`, 80 chars + …); the scope is the transcript's own
+`cwd` (trailing `/` ignored), applied before the limit, and a mismatch skips the tail read.
+
 **`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
 Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against
 "/", symlinked ancestors re-checked). List / read / upload / download / delete were Phase

@@ -52,6 +52,10 @@ type feedPushParams struct {
 type hookPayload struct {
 	NotificationType     string  `json:"notification_type"`
 	Prompt               string  `json:"prompt"`
+	// F3 (Phase 117): the Context Rail's keys (context.go).
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+	Reason    string `json:"reason"`
 	LastAssistantMessage *string `json:"last_assistant_message"`
 }
 
@@ -122,13 +126,27 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 		b := *e.brief.Brief
 		stopBrief = &b
 	}
-	pane, session, policy := e.paneID, e.name, e.policy
+	pane, session, policy, wsID := e.paneID, e.name, e.policy, e.workspaceID
 	logger.Debug("hook folded", "pane", pane, "subkind", p.Subkind,
 		"state", string(e.run.CurrentState()), "seq", e.run.Seq)
 	r.mu.Unlock()
 
 	if runEv != nil {
 		r.hub.publish("pane:agent-run", same(*runEv))
+	}
+	// F3: the session's context record (file I/O — never under r.mu).
+	switch p.Subkind {
+	case "user-prompt-submit", "stop", "session-end":
+		ev := contextEvent{sessionID: pl.SessionID, wsID: wsID, paneID: pane, cwd: pl.Cwd}
+		switch p.Subkind {
+		case "user-prompt-submit":
+			ev.prompt = strings.TrimSpace(pl.Prompt)
+		case "stop":
+			ev.stop = stopBrief
+		case "session-end":
+			ev.ended, ev.reason = true, pl.Reason
+		}
+		r.recordContext(ev)
 	}
 	if briefEv != nil {
 		r.hub.publish("pane:brief", same(map[string]any{"pane_id": pane, "entry": *briefEv}))

@@ -582,6 +582,9 @@ export class WebBackend implements Backend {
     this.paneSession.set(paneId, name);
     const sid = await this.pty.open(name, num(a.cols, 80), num(a.rows, 24));
     this.paneSid.set(paneId, sid);
+    // Seed smart bidi from the leaf (lib.rs seeds the filter at pane_connect).
+    const leaf = findLeaf(w.layout ?? null, paneId);
+    if (leaf && "smart_bidi" in leaf && leaf.smart_bidi) this.pty.setBidi(sid, true);
     return sid;
   }
 
@@ -833,6 +836,49 @@ export class WebBackend implements Backend {
       this.layoutOp(str(a.workspaceId), (l) =>
         patchLeaf(l, str(a.paneId), { annotation: a.annotation === null ? null : str(a.annotation) }),
       ),
+
+    // ── Phase 117 (F3): pane fields the desktop keeps on the layout leaf ──
+    pane_set_identity: async (a) => {
+      const color = a.color === null || a.color === undefined ? null : str(a.color);
+      const emoji = a.emoji === null || a.emoji === undefined ? null : str(a.emoji);
+      checkIdentity(color, emoji);
+      await this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { color, emoji }));
+      return { pane_id: str(a.paneId), color, emoji };
+    },
+    pane_set_smart_bidi: async (a) => {
+      const on = a.enabled === true;
+      const f = await this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { smart_bidi: on }));
+      const sid = this.paneSid.get(str(a.paneId));
+      if (sid) this.pty.setBidi(sid, on);
+      return f;
+    },
+    pane_set_claude_running: (a) =>
+      this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { claude_running: a.running === true })),
+    // The resume picker: the daemon reads ~/.claude/projects on its own box.
+    pane_list_claude_sessions: (a) => {
+      const q = new URLSearchParams({ limit: String(num(a.limit, 30)) });
+      if (str(a.projectPath)) q.set("project_path", str(a.projectPath));
+      return api("GET", `/api/v2/claude/sessions?${q}`);
+    },
+    // The Context Rail: the daemon's per-session records (term/context.go);
+    // `context:changed` arrives on the events socket like any other event.
+    session_context_list: (a) => api("GET", `/api/v2/context/sessions?ws_id=${encodeURIComponent(str(a.wsId))}`),
+    // The desktop keeps this for the SSH ticket-cwd lookup; nothing here reads it.
+    pane_set_active: async () => null,
+    sessions_kill_by_name: async (a) => {
+      const name = str(a.name);
+      const holder = [...this.paneSession].find(([, n]) => n === name)?.[0];
+      if (holder) return this.kill(holder);
+      try {
+        await api("DELETE", `/api/v2/term/sessions/${encodeURIComponent(name)}`);
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 404) return { result: "already_gone", backend: "tmux", session: name };
+        throw e;
+      }
+      return { result: "killed", backend: "tmux", session: name };
+    },
+    // One box: a pane's own connection is the daemon's.
+    pane_probe_tmux_sessions: (a) => this.handlers.pane_list_tmux_sessions({ workspaceId: a.workspaceId, projectPath: null }),
 
     // panes / PTY
     pane_connect: (a) => this.connect(a),
