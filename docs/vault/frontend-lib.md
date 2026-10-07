@@ -151,6 +151,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
   decode → filter order; `connect` seeds it from the leaf's `smart_bidi`, the toggle flips
   it live. A popout's own attach starts with it off.
+  Every session create sends `replace_pane: true` (the leaf shows what it was last
+  connected to), and `api()` shows a problem+json error's `detail`, never the raw document.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

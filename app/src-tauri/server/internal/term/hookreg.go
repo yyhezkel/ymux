@@ -55,6 +55,11 @@ type hookEntry struct {
 	// 103) — "" for a session created outside one. It fences an agent's
 	// send / title verbs to its own workspace.
 	workspaceID string
+	// released (Phase 117): another session took this pane id over
+	// (create with replace_pane — "open a new session instead"). The session
+	// keeps running, but it no longer speaks for any pane: its hooks get a
+	// quiet passive answer and every pane-keyed lookup skips it.
+	released bool
 }
 
 // Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
@@ -165,11 +170,26 @@ func (r *HookRegistry) paneInUse(paneID string) bool {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, e := range r.byName {
-		if e.paneID == paneID {
+		if e.paneID == paneID && !e.released {
 			return true
 		}
 	}
 	return false
+}
+
+// releasePane hands paneID over: whatever live session carried it stops
+// speaking for it (see hookEntry.released). Returns how many were released.
+func (r *HookRegistry) releasePane(paneID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, e := range r.byName {
+		if e.paneID == paneID && !e.released {
+			e.released = true
+			n++
+		}
+	}
+	return n
 }
 
 // add registers a session that tmux has just created.
@@ -294,6 +314,9 @@ func (r *HookRegistry) Snapshot() map[string]PaneSnapshot {
 	defer r.mu.Unlock()
 	out := make(map[string]PaneSnapshot, len(r.byName))
 	for _, e := range r.byName {
+		if e.released {
+			continue
+		}
 		out[e.paneID] = PaneSnapshot{Session: e.name, AgentRun: e.run.Event(e.paneID), Brief: e.brief}
 	}
 	return out

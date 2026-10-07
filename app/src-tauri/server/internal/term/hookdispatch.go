@@ -89,6 +89,12 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 
 	r.mu.Lock()
 	e := t.e
+	if e.released {
+		// Its pane belongs to a newer session now: no card, no light, no
+		// context — and no opinion, so the CLI falls back to Claude's own.
+		r.mu.Unlock()
+		return map[string]any{"request_id": p.RequestID, "decision": "passive"}
+	}
 	// Defense in depth: the HMAC already identified the session, so a hook
 	// naming another pane or another tmux session is something forging
 	// across sessions — refuse rather than fold it into the wrong light.

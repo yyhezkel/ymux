@@ -602,6 +602,12 @@ never overwritten and its session refused, > 30 days pruned at load), log capped
 first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
 assistant line via `extractTextField`, 80 chars + …); the scope is the transcript's own
 `cwd` (trailing `/` ignored), applied before the limit, and a mismatch skips the tail read.
+**`replace_pane` (Phase 117)** on term-create: a pane id is carried by at most one live
+session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
+With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
+hooks get a quiet `passive` (no card, light or context — the CLI falls back to Claude's
+own), and `byPane` / `Snapshot` / the hello skip it. A daemon restart's `RecoverHooks`
+does not know `released` (both sessions carry the pane id again) — a known edge.
 
 **`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
 Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against

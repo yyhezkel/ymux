@@ -30,6 +30,9 @@ type TermCreateRequest struct {
 	// Phase 110: an argv the session runs instead of a shell — a browser pane
 	// opened in "claude" mode. argv, never a shell string (Rule #3).
 	Cmd []string `json:"cmd,omitempty"`
+	// Phase 117: take pane_id over from a live session that carries it ("open
+	// a new session instead"); that session keeps running, released.
+	ReplacePane bool `json:"replace_pane,omitempty"`
 }
 
 // TermCreated is the create response; same keys the raw handler's map had.
@@ -123,6 +126,11 @@ func (s *Service) RegisterHuma(api huma.API) {
 		cmd, err := s.sessionArgv(body.Cmd)
 		if err != nil {
 			return nil, huma.NewError(http.StatusBadRequest, err.Error())
+		}
+		if body.ReplacePane && body.PaneID != "" && s.hooks != nil {
+			if n := s.hooks.releasePane(body.PaneID); n > 0 {
+				logger.Info("pane taken over by a new session", "pane", body.PaneID, "released", n)
+			}
 		}
 		e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID, cmd...)
 		if err != nil {

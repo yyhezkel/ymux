@@ -70,3 +70,28 @@ func TestContextStoreModel(t *testing.T) {
 		t.Fatal("corrupt file changed")
 	}
 }
+
+// Phase 117: "open a new session instead" — replace_pane takes a pane id over
+// from a live session, which keeps running released.
+func TestReplacePaneTakesOver(t *testing.T) {
+	s, _ := hookService("tmux 3.4")
+	s.hooks.SetHookAddr("127.0.0.1:1")
+	create := func(body string) int {
+		return do(s, "POST", "/api/v2/term/sessions", "owner-token", body).Code
+	}
+	if c := create(`{"name":"a","pane_id":"p1"}`); c != 201 {
+		t.Fatalf("first → %d", c)
+	}
+	if c := create(`{"name":"b","pane_id":"p1"}`); c != 409 {
+		t.Fatalf("taken pane without replace → %d", c)
+	}
+	if c := create(`{"name":"c","pane_id":"p1","replace_pane":true}`); c != 201 {
+		t.Fatalf("replace → %d", c)
+	}
+	if snap := s.hooks.Snapshot(); snap["p1"].Session != "c" {
+		t.Fatalf("p1 is %q, want c", snap["p1"].Session)
+	}
+	if e, ok := s.hooks.byPane("p1"); !ok || e.name != "c" {
+		t.Fatalf("byPane = %+v %v", e, ok)
+	}
+}

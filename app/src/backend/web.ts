@@ -565,6 +565,9 @@ export class WebBackend implements Backend {
           cwd: str(a.cwdOverride),
           workspace_id: wsId,
           pane_id: paneId,
+          // A leaf shows what it was last connected to: a new session takes
+          // the pane over from one still running (it keeps running, released).
+          replace_pane: true,
           cmd,
         });
       } catch (e) {
@@ -574,6 +577,9 @@ export class WebBackend implements Backend {
           cwd: str(a.cwdOverride),
           workspace_id: wsId,
           pane_id: paneId,
+          // A leaf shows what it was last connected to: a new session takes
+          // the pane over from one still running (it keeps running, released).
+          replace_pane: true,
           cmd,
         });
       }

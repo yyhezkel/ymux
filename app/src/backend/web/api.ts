@@ -81,7 +81,12 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
     throw new ApiError(401, "not signed in");
   }
   if (!r.ok) {
-    const msg = typeof parsed === "string" ? parsed : text.trim() || `HTTP ${r.status}`;
+    // huma answers problem+json — show its detail, never the raw document.
+    const pj = parsed && typeof parsed === "object" ? (parsed as { detail?: unknown; title?: unknown }) : null;
+    const msg =
+      typeof parsed === "string"
+        ? parsed
+        : (typeof pj?.detail === "string" && pj.detail) || (typeof pj?.title === "string" && pj.title) || text.trim() || `HTTP ${r.status}`;
     throw new ApiError(r.status, msg, parsed);
   }
   return parsed as T;
