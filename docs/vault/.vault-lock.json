@@ -174,7 +174,7 @@
     "app/src/DiffPane.tsx": "858ccaa0a5e21b0a9bcefc1e390810121e1fa42683d25271b160f576fab98c51",
     "app/src/FeedPanel.tsx": "afc5c5b1df122ef468b9b4476eee93ee49f88c22bc64a088f6bf738cadb0360f",
     "app/src/FileEditor.tsx": "9ae4f420b97dcf8f0b9ece3e1e26fd533d776c41e9aad1d2dd8018c31d968a32",
-    "app/src/FileManagerPane.tsx": "f0c40f148a7893bbf6cbc676996861e1ec3d5cda25c6b743194110e9fcf23f39",
+    "app/src/FileManagerPane.tsx": "0d569ebb862b7d56bb9e7863d0f7177b3a086744321c8b820eb0c6401bc4c30e",
     "app/src/FileManagerWindow.tsx": "dc988da67aa9e75d38e7d289155f007124ca229fb5ebee3e461e93388dd88e7a",
     "app/src/HelpPane.tsx": "2bb243ef25f974e043ed341de0b9315e1c40309683ae5f641ea9c8bff5c5dd23",
     "app/src/HygienePanel.tsx": "d8f37c3b3088852c1a630d6fd9aeacee481a4369144cbdc7dca3cdc667c484e1",

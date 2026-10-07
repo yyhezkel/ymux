@@ -152,6 +152,12 @@ list, scroll and an open `FileEditor` with its unsaved text. The pane's teardown
 (`disposed` flag, drag-drop `unlisten`, the document `mousedown`/`keydown` menu
 dismissers) is registered in the component scope / a sync `onMount`: an `onCleanup`
 after an `await` in the async `onMount` has no owner and never runs.
+In a browser (`!can("fileManagerLocal")`) everything local stays out: `refreshLocal`
+returns early (the toolbar ⟳ and post-transfer refreshes used to ask for `file_list_local`
+and paint an error), and "paste to local" / "upload the selected local file" are not
+rendered; download stays. Names render in `dir="auto"` spans and the path input is
+`dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
+as `bun.`, on the desktop too.
 **`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
 imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 

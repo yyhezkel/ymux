@@ -219,6 +219,9 @@ export function FileManagerPane(p: Props) {
   const remoteEntriesView = createMemo(() => applyFilterSort(remoteEntries()));
 
   const refreshLocal = async () => {
+    // A browser has no local column (Phase 107); the shared refresh paths
+    // (toolbar ⟳, after a transfer) must not ask for one.
+    if (!backend.can("fileManagerLocal")) return;
     try {
       const list = await backend.call<FileEntry[]>("file_list_local", {
         path: localPath(),
@@ -1086,6 +1089,7 @@ export function FileManagerPane(p: Props) {
         <button class="fm-up" title={t("fm.btn.up")} onClick={() => goUp(props.side)}><IconArrowUp size={14} /></button>
         <input
           class="fm-path"
+          dir="ltr"
           value={props.path()}
           onChange={(e) => {
             props.setPath(e.currentTarget.value);
@@ -1125,9 +1129,11 @@ export function FileManagerPane(p: Props) {
             <span class="fm-clip-src">({clip()!.side})</span>
           </span>
           <span class="fm-clip-actions">
-            <button class="fm-clip-btn" onClick={() => void pasteInto("local")}>
-              {t("fm.paste.to_local")}
-            </button>
+            <Show when={backend.can("fileManagerLocal")}>
+              <button class="fm-clip-btn" onClick={() => void pasteInto("local")}>
+                {t("fm.paste.to_local")}
+              </button>
+            </Show>
             <Show when={p.hasSsh}>
               <button class="fm-clip-btn" onClick={() => void pasteInto("remote")}>
                 {t("fm.paste.to_remote")}
@@ -1249,7 +1255,7 @@ export function FileManagerPane(p: Props) {
              which side the selection is on. Always rendered in SSH
              workspaces (no Show on selection state) so layout stays
              constant — they grey out when not applicable. */}
-        <Show when={p.hasSsh}>
+        <Show when={p.hasSsh && backend.can("fileManagerLocal")}>
           <button
             class="fm-action"
             title={t("fm.btn.upload.tooltip")}
@@ -1263,6 +1269,8 @@ export function FileManagerPane(p: Props) {
           >
             <IconUpload size={14} />
           </button>
+        </Show>
+        <Show when={p.hasSsh}>
           <button
             class="fm-action"
             title={t("fm.btn.download.tooltip")}
@@ -1365,7 +1373,7 @@ export function FileManagerPane(p: Props) {
                     onContextMenu={(ev) => openCtxMenu("local", e, ev)}
                   >
                     <span class="fm-icon">{e.is_dir ? <IconFolder size={14} /> : e.is_link ? <IconLink size={14} /> : <IconFile size={14} />}</span>
-                    <span class="fm-name"><TechText text={e.name} /></span>
+                    <span class="fm-name" dir="auto"><TechText text={e.name} /></span>
                     <span class="fm-size">{e.is_dir ? "" : fmtSize(e.size)}</span>
                     <span class="fm-time">{fmtTime(e.modified)}</span>
                   </div>
@@ -1414,7 +1422,7 @@ export function FileManagerPane(p: Props) {
                       onContextMenu={(ev) => openCtxMenu("remote", e, ev)}
                     >
                       <span class="fm-icon">{e.is_dir ? <IconFolder size={14} /> : e.is_link ? <IconLink size={14} /> : <IconFile size={14} />}</span>
-                      <span class="fm-name"><TechText text={e.name} /></span>
+                      <span class="fm-name" dir="auto"><TechText text={e.name} /></span>
                       <span class="fm-size">{e.is_dir ? "" : fmtSize(e.size)}</span>
                       <span class="fm-time">{fmtTime(e.modified)}</span>
                     </div>

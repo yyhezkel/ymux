@@ -138,7 +138,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   out path-shaped tokens `webfile:<n>/<name>` that keep the File; the UI's basename logic
   still works, and `file_upload` / `pane_upload_dropped` (→ `~/ymux-drops/<name>`, typed
   into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
-  one request, not a tracked transfer.
+  one request, not a tracked transfer. The notifications banner (`.web-push-prompt`) sits at
+  z-index 30, under panels and their confirm toasts, which it used to cover.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

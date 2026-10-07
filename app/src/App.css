@@ -7555,7 +7555,9 @@ body.ymux-dragging .pane-conn {
   position: fixed;
   inset-inline: 12px;
   bottom: 12px;
-  z-index: 9000;
+  /* Below panels, drawers and their confirm toasts (the File Manager's sits
+     at 40): an invitation must never cover a question the app is asking. */
+  z-index: 30;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
