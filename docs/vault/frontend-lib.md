@@ -135,7 +135,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   desktop hide / re-attach flow runs unchanged. In the new window `host.windowLabel()` is
   `popout-<sid>` (index.tsx renders `PopoutTerminal`) and `init()` attaches its own tmux
   client under the opener's sid (`PtySessions.open(name, cols, rows, sid)`), the only id
-  PopoutTerminal knows.
+  PopoutTerminal knows. `caps` holds `"popout"`, so PaneView shows the button.
 - **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
   the required groups, merged one level deep; restore-on-start ON, update checks OFF).
   A stored non-object where the default is a group is **ignored**, not merged — found

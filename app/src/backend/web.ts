@@ -156,7 +156,8 @@ const derivedName = (w: { name: string }, paneId: string): string =>
 
 export class WebBackend implements Backend {
   readonly kind = "web" as const;
-  readonly caps: ReadonlySet<Capability> = new Set<Capability>();
+  // "popout": a pane opens in its own browser window (popout_pane below).
+  readonly caps: ReadonlySet<Capability> = new Set<Capability>(["popout"]);
   readonly bus = new EventBus();
   private pty = new PtySessions(this.bus);
   private files = new FilesBridge();

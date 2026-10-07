@@ -126,7 +126,7 @@
     "app/src/backend/index.ts": "ced20e3838f06ebcaec95204858df063bfb8da7ad0d0c5aa43f277c9a51e72ba",
     "app/src/backend/tauri.ts": "e173c89dc7daf27920b0aba3f37b9a1b347c544c10e230303bf309d9d37e57b9",
     "app/src/backend/types.ts": "a3b442aa8232c265a38f2d73ec8360620098a77fd51d379a075b82f87d2b8255",
-    "app/src/backend/web.ts": "7503e147e70892c3f8862c68054d0927db0fbc7c6d392ba16bc70b10b33cac2e",
+    "app/src/backend/web.ts": "a9dd87ae38ff3531c48bbaca9fecb8f4dba10fc8f24fe3e0358854c5e3b7a2f8",
     "app/src/backend/web/api.ts": "6cd4d659307fcbcd1d6045cb59a2ec699c9cdb084e729d6f81582b9e8d3a0c1e",
     "app/src/backend/web/argv.ts": "147f8e58c0832afc2fbc62410cc58a879af45cb29133204220dd64339431f6c7",
     "app/src/backend/web/defaults.ts": "a29210d09db65da91cb88821c749bd76313053be1a56715df7654f7290e5464c",
