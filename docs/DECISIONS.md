@@ -465,6 +465,22 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-07 — Phase F: the browser reaches the desktop's usability, in five PRs
+- **Decided (Yossi):** "the browser must be as usable as the desktop" — a parity pass
+  over the 134 desktop commands the browser backend did not handle. Order approved:
+  **F1** workspaces + project folders (tree, groups, order) → **F2** File Manager
+  (mkdir/rename/copy/zip, upload, drag into a pane) → **F3** panes (resume a claude
+  session, identity, smart bidi, Context Rail) → **F4** git (Diff pane, worktrees) →
+  **F5** Claude summaries / usage, tickets, skills, presets, log tail.
+- **Decided (Yossi):** "more workspaces" means more on the SAME server; a browser that
+  talks to several daemons is out of scope for F.
+- **By design, not ported:** the in-app Browser (links open a new tab), the local
+  machine (files, shells, setup wizard), SSH out / provisioning / keys, the updater,
+  font install, device-pairing admin, add-ons, local STT.
+- **Decided (Claude):** the daemon stores the tree fields opaque (`meta`) and the
+  browser owns lib.rs's semantics (`backend/web/tree.ts`) — the B5 rule for layouts,
+  applied to the tree; pre-F1 flat rows migrate to header + screen once.
+
 ### 2026-10-06 — Phase E: the PWA gets real Web Push (FCM/autopush), not just in-tab notifications
 - **Decided (Yossi):** "E1+E2 together" — the installable PWA **and** background
   notifications via Web Push, delivered even with the app closed. Accepted trade-off:
