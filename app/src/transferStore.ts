@@ -1,6 +1,5 @@
 import { createSignal } from "solid-js";
-import { listen } from "@tauri-apps/api/event";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 // Phase 81.B: global store for in-flight SFTP transfers.
 //
@@ -146,7 +145,7 @@ export async function cancelTransfer(id: string): Promise<void> {
     list.map((t) => (t.id === id && t.state === "active" ? { ...t, state: "canceling" } : t)),
   );
   try {
-    await invoke("fm_transfer_cancel", { transferId: id });
+    await backend.call("fm_transfer_cancel", { transferId: id });
   } catch {
     // Already finished between the click and the call — the done event
     // has the truth, so there is nothing to report here.
@@ -162,8 +161,8 @@ let started = false;
 export async function initTransferListener(): Promise<void> {
   if (started) return;
   started = true;
-  await listen<ProgressPayload>("fm-transfer-progress", (e) => upsert(e.payload));
-  await listen<DonePayload>("fm-transfer-done", (e) => finish(e.payload));
+  await backend.on<ProgressPayload>("fm-transfer-progress", (e) => upsert(e.payload));
+  await backend.on<DonePayload>("fm-transfer-done", (e) => finish(e.payload));
 }
 
 // ─── formatting helpers (shared by the bar and any future tray) ──────────

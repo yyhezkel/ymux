@@ -98,7 +98,7 @@ hide blanks a window that will never call show again.
 
 **The `shownWsId` invariant.** The chrome must hide the Webview belonging to the
 workspace that is **actually on screen**, which is *not* the same as `p.workspace?.id`.
-One writer (the show effect's `.then`, after the invoke resolves), one reader
+One writer (the show effect's `.then`, after the `backend.call` resolves), one reader
 (`hideShown`), and three callers: the workspace-switch effect (hide the **outgoing**
 workspace before forgetting which it was), the show effect's no-URL branch, and the
 falling-edge close effect. Phase 85.B: all three used to pass the *active* id, so opening
@@ -152,6 +152,12 @@ list, scroll and an open `FileEditor` with its unsaved text. The pane's teardown
 (`disposed` flag, drag-drop `unlisten`, the document `mousedown`/`keydown` menu
 dismissers) is registered in the component scope / a sync `onMount`: an `onCleanup`
 after an `await` in the async `onMount` has no owner and never runs.
+In a browser (`!can("fileManagerLocal")`) everything local stays out: `refreshLocal`
+returns early (the toolbar ⟳ and post-transfer refreshes used to ask for `file_list_local`
+and paint an error), and "paste to local" / "upload the selected local file" are not
+rendered; download stays. Names render inside `<bdi>` (direction isolated, cell alignment kept — `dir="auto"` on the span pushed LTR names to the far edge) and the path input is
+`dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
+as `bun.`, on the desktop too.
 **`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
 imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 
@@ -221,7 +227,10 @@ reports a LISTEN port → a row appears with **[Forward]** → the backend opens
 flips to **[Open] [Stop]**. Stop tears the tunnel down; the row reverts to detected-only,
 or disappears when `port.closed` fires.
 
-**`MobilePairing.tsx` (428)** — the Monitor's Mobile tab. Drives the nginx-proxy install
+**`MobilePairing.tsx` (428)** — the Monitor's Mobile tab, labelled **"Web & devices"**
+since Phase 113: each device row also has a **Terminal access** checkbox (checked when
+the stored scopes name `shell:attach` — never implied by "all"; disabled unless the device
+is active; granting asks for confirmation) → `mobile_pairing_set_shell`. Drives the nginx-proxy install
 and the daemon's pairing endpoints via the `mobile_pairing_*` commands. Host and port are
 used **only** to render the URL card.
 

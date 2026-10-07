@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClose, IconWarning, IconCircle } from "./icons";
 
@@ -48,7 +48,7 @@ export function HygienePanel(p: { workspaceId?: string }) {
     setLoading(true);
     setErr(null);
     try {
-      const raw = await invoke<string>("insights_fetch", {
+      const raw = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: "/hygiene",
       });
@@ -67,7 +67,7 @@ export function HygienePanel(p: { workspaceId?: string }) {
     setErr(null);
     setNote(null);
     try {
-      const raw = await invoke<string>("insights_hygiene_kill", {
+      const raw = await backend.call<string>("insights_hygiene_kill", {
         workspaceId: p.workspaceId,
         pids,
       });

@@ -26,6 +26,13 @@ type TermCreateRequest struct {
 	Cwd         string   `json:"cwd,omitempty"`
 	Policy      string   `json:"policy,omitempty"`       // "none" (default) | "gate"
 	WorkspaceID string   `json:"workspace_id,omitempty"` // a browser workspace
+	PaneID      string   `json:"pane_id,omitempty"`      // Phase 109: the browser leaf this session fills
+	// Phase 110: an argv the session runs instead of a shell — a browser pane
+	// opened in "claude" mode. argv, never a shell string (Rule #3).
+	Cmd []string `json:"cmd,omitempty"`
+	// Phase 117: take pane_id over from a live session that carries it ("open
+	// a new session instead"); that session keeps running, released.
+	ReplacePane bool `json:"replace_pane,omitempty"`
 }
 
 // TermCreated is the create response; same keys the raw handler's map had.
@@ -61,8 +68,10 @@ func humaErr(err error) error {
 		return huma.NewError(http.StatusNotFound, err.Error())
 	case errors.Is(err, ErrBadName):
 		return huma.NewError(http.StatusBadRequest, err.Error())
-	case errors.Is(err, errSessionExists):
+	case errors.Is(err, errSessionExists), errors.Is(err, errPaneInUse):
 		return huma.NewError(http.StatusConflict, err.Error())
+	case errors.Is(err, errBadPaneID):
+		return huma.NewError(http.StatusBadRequest, err.Error())
 	default:
 		logger.Error("tmux command failed", "err", err)
 		return huma.NewError(http.StatusInternalServerError, "tmux command failed")
@@ -114,7 +123,16 @@ func (s *Service) RegisterHuma(api huma.API) {
 		if body.WorkspaceID != "" && (s.hooks == nil || !s.hooks.webws.exists(body.WorkspaceID)) {
 			return nil, huma.NewError(http.StatusBadRequest, "no such workspace")
 		}
-		e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID)
+		cmd, err := s.sessionArgv(body.Cmd)
+		if err != nil {
+			return nil, huma.NewError(http.StatusBadRequest, err.Error())
+		}
+		if body.ReplacePane && body.PaneID != "" && s.hooks != nil {
+			if n := s.hooks.releasePane(body.PaneID); n > 0 {
+				logger.Info("pane taken over by a new session", "pane", body.PaneID, "released", n)
+			}
+		}
+		e, hooks, err := s.spawnSession(body.Name, body.Cwd, body.Policy, body.WorkspaceID, body.PaneID, cmd...)
 		if err != nil {
 			return nil, humaErr(err)
 		}

@@ -39,6 +39,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/files/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Pack items into a .zip or .tar.gz next to them */
+        post: operations["files-archive"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/files/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Copy a file or a directory (recursive; never overwrites) */
+        post: operations["files-copy"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/files/delete": {
         parameters: {
             query?: never;
@@ -49,7 +83,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Delete a file or empty directory */
+        /** Delete a file or empty directory (recursive=true: a whole directory) */
         delete: operations["files-delete"];
         options?: never;
         head?: never;
@@ -90,6 +124,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/files/mkdir": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a directory (no parents; 409 if it exists) */
+        post: operations["files-mkdir"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/files/read": {
         parameters: {
             query?: never;
@@ -101,6 +152,40 @@ export interface paths {
         get: operations["files-read"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/files/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rename / move inside the sandbox (never overwrites) */
+        post: operations["files-rename"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/files/unzip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Extract a .zip into <dir>/<name>/ */
+        post: operations["files-unzip"];
         delete?: never;
         options?: never;
         head?: never;
@@ -383,6 +468,13 @@ export interface components {
             /** Format: int64 */
             windows: number;
         };
+        ArchiveBody: {
+            cwd: string;
+            /** @enum {string} */
+            format: "zip" | "targz";
+            names: string[] | null;
+            output: string;
+        };
         ClientInfo: {
             client_id: string;
             device_name: string;
@@ -494,6 +586,10 @@ export interface components {
         LineEvent: {
             line: string;
         };
+        MoveBody: {
+            from: string;
+            to: string;
+        };
         OkBody: {
             ok: boolean;
         };
@@ -504,6 +600,9 @@ export interface components {
             default_workspace_id: string;
             device_id: string;
             long_term_token: string;
+        };
+        PathBody: {
+            path: string;
         };
         PendingRequest: {
             /** Format: int64 */
@@ -538,9 +637,12 @@ export interface components {
             session_id: string;
         };
         TermCreateRequest: {
+            cmd?: string[] | null;
             cwd?: string;
             name?: string;
+            pane_id?: string;
             policy?: string;
+            replace_pane?: boolean;
             workspace_id?: string;
         } & {
             [key: string]: unknown;
@@ -699,10 +801,78 @@ export interface operations {
             };
         };
     };
+    "files-archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArchiveBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PathBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "files-copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "files-delete": {
         parameters: {
             query: {
                 path: string;
+                /** @description Phase 116: remove a directory with everything under it */
+                recursive?: boolean;
             };
             header?: never;
             path?: never;
@@ -793,6 +963,39 @@ export interface operations {
             };
         };
     };
+    "files-mkdir": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PathBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
     "files-read": {
         parameters: {
             query?: {
@@ -812,6 +1015,72 @@ export interface operations {
                 };
                 content: {
                     "application/octet-stream": string;
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "files-rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MoveBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OkBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "files-unzip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PathBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PathBody"];
                 };
             };
             /** @description Error */

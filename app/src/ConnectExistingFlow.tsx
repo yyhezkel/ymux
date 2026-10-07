@@ -1,5 +1,5 @@
 import { createSignal, createMemo, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClose, IconCheck } from "./icons";
 import type { ServerDiscovery } from "./bindings/ServerDiscovery";
@@ -74,7 +74,7 @@ export function ConnectExistingFlow(p: Props) {
     setAuthError(null);
     setDiscovery(null);
     try {
-      const d = await invoke<ServerDiscovery>("connect_existing_discover", {
+      const d = await backend.call<ServerDiscovery>("connect_existing_discover", {
         host: host().trim(),
         port: port(),
         user: user().trim(),
@@ -139,7 +139,7 @@ export function ConnectExistingFlow(p: Props) {
         workspace_name: workspaceName().trim() || null,
         existing_workspace_id: null,
       };
-      const r = await invoke<ConnectExistingResult>("connect_existing_execute", {
+      const r = await backend.call<ConnectExistingResult>("connect_existing_execute", {
         input,
       });
       setResult(r);

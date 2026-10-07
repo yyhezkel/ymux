@@ -51,6 +51,42 @@
         ],
         "type": "object"
       },
+      "ArchiveBody": {
+        "additionalProperties": false,
+        "properties": {
+          "cwd": {
+            "type": "string"
+          },
+          "format": {
+            "enum": [
+              "zip",
+              "targz"
+            ],
+            "type": "string"
+          },
+          "names": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": [
+              "array",
+              "null"
+            ]
+          },
+          "output": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "cwd",
+          "names",
+          "output",
+          "format"
+        ],
+        "type": "object"
+      },
       "ClientInfo": {
         "additionalProperties": false,
         "properties": {
@@ -403,6 +439,24 @@
         ],
         "type": "object"
       },
+      "MoveBody": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "to": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
       "OkBody": {
         "additionalProperties": false,
         "properties": {
@@ -444,6 +498,19 @@
           "device_id",
           "long_term_token",
           "default_workspace_id"
+        ],
+        "type": "object"
+      },
+      "PathBody": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
         ],
         "type": "object"
       },
@@ -584,14 +651,29 @@
       "TermCreateRequest": {
         "additionalProperties": true,
         "properties": {
+          "cmd": {
+            "items": {
+              "type": "string"
+            },
+            "type": [
+              "array",
+              "null"
+            ]
+          },
           "cwd": {
             "type": "string"
           },
           "name": {
             "type": "string"
           },
+          "pane_id": {
+            "type": "string"
+          },
           "policy": {
             "type": "string"
+          },
+          "replace_pane": {
+            "type": "boolean"
           },
           "workspace_id": {
             "type": "string"
@@ -751,7 +833,7 @@
   "info": {
     "description": "ymux server daemon API — the client-SDK surface (version negotiation, Files, Logs, Terminal). Streaming WebSocket frames are described in asyncapi.json (PHASE-77-DESIGN §4.4). Generated from the huma handlers (S4); the Insights metrics API is desktop-internal and documented separately.",
     "title": "ymux-server",
-    "version": "2.9.0"
+    "version": "2.19.0"
   },
   "openapi": "3.1.0",
   "paths": {
@@ -919,6 +1001,98 @@
         ]
       }
     },
+    "/api/v2/files/archive": {
+      "post": {
+        "operationId": "files-archive",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArchiveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PathBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Pack items into a .zip or .tar.gz next to them",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/api/v2/files/copy": {
+      "post": {
+        "operationId": "files-copy",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Copy a file or a directory (recursive; never overwrites)",
+        "tags": [
+          "files"
+        ]
+      }
+    },
     "/api/v2/files/delete": {
       "delete": {
         "operationId": "files-delete",
@@ -930,6 +1104,16 @@
             "required": true,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "description": "Phase 116: remove a directory with everything under it",
+            "explode": false,
+            "in": "query",
+            "name": "recursive",
+            "schema": {
+              "description": "Phase 116: remove a directory with everything under it",
+              "type": "boolean"
             }
           }
         ],
@@ -960,7 +1144,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Delete a file or empty directory",
+        "summary": "Delete a file or empty directory (recursive=true: a whole directory)",
         "tags": [
           "files"
         ]
@@ -1070,6 +1254,52 @@
         ]
       }
     },
+    "/api/v2/files/mkdir": {
+      "post": {
+        "operationId": "files-mkdir",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Create a directory (no parents; 409 if it exists)",
+        "tags": [
+          "files"
+        ]
+      }
+    },
     "/api/v2/files/read": {
       "get": {
         "operationId": "files-read",
@@ -1122,6 +1352,98 @@
           }
         ],
         "summary": "Read up to max_bytes of a file (raw bytes; X-Ymux-Truncated header)",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/api/v2/files/rename": {
+      "post": {
+        "operationId": "files-rename",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoveBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OkBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Rename / move inside the sandbox (never overwrites)",
+        "tags": [
+          "files"
+        ]
+      }
+    },
+    "/api/v2/files/unzip": {
+      "post": {
+        "operationId": "files-unzip",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PathBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PathBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Extract a .zip into <dir>/<name>/",
         "tags": [
           "files"
         ]

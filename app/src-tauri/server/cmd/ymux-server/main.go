@@ -300,6 +300,13 @@ func main() {
 		logger.Warn("terminal API: chat disabled, only the shared token is accepted")
 	}
 	logger.Info("terminal API enabled", "device_scopes", chatAPI != nil)
+	// Phase 114 (E): Web Push for the browser app. Before hooks.Start — the
+	// registry's notify hook is set here and read by every hook after.
+	if chatAPI != nil {
+		termSvc.SetWebPush(*base, chatAPI.ResolveToken, chatAPI.ActiveDeviceScopes)
+	} else {
+		termSvc.SetWebPush(*base, nil, nil)
+	}
 
 	// Hook RPC (Phase 100): one listener, two kinds of caller. term's registry
 	// answers for tmux sessions a browser created; chat (when its store opened)
@@ -311,12 +318,16 @@ func main() {
 	if chatMgr != nil {
 		hookResolvers = append(hookResolvers, chatMgr)
 	}
-	hooks.Start(hookResolvers...)
+	hooks.Start(filepath.Join(*base, "hook-port"), hookResolvers...)
 	// Phase 102 (B4): notes persist next to the other stores, and the box's
 	// listening ports are detected for browser clients. Port watch starts
 	// after hooks.Start so the hook listener's own port is known and skipped.
 	termSvc.SetDataDir(*base)
 	termSvc.SetWebRoot(*base)
+	// Phase 111: sessions created before a restart get their hook routing
+	// back from their own tmux environment (same port, same token). After
+	// SetDataDir, so a recovered session's workspace can be checked.
+	termSvc.RecoverHooks()
 	termSvc.StartPortWatch(context.Background(), *port)
 
 	srv := api.NewServer(token, *port, api.Deps{

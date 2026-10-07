@@ -17,7 +17,7 @@
 // IMPORTANT: this module must be imported before the console monkeypatch in
 // index.tsx — it captures the ORIGINAL console fns so logger output is never
 // forwarded twice.
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
@@ -95,7 +95,7 @@ function flushLogs(): void {
     });
     dropped = 0;
   }
-  invoke("ui_log_batch", { entries }).catch(() => {});
+  backend.call("ui_log_batch", { entries }).catch(() => {});
 }
 
 /** Queue one debug.log line. Also the sink for index.tsx's console

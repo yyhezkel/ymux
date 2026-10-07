@@ -1,7 +1,7 @@
 import { createMemo, createSignal, Show } from "solid-js";
+import { backend } from "./backend";
 import MarkdownIt from "markdown-it";
 import DOMPurify from "dompurify";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { t } from "./i18n";
 import { markdownDoc, closeMarkdown } from "./mdViewerStore";
 import { createLogger } from "./logger";
@@ -79,7 +79,7 @@ export function MarkdownViewer() {
     e.preventDefault();
     const href = a.getAttribute("href") ?? "";
     if (/^(https?:\/\/|mailto:)/i.test(href)) {
-      void openUrl(href).catch((err) => log.warn("openUrl failed", err));
+      void backend.host.openUrl(href).catch((err) => log.warn("openUrl failed", err));
     } else {
       log.warn(`blocked non-external link: ${href}`);
     }
