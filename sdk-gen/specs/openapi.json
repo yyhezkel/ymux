@@ -672,6 +672,9 @@
           "policy": {
             "type": "string"
           },
+          "replace_pane": {
+            "type": "boolean"
+          },
           "workspace_id": {
             "type": "string"
           }

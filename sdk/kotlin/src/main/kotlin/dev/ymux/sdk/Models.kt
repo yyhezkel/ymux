@@ -210,6 +210,7 @@ data class TermCreateRequest(
     val name: String? = null,
     @SerialName("pane_id") val paneId: String? = null,
     val policy: String? = null,
+    @SerialName("replace_pane") val replacePane: Boolean? = null,
     @SerialName("workspace_id") val workspaceId: String? = null
 )
 

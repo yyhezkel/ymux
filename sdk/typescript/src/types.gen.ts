@@ -642,6 +642,7 @@ export interface components {
             name?: string;
             pane_id?: string;
             policy?: string;
+            replace_pane?: boolean;
             workspace_id?: string;
         } & {
             [key: string]: unknown;
