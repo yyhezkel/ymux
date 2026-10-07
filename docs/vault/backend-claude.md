@@ -94,7 +94,7 @@ mtime-pruned files still count in `skipped_files`. `scan` returns
 | D5 | assistant line with no/null `usage` → skipped, not an error |
 | D6 | missing or non-string timestamp → `parse_errors` |
 | D7 | walk follows symlinks (dirs and files); only regular files named `*.jsonl` count |
-| D8 | `since`/`until` accept unix seconds or RFC3339 (`%2B` decoded) |
+| D8 | `since`/`until` accept unix seconds or RFC3339 (`%2B` decoded); `parse_when` returns `0` for a missing or unparseable value (no `Option`), which `route` clamps |
 | D9 | missing root → empty report; any other unreadable root → error (Rust `Err`, Go 500) |
 
 Walk order is deliberately not unified.
