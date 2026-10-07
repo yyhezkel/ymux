@@ -1657,8 +1657,13 @@ function App() {
       setShowSetup(opts);
       return;
     }
+    // Count roots, not rows: a root comes with its screens (Phase 115).
+    const all = file().workspaces;
+    const names = new Set(all.map((w) => w.name));
+    let n = all.filter((w) => !w.parent_id).length + 1;
+    while (names.has(`workspace ${n}`)) n++;
     void handleCreate({
-      name: `workspace ${file().workspaces.length + 1}`,
+      name: `workspace ${n}`,
       connection: { type: "local", shell: null },
     });
   };
