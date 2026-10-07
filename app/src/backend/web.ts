@@ -46,6 +46,7 @@ import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { startPwa } from "./web/pwa";
 import { installWebMono } from "./web/fonts";
+import { PRESETS } from "./web/presets.gen";
 import { isHeader, rootIdOf, screenOrSelf } from "../wsTree";
 import {
   DEFAULT_SCREEN_NAME,
@@ -647,7 +648,13 @@ export class WebBackend implements Backend {
     settings_load: () => this.loadSettings(),
     settings_save: (a) => this.saveSettings(a.settings as Settings),
     settings_reset: () => this.saveSettings(structuredClone(WEB_DEFAULT_SETTINGS)),
-    settings_get_presets: async () => [],
+    // Phase 119 (F5): the desktop's presets, generated from settings.rs.
+    settings_get_presets: async () => PRESETS,
+    settings_apply_preset: async (a) => {
+      const p = PRESETS.find((x) => x.id === str(a.preset));
+      if (!p) throw new Error(`unknown preset ${str(a.preset)}`);
+      return this.saveSettings({ ...this.settingsCache, theme: structuredClone(p.theme) });
+    },
     list_system_fonts: async () => ({ ui: [], mono: [] }),
     font_catalog: async () => [],
 
@@ -901,6 +908,37 @@ export class WebBackend implements Backend {
     },
     // One box: a pane's own connection is the daemon's.
     pane_probe_tmux_sessions: (a) => this.handlers.pane_list_tmux_sessions({ workspaceId: a.workspaceId, projectPath: null }),
+
+    // ── the claude -p tools (Phase 119, F5 — term/claudetools.go) ──
+    claude_usage_fetch: (a) => api("GET", `/api/v2/claude/usage${a.force === true ? "?force=1" : ""}`),
+    claude_summarize: (a) => {
+      const pane = str(a.paneId);
+      return api("POST", "/api/v2/claude/summarize", {
+        pane_id: pane,
+        session: this.paneSession.get(pane) ?? "",
+        workspace_id: str(a.workspaceId),
+      });
+    },
+    sessions_overview_summarize: (a) =>
+      api("POST", "/api/v2/term/sessions/summarize", {
+        names: Array.isArray(a.names) ? a.names : [],
+        lang: str(a.lang),
+      }),
+    // Settings → Logs shows the daemon's own log (the browser has no
+    // debug.log); clearing it from a browser is not offered.
+    read_log_tail: async (a) => {
+      const d = await api<{ lines?: string[] }>("GET", `/api/v2/logs/daemon?tail=${Math.min(2000, num(a.n, 200))}`);
+      return (d.lines ?? []).join("\n");
+    },
+    clear_debug_log_cmd: async () => null,
+    // The page already tried navigator.clipboard; the server's clipboard is
+    // never read (meaningless there, and it would leak).
+    clipboard_read_text: async () => "",
+    // Desktop-only knobs with no browser meaning: answered, not rejected.
+    workspace_secret_env_keys: async () => [],
+    workspace_set_auto_port_forward: async (a) => this.getRow(str(a.workspaceId)),
+    workspace_set_claude_separate_account: async () => null,
+    ssh_cancel_reconnect: async () => null,
 
     // ── the Diff pane + worktrees (Phase 118, F4) ──
     diff_pane_start: async (a) => {

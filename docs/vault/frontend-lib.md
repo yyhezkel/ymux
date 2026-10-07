@@ -164,6 +164,18 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
   path, or the existing one activated). The legacy local-only worktree block in
   `CreateWorkspaceModal` is hidden without `localPanes`.
+- **Tools, F5** (Phase 119) — `settings_get_presets` / `settings_apply_preset` use
+  `web/presets.gen.ts`, GENERATED from `settings.rs` `list_presets()` (13 themes, palette
+  overrides resolved) and pinned to it by `webPresets.test.ts`; apply = the settings
+  document with that theme, saved. `claude_usage_fetch`, `claude_summarize` (sends the
+  pane's tmux session) and `sessions_overview_summarize` call the daemon's
+  `claudetools.go`; `read_log_tail` shows the DAEMON's log (`/api/v2/logs/daemon`, needs
+  insights:read), `clear_debug_log_cmd` is a no-op. Answered, not rejected:
+  `clipboard_read_text` "" (the server's clipboard is never read),
+  `workspace_secret_env_keys` [], `workspace_set_auto_port_forward` (returns the row),
+  `workspace_set_claude_separate_account`, `ssh_cancel_reconnect`. Tickets and skills stay
+  out (`can()` off): ticket capture needs the in-app browser, skills install from the
+  desktop's registry.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

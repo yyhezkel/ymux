@@ -322,6 +322,19 @@ func (t *Tmux) CurrentPath(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// Capture is the last `lines` lines of a session's current pane, as text
+// (Phase 119, the sessions overview). "" on any failure.
+func (t *Tmux) Capture(name string, lines int) string {
+	if !ValidName(name) {
+		return ""
+	}
+	out, err := t.exec("capture-pane", "-p", "-t", paneTarget(name), "-S", "-"+strconv.Itoa(lines))
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // AttachArgs is the argv for attaching to a session, shared by the PTY layer.
 // `-u` forces UTF-8: the daemon runs under systemd with a minimal environment
 // where LANG is often unset, and without it tmux draws box characters as

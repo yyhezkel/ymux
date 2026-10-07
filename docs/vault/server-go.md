@@ -624,6 +624,23 @@ the directory only (`sanitizeBranch`, `defaultWorktreeTarget` = `<parent>/<base>
 base / branch refused when option-shaped, `git worktree add -b <branch> -- <target>
 <base>` (the `--` the Rust lacks), then the parsed list. `runGit` is the test seam.
 
+**`term/claudetools.go` (Phase 119, WEB-DESIGN F5) — the desktop's `claude -p` tools for a
+browser.** `GET /api/v2/claude/usage?force=1` ports `claude_usage.rs` (`claude -p /usage
+--output-format json`, `parseUsage` pinned to the Rust sample; cached 5 min, a failure backs
+off 5 min, one probe at a time — the others get the cached value). `POST
+/api/v2/claude/summarize {pane_id, session, workspace_id}` ports `claude_summary.rs`: the
+session is the pane's newest context record, else session-meta's id for the tmux session,
+else the newest transcript; its last N user/assistant turns (`parseTranscript`, N and the
+prompt from the settings document, `{N}` substituted) go on stdin; the answer becomes a
+note tagged `summary` + `notes:changed`. `POST /api/v2/term/sessions/summarize {names, lang}`
+ports `sessions_overview.rs`: `Tmux.Capture` (40 lines) → `clipCapture` (escapes stripped,
+240 chars) → `### SESSION i` frames → `parseOverview` (lenient: a bad row is `unknown`).
+Beyond the desktop: prompts never come from the request, every model call that reads
+transcript / screen text gets `--tools ""` (untrusted input must not act) and
+`--no-session-persistence` (a summary is not a session to resume), one call per kind at a
+time (`TryLock` → 409), timeouts 20 / 45 / 90 s, names `ValidName`d, logs carry counts only.
+`runClaude` is the test seam.
+
 **`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
 Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against
 "/", symlinked ancestors re-checked). List / read / upload / download / delete were Phase

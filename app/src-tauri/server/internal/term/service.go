@@ -59,12 +59,14 @@ type Service struct {
 	// webpush sends the browser's notifications (Phase 114, webpush.go);
 	// nil until SetWebPush.
 	webpush *webPusher
+	// claude holds the F5 tools' single-flight locks and the /usage cache.
+	claude *claudeTools
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
 // is the user's home directory (where ~/.ymux/session-meta.json lives).
 func NewService(token, home string) *Service {
-	s := &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}}
+	s := &Service{tmux: NewTmux(), token: token, home: home, logBudget: &logBudget{}, claude: &claudeTools{}}
 	s.attachHooks(NewHookRegistry())
 	return s
 }
@@ -156,6 +158,10 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	// Phase 118 (F4): the Diff pane's snapshot and worktree creation.
 	mux.HandleFunc("POST /api/v2/git/diff", s.gate(s.handleGitDiff))
 	mux.HandleFunc("POST /api/v2/git/worktree-add", s.gate(s.handleGitWorktreeAdd))
+	// Phase 119 (F5): the desktop's claude -p tools (claudetools.go).
+	mux.HandleFunc("GET /api/v2/claude/usage", s.gate(s.handleClaudeUsage))
+	mux.HandleFunc("POST /api/v2/claude/summarize", s.gate(s.handleClaudeSummarize))
+	mux.HandleFunc("POST /api/v2/term/sessions/summarize", s.gate(s.handleSessionsSummarize))
 	// Phase 104 (B6): session history — ended rows, their transcript, resume.
 	// Phase 114 (E): Web Push subscriptions for the browser's notifications.
 	mux.HandleFunc("GET /api/v2/webpush/key", s.gate(s.handleWebPushKey))

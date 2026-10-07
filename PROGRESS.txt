@@ -7977,3 +7977,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Daemon term/gitdiff.go: POST /api/v2/git/diff (one snapshot, port of diff_pane.rs fetch_bundle_local), POST /api/v2/git/worktree-add (port of workspace_create_project_worktree, with -- and option checks).
 - Browser: caps diffPane + worktrees; per-pane 2 s poll emitting diff-pane-updated by the desktop's rules; set_source/set_cwd/refresh/worktrees/open_worktree; legacy local worktree block hidden without localPanes.
 - tsc clean; Go → CI. Not verified live yet.
+
+[2026-10-07 20:00] Phase 119 — WEB-DESIGN F5: claude tools + presets in the browser (yos/f5-web-tools, stacked on F4 #78; daemon 2.19.0)
+- Daemon term/claudetools.go: /api/v2/claude/usage (cache/backoff/single probe), /api/v2/claude/summarize (note tagged summary), /api/v2/term/sessions/summarize; --tools "" + --no-session-persistence on every model call reading untrusted text; prompts never from the request.
+- Browser: presets generated from settings.rs (presets.gen.ts + webPresets.test.ts guard); usage/summarize/overview wired; Logs show the daemon's log; small desktop-only knobs answered instead of rejected. Tickets/skills stay gated (by design).
+- tsc clean; Go → CI. Not verified live yet.

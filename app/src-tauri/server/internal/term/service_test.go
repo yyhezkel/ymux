@@ -19,7 +19,7 @@ import (
 // testService builds a Service with a fake tmux and a two-device resolver.
 func testService(respond func(args []string) ([]byte, error)) (*Service, *[][]string) {
 	tm, calls := fake(respond)
-	s := &Service{tmux: tm, token: "owner-token", home: "/nonexistent"}
+	s := &Service{tmux: tm, token: "owner-token", home: "/nonexistent", claude: &claudeTools{}}
 	s.SetScopeResolver(func(tok string) (string, bool, bool) {
 		switch tok {
 		case "device-all":
