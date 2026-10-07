@@ -297,6 +297,20 @@ browser's workspaces and agent automation.**
   daemon-side edit. Only three operations exist: find a leaf, split a leaf (the
   desktop's `split_pane_in`: `{first: leaf, second: new, ratio 0.5}`, `sp_<hex>_<hex>`
   ids), set/clear a leaf's title or annotation. Everything else is the browser's (§4).
+- **The tree (Phase 115, F1).** A row's `meta` is an opaque JSON object of the desktop's
+  tree fields (parent_id, cwd, is_folder, sort_order, group_id, colour…); POST accepts
+  the whole row (name, layout, meta, intent, is_project_root, tabs_mode), PUT replaces
+  `meta` when given and keeps it when absent, and both reject a non-object. The browser
+  owns the semantics (`frontend-lib.md` § the workspace tree). The file also holds
+  `groups` (an opaque array) + `groups_version`: `GET/PUT /api/v2/web/groups`, 409 with
+  the current document on a stale version. **`migrateFlat`** runs at load: a pre-F1 row
+  (a layout, no meta) gets a header of the same name and becomes its child — same id,
+  name and layout, so its tmux sessions and the restore hints still match; saved once.
+- **`gitprobe.go`** — `POST /api/v2/web/git/worktrees {path}`: `git -C <path> worktree
+  list --porcelain` as an argv (Rule #3), 10 s timeout, `GIT_TERMINAL_PROMPT=0`. 400 for
+  an empty or relative path (`~` expands), 404 "directory not found on the host" (the
+  probe's only hard error), else 200 `{ok, worktrees, error}` — git's own fatal line when
+  not a repo. `parseWorktreePorcelain` is worktrees.rs's parser. Behind `gate`.
 - **A pane is a tmux session.** Its leaf's `pane_id` is the session's hook pane id
   (`term_<hex>`); `POST /api/v2/term/sessions` takes `workspace_id` (must exist) and
   answers `pane_id`. `hookEntry.workspaceID` is the membership.

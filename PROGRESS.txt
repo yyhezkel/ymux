@@ -7955,3 +7955,9 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Android (FCM) push: 410 on every send, subscription dropped (00:28, 01:32); Mozilla autopush fine. webpush.Send now returns the service's clipped reason on non-2xx; term logs it (`reason`). Diagnostic, not the fix.
 - Hebrew in the browser terminal drifted ("spaces in the wrong places"): font stacks are Windows-only; Android/Linux monospace lacks Hebrew. web/fonts.ts declares "YMUX Hebrew Mono" (unmodified Liberation Mono 2.1.5, OFL, unicode-range Hebrew) at WebBackend.init; both stacks end with it; desktop never declares it.
 - Files: webpush/webpush.go(+test), term/webpush.go(+test), app/src/backend/web/fonts.ts, web.ts, settings.ts, terminalInstance.ts, app/public/fonts/liberation-mono-*. Version bump 2.14.1. tsc local clean (frontend only); CI pending.
+
+[2026-10-07 02:40] Phase 115 — WEB-DESIGN F1: the desktop workspace tree in the browser (yos/f1-web-workspaces, on top of yos/e-pwa; daemon 2.15.0)
+- Yossi: the browser must match the desktop's usability; parity audit (134 desktop commands with no web handler) → 5 steps approved: F1 workspaces+project folders → F2 files → F3 panes → F4 git → F5 claude/tools.
+- Server: web-workspaces rows carry an opaque `meta` (tree fields); groups document (GET/PUT /api/v2/web/groups, versioned); migrateFlat turns pre-F1 flat rows into header+screen once; POST /api/v2/web/git/worktrees (git worktree list --porcelain, argv).
+- Browser: backend/web/tree.ts (lib.rs rules, webTree.test.ts 9 tests pass locally on node 22); web.ts implements create(root+screen)/new_screen/pin_project_folder/set_project_root/open_session/collapse/intent/identity/reorder/5 group commands/project_folder_probe/git_probe_worktrees; delete takes the subtree.
+- tsc clean locally (frontend only). Go untested locally (no Go) → CI. Not verified live yet.

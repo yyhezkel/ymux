@@ -24,6 +24,8 @@ import type { LayoutNode } from "../bindings/LayoutNode";
 import type { Settings } from "../settings";
 import type { WorkspacesFile } from "../types";
 import type { Workspace } from "../bindings/Workspace";
+import type { WorkspaceGroup } from "../bindings/WorkspaceGroup";
+import type { WorktreeEntry } from "../bindings/WorktreeEntry";
 import type { Connection } from "../bindings/Connection";
 import type { SplitDirection } from "../bindings/SplitDirection";
 import type { PaneKind } from "../bindings/PaneKind";
@@ -43,6 +45,19 @@ import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { startPwa } from "./web/pwa";
 import { installHebrewMono } from "./web/fonts";
+import { isHeader, rootIdOf, screenOrSelf } from "../wsTree";
+import {
+  DEFAULT_SCREEN_NAME,
+  activeAfterDelete,
+  checkIdentity,
+  checkPin,
+  folderLabel,
+  pickSessionParent,
+  reorder,
+  reorderGroups,
+  subtreeIds,
+  uniqueSiblingName,
+} from "./web/tree";
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
 import { splitArgs } from "./web/argv";
@@ -67,9 +82,29 @@ interface WebWS {
   tabs_mode?: boolean;
   intent?: string;
   is_project_root?: boolean;
+  /** Phase 115 (F1): the desktop's tree fields (META_KEYS), stored opaque. */
+  meta?: Record<string, unknown> | null;
   created_at: string;
   updated_at: string;
 }
+
+/** The Workspace fields that travel in `meta` (term/webws.go). */
+const META_KEYS = [
+  "parent_id",
+  "cwd",
+  "is_folder",
+  "is_collapsed",
+  "sort_order",
+  "group_id",
+  "color",
+  "emoji",
+  "tmux_session",
+] as const;
+
+/** The fields the daemon stores as named columns. */
+const TOP_KEYS = ["name", "layout", "intent", "is_project_root", "tabs_mode"] as const;
+
+const strOrNull = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
 
 /** What the daemon's session list returns (term/meta.go Annotated). */
 interface DaemonSession {
@@ -119,6 +154,8 @@ export class WebBackend implements Backend {
   private events: EventsSocket;
   private hello: Hello | null = null;
   private ws: WebWS[] = [];
+  private groups: WorkspaceGroup[] = [];
+  private groupsVersion = 0;
   private settingsVersion = 0;
   private settingsCache: Settings = structuredClone(WEB_DEFAULT_SETTINGS);
   /** leaf pane id → tmux session name (hello `panes` + our creates). */
@@ -298,7 +335,15 @@ export class WebBackend implements Backend {
   // ── workspaces ─────────────────────────────────────────────────────────
 
   private async reloadWorkspaces(): Promise<void> {
-    this.ws = await api<WebWS[]>("GET", "/api/v2/web/workspaces");
+    const [ws, g] = await Promise.all([
+      api<WebWS[]>("GET", "/api/v2/web/workspaces"),
+      api<{ version: number; groups: WorkspaceGroup[] }>("GET", "/api/v2/web/groups").catch(() => null),
+    ]);
+    this.ws = ws;
+    if (g) {
+      this.groups = Array.isArray(g.groups) ? g.groups : [];
+      this.groupsVersion = g.version;
+    }
   }
 
   private activeId(): string | null {
@@ -308,18 +353,34 @@ export class WebBackend implements Backend {
     } catch {
       /* no storage */
     }
-    if (id && this.ws.some((w) => w.id === id)) return id;
-    return this.ws[0]?.id ?? null;
+    const all = this.all();
+    // A header is never active (lib.rs workspace_set_active): it hands over
+    // to its first screen.
+    const screen = id && all.some((w) => w.id === id) ? screenOrSelf(all, id) : null;
+    return screen ?? activeAfterDelete(all, null);
   }
 
-  private toWorkspace(w: WebWS, i: number): Workspace {
+  private setActive(id: string | null): void {
+    try {
+      if (id) localStorage.setItem(ACTIVE_KEY, id);
+    } catch {
+      /* per-tab only */
+    }
+  }
+
+  private all(): Workspace[] {
+    return this.ws.map((w, i) => this.toWorkspace(w, i));
+  }
+
+  private toWorkspace(w: WebWS, _i: number): Workspace {
     const updated = Date.parse(w.updated_at) || 0;
+    const m = w.meta ?? {};
     return {
       id: w.id,
       name: w.name,
-      color: null,
-      emoji: null,
-      cwd: null,
+      color: strOrNull(m.color),
+      emoji: strOrNull(m.emoji),
+      cwd: strOrNull(m.cwd),
       connection: serverConnection(),
       layout: w.layout ?? null,
       setup_command: null,
@@ -331,25 +392,85 @@ export class WebBackend implements Backend {
       last_active_at: updated as unknown as bigint,
       git_worktree: null,
       claude_separate_account: false,
-      group_id: null,
-      sort_order: i,
-      parent_id: null,
+      group_id: strOrNull(m.group_id),
+      sort_order: typeof m.sort_order === "number" ? m.sort_order : null,
+      parent_id: strOrNull(m.parent_id),
       is_project_root: w.is_project_root ?? false,
-      is_collapsed: false,
+      is_collapsed: m.is_collapsed === true,
       tabs_mode: w.tabs_mode ?? false,
-      tmux_session: null,
+      tmux_session: strOrNull(m.tmux_session),
       intent: w.intent ?? null,
       known_sessions: [],
-      is_folder: false,
+      is_folder: m.is_folder === true,
     };
+  }
+
+  /** Split a Workspace patch into the daemon's columns and its meta object. */
+  private body(cur: WebWS | null, patch: Partial<Workspace>): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    for (const k of TOP_KEYS) if (k in patch) out[k] = patch[k];
+    if (META_KEYS.some((k) => k in patch)) {
+      const meta: Record<string, unknown> = { ...(cur?.meta ?? {}) };
+      for (const k of META_KEYS) if (k in patch) meta[k] = patch[k];
+      out.meta = meta;
+    }
+    return out;
+  }
+
+  /** Change fields of one row (columns and meta alike). */
+  private patch(id: string, p: Partial<Workspace>): Promise<WorkspacesFile> {
+    return this.mutate(id, (w) => this.body(w, p));
+  }
+
+  /** Create a row; `meta` always present, so the daemon never migrates it. */
+  private async createRow(p: Partial<Workspace> & { name: string }): Promise<Workspace> {
+    const b = this.body(null, p);
+    const created = await api<WebWS>("POST", "/api/v2/web/workspaces", { ...b, meta: b.meta ?? {} });
+    this.ws.push(created);
+    return this.toWorkspace(created, this.ws.length - 1);
+  }
+
+  /** lib.rs screen_under: a screen inheriting its header's directory. */
+  private screenUnder(header: Workspace, name: string): Promise<Workspace> {
+    return this.createRow({
+      name,
+      parent_id: header.id,
+      cwd: header.cwd,
+      layout: makeLeaf(newPaneId()),
+    });
+  }
+
+  private getRow(id: string): Workspace {
+    const w = this.all().find((x) => x.id === id);
+    if (!w) throw new Error("workspace not found");
+    return w;
+  }
+
+  private async saveGroups(next: WorkspaceGroup[]): Promise<void> {
+    const put = (version: number) =>
+      api<{ version: number; groups: WorkspaceGroup[] }>("PUT", "/api/v2/web/groups", { version, groups: next });
+    let d: { version: number; groups: WorkspaceGroup[] };
+    try {
+      d = await put(this.groupsVersion);
+    } catch (e) {
+      // Groups change from one dialog at a time; the latest write wins.
+      if (!(e instanceof ApiError && e.status === 409)) throw e;
+      d = await put(num((e.body as { version?: number } | null)?.version, this.groupsVersion));
+    }
+    this.groups = d.groups;
+    this.groupsVersion = d.version;
+  }
+
+  private async gitWorktrees(path: string): Promise<{ ok: boolean; worktrees: WorktreeEntry[]; error?: string }> {
+    return api("POST", "/api/v2/web/git/worktrees", { path });
   }
 
   private file(): WorkspacesFile {
     return {
       version: 1,
       active_workspace_id: this.activeId(),
-      workspaces: this.ws.map((w, i) => this.toWorkspace(w, i)),
-      groups: [],
+      workspaces: this.all(),
+      groups: this.groups,
     };
   }
 
@@ -485,37 +606,178 @@ export class WebBackend implements Backend {
       return this.file();
     },
     workspace_set_active: async (a) => {
-      try {
-        localStorage.setItem(ACTIVE_KEY, str(a.workspaceId));
-      } catch {
-        /* per-tab only */
+      const id = str(a.workspaceId);
+      if (id) {
+        const screen = screenOrSelf(this.all(), id);
+        if (!screen) throw new Error(`"${this.getRow(id).name}" has no screens yet`);
+        this.setActive(screen);
       }
       return this.file();
     },
+    // ── the tree (Phase 115, F1 — lib.rs semantics, backend/web/tree.ts) ──
     workspace_create: async (a) => {
-      const input = (a.input ?? {}) as { name?: string };
-      const created = await api<WebWS>("POST", "/api/v2/web/workspaces", { name: input.name || "workspace" });
-      this.ws.push(created);
-      const f = await this.mutate(created.id, () => ({ layout: makeLeaf(newPaneId()) }));
-      try {
-        localStorage.setItem(ACTIVE_KEY, created.id);
-      } catch {
-        /* per-tab only */
+      // A root header + its first screen (lib.rs create_root_with_screen).
+      const input = (a.input ?? {}) as { name?: string; cwd?: string | null; color?: string | null };
+      const root = await this.createRow({
+        name: (input.name ?? "").trim() || "workspace",
+        cwd: strOrNull(input.cwd?.trim()),
+        color: strOrNull(input.color),
+      });
+      const screen = await this.screenUnder(root, DEFAULT_SCREEN_NAME);
+      this.setActive(screen.id);
+      return this.file();
+    },
+    workspace_new_screen: async (a) => {
+      const header = this.getRow(str(a.parentWorkspaceId));
+      if (!isHeader(header)) throw new Error("a screen cannot hold screens — use its header");
+      const base = str(a.name).trim() || DEFAULT_SCREEN_NAME;
+      const screen = await this.screenUnder(header, uniqueSiblingName(this.all(), header.id, base));
+      this.setActive(screen.id);
+      return this.file();
+    },
+    project_folder_probe: async (a) => {
+      if (!str(a.path).trim()) throw new Error("project path is required");
+      const r = await this.gitWorktrees(str(a.path).trim());
+      return r.ok && r.worktrees.length > 0;
+    },
+    git_probe_worktrees: async (a) => {
+      if (!str(a.path).trim()) throw new Error("project path is required");
+      const r = await this.gitWorktrees(str(a.path).trim());
+      if (!r.ok) throw new Error(r.error || "not a git repository");
+      return r.worktrees;
+    },
+    workspace_pin_project_folder: async (a) => {
+      const parentId = str(a.parentWorkspaceId);
+      const path = checkPin(this.all(), parentId, str(a.path));
+      const folder = await this.createRow({
+        name: folderLabel(path, a.name as string | null),
+        cwd: path,
+        parent_id: parentId,
+        is_project_root: a.isProjectRoot === true,
+        is_folder: true,
+      });
+      const screen = await this.screenUnder(folder, DEFAULT_SCREEN_NAME);
+      this.setActive(screen.id);
+      return this.file();
+    },
+    workspace_set_project_root: async (a) => {
+      const w = this.getRow(str(a.workspaceId));
+      const want = a.isProjectRoot === true;
+      return w.is_project_root === want ? this.file() : this.patch(w.id, { is_project_root: want });
+    },
+    workspace_open_session: async (a) => {
+      const name = str(a.sessionName).trim();
+      if (!name) throw new Error("session name is required");
+      const all = this.all();
+      const rootId = rootIdOf(all, this.getRow(str(a.workspaceId)).id);
+      // One box, so "same host" is every row.
+      const existing = all.find((w) => w.tmux_session === name);
+      if (existing) {
+        this.setActive(existing.id);
+        return this.file();
       }
-      return { ...f, active_workspace_id: created.id };
+      const cwd = strOrNull(str(a.cwd).trim());
+      const row = await this.createRow({
+        name: str(a.displayName).trim() || name,
+        cwd,
+        parent_id: pickSessionParent(all, rootId, cwd),
+        tmux_session: name,
+        layout: makeLeaf(newPaneId()),
+      });
+      this.setActive(row.id);
+      return this.file();
+    },
+    workspace_set_collapsed: (a) => this.patch(str(a.workspaceId), { is_collapsed: a.collapsed === true }),
+    workspace_set_intent: async (a) => {
+      const id = str(a.workspaceId);
+      await this.patch(id, { intent: strOrNull(str(a.intent).trim()) });
+      return this.getRow(id);
+    },
+    workspace_set_identity: async (a) => {
+      const id = str(a.workspaceId);
+      const color = a.color === null || a.color === undefined ? null : str(a.color);
+      const emoji = a.emoji === null || a.emoji === undefined ? null : str(a.emoji);
+      checkIdentity(color, emoji);
+      await this.patch(id, { color, emoji });
+      return this.getRow(id);
+    },
+    workspace_reorder: async (a) => {
+      const changes = reorder(
+        this.all(),
+        this.groups,
+        str(a.workspaceId),
+        a.groupId === null || a.groupId === undefined ? null : str(a.groupId),
+        num(a.newIndex, 0),
+      );
+      for (const [id, p] of changes) await this.patch(id, p);
+      return this.file();
+    },
+    workspace_group_create: async (a) => {
+      const name = str(a.name).trim();
+      if (!name) throw new Error("group name is required");
+      const g: WorkspaceGroup = {
+        id: `g_${Date.now().toString(16)}${Math.random().toString(16).slice(2, 6)}`,
+        name,
+        color: str(a.color),
+        is_collapsed: false,
+        sort_order: null,
+      };
+      await this.saveGroups([...this.groups, g]);
+      return g;
+    },
+    workspace_group_update: async (a) => {
+      const id = str(a.id);
+      if (!this.groups.some((g) => g.id === id)) throw new Error(`no group ${id}`);
+      await this.saveGroups(
+        this.groups.map((g) =>
+          g.id !== id
+            ? g
+            : {
+                ...g,
+                name: typeof a.name === "string" && a.name.trim() ? a.name.trim() : g.name,
+                color: typeof a.color === "string" ? a.color : g.color,
+                is_collapsed: typeof a.isCollapsed === "boolean" ? a.isCollapsed : g.is_collapsed,
+              },
+        ),
+      );
+      return null;
+    },
+    workspace_group_delete: async (a) => {
+      const id = str(a.id);
+      for (const w of this.all().filter((x) => x.group_id === id)) await this.patch(w.id, { group_id: null });
+      await this.saveGroups(this.groups.filter((g) => g.id !== id));
+      return null;
+    },
+    workspace_set_group: async (a) => {
+      const gid = a.groupId === null || a.groupId === undefined ? null : str(a.groupId);
+      if (gid !== null && !this.groups.some((g) => g.id === gid)) throw new Error(`no group ${gid}`);
+      const id = str(a.workspaceId);
+      if (!this.ws.some((w) => w.id === id)) throw new Error(`no workspace ${id}`);
+      await this.patch(id, { group_id: gid });
+      return null;
+    },
+    workspace_group_reorder: async (a) => {
+      await this.saveGroups(reorderGroups(this.groups, str(a.groupId), num(a.newIndex, 0)));
+      return this.file();
     },
     workspace_rename: (a) => this.mutate(str(a.workspaceId), () => ({ name: str(a.name) })),
     workspace_update: (a) =>
       this.mutate(str(a.workspaceId), () => (typeof a.name === "string" && a.name ? { name: a.name } : {})),
     workspace_delete: async (a) => {
+      // A row owns its subtree (lib.rs workspace_delete). Panes detach; the
+      // tmux sessions are the caller's to kill, as on the desktop.
       const id = str(a.workspaceId);
-      for (const pid of leafIds(this.find(id).layout ?? null)) this.disconnect(pid);
-      await api("DELETE", `/api/v2/web/workspaces/${encodeURIComponent(id)}`);
-      this.ws = this.ws.filter((w) => w.id !== id);
+      const wasActive = this.activeId();
+      const parent = this.getRow(id).parent_id;
+      const ids = subtreeIds(this.all(), id);
+      for (const x of [...ids].reverse()) {
+        for (const pid of leafIds(this.find(x).layout ?? null)) this.disconnect(pid);
+        await api("DELETE", `/api/v2/web/workspaces/${encodeURIComponent(x)}`);
+        this.ws = this.ws.filter((w) => w.id !== x);
+      }
+      if (wasActive && ids.includes(wasActive)) this.setActive(activeAfterDelete(this.all(), parent));
       return this.file();
     },
-    workspace_reorder: async () => this.file(),
-    workspace_set_collapsed: async () => this.file(),
     workspace_remember_sessions: async () => this.file(),
     workspace_mirror_sessions: async () => this.file(),
     workspace_set_tabs_mode: (a) => this.mutate(str(a.workspaceId), () => ({ tabs_mode: a.tabsMode === true })),

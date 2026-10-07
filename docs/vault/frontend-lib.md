@@ -109,8 +109,23 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   lib.rs `split_pane_in` / `close_pane_in` / `set_split_ratio_in` /
   `swap_two_panes_in_layout` / `reset_all_split_ratios`, pinned by `layoutOps.test.ts`)
   and PUT with the version; a 409 re-applies the op once on the returned document. The
-  active workspace is per browser (localStorage). Colour, emoji, groups and order are
-  not stored on the daemon yet.
+  active workspace is per browser (localStorage) and is always a screen (`screenOrSelf`).
+- **The workspace tree** (Phase 115, F1) — the desktop's header / pinned folder / screen
+  tree, same rules. The tree fields (`parent_id, cwd, is_folder, is_collapsed, sort_order,
+  group_id, color, emoji, tmux_session` — `META_KEYS`) travel in the row's opaque `meta`;
+  `body()` splits a `Partial<Workspace>` into the daemon's columns and that object,
+  `patch()` writes one row, `createRow()` POSTs a whole row (always with a `meta`, so the
+  daemon's pre-F1 migration never touches it). `web/tree.ts` holds lib.rs's rules as pure
+  functions, pinned by `webTree.test.ts`: `uniqueSiblingName`, `folderLabel` + `checkPin`
+  (the desktop's error strings), `reorder` / `reorderGroups` (scope + dense renumbering),
+  `subtreeIds` + `activeAfterDelete` (a delete takes the subtree and lands on a sibling
+  screen), `pickSessionParent`, `checkIdentity`. Implemented on top: `workspace_create`
+  (root + `shell` screen), `workspace_new_screen`, `workspace_pin_project_folder` (folder
+  picked in `DirPicker` over the Files API — the SSH path, since the connection is
+  ssh-shaped), `workspace_set_project_root`, `workspace_open_session` (the header `+`
+  when sessions are rows), collapse, intent, identity, reorder, the five group commands,
+  and `project_folder_probe` / `git_probe_worktrees` over `POST /api/v2/web/git/worktrees`.
+  Groups are one versioned document (`/api/v2/web/groups`, 409 → latest wins).
 - **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
   the required groups, merged one level deep; restore-on-start ON, update checks OFF).
   A stored non-object where the default is a group is **ignored**, not merged — found

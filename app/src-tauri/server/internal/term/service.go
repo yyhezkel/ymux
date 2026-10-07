@@ -145,6 +145,10 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("PUT /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
 	mux.HandleFunc("DELETE /api/v2/web/workspaces/{id}", s.gate(s.handleWebWorkspace))
+	// Phase 115 (F1): the workspace tree's groups, and git for a folder.
+	mux.HandleFunc("GET /api/v2/web/groups", s.gate(s.handleWebGroups))
+	mux.HandleFunc("PUT /api/v2/web/groups", s.gate(s.handleWebGroups))
+	mux.HandleFunc("POST /api/v2/web/git/worktrees", s.gate(s.handleGitWorktrees))
 	// Phase 104 (B6): session history — ended rows, their transcript, resume.
 	// Phase 114 (E): Web Push subscriptions for the browser's notifications.
 	mux.HandleFunc("GET /api/v2/webpush/key", s.gate(s.handleWebPushKey))
