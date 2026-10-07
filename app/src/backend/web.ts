@@ -830,8 +830,25 @@ export class WebBackend implements Backend {
       }
       return out;
     },
-    pane_list_tmux_sessions: async () =>
-      (await this.sessions()).map((s) => ({
+    pane_list_tmux_sessions: async (a) => {
+      // lib.rs annotate_scope_with, minus the owners file: a session is this
+      // workspace's when one of its panes holds it (or the row IS that
+      // session), and in its folder when its path is under projectPath. The
+      // picker's "This folder" view is `owned || in_cwd`.
+      const wsId = str(a.workspaceId);
+      const root = str(a.projectPath).replace(/\/+$/, "");
+      const row = this.ws.find((w) => w.id === wsId);
+      const mine = new Set<string>();
+      if (row) {
+        for (const pid of leafIds(row.layout ?? null)) {
+          const n = this.paneSession.get(pid);
+          if (n) mine.add(n);
+        }
+        const ts = row.meta?.tmux_session;
+        if (typeof ts === "string") mine.add(ts);
+      }
+      const within = (p: string) => !!root && !!p && (p === root || p.startsWith(root + "/"));
+      return (await this.sessions()).map((s) => ({
         name: s.name,
         created: s.created,
         attached: s.attached > 0,
@@ -844,9 +861,10 @@ export class WebBackend implements Backend {
         claude_session_id: s.claude_session_id,
         origin: s.origin,
         cwd: s.path,
-        owned: true,
-        in_cwd: false,
-      })),
+        owned: mine.has(s.name),
+        in_cwd: within(s.path),
+      }));
+    },
     pane_target_session_state: async (a) => {
       const name = str(a.sessionName) || str(a.fallbackName) || this.paneSession.get(str(a.paneId)) || "";
       const s = (await this.sessions()).find((x) => x.name === name);

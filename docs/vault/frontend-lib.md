@@ -126,6 +126,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   when sessions are rows), collapse, intent, identity, reorder, the five group commands,
   and `project_folder_probe` / `git_probe_worktrees` over `POST /api/v2/web/git/worktrees`.
   Groups are one versioned document (`/api/v2/web/groups`, 409 → latest wins).
+  `pane_list_tmux_sessions` stamps the picker's scope like lib.rs `annotate_scope_with`
+  (no owners file): `owned` = a pane of this workspace holds the session (or the row is
+  that session), `in_cwd` = its path is under `projectPath`.
 - **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
   the required groups, merged one level deep; restore-on-start ON, update checks OFF).
   A stored non-object where the default is a group is **ignored**, not merged — found
