@@ -7961,3 +7961,9 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Server: web-workspaces rows carry an opaque `meta` (tree fields); groups document (GET/PUT /api/v2/web/groups, versioned); migrateFlat turns pre-F1 flat rows into header+screen once; POST /api/v2/web/git/worktrees (git worktree list --porcelain, argv).
 - Browser: backend/web/tree.ts (lib.rs rules, webTree.test.ts 9 tests pass locally on node 22); web.ts implements create(root+screen)/new_screen/pin_project_folder/set_project_root/open_session/collapse/intent/identity/reorder/5 group commands/project_folder_probe/git_probe_worktrees; delete takes the subtree.
 - tsc clean locally (frontend only). Go untested locally (no Go) → CI. Not verified live yet.
+
+[2026-10-07 13:30] Phase 116 — WEB-DESIGN F2: the File Manager in the browser (yos/f2-web-files, stacked on F1 #74; daemon 2.16.0)
+- Server files/: mkdir, rename, copy (recursive, symlinks skipped), recursive delete (?recursive=true), archive (zip|targz via argv, exit-127 message on a missing zip), unzip → <dir>/<stem>/. mutate_test.go.
+- Browser: web/localfiles.ts — pickPaths (file input) + onDragDrop (window drag events) hand out webfile:<n>/<name> tokens; file_upload / pane_upload_dropped (→ ~/ymux-drops) swap them back; all FM remote ops wired; file_open_remote → browser download.
+- Also on F1 earlier today: popout windows (popout_pane), main-red fix PR #75 (merged).
+- tsc clean locally; Go → CI. Not verified live yet.

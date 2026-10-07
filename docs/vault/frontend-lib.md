@@ -129,6 +129,16 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `pane_list_tmux_sessions` stamps the picker's scope like lib.rs `annotate_scope_with`
   (no owners file): `owned` = a pane of this workspace holds the session (or the row is
   that session), `in_cwd` = its path is under `projectPath`.
+- **File Manager, the rest of it** (Phase 116, F2) — mkdir / rename / copy / recursive
+  delete / zip / tar.gz / unzip (+ the overwrite pre-check, `exists` over a parent listing)
+  map onto the daemon's new Files ops; `file_open_remote` becomes a browser download.
+  **Files from the user's computer** (`web/localfiles.ts`): a page never sees a path, so
+  `host.pickPaths` (a hidden `<input type=file>`; directories → null) and `host.onDragDrop`
+  (window drag events with Files, positions × devicePixelRatio like Tauri on Windows) hand
+  out path-shaped tokens `webfile:<n>/<name>` that keep the File; the UI's basename logic
+  still works, and `file_upload` / `pane_upload_dropped` (→ `~/ymux-drops/<name>`, typed
+  into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
+  one request, not a tracked transfer.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

@@ -8,9 +8,9 @@
 // root-relative, and anything outside it is refused with a plain message
 // (the sandbox is the daemon's to enforce; this only keeps the error legible).
 //
-// What the API has: list, read, write (upload), delete, download. What it
-// does not — rename, mkdir, copy, zip — rejects as "not available yet"
-// (FOLLOWUPS) rather than being faked client-side.
+// The API has list, read, write (upload), delete (recursive on request),
+// download, and since Phase 116 (F2) mkdir, rename, copy, archive and unzip;
+// paths the daemon returns are root-relative and come back absolute here.
 
 import { ApiError, api, getToken } from "./api";
 
@@ -95,6 +95,55 @@ export class FilesBridge {
 
   async remove(p: string): Promise<void> {
     await api("DELETE", `/api/v2/files/delete?path=${encodeURIComponent(await this.rel(p))}`);
+  }
+
+  /** The desktop's recursive delete (the UI confirms first). */
+  async removeTree(p: string): Promise<void> {
+    await api("DELETE", `/api/v2/files/delete?path=${encodeURIComponent(await this.rel(p))}&recursive=true`);
+  }
+
+  async mkdir(p: string): Promise<void> {
+    await api("POST", "/api/v2/files/mkdir", { path: await this.rel(p) });
+  }
+
+  async rename(from: string, to: string): Promise<void> {
+    await api("POST", "/api/v2/files/rename", { from: await this.rel(from), to: await this.rel(to) });
+  }
+
+  async copy(from: string, to: string): Promise<void> {
+    await api("POST", "/api/v2/files/copy", { from: await this.rel(from), to: await this.rel(to) });
+  }
+
+  /** Pack names (relative to cwd) into cwd/output; the archive's absolute path. */
+  async archive(cwd: string, names: string[], output: string, format: "zip" | "targz"): Promise<string> {
+    const r = await api<{ path: string }>("POST", "/api/v2/files/archive", { cwd: await this.rel(cwd), names, output, format });
+    return this.abs(r.path);
+  }
+
+  /** Extract a .zip into <dir>/<stem>/; that folder's absolute path. */
+  async unzip(p: string): Promise<string> {
+    const r = await api<{ path: string }>("POST", "/api/v2/files/unzip", { path: await this.rel(p) });
+    return this.abs(r.path);
+  }
+
+  /** Whether p exists (its parent lists it). */
+  async exists(p: string): Promise<boolean> {
+    const clean = p.replace(/\/+$/, "");
+    const i = clean.lastIndexOf("/");
+    const parent = i > 0 ? clean.slice(0, i) : "/";
+    const name = clean.slice(i + 1);
+    try {
+      return (await this.list(parent)).some((e) => e.name === name);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Root-relative (from the daemon) → absolute. */
+  async abs(rel: string): Promise<string> {
+    const h = await this.home();
+    if (rel === "/" || rel === "") return h;
+    return h === "/" ? rel : `${h}${rel.startsWith("/") ? "" : "/"}${rel}`;
   }
 
   /** Hands a remote file to the browser's own download (no local paths here). */

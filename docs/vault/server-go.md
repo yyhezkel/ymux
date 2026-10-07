@@ -65,7 +65,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `config` | 469 | API token, filesystem paths, the log janitor (size cap + age prune), and the one-time data-dir migration |
 | `core` | 110 | the leaf interface package |
 | `desktop` | 290 | an OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96). The other one is `webpush` |
-| `files` | 682 | the Files API (`/api/v2/files/*`) |
+| `files` | 1178 | the Files API (`/api/v2/files/*`) |
 | `hooks` | 178 | the hook-RPC endpoint: localhost listener + the Phase-66 challenge/response, asking each `core.HookResolver` (chat, term) whose token signed it (Phase 100) |
 | `insights` | 2,653 | sampler, store, Docker, the hygiene reaper, and the two Phase-84 rollups |
 | `logging` | 599 | the unified `log/slog` handler |
@@ -583,6 +583,19 @@ object (code -32000, as the desktop's `rpc_server` does). `main.go` starts it af
 resolvers exist and **no longer only when chat.db opened** — a failed chat store must not
 cost browser sessions their hooks. hooks → core, chat → core, term → core: still no
 cycle.
+
+**`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
+Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against
+"/", symlinked ancestors re-checked). List / read / upload / download / delete were Phase
+77; F2 added, as huma ops with `ErrExists` → 409: `POST mkdir {path}` (one level, the
+desktop's sftp create_dir), `POST rename {from,to}` and `POST copy {from,to}` (never
+overwrite; copy recurses into a directory and SKIPS symlinks, refuses a folder into itself),
+`DELETE delete?recursive=true` (`DeleteTree`, never the root — plain delete stays
+non-recursive for the phone), `POST archive {cwd, names, output, format: zip|targz}` and
+`POST unzip {path}` → `<dir>/<stem>/`. Archives run `zip` / `tar` / `unzip` as argv in the
+folder (Rule #3), names prefixed `./` so none reads as a flag, 10 min cap; a missing binary
+fails as "`zip failed (exit 127): zip: command not found`" (422) — the exact shape the UI
+reads to offer tar.gz. Returned paths are root-relative. Tests: `mutate_test.go`.
 
 **`insights/analytics.go`** (424) — `GET /analytics`, the Monitor's Analytics tab. It is a
 separate endpoint from `/history` for two reasons, both of them about the transport.

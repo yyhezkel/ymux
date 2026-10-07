@@ -62,6 +62,7 @@ import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
 import { splitArgs } from "./web/argv";
 import { FilesBridge, LARGE_FILE_BYTES } from "./web/files";
+import { fileFor, onDragDrop as onLocalDragDrop, pickPaths as pickLocalFiles } from "./web/localfiles";
 import { PtySessions } from "./web/pty";
 import type {
   Backend,
@@ -190,9 +191,10 @@ export class WebBackend implements Backend {
       window.open(url, "_blank", "noopener,noreferrer");
     },
     revealInDir: () => Promise.reject("not available in the browser"),
-    pickPaths: (_opts: PickPathsOptions) => Promise.resolve(null),
+    // Phase 116 (F2): the user's own files as path-shaped tokens (web/localfiles.ts).
+    pickPaths: (opts: PickPathsOptions) => pickLocalFiles(opts),
     savePath: () => Promise.resolve(null),
-    onDragDrop: (_cb: EventCallback<DragDropPayload>) => Promise.resolve(() => {}),
+    onDragDrop: (cb: EventCallback<DragDropPayload>) => onLocalDragDrop(cb),
   };
 
   constructor() {
@@ -977,15 +979,64 @@ export class WebBackend implements Backend {
       return null;
     },
     file_delete_remote: async (a) => {
-      await this.files.remove(str(a.path));
+      // Recursive, like the desktop's SFTP delete (the UI confirms first).
+      await this.files.removeTree(str(a.path));
       return null;
     },
+    // ── Phase 116 (F2): the rest of the File Manager ──
+    file_mkdir_remote: async (a) => {
+      await this.files.mkdir(str(a.path));
+      return null;
+    },
+    file_rename_remote: async (a) => {
+      await this.files.rename(str(a.oldPath), str(a.newPath));
+      return null;
+    },
+    file_copy_remote: async (a) => {
+      await this.files.copy(str(a.src), str(a.dest));
+      return null;
+    },
+    file_manager_zip_remote: (a) => this.archive(a, "zip"),
+    file_manager_targz_remote: (a) => this.archive(a, "targz"),
+    file_manager_unzip_remote: (a) => this.files.unzip(str(a.zipPath)),
+    file_manager_unzip_remote_check: (a) => this.files.exists(str(a.zipPath).replace(/\.zip$/i, "")),
+    // The desktop opens a temp copy in the OS app; a browser downloads it,
+    // and the browser decides whether to show it.
+    file_open_remote: async (a) => {
+      const p = str(a.remotePath);
+      await this.files.download(p, p.split("/").pop() ?? "file");
+      return "browser download";
+    },
+    // From the user's computer: localPath is a webfile token (pickPaths /
+    // a drop), never a real path.
+    file_upload: async (a) => {
+      const f = fileFor(str(a.localPath));
+      await this.files.write(str(a.remotePath), f);
+      return f.size;
+    },
+    // A file dropped on a terminal: ~/ymux-drops/<name>, the desktop's spot;
+    // the returned path is what gets typed into the pane.
+    pane_upload_dropped: async (a) => {
+      const f = fileFor(str(a.localPath));
+      const name = (str(a.fileName) || f.name).split(/[\\/]/).pop() ?? "";
+      if (!name || name === "." || name === "..") throw new Error("invalid file name");
+      const home = await this.files.home();
+      const dest = `${home === "/" ? "" : home}/ymux-drops/${name}`;
+      await this.files.write(dest, f); // the daemon creates ymux-drops/
+      return dest;
+    },
+    fm_transfer_cancel: async () => null, // uploads here are single requests, not tracked transfers
     file_large_threshold: async () => LARGE_FILE_BYTES,
     web_download: async (a) => {
       await this.files.download(str(a.remotePath), str(a.name));
       return null;
     },
   };
+
+  private archive(a: Args, format: "zip" | "targz"): Promise<string> {
+    const names = Array.isArray(a.paths) ? a.paths.filter((x): x is string => typeof x === "string") : [];
+    return this.files.archive(str(a.cwd), names, str(a.outputName), format);
+  }
 
   /** A daemon insights path (same allow-list shape as Rust's safe_api_path). */
   private async insights(method: string, path: string, body?: unknown): Promise<string> {
