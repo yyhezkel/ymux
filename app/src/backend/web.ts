@@ -26,6 +26,7 @@ import type { WorkspacesFile } from "../types";
 import type { Workspace } from "../bindings/Workspace";
 import type { WorkspaceGroup } from "../bindings/WorkspaceGroup";
 import type { WorktreeEntry } from "../bindings/WorktreeEntry";
+import type { DiffSource } from "../bindings/DiffSource";
 import type { Connection } from "../bindings/Connection";
 import type { SplitDirection } from "../bindings/SplitDirection";
 import type { PaneKind } from "../bindings/PaneKind";
@@ -123,6 +124,17 @@ interface DaemonSession {
 }
 
 type Args = Record<string, unknown>;
+
+/** The desktop's diff-pane-updated payload (diff_pane.rs). */
+interface DiffEvent {
+  pane_id: string;
+  diff_text: string;
+  files: { xy: string; path: string; orig_path: string | null }[];
+  error: string | null;
+  cwd: string;
+  branch: string | null;
+  truncated: boolean;
+}
 type Handler = (a: Args) => Promise<unknown>;
 
 const ACTIVE_KEY = "ymux.web.activeWorkspace";
@@ -158,7 +170,8 @@ const derivedName = (w: { name: string }, paneId: string): string =>
 export class WebBackend implements Backend {
   readonly kind = "web" as const;
   // "popout": a pane opens in its own browser window (popout_pane below).
-  readonly caps: ReadonlySet<Capability> = new Set<Capability>(["popout"]);
+  // Phase 118 (F4): the Diff pane and worktrees, over the daemon's git.
+  readonly caps: ReadonlySet<Capability> = new Set<Capability>(["popout", "diffPane", "worktrees"]);
   readonly bus = new EventBus();
   private pty = new PtySessions(this.bus);
   private files = new FilesBridge();
@@ -174,6 +187,8 @@ export class WebBackend implements Backend {
   /** leaf pane id → live attach sid, and back. */
   private paneSid = new Map<string, string>();
   private warned = new Set<string>();
+  /** Diff panes being watched: pane id → the poll's state (Phase 118). */
+  private diffWatch = new Map<string, { timer: number; hash: string | null; err: string | null; stopped: boolean }>();
   version = "";
 
   readonly host: HostShell = {
@@ -828,6 +843,7 @@ export class WebBackend implements Backend {
     workspace_close_pane: (a) => {
       // A DETACH, like the desktop: the tmux session outlives the leaf.
       this.disconnect(str(a.paneId));
+      this.diffStop(str(a.paneId));
       return this.layoutOp(str(a.workspaceId), (l) => closeLeaf(l, str(a.paneId)).node);
     },
     workspace_set_split_ratio: (a) =>
@@ -885,6 +901,79 @@ export class WebBackend implements Backend {
     },
     // One box: a pane's own connection is the daemon's.
     pane_probe_tmux_sessions: (a) => this.handlers.pane_list_tmux_sessions({ workspaceId: a.workspaceId, projectPath: null }),
+
+    // ── the Diff pane + worktrees (Phase 118, F4) ──
+    diff_pane_start: async (a) => {
+      this.diffStart(str(a.paneId));
+      return null;
+    },
+    diff_pane_stop: async (a) => {
+      this.diffStop(str(a.paneId));
+      return null;
+    },
+    diff_pane_set_source: async (a) => {
+      const src = (a.source ?? {}) as DiffSource;
+      if (src.kind === "ref") {
+        const ref = (src.git_ref ?? "").trim();
+        if (!ref || ref.startsWith("-") || /[\u0000-\u001f\u007f]/.test(ref)) throw new Error("invalid git ref");
+      }
+      await this.diffPatch(str(a.paneId), { diff_source: src });
+      this.diffStart(str(a.paneId)); // a restart: the next snapshot always emits
+      return null;
+    },
+    diff_pane_set_cwd: async (a) => {
+      const cwd = typeof a.cwd === "string" && a.cwd.trim() ? a.cwd.trim() : null;
+      await this.diffPatch(str(a.paneId), { diff_cwd: cwd });
+      this.diffStart(str(a.paneId));
+      return null;
+    },
+    diff_pane_refresh: async (a) => {
+      const ev = await this.diffFetch(str(a.paneId));
+      if (!ev) throw new Error(`no Diff pane with id ${str(a.paneId)}`);
+      this.bus.emit("diff-pane-updated", ev); // once, whatever the hash
+      return null;
+    },
+    diff_pane_worktrees: async (a) => {
+      const ctx = this.diffContext(str(a.paneId));
+      if (!ctx) throw new Error(`no Diff pane with id ${str(a.paneId)}`);
+      if (!ctx.cwd.trim()) throw new Error("this workspace has no project directory");
+      const r = await this.gitWorktrees(ctx.cwd);
+      if (!r.ok) throw new Error(r.error || "git failed");
+      return r.worktrees;
+    },
+    workspace_create_project_worktree: async (a) => {
+      const w = this.getRow(str(a.workspaceId));
+      if (!w.cwd) throw new Error("this workspace has no project directory");
+      return api("POST", "/api/v2/git/worktree-add", {
+        cwd: w.cwd,
+        branch: str(a.branchName),
+        base: str(a.baseBranch),
+        target: strOrNull(str(a.targetPath).trim()) ?? "",
+      });
+    },
+    // lib.rs workspace_open_worktree: a child row of the project folder, at
+    // the worktree's path — or the existing one, made active.
+    workspace_open_worktree: async (a) => {
+      const path = str(a.worktreePath).trim();
+      if (!path) throw new Error("worktree path is required");
+      const all = this.all();
+      const root = all.find((w) => w.id === str(a.rootWorkspaceId));
+      if (!root) throw new Error("project folder workspace not found");
+      const key = (p: string) => p.replace(/\\/g, "/").replace(/\/+$/, "");
+      const existing = all.find((w) => w.parent_id === root.id && w.cwd && key(w.cwd) === key(path));
+      if (existing) {
+        this.setActive(screenOrSelf(all, existing.id) ?? existing.id);
+        return this.file();
+      }
+      const row = await this.createRow({
+        name: str(a.name) || "worktree",
+        cwd: path,
+        parent_id: root.id,
+        layout: makeLeaf(newPaneId()),
+      });
+      this.setActive(row.id);
+      return this.file();
+    },
 
     // panes / PTY
     pane_connect: (a) => this.connect(a),
@@ -1088,6 +1177,77 @@ export class WebBackend implements Backend {
   private archive(a: Args, format: "zip" | "targz"): Promise<string> {
     const names = Array.isArray(a.paths) ? a.paths.filter((x): x is string => typeof x === "string") : [];
     return this.files.archive(str(a.cwd), names, str(a.outputName), format);
+  }
+
+  // ── the Diff pane (Phase 118, F4) ────────────────────────────────────
+  // The desktop runs a poller per pane in Rust and emits diff-pane-updated;
+  // here the poll runs in the browser against POST /api/v2/git/diff (one
+  // stateless snapshot) and the same event goes onto the local bus, by the
+  // desktop's rules: emit when the bundle's hash changes; an error once until
+  // it changes, then the next success always emits.
+
+  /** lib.rs lookup_pane_context: the leaf's diff_cwd ?? the row's cwd. */
+  private diffContext(paneId: string): { cwd: string; source: DiffSource } | null {
+    for (const w of this.all()) {
+      const leaf = findLeaf(w.layout ?? null, paneId);
+      if (!leaf) continue;
+      return { cwd: leaf.diff_cwd ?? w.cwd ?? "", source: leaf.diff_source ?? { kind: "working" } };
+    }
+    return null;
+  }
+
+  private async diffFetch(paneId: string): Promise<DiffEvent | null> {
+    const ctx = this.diffContext(paneId);
+    if (!ctx) return null;
+    try {
+      const b = await api<Omit<DiffEvent, "pane_id">>("POST", "/api/v2/git/diff", ctx);
+      return { pane_id: paneId, ...b };
+    } catch (e) {
+      return { pane_id: paneId, diff_text: "", files: [], error: String(e instanceof Error ? e.message : e), cwd: ctx.cwd, branch: null, truncated: false };
+    }
+  }
+
+  private diffStart(paneId: string): void {
+    this.diffStop(paneId);
+    const st = { timer: 0, hash: null as string | null, err: null as string | null, stopped: false };
+    this.diffWatch.set(paneId, st);
+    const tick = async () => {
+      if (st.stopped) return;
+      const ev = await this.diffFetch(paneId);
+      if (st.stopped) return;
+      if (!ev) {
+        this.diffStop(paneId); // the pane left every layout
+        return;
+      }
+      if (ev.error) {
+        if (ev.error !== st.err) this.bus.emit("diff-pane-updated", ev);
+        st.err = ev.error;
+        st.hash = null;
+      } else {
+        st.err = null;
+        const h = JSON.stringify([ev.diff_text, ev.files, ev.branch]);
+        if (h !== st.hash) this.bus.emit("diff-pane-updated", ev);
+        st.hash = h;
+      }
+      // A browser polls over the network: 2 s rather than the desktop's 1 s.
+      if (!st.stopped) st.timer = window.setTimeout(() => void tick(), 2000);
+    };
+    void tick();
+  }
+
+  private diffStop(paneId: string): void {
+    const st = this.diffWatch.get(paneId);
+    if (!st) return;
+    st.stopped = true;
+    window.clearTimeout(st.timer);
+    this.diffWatch.delete(paneId);
+  }
+
+  /** Patch a Diff leaf wherever it lives; the desktop's error when nowhere. */
+  private async diffPatch(paneId: string, patch: Record<string, unknown>): Promise<void> {
+    const w = this.all().find((x) => findLeaf(x.layout ?? null, paneId));
+    if (!w) throw new Error(`no Diff pane with id ${paneId}`);
+    await this.layoutOp(w.id, (l) => patchLeaf(l, paneId, patch));
   }
 
   /** A daemon insights path (same allow-list shape as Rust's safe_api_path). */

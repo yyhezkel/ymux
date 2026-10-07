@@ -609,6 +609,21 @@ hooks get a quiet `passive` (no card, light or context — the CLI falls back to
 own), and `byPane` / `Snapshot` / the hello skip it. A daemon restart's `RecoverHooks`
 does not know `released` (both sessions carry the pane id again) — a known edge.
 
+**`term/gitdiff.go` (Phase 118, WEB-DESIGN F4) — the Diff pane and worktree creation.**
+`POST /api/v2/git/diff {cwd, source}` is ONE snapshot, a port of `diff_pane.rs`
+`fetch_bundle_local`: `rev-parse --show-toplevel` → `status --porcelain=v1 -z --branch
+--untracked-files=all` (`parseStatusZ` / `parseBranchHeader`) → `diff --no-color
+--no-ext-diff [HEAD|<ref>] --` → the first 40 untracked files as `--no-index /dev/null`
+diffs (256 KB each) → a 2 MB cap (cut on a rune boundary — the Rust would panic mid-
+codepoint) with `… ymux: output truncated`. Every git carries `gitG`'s `-c` block; always
+200, a failure is the bundle's `error` ("git: <first line>"). A ref that reads as an option
+or holds a control char is refused. The desktop polls per pane in Rust; the browser polls
+this endpoint itself, so the daemon keeps no per-pane state. `POST /api/v2/git/worktree-add
+{cwd, branch, base, target}` ports `workspace_create_project_worktree`: branch sanitized for
+the directory only (`sanitizeBranch`, `defaultWorktreeTarget` = `<parent>/<base>-<safe>`),
+base / branch refused when option-shaped, `git worktree add -b <branch> -- <target>
+<base>` (the `--` the Rust lacks), then the parsed list. `runGit` is the test seam.
+
 **`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
 Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against
 "/", symlinked ancestors re-checked). List / read / upload / download / delete were Phase

@@ -352,8 +352,10 @@ export function CreateWorkspaceModal(p: Props) {
 
           {/* Phase 49-B: worktree creator. Shown only for local
               workspaces. If a worktree already exists for this
-              workspace, the path is shown instead. */}
-          <Show when={type() === "local"}>
+              workspace, the path is shown instead. Phase 118: not in a
+              browser — the worktree there is made from the Diff pane's
+              strip (workspace_create_project_worktree). */}
+          <Show when={type() === "local" && backend.can("localPanes")}>
             <div class="ws-worktree-block">
               <Show
                 when={!p.editing?.git_worktree}

@@ -153,6 +153,9 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	// Phase 117 (F3): the resume picker's claude sessions.
 	mux.HandleFunc("GET /api/v2/claude/sessions", s.gate(s.handleClaudeSessions))
 	mux.HandleFunc("GET /api/v2/context/sessions", s.gate(s.handleContextSessions))
+	// Phase 118 (F4): the Diff pane's snapshot and worktree creation.
+	mux.HandleFunc("POST /api/v2/git/diff", s.gate(s.handleGitDiff))
+	mux.HandleFunc("POST /api/v2/git/worktree-add", s.gate(s.handleGitWorktreeAdd))
 	// Phase 104 (B6): session history — ended rows, their transcript, resume.
 	// Phase 114 (E): Web Push subscriptions for the browser's notifications.
 	mux.HandleFunc("GET /api/v2/webpush/key", s.gate(s.handleWebPushKey))

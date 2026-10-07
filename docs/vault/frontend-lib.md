@@ -153,6 +153,17 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   it live. A popout's own attach starts with it off.
   Every session create sends `replace_pane: true` (the leaf shows what it was last
   connected to), and `api()` shows a problem+json error's `detail`, never the raw document.
+- **The Diff pane, F4** (Phase 118) — `caps` gains `diffPane` and `worktrees`. The desktop's
+  per-pane Rust poller becomes a browser poll (`diffStart` / `diffStop`, every 2 s) of
+  `POST /api/v2/git/diff` with the leaf's context (`diff_cwd ?? row cwd`, `diff_source ??
+  working`), emitting `diff-pane-updated` on the local bus by the desktop's rules — on a
+  hash change, an error once, the next success after an error always. `set_source` /
+  `set_cwd` patch the leaf and restart the poll; `refresh` emits once; `workspace_close_pane`
+  stops it; a pane gone from every layout stops itself. `diff_pane_worktrees` reuses the F1
+  git endpoint; `workspace_create_project_worktree` → `/api/v2/git/worktree-add`;
+  `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
+  path, or the existing one activated). The legacy local-only worktree block in
+  `CreateWorkspaceModal` is hidden without `localPanes`.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
   blocker's null becomes a readable error), then DETACHES this window's own tmux client
   (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the

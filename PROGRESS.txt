@@ -7972,3 +7972,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 - Browser: pane identity / smart bidi / claude_running on the leaf; pane_set_active no-op; sessions_kill_by_name; pane_probe_tmux_sessions; smart bidi = web/bidiFilter.ts (port of bidi_filter.rs, 9 tests pass locally on node 22) in PtySessions after decode.
 - Daemon: GET /api/v2/claude/sessions (resume picker, port of the local transcript scan); term/context.go — the Context Rail store (port of context_store.rs), GET /api/v2/context/sessions + context:changed; agent brief parses goal/done. Injection (105.C) not ported.
 - tsc clean; Go → CI. Not verified live yet.
+
+[2026-10-07 19:10] Phase 118 — WEB-DESIGN F4: the Diff pane + worktrees in the browser (yos/f4-web-git, stacked on F3 #77; daemon 2.18.0)
+- Daemon term/gitdiff.go: POST /api/v2/git/diff (one snapshot, port of diff_pane.rs fetch_bundle_local), POST /api/v2/git/worktree-add (port of workspace_create_project_worktree, with -- and option checks).
+- Browser: caps diffPane + worktrees; per-pane 2 s poll emitting diff-pane-updated by the desktop's rules; set_source/set_cwd/refresh/worktrees/open_worktree; legacy local worktree block hidden without localPanes.
+- tsc clean; Go → CI. Not verified live yet.
