@@ -44,7 +44,7 @@ import {
 import { getPaneSession, rememberPaneSession } from "../sessionRestore";
 import { ApiError, api, forgetToken, getToken, setUnauthorizedHandler } from "./web/api";
 import { startPwa } from "./web/pwa";
-import { installHebrewMono } from "./web/fonts";
+import { installWebMono } from "./web/fonts";
 import { isHeader, rootIdOf, screenOrSelf } from "../wsTree";
 import {
   DEFAULT_SCREEN_NAME,
@@ -207,7 +207,7 @@ export class WebBackend implements Backend {
    */
   async init(): Promise<void> {
     if (!getToken()) throw new ApiError(401, "not signed in");
-    const font = installHebrewMono(); // in parallel; awaited before the first pane
+    const font = installWebMono(); // in parallel; awaited before the first pane
     const v = await fetch("/api/version").then((r) => r.json() as Promise<{ version?: string }>);
     this.version = v.version ?? "";
     await this.loadSettings();

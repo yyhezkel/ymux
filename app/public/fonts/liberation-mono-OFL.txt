@@ -1,5 +1,5 @@
 Liberation Mono 2.1.5 (liberation-mono-400.ttf, liberation-mono-700.ttf), unmodified.
-Used by the browser build only, for Hebrew glyphs in the terminal (unicode-range).
+Used by the browser build only, as the terminal's monospace font (Latin + Hebrew).
 
 Digitized data copyright (c) 2010 Google Corporation with Reserved Font Arimo, Tinos and Cousine.
 Copyright (c) 2012 Red Hat, Inc. with Reserved Font Name Liberation.

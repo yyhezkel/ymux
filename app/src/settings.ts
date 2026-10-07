@@ -712,7 +712,7 @@ function quoteFamily(family: string): string {
     ? `"${trimmed}"`
     : trimmed;
   const fallback = isMono
-    ? '"Cascadia Mono", "JetBrains Mono", Consolas, ui-monospace, monospace, "YMUX Hebrew Mono"'
+    ? '"Cascadia Mono", "JetBrains Mono", Consolas, "YMUX Mono", ui-monospace, monospace'
     : '-apple-system, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif';
   return `${head}, ${fallback}`;
 }

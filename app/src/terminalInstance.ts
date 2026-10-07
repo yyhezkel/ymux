@@ -825,7 +825,7 @@ export class TerminalInstance {
     this.term = new Terminal({
       fontFamily:
         g_fontFamily ??
-        '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace, "YMUX Hebrew Mono"',
+        '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", "YMUX Mono", monospace',
       fontSize: g_fontSizePx ?? 14,
       lineHeight: 1.15,
       cursorBlink: true,
