@@ -21,7 +21,7 @@
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
     "app/src-tauri/src/dev.rs": "7fe2df26da158a6741e1ade23117b2777988a34ca2776eb56f6dd3101b74ff64",
-    "app/src-tauri/src/diff_pane.rs": "e6c18105c92f130348a186ea6203f550d575f96c57790be977ffd189e5a353fd",
+    "app/src-tauri/src/diff_pane.rs": "8672a1b92c6d1e1ce84027027c5b56f505486ebae29a89f2eafbcefa48ddc377",
     "app/src-tauri/src/file_manager.rs": "d230dead31918d21d66fd291ce912296b78c5fb0d3fccffec3af5b44d572d1b6",
     "app/src-tauri/src/fonts.rs": "4b149872979cda7eedf4ea293dec560fdd7a16cb38e39ddead04d0a700c270be",
     "app/src-tauri/src/notes.rs": "c66ce93fe4ad80e03f01ab62b367895aa3430872cdc48740175620fe0dde7ffe",

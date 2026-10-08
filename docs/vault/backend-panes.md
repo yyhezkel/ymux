@@ -29,7 +29,7 @@ workspace-teardown stops), polling a **bundle** and emitting `diff-pane-updated`
 hash changes. The bundle is `git status --porcelain=v1 -z --branch --untracked-files=all`
 (branch + `StatusEntry` list), `git diff` against the pane's `DiffSource` (default **Head**
 = staged + unstaged), and a `git diff --no-index` per untracked file (capped at 40 files /
-256 KiB each). Git runs through `worktrees::run_git_raw` (Local, sequential) or
+256 KiB each; both byte caps cut at a UTF-8 char boundary via `truncate_at_char_boundary`). Git runs through `worktrees::run_git_raw` (Local, sequential) or
 `exec_script_over` (WSL/SSH, **one round trip** — a marker-delimited `sh` script that runs
 `tr '\0' '\n'` because the WSL transport strips NULs, and `sh -c`-wrapped so a fish login
 shell can't choke); the old `cwd.join(".git").exists()` pre-check is **gone**, so a
