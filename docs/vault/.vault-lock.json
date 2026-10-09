@@ -34,7 +34,7 @@
     "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
   },
   "backend-remote": {
-    "app/src-tauri/src/addons.rs": "c48a281c4fbd412256e42f270fcb4665411e57b343d6d14b5435f0207ddc15f0",
+    "app/src-tauri/src/addons.rs": "85a4eb9f5e52e22cb9580825405d6e8fb10f257a8b30a01356de9ebf574dfdd5",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "e9eb2e82df82efd3ce793177a3c80a502ce261d14c551355b85b91fb4dd79664",
     "app/src-tauri/src/provisioning.rs": "e728eb9da0f6a9109ec965b9672aab9fe5f61040de7b8aebb2db1d9e62c95bdf",
