@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onMount, onCleanup, createMemo } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import { t } from "./i18n";
 import { createLogger } from "./logger";
 
@@ -124,18 +123,18 @@ export function ProvisionNewServerFlow(p: Props) {
   // are missed.
   onMount(async () => {
     try {
-      const pf = await invoke<ProfilesFile>("provisioning_profiles_list");
+      const pf = await backend.call<ProfilesFile>("provisioning_profiles_list");
       setProfiles(pf.profiles);
     } catch (e) {
       log.warn("provisioning_profiles_list failed", e);
     }
     try {
-      const cat = await invoke<[string, string][]>("provisioning_step_catalog");
+      const cat = await backend.call<[string, string][]>("provisioning_step_catalog");
       setStepCatalog(cat);
     } catch (e) {
       log.warn("provisioning_step_catalog failed", e);
     }
-    unlisten = await listen<StepProgress>("provisioning:progress", (e) => {
+    unlisten = await backend.on<StepProgress>("provisioning:progress", (e) => {
       setLogLines((prev) => [...prev, e.payload]);
       setStepStates((prev) => ({ ...prev, [e.payload.step_index]: e.payload }));
       // Phase 32.A: the preflight failure rides on the same event
@@ -152,7 +151,7 @@ export function ProvisionNewServerFlow(p: Props) {
     // Phase 14.A.2: the backend fires this once after the per-step
     // loop finishes. We snapshot the payload and auto-advance to the
     // Done step so the user immediately sees the CTAs.
-    unlistenComplete = await listen<ProvisionResult>("provisioning:complete", (e) => {
+    unlistenComplete = await backend.on<ProvisionResult>("provisioning:complete", (e) => {
       setResult(e.payload);
       setWizStep("done");
     });
@@ -173,7 +172,7 @@ export function ProvisionNewServerFlow(p: Props) {
     setInspecting(true);
     setInspect(null);
     try {
-      const r = await invoke<InspectResult>("provisioning_inspect", {
+      const r = await backend.call<InspectResult>("provisioning_inspect", {
         host: host().trim(),
         port: port(),
         user: user().trim(),
@@ -202,7 +201,7 @@ export function ProvisionNewServerFlow(p: Props) {
     setResult(null);
     setPreflightError(null);
     try {
-      const handle = await invoke<RunHandle>("provisioning_start", {
+      const handle = await backend.call<RunHandle>("provisioning_start", {
         input: {
           workspace_id: p.workspaceId ?? `prov-${Date.now()}`,
           host: host().trim(),

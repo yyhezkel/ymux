@@ -69,7 +69,9 @@ and it no longer hosts the "existing" flows at all.
 Creation moved to `SetupWizard`. This modal is what the sidebar's edit action and the
 palette rename open. The SSH form and the extras block are **shared** with the wizard
 rather than duplicated. On open it also calls `workspace_secret_env_keys` once and feeds
-the names to `storedSecretKeys` (failure → logged, editor still usable):
+the names to `storedSecretKeys` (failure → logged, editor still usable). The legacy
+Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders only with
+`backend.can("localPanes")` — in a browser a worktree comes from the Diff pane's strip:
 
 - **`SshConnectionFields.tsx` (492)** — the SSH form. **The parent owns the form state**
   (via `createSshFormState`) so it can hydrate from an existing workspace or read the
@@ -170,7 +172,7 @@ Backed by `updater_list_versions` / `updater_install_version`.
 
 ## Invariants
 
-- **Rule #5** — no `any`; `invoke` return types explicit.
+- **Rule #5** — no `any`; `backend.call<T>` return types explicit.
 - **The parent owns form state.** Every shared field block follows the
   `SshConnectionFields` pattern, so hydration and submit both live in one place.
 - A wizard step that shells out reaches the backend through a Tauri command — the

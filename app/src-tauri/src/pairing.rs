@@ -28,6 +28,37 @@ fn valid_device_id(id: &str) -> bool {
         && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
 }
 
+/// `/api/v2/devices/{id}/scopes` — the one non-pairing route the desktop may
+/// call (Phase 113, the owner's scope grants), for one valid device id.
+fn is_device_scopes_path(path: &str) -> bool {
+    path.strip_prefix("/api/v2/devices/")
+        .and_then(|rest| rest.strip_suffix("/scopes"))
+        .is_some_and(valid_device_id)
+}
+
+/// The scope list with `shell:attach` added or removed. `current` is the
+/// daemon's GET body, `{"scopes":[...]}` — already expanded from "all", so no
+/// copy of the Go scope vocabulary is needed here; the daemon's PUT
+/// normalizes whatever comes back.
+fn with_shell(current: &str, enabled: bool) -> Result<Vec<String>, String> {
+    let v: serde_json::Value =
+        serde_json::from_str(current.trim()).map_err(|_| format!("unexpected scopes reply: {}", current.trim()))?;
+    let mut scopes: Vec<String> = v
+        .get("scopes")
+        .and_then(|s| s.as_array())
+        .ok_or_else(|| format!("unexpected scopes reply: {}", current.trim()))?
+        .iter()
+        .filter_map(|s| s.as_str().map(str::to_string))
+        .filter(|s| s != SHELL_ATTACH)
+        .collect();
+    if enabled {
+        scopes.push(SHELL_ATTACH.to_string());
+    }
+    Ok(scopes)
+}
+
+const SHELL_ATTACH: &str = "shell:attach";
+
 /// curl the daemon's pairing API over SSH using the admin (insights) token.
 /// The request body, when present, is fed on stdin (never in the command
 /// string) so user-supplied fields can't break out (Rule #3).
@@ -38,7 +69,7 @@ async fn daemon_curl(
     path: &str,
     body: Option<&str>,
 ) -> Result<String, String> {
-    if !path.starts_with("/api/pairing/")
+    if !(path.starts_with("/api/pairing/") || is_device_scopes_path(path))
         || !path
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || b"/_-?=&.".contains(&b))
@@ -216,9 +247,59 @@ pub(crate) async fn mobile_pairing_rename(
     .await
 }
 
+/// Phase 113 (Web & devices): grant or withdraw a paired device's terminal
+/// access (`shell:attach`). Read-modify-write of the owner scopes endpoint,
+/// then checked against what the daemon stored.
+#[tauri::command]
+pub(crate) async fn mobile_pairing_set_shell(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    device_id: String,
+    enabled: bool,
+) -> Result<String, String> {
+    if !valid_device_id(&device_id) {
+        return Err("invalid device id".into());
+    }
+    let path = format!("/api/v2/devices/{device_id}/scopes");
+    let current = daemon_curl(&state, &workspace_id, "GET", &path, None).await?;
+    let scopes = with_shell(&current, enabled)?;
+    let body = json!({ "scopes": scopes }).to_string();
+    let out = daemon_curl(&state, &workspace_id, "PUT", &path, Some(&body)).await?;
+    let stored = with_shell(&out, false).map(|_| out.contains(SHELL_ATTACH))?;
+    if stored != enabled {
+        return Err(format!("the daemon did not store the change: {}", out.trim()));
+    }
+    crate::log_info(
+        "PAIRING",
+        &format!("device {device_id} terminal access {}", if enabled { "granted" } else { "withdrawn" }),
+    );
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::valid_device_id;
+    use super::{is_device_scopes_path, valid_device_id, with_shell};
+
+    #[test]
+    fn only_one_device_route_is_allowed() {
+        assert!(is_device_scopes_path("/api/v2/devices/dev_ab12/scopes"));
+        assert!(!is_device_scopes_path("/api/v2/devices//scopes"));
+        assert!(!is_device_scopes_path("/api/v2/devices/a/b/scopes"));
+        assert!(!is_device_scopes_path("/api/v2/devices/dev_ab12"));
+        assert!(!is_device_scopes_path("/api/v2/term/sessions"));
+    }
+
+    #[test]
+    fn shell_is_added_once_and_removed_cleanly() {
+        let on = with_shell(r#"{"scopes":["files:read","insights:read"]}"#, true).unwrap();
+        assert_eq!(on, vec!["files:read", "insights:read", "shell:attach"]);
+        let again = with_shell(r#"{"scopes":["files:read","shell:attach"]}"#, true).unwrap();
+        assert_eq!(again.iter().filter(|s| *s == "shell:attach").count(), 1);
+        let off = with_shell(r#"{"scopes":["shell:attach","files:read"]}"#, false).unwrap();
+        assert_eq!(off, vec!["files:read"]);
+        assert!(with_shell("not json", true).is_err());
+        assert!(with_shell(r#"{"nope":1}"#, true).is_err());
+    }
 
     #[test]
     fn device_id_validation() {

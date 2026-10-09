@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show, on, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import type { KillSessionOutcome, SessionSummary, TmuxSessionInfo } from "./types";
 import { sessionDisplay } from "./paneTitle";
 import { currentLanguage, t } from "./i18n";
@@ -96,7 +96,7 @@ export function SessionsOverviewWindow(p: Props) {
     try {
       for (let i = 0; i < names.length; i += SUMMARY_CHUNK) {
         const chunk = names.slice(i, i + SUMMARY_CHUNK);
-        const out = await invoke<SessionSummary[]>("sessions_overview_summarize", {
+        const out = await backend.call<SessionSummary[]>("sessions_overview_summarize", {
           workspaceId: p.workspaceId,
           names: chunk,
           lang: currentLanguage(),
@@ -169,7 +169,7 @@ export function SessionsOverviewWindow(p: Props) {
     setInFlight(new Set<string>());
     setSummarizing(false);
     try {
-      const list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+      const list = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
         workspaceId: wsId,
         projectPath: null,
       });

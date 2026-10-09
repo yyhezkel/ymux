@@ -486,11 +486,11 @@ fn scan_file(
 /// corrected rather than turned into an error.
 pub fn route(query: &str) -> Result<String, String> {
     let now = chrono::Utc::now().timestamp();
-    let mut until = parse_when(query, "until").unwrap_or(0);
+    let mut until = parse_when(query, "until");
     if until <= 0 || until > now {
         until = now;
     }
-    let mut since = parse_when(query, "since").unwrap_or(0);
+    let mut since = parse_when(query, "since");
     if since <= 0 {
         since = until - 24 * 3600;
     }

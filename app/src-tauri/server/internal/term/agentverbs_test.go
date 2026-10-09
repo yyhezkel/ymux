@@ -53,7 +53,7 @@ func TestSplitDirectionSpellings(t *testing.T) {
 func TestWebWorkspaceVersionGuardAndPersistence(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "web-workspaces.json")
 	st := newWebWSStore(path)
-	w, err := st.create("api")
+	w, err := st.create(workspaceCreate{Name: "api", Meta: json.RawMessage(`{}`)})
 	if err != nil || w.Version != 1 || !strings.HasPrefix(w.ID, "w_") {
 		t.Fatalf("create = %+v %v", w, err)
 	}
@@ -70,6 +70,67 @@ func TestWebWorkspaceVersionGuardAndPersistence(t *testing.T) {
 		t.Fatalf("reload = %+v", again)
 	}
 }
+
+// F1: meta round-trips opaque, a put without meta keeps it, and a pre-F1
+// flat row (layout, no meta) becomes a header + itself as the screen, once.
+func TestWebWorkspaceMetaAndFlatMigration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web-workspaces.json")
+	st := newWebWSStore(path)
+	meta := json.RawMessage(`{"parent_id":"w_h","cwd":"/srv/app","sort_order":2}`)
+	w, err := st.create(workspaceCreate{Name: "shell", Meta: meta, Layout: json.RawMessage(`{"kind":"pane"}`)})
+	if err != nil || string(w.Meta) != string(meta) || len(w.Layout) == 0 {
+		t.Fatalf("create = %+v %v", w, err)
+	}
+	w2, err := st.put(w.ID, workspacePut{Version: 1, Name: ptr("renamed")})
+	if err != nil || string(w2.Meta) != string(meta) {
+		t.Fatalf("a put without meta must keep it: %+v %v", w2, err)
+	}
+	flat, _ := st.create(workspaceCreate{Name: "old", Layout: json.RawMessage(`{"kind":"pane","pane_id":"p1"}`)})
+	header, _ := st.create(workspaceCreate{Name: "empty"}) // no layout: not a screen, left alone
+	re := newWebWSStore(path)
+	all := re.list()
+	if len(all) != 4 {
+		t.Fatalf("after migration: %d rows, want 4: %+v", len(all), all)
+	}
+	var h, moved WebWorkspace
+	for i, x := range all {
+		if x.ID == flat.ID {
+			moved, h = x, all[i-1]
+		}
+	}
+	if h.Name != "old" || string(h.Meta) != `{}` || len(h.Layout) != 0 {
+		t.Fatalf("header = %+v", h)
+	}
+	if string(moved.Meta) != `{"parent_id":"`+h.ID+`"}` || string(moved.Layout) != string(flat.Layout) || moved.Version != 2 {
+		t.Fatalf("moved = %+v", moved)
+	}
+	if e, _ := re.get(header.ID); len(e.Meta) != 0 {
+		t.Fatalf("a paneless row was migrated: %+v", e)
+	}
+	if n := len(newWebWSStore(path).list()); n != 4 {
+		t.Fatalf("migration ran twice: %d rows", n)
+	}
+}
+
+func TestWebGroupsVersionGuard(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "web-workspaces.json")
+	st := newWebWSStore(path)
+	if g := st.getGroups(); g.Version != 0 || string(g.Groups) != `[]` {
+		t.Fatalf("empty = %+v", g)
+	}
+	g, err := st.putGroups(WebGroups{Version: 0, Groups: json.RawMessage(`[{"id":"g_1","name":"work"}]`)})
+	if err != nil || g.Version != 1 {
+		t.Fatalf("put = %+v %v", g, err)
+	}
+	if cur, err := st.putGroups(WebGroups{Version: 0, Groups: json.RawMessage(`[]`)}); err != errVersion || cur.Version != 1 {
+		t.Fatalf("stale put = %+v %v", cur, err)
+	}
+	if again := newWebWSStore(path).getGroups(); again.Version != 1 || string(again.Groups) != `[{"id":"g_1","name":"work"}]` {
+		t.Fatalf("reload = %+v", again)
+	}
+}
+
+func ptr[T any](v T) *T { return &v }
 
 func TestWebWorkspacesREST(t *testing.T) {
 	s, _ := hookService("tmux 3.4")
@@ -94,6 +155,23 @@ func TestWebWorkspacesREST(t *testing.T) {
 	}
 	if w := do(s, "GET", "/api/v2/web/workspaces", "owner-token", ""); !strings.Contains(w.Body.String(), ws.ID) {
 		t.Errorf("list → %s", w.Body)
+	}
+	// F1: meta must be an object; groups are a versioned array.
+	if w := do(s, "PUT", "/api/v2/web/workspaces/"+ws.ID, "owner-token", `{"version":2,"meta":"x"}`); w.Code != http.StatusBadRequest {
+		t.Errorf("non-object meta → %d", w.Code)
+	}
+	if w := do(s, "POST", "/api/v2/web/workspaces", "owner-token", `{"name":"s","meta":{"parent_id":"`+ws.ID+`"},"layout":{"kind":"pane"}}`); w.Code != http.StatusCreated ||
+		!strings.Contains(w.Body.String(), `"meta":{"parent_id":"`+ws.ID+`"}`) {
+		t.Errorf("create with meta → %d %s", w.Code, w.Body)
+	}
+	if w := do(s, "PUT", "/api/v2/web/groups", "owner-token", `{"version":0,"groups":{}}`); w.Code != http.StatusBadRequest {
+		t.Errorf("non-array groups → %d", w.Code)
+	}
+	if w := do(s, "PUT", "/api/v2/web/groups", "owner-token", `{"version":0,"groups":[{"id":"g_1"}]}`); w.Code != http.StatusOK {
+		t.Errorf("groups put → %d %s", w.Code, w.Body)
+	}
+	if w := do(s, "GET", "/api/v2/web/groups", "owner-token", ""); !strings.Contains(w.Body.String(), `"version":1`) {
+		t.Errorf("groups get → %s", w.Body)
 	}
 	if w := do(s, "DELETE", "/api/v2/web/workspaces/"+ws.ID, "owner-token", ""); w.Code != http.StatusNoContent {
 		t.Errorf("delete → %d", w.Code)

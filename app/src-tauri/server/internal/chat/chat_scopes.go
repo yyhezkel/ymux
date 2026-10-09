@@ -28,6 +28,16 @@ func (c *ChatAPI) GetDeviceScopes(id string) (string, bool) {
 	return "", false
 }
 
+// ActiveDeviceScopes is GetDeviceScopes for a device that is still active:
+// ok=false once it is revoked. Web Push (term/webpush.go) asks it before
+// every send, so a revoke stops a browser's notifications.
+func (c *ChatAPI) ActiveDeviceScopes(id string) (string, bool) {
+	if d, ok := c.store.deviceByID(id); ok && d.Status == "active" {
+		return d.Scopes, true
+	}
+	return "", false
+}
+
 // SetDeviceScopes stores a device's grants (caller passes the canonical form
 // from auth.NormalizeScopes). Returns false if the device isn't active.
 func (c *ChatAPI) SetDeviceScopes(id, scopes string) bool {

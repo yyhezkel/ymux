@@ -104,7 +104,7 @@ func call(t *testing.T, addr, token, tag, method string) (string, map[string]any
 func TestEachTokenReachesItsOwnResolver(t *testing.T) {
 	chat := &fakeResolver{name: "chat", token: "tok-chat"}
 	term := &fakeResolver{name: "term", token: "tok-term"}
-	Start(term, chat)
+	Start("", term, chat)
 	addr := term.listenAddr()
 	if addr == "" || chat.listenAddr() != addr {
 		t.Fatalf("every AddrSink must learn the address: term=%q chat=%q", addr, chat.listenAddr())
@@ -126,7 +126,7 @@ func TestEachTokenReachesItsOwnResolver(t *testing.T) {
 
 func TestUnknownTokenIsDeniedInClientDialect(t *testing.T) {
 	r := &fakeResolver{name: "x", token: "real"}
-	Start(r)
+	Start("", r)
 	for _, tag := range []string{TagYmux, TagLegacy} {
 		verdict, _ := call(t, r.listenAddr(), "forged", tag, "feed.push")
 		if verdict != tag+"-DENIED unknown-session" {
@@ -137,7 +137,7 @@ func TestUnknownTokenIsDeniedInClientDialect(t *testing.T) {
 
 func TestRPCErrorBecomesAnErrorObject(t *testing.T) {
 	r := &fakeResolver{name: "x", token: "t", err: &core.RPCError{Code: -32000, Message: "unknown method"}}
-	Start(r)
+	Start("", r)
 	_, resp := call(t, r.listenAddr(), "t", TagLegacy, "nope")
 	if _, has := resp["result"]; has {
 		t.Errorf("an error reply must not carry result: %v", resp)
@@ -153,7 +153,7 @@ func TestRPCErrorBecomesAnErrorObject(t *testing.T) {
 
 func TestBadResponseHex(t *testing.T) {
 	r := &fakeResolver{name: "x", token: "t"}
-	Start(r)
+	Start("", r)
 	conn, err := net.DialTimeout("tcp", r.listenAddr(), 3*time.Second)
 	if err != nil {
 		t.Fatal(err)

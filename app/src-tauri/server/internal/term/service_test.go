@@ -19,7 +19,7 @@ import (
 // testService builds a Service with a fake tmux and a two-device resolver.
 func testService(respond func(args []string) ([]byte, error)) (*Service, *[][]string) {
 	tm, calls := fake(respond)
-	s := &Service{tmux: tm, token: "owner-token", home: "/nonexistent"}
+	s := &Service{tmux: tm, token: "owner-token", home: "/nonexistent", claude: &claudeTools{}}
 	s.SetScopeResolver(func(tok string) (string, bool, bool) {
 		switch tok {
 		case "device-all":
@@ -171,14 +171,16 @@ func TestCreateEmptyBodyIsAccepted(t *testing.T) {
 }
 
 func TestCreateIgnoresUnknownFields(t *testing.T) {
-	// The browser client also sends pane_id/cmd; unknown keys must not 422.
+	// A newer client may send keys this daemon does not know; they must not
+	// 422. (pane_id and cmd are known since Phase 109/110 — cmd is an argv
+	// array — so the unknown keys here are made up.)
 	s, _ := testService(func(args []string) ([]byte, error) {
 		if args[0] == "has-session" {
 			return nil, exitErr()
 		}
 		return nil, nil
 	})
-	w := do(s, "POST", "/api/v2/term/sessions", "", `{"pane_id":"p1","cmd":"ls"}`)
+	w := do(s, "POST", "/api/v2/term/sessions", "", `{"from_a_newer_client":"x","another":[1,2]}`)
 	if w.Code != http.StatusCreated {
 		t.Errorf("got %d, want 201 (body %s)", w.Code, w.Body.String())
 	}
@@ -311,5 +313,31 @@ func TestShellAttachIsNotInAllScopes(t *testing.T) {
 	}
 	if !auth.HasScope(`["shell:attach"]`, auth.ScopeShellAttach) {
 		t.Error("an explicit grant was not honoured")
+	}
+}
+
+func TestCreateRunsAnArgv(t *testing.T) {
+	// Phase 110: a browser pane opened in "claude" mode. argv after `--`,
+	// never a shell string, and a bare `claude` becomes the resolved path.
+	s, calls := testService(func(args []string) ([]byte, error) {
+		if args[0] == "has-session" {
+			return nil, exitErr()
+		}
+		return nil, nil
+	})
+	s.claudeBin = "/opt/claude/bin/claude"
+	w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{"name":"c1","cmd":["claude","--model","x; rm -rf ~"]}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	argv := lastCreate(t, calls)
+	tail := strings.Join(argv[len(argv)-4:], "|")
+	if tail != "--|/opt/claude/bin/claude|--model|x; rm -rf ~" {
+		t.Errorf("argv tail = %q", tail)
+	}
+	for _, bad := range []string{`{"name":"c2","cmd":[""]}`, `{"name":"c3","cmd":["a\u0000b"]}`} {
+		if w := do(s, "POST", "/api/v2/term/sessions", "owner-token", bad); w.Code != http.StatusBadRequest {
+			t.Errorf("%s = %d, want 400", bad, w.Code)
+		}
 	}
 }

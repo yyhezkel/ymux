@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { IconClose, IconCheck } from "./icons";
 import type { SkillInfo } from "./bindings/SkillInfo";
 
@@ -18,7 +18,7 @@ export function YmuxToolsTab(p: { workspaceId?: string }) {
       setInstalled(new Set<string>());
       return;
     }
-    const inst = await invoke<string[]>("skills_installed", { workspaceId: p.workspaceId });
+    const inst = await backend.call<string[]>("skills_installed", { workspaceId: p.workspaceId });
     setInstalled(new Set(inst));
   };
 
@@ -26,7 +26,7 @@ export function YmuxToolsTab(p: { workspaceId?: string }) {
     setErr(null);
     setLoading(true);
     try {
-      setSkills(await invoke<SkillInfo[]>("skills_list"));
+      setSkills(await backend.call<SkillInfo[]>("skills_list"));
       await loadInstalled();
     } catch (e) {
       setErr(String(e));
@@ -41,7 +41,7 @@ export function YmuxToolsTab(p: { workspaceId?: string }) {
     setBusy(name);
     setErr(null);
     try {
-      await invoke(cmd, { workspaceId: p.workspaceId, name });
+      await backend.call(cmd, { workspaceId: p.workspaceId, name });
       await loadInstalled();
     } catch (e) {
       setErr(String(e));

@@ -20,11 +20,21 @@ package term
 //
 // Every change announces `workspaces:changed` {workspace_id, version} on the
 // events socket; a client holding an older version re-reads.
+//
+// Phase 115 (F1, the desktop's workspace tree in the browser): `meta` carries
+// the tree fields of the desktop's Workspace — parent_id, cwd, is_folder,
+// is_collapsed, sort_order, group_id, color, emoji, tmux_session — as an
+// opaque JSON object. The browser owns their semantics (backend/web/tree.ts
+// ports lib.rs); the daemon only stores them, like the layout. The groups
+// list is one opaque document beside the workspaces, with its own version.
+// A file written before F1 has flat rows (a layout, no meta); load turns each
+// into a header + the old row as its screen, once (migrateFlat).
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -41,13 +51,22 @@ type WebWorkspace struct {
 	TabsMode      bool            `json:"tabs_mode,omitempty"`
 	Intent        string          `json:"intent,omitempty"`
 	IsProjectRoot bool            `json:"is_project_root,omitempty"`
+	Meta          json.RawMessage `json:"meta,omitempty"` // F1: the desktop's tree fields, opaque
 	CreatedAt     string          `json:"created_at"`
 	UpdatedAt     string          `json:"updated_at"`
 }
 
 type webWSFile struct {
-	Version    int            `json:"version"`
-	Workspaces []WebWorkspace `json:"workspaces"`
+	Version       int             `json:"version"`
+	Workspaces    []WebWorkspace  `json:"workspaces"`
+	Groups        json.RawMessage `json:"groups,omitempty"` // F1: WorkspaceGroup[], opaque
+	GroupsVersion int64           `json:"groups_version,omitempty"`
+}
+
+// WebGroups is the groups document a client reads and writes whole.
+type WebGroups struct {
+	Version int64           `json:"version"`
+	Groups  json.RawMessage `json:"groups"`
 }
 
 var (
@@ -56,10 +75,12 @@ var (
 )
 
 type webWSStore struct {
-	mu   sync.Mutex
-	path string
-	ws   []WebWorkspace
-	seq  atomic.Uint64
+	mu      sync.Mutex
+	path    string
+	ws      []WebWorkspace
+	groups  json.RawMessage
+	groupsV int64
+	seq     atomic.Uint64
 	now  func() time.Time
 }
 
@@ -70,9 +91,47 @@ func newWebWSStore(path string) *webWSStore {
 	}
 	var f webWSFile
 	if loadJSON(path, &f, "web workspaces") {
-		s.ws = f.Workspaces
+		s.ws, s.groups, s.groupsV = f.Workspaces, f.Groups, f.GroupsVersion
+	}
+	if s.migrateFlat() {
+		if err := s.saveLocked(); err != nil {
+			logger.Warn("web workspaces: migration not saved", "err", err)
+		} else {
+			logger.Info("web workspaces: flat rows moved under headers", "count", len(s.ws))
+		}
 	}
 	return s
+}
+
+// migrateFlat gives every pre-F1 row (a layout and no meta — it was a
+// screen with nothing above it) a header of the same name, and makes the row
+// that header's child. The row keeps its id, name and layout, so its panes'
+// tmux sessions and the browsers' restore hints still match. Runs before any
+// client can see the store; reports whether anything changed.
+func (s *webWSStore) migrateFlat() bool {
+	var out []WebWorkspace
+	changed := false
+	for _, w := range s.ws {
+		if len(w.Meta) > 0 || len(w.Layout) == 0 || string(w.Layout) == "null" {
+			out = append(out, w)
+			continue
+		}
+		h := WebWorkspace{ID: s.newID(), Name: w.Name, Version: 1, Meta: json.RawMessage(`{}`),
+			CreatedAt: w.CreatedAt, UpdatedAt: w.UpdatedAt}
+		meta, _ := json.Marshal(map[string]string{"parent_id": h.ID})
+		w.Meta = meta
+		w.Version++
+		out = append(out, h, w)
+		changed = true
+	}
+	if changed {
+		s.ws = out
+	}
+	return changed
+}
+
+func (s *webWSStore) newID() string {
+	return fmt.Sprintf("w_%x_%x", s.now().UnixNano(), s.seq.Add(1)-1)
 }
 
 func (s *webWSStore) iso() string { return s.now().UTC().Format(time.RFC3339) }
@@ -83,7 +142,7 @@ func (s *webWSStore) saveLocked() error {
 	}
 	// Compact, not indented: MarshalIndent re-indents the embedded layout
 	// RawMessage, so a reload would hand clients a reformatted document.
-	b, err := json.Marshal(webWSFile{Version: 1, Workspaces: s.ws})
+	b, err := json.Marshal(webWSFile{Version: 1, Workspaces: s.ws, Groups: s.groups, GroupsVersion: s.groupsV})
 	if err != nil {
 		return err
 	}
@@ -116,12 +175,29 @@ func (s *webWSStore) get(id string) (WebWorkspace, bool) {
 
 func (s *webWSStore) exists(id string) bool { _, ok := s.get(id); return ok }
 
-func (s *webWSStore) create(name string) (WebWorkspace, error) {
+// workspaceCreate is POST's body: a name, and since F1 optionally the rest of
+// the row, so a header + screen is two creates and not create-then-put.
+type workspaceCreate struct {
+	Name          string          `json:"name"`
+	Layout        json.RawMessage `json:"layout"`
+	TabsMode      bool            `json:"tabs_mode"`
+	Intent        string          `json:"intent"`
+	IsProjectRoot bool            `json:"is_project_root"`
+	Meta          json.RawMessage `json:"meta"`
+}
+
+func (s *webWSStore) create(in workspaceCreate) (WebWorkspace, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.iso()
-	w := WebWorkspace{ID: fmt.Sprintf("w_%x_%x", s.now().UnixNano(), s.seq.Add(1)-1), Name: name,
-		Version: 1, CreatedAt: now, UpdatedAt: now}
+	w := WebWorkspace{ID: s.newID(), Name: in.Name, Version: 1, CreatedAt: now, UpdatedAt: now,
+		TabsMode: in.TabsMode, Intent: in.Intent, IsProjectRoot: in.IsProjectRoot}
+	if isJSONObject(in.Layout) {
+		w.Layout = append(json.RawMessage{}, in.Layout...)
+	}
+	if isJSONObject(in.Meta) {
+		w.Meta = append(json.RawMessage{}, in.Meta...)
+	}
 	s.ws = append(s.ws, w)
 	if err := s.saveLocked(); err != nil {
 		s.ws = s.ws[:len(s.ws)-1]
@@ -138,6 +214,7 @@ type workspacePut struct {
 	TabsMode      *bool           `json:"tabs_mode"`
 	Intent        *string         `json:"intent"`
 	IsProjectRoot *bool           `json:"is_project_root"`
+	Meta          json.RawMessage `json:"meta"` // absent = keep; an object replaces
 }
 
 // put applies a client write if in.Version is the stored version
@@ -173,6 +250,9 @@ func (s *webWSStore) put(id string, in workspacePut) (WebWorkspace, error) {
 	}
 	if in.IsProjectRoot != nil {
 		w.IsProjectRoot = *in.IsProjectRoot
+	}
+	if isJSONObject(in.Meta) {
+		w.Meta = append(json.RawMessage{}, in.Meta...)
 	}
 	w.Version++
 	w.UpdatedAt = s.iso()
@@ -227,6 +307,52 @@ func (s *webWSStore) remove(id string) error {
 		return err
 	}
 	return nil
+}
+
+// getGroups returns the groups document ("[]" when none was ever written).
+func (s *webWSStore) getGroups() WebGroups {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	g := s.groups
+	if len(g) == 0 {
+		g = json.RawMessage(`[]`)
+	}
+	return WebGroups{Version: s.groupsV, Groups: g}
+}
+
+// putGroups replaces the groups list if version matches (409 otherwise, with
+// the current document — the workspace rule).
+func (s *webWSStore) putGroups(in WebGroups) (WebGroups, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := func() WebGroups {
+		g := s.groups
+		if len(g) == 0 {
+			g = json.RawMessage(`[]`)
+		}
+		return WebGroups{Version: s.groupsV, Groups: g}
+	}
+	if in.Version != s.groupsV {
+		return cur(), errVersion
+	}
+	prevG, prevV := s.groups, s.groupsV
+	s.groups, s.groupsV = append(json.RawMessage{}, in.Groups...), s.groupsV+1
+	if err := s.saveLocked(); err != nil {
+		s.groups, s.groupsV = prevG, prevV
+		return WebGroups{}, err
+	}
+	return cur(), nil
+}
+
+// isJSONObject: a non-empty raw value that is a JSON object.
+func isJSONObject(b json.RawMessage) bool {
+	var m map[string]json.RawMessage
+	return len(b) > 0 && b[0] == '{' && json.Unmarshal(b, &m) == nil
+}
+
+func isJSONArray(b json.RawMessage) bool {
+	var a []json.RawMessage
+	return len(b) > 0 && b[0] == '[' && json.Unmarshal(b, &a) == nil
 }
 
 func (r *HookRegistry) workspacesChanged(id string, version int64) {
@@ -288,15 +414,21 @@ func (s *Service) handleWebWorkspaces(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, st.list())
 		return
 	}
-	var body struct {
-		Name string `json:"name"`
+	var body workspaceCreate
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
 	if body.Name == "" {
 		http.Error(w, "name required", http.StatusBadRequest)
 		return
 	}
-	ws, err := st.create(body.Name)
+	if (len(body.Layout) > 0 && string(body.Layout) != "null" && !isJSONObject(body.Layout)) ||
+		(len(body.Meta) > 0 && string(body.Meta) != "null" && !isJSONObject(body.Meta)) {
+		http.Error(w, "layout and meta must be JSON objects", http.StatusBadRequest)
+		return
+	}
+	ws, err := st.create(body)
 	if err != nil {
 		logger.Error("workspace create failed", "err", err)
 		http.Error(w, "save failed", http.StatusInternalServerError)
@@ -343,6 +475,10 @@ func (s *Service) handleWebWorkspace(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if len(in.Meta) > 0 && string(in.Meta) != "null" && !isJSONObject(in.Meta) {
+			http.Error(w, "meta is not a JSON object", http.StatusBadRequest)
+			return
+		}
 		ws, err := st.put(id, in)
 		switch {
 		case errors.Is(err, errVersion):
@@ -357,5 +493,34 @@ func (s *Service) handleWebWorkspace(w http.ResponseWriter, r *http.Request) {
 			s.hooks.workspacesChanged(ws.ID, ws.Version)
 			writeJSON(w, http.StatusOK, ws)
 		}
+	}
+}
+
+// handleWebGroups: GET the groups document, PUT it whole with its version.
+func (s *Service) handleWebGroups(w http.ResponseWriter, r *http.Request) {
+	if s.hooks == nil {
+		http.Error(w, "workspaces unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	st := s.hooks.webws
+	if r.Method == http.MethodGet {
+		writeJSON(w, http.StatusOK, st.getGroups())
+		return
+	}
+	var in WebGroups
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256<<10)).Decode(&in); err != nil || !isJSONArray(in.Groups) {
+		http.Error(w, "body must be {version, groups: [...]}", http.StatusBadRequest)
+		return
+	}
+	g, err := st.putGroups(in)
+	switch {
+	case errors.Is(err, errVersion):
+		writeJSON(w, http.StatusConflict, g)
+	case err != nil:
+		logger.Error("workspace groups save failed", "err", err)
+		http.Error(w, "save failed", http.StatusInternalServerError)
+	default:
+		s.hooks.workspacesChanged("", 0)
+		writeJSON(w, http.StatusOK, g)
 	}
 }

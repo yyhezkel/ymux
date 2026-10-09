@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { createLogger } from "./logger";
 
@@ -132,7 +132,7 @@ export function SshConnectionFields(p: Props) {
   onMount(() => {
     void (async () => {
       try {
-        const hosts = await invoke<SshConfigHost[]>("parse_ssh_config");
+        const hosts = await backend.call<SshConfigHost[]>("parse_ssh_config");
         setSshHosts(hosts);
         setSshHostsLoaded(true);
       } catch (e) {
@@ -140,7 +140,7 @@ export function SshConnectionFields(p: Props) {
         setSshHostsLoaded(true);
       }
       try {
-        const keys = await invoke<DetectedKey[]>("list_ssh_keys");
+        const keys = await backend.call<DetectedKey[]>("list_ssh_keys");
         setDetectedKeys(keys);
       } catch (e) {
         log.warn("list_ssh_keys failed", e);
@@ -155,7 +155,7 @@ export function SshConnectionFields(p: Props) {
       return;
     }
     try {
-      const r = await invoke<PermsResult>("check_key_permissions", { path });
+      const r = await backend.call<PermsResult>("check_key_permissions", { path });
       s.setKeyPerms(r);
     } catch (e) {
       log.warn("check_key_permissions failed", e);
@@ -172,7 +172,7 @@ export function SshConnectionFields(p: Props) {
     const path = s.keyPath();
     if (!path) return;
     try {
-      const r = await invoke<PermsResult>("fix_key_permissions", { path });
+      const r = await backend.call<PermsResult>("fix_key_permissions", { path });
       s.setKeyPerms(r);
     } catch (e) {
       log.error("fix_key_permissions failed", e);
@@ -207,7 +207,7 @@ export function SshConnectionFields(p: Props) {
     setTesting(true);
     setTestResult(null);
     try {
-      const r = await invoke<TestResult>("test_ssh_connect", {
+      const r = await backend.call<TestResult>("test_ssh_connect", {
         host: s.host().trim(),
         user: s.user().trim(),
         port: s.port(),

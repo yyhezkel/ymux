@@ -1,7 +1,5 @@
 import { onCleanup, onMount } from "solid-js";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { invoke } from "@tauri-apps/api/core";
+import { backend, type UnlistenFn } from "../backend";
 import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
 import { applyTheme, loadSettings } from "../settings";
 import { parsePopoutProfile, popoutProfileKey } from "../popoutProfile";
@@ -89,7 +87,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
     // failed lookup leaves the proxy unarmed (plain shell keeps xterm wheel).
     void resolvePopoutTmuxArm(
       localStorage.getItem(`ymux.popout.pane.${props.sessionId}`),
-      () => invoke<Record<string, string>>("pane_persistence_list"),
+      () => backend.call<Record<string, string>>("pane_persistence_list"),
       (m, e) => log.warn(m, e),
     ).then((armed) => ti?.setTmuxScroll(armed));
 
@@ -109,7 +107,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
       } catch {
         // quota/private mode — zoom still applies for this session
       }
-      void emit("popout:zoom", sizePt); // equalize every open popout
+      void backend.emit("popout:zoom", sizePt); // equalize every open popout
     };
     ti.container.addEventListener("wheel", onWheel, {
       capture: true,
@@ -119,7 +117,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
     void (async () => {
       // Cross-popout equalize: match the latest wheel-set size.
       unlistens.push(
-        await listen<number>("popout:zoom", (e) => {
+        await backend.on<number>("popout:zoom", (e) => {
           const pt = clampPt(Math.round(e.payload));
           if (pt === sizePt) return;
           sizePt = pt;
@@ -127,14 +125,14 @@ export function PopoutTerminal(props: { sessionId: string }) {
         }),
       );
       unlistens.push(
-        await listen<PtyDataEvent>("pty:data", (e) => {
+        await backend.on<PtyDataEvent>("pty:data", (e) => {
           if (e.payload.session_id === props.sessionId) {
             ti?.writeData(e.payload.data);
           }
         }),
       );
       unlistens.push(
-        await listen<PtyExitEvent>("pty:exit", (e) => {
+        await backend.on<PtyExitEvent>("pty:exit", (e) => {
           if (e.payload.session_id !== props.sessionId) return;
           ti?.notice(
             `[session ended${e.payload.reason ? ` (${e.payload.reason})` : ""}]`,
@@ -142,7 +140,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
           // Let the notice land, then close the window. Rust's Destroyed
           // handler emits popout:closed so the main pane cleans up.
           setTimeout(() => {
-            void getCurrentWindow().close();
+            void backend.host.closeWindow();
           }, 1200);
         }),
       );

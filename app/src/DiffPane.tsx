@@ -9,8 +9,7 @@
 // jumps to a file's hunk. Parsing is in `diffModel.ts` (pure, tested).
 
 import { createSignal, createMemo, createEffect, on, For, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import type { DiffSource } from "./bindings/DiffSource";
 import type { WorktreeEntry } from "./bindings/WorktreeEntry";
 import type { LayoutNode } from "./types";
@@ -88,7 +87,7 @@ export function DiffPane(p: Props) {
     setSource(next);
     setBusy(true);
     try {
-      await invoke("diff_pane_set_source", { paneId: p.pane.pane_id, source: next });
+      await backend.call("diff_pane_set_source", { paneId: p.pane.pane_id, source: next });
     } catch (e) {
       log.error("diff_pane_set_source failed", e);
     } finally {
@@ -99,7 +98,7 @@ export function DiffPane(p: Props) {
   const refresh = async () => {
     setBusy(true);
     try {
-      await invoke("diff_pane_refresh", { paneId: p.pane.pane_id });
+      await backend.call("diff_pane_refresh", { paneId: p.pane.pane_id });
     } catch {
       // diff_pane_refresh emits an error event too; ignore the rejection.
     } finally {
@@ -109,7 +108,7 @@ export function DiffPane(p: Props) {
 
   const listWorktrees = async () => {
     try {
-      const list = await invoke<WorktreeEntry[]>("diff_pane_worktrees", {
+      const list = await backend.call<WorktreeEntry[]>("diff_pane_worktrees", {
         paneId: p.pane.pane_id,
       });
       setWorktrees(list);
@@ -123,7 +122,7 @@ export function DiffPane(p: Props) {
   const selectWorktree = async (wt: WorktreeEntry) => {
     const back = pathKey(wt.path) === pathKey(p.workspaceCwd ?? "");
     try {
-      await invoke("diff_pane_set_cwd", {
+      await backend.call("diff_pane_set_cwd", {
         paneId: p.pane.pane_id,
         cwd: back ? null : wt.path,
       });
@@ -165,7 +164,7 @@ export function DiffPane(p: Props) {
     let unlisten: UnlistenFn | undefined;
     void (async () => {
       try {
-        unlisten = await listen<{
+        unlisten = await backend.on<{
           pane_id: string;
           diff_text: string;
           files: StatusEntry[];
@@ -202,14 +201,14 @@ export function DiffPane(p: Props) {
       }
       // Start the watcher only after the listener is armed (the first emit
       // is hash-gated and never repeats).
-      try { await invoke("diff_pane_start", { paneId: p.pane.pane_id }); }
+      try { await backend.call("diff_pane_start", { paneId: p.pane.pane_id }); }
       catch (e) { log.error("diff_pane_start failed", e); }
       void listWorktrees();
     })();
     onCleanup(() => {
       disposed = true;
       try { unlisten?.(); } catch {}
-      void invoke("diff_pane_stop", { paneId: p.pane.pane_id }).catch(() => {});
+      void backend.call("diff_pane_stop", { paneId: p.pane.pane_id }).catch(() => {});
     });
   });
 

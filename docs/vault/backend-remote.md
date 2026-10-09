@@ -5,6 +5,7 @@ covers:
   - app/src-tauri/src/bootstrap_guard.rs
   - app/src-tauri/src/provisioning.rs
   - app/src-tauri/src/addons.rs
+  - app/src-tauri/src/web_addon.rs
   - app/src-tauri/src/pairing.rs
 ---
 
@@ -96,7 +97,36 @@ Insights panel — the frontend does not make it. Shared helpers `exec`, `exec_s
 hand** — a Go change that skips the rebake ships the old server to every remote, which
 is why `ci-windows.yml` has a gate for exactly that.
 
-## `pairing.rs` (231) — mobile
+## `web_addon.rs` — the `ymux-web` add-on (Phase 112, WEB-DESIGN Phase D)
+
+Puts the browser frontend on a server so its daemon (2.9.0+) serves it at `/`. The
+frontend shipped is **the one embedded in this desktop binary** (Tauri `frontendDist`):
+`init()` at app setup takes the file list from `AssetResolver::iter` (whose bytes are
+brotli-compressed — never upload those) and the contents from `AssetResolver::get`
+(decompressed; no CSP is configured, so `index.html` is untouched), keeping `index.html`,
+`assets/`, `fonts/`, and since Phase 114 the PWA's `sw.js`, `manifest.webmanifest` and
+`icons/` — exactly the daemon's routes. Its label `<app version>-<sha256 8 hex>` is the add-on's version —
+`addons.rs registry()` substitutes it for the crate's `"embedded"` placeholder. No
+tarball in `resources/` (a `cargo test` without a fresh vite build would fail on it) and
+no second build: version-aligned by construction. A dev build on `devUrl` has no
+embedded `index.html` and the add-on reports itself unavailable.
+
+- **install / update** (`web_install`): one SFTP session uploads the set into
+  `~/.ymux/server/www/<label>.tmp-<pid>/`, then `mv` to `<label>/`, a fresh symlink
+  `mv -T`'d over `current` (atomic), and every other version but the newest one is
+  removed. Verified by reading `current` back. A failed upload removes the tmp dir.
+- **detect** (`web_detect`): `basename $(readlink current)` when `current/index.html`
+  exists. **uninstall**: `rm -rf ~/.ymux/server/www` — the daemon falls back to its
+  diagnostic page.
+- **Automatic on connect** (Yossi, 2026-10-06): `spawn_ssh` calls `spawn_auto_update`
+  next to `check_remote_hooks` — a background task that re-installs only when the
+  host HAS the add-on and its label differs, once per host + label per run (a failure
+  clears the mark so the next connect retries). It never installs on a host that did
+  not opt in, and never blocks the pane.
+- Paths come from our own build and pass `safe_rel` (no `..`, plain charset) before they
+  reach a remote string.
+
+## `pairing.rs` (231) — mobile, and Web & devices (Phase 113)
 
 Drives the `nginx-proxy` add-on install (domain + Cloudflare token) and the daemon's
 `/api/pairing/*` endpoints, curled over the workspace SSH session the same way
@@ -107,6 +137,15 @@ It persists remote-side only in `/etc/ymux/cloudflare.ini` (mode 600, root) beca
 certbot's auto-renew needs it. The domain marker lives at
 `~/.ymux/server/mobile-domain` — note `server`, not `insights`; Phase 77 renamed that
 directory and migrates it in place on first 2.0 boot.
+
+**Terminal access (Phase 113).** `mobile_pairing_set_shell(workspace, device, enabled)`
+grants or withdraws `shell:attach` on a paired device — the checkbox in the device list
+(Monitor → "Web & devices"). Read-modify-write of the owner endpoint
+`/api/v2/devices/{id}/scopes`: the daemon's GET already expands "all" into the explicit
+list, so `with_shell` only adds/removes the one name and no copy of the Go scope
+vocabulary lives here; the PUT normalizes; the reply is checked for the change.
+`daemon_curl`'s allow-list grew by exactly that route (`is_device_scopes_path`, one valid
+device id) — nothing else under `/api/v2/` is reachable through it.
 
 ## Invariants
 

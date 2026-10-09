@@ -145,6 +145,9 @@ func (r *HookRegistry) hello(lang string) helloData {
 	}
 	r.mu.Lock()
 	for _, e := range r.byName {
+		if e.released {
+			continue
+		}
 		d.PaneAgentStates[e.paneID] = e.run.Event(e.paneID)
 		d.PaneBriefs[e.paneID] = e.brief
 		d.Panes[e.paneID] = paneInfo{Session: e.name, Policy: e.policy}

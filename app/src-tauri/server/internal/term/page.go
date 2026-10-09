@@ -94,6 +94,11 @@ func (s *Service) registerPageRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /diag", s.handlePage)
 	mux.HandleFunc("GET /assets/{file...}", s.handleWebAsset)
 	mux.HandleFunc("GET /fonts/{file...}", s.handleWebAsset)
+	// Phase 114 (E): the PWA's manifest, service worker and icons — each
+	// named, still no catch-all.
+	mux.HandleFunc("GET /icons/{file...}", s.handleWebAsset)
+	mux.HandleFunc("GET /manifest.webmanifest", s.handleWebTopFile)
+	mux.HandleFunc("GET /sw.js", s.handleWebTopFile)
 	mux.HandleFunc("POST /diag/log", s.handleDiagLog)
 }
 

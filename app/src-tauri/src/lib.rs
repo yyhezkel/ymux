@@ -7,6 +7,7 @@ mod brief;
 // Phase 53 (rebased): browser_pane.rs renamed to workspace_browser.rs;
 // per-pane commands swapped for workspace-keyed commands.
 mod workspace_browser;
+mod web_addon;
 mod claude_log;
 mod claude_summary;
 mod claude_usage;
@@ -4838,6 +4839,10 @@ async fn spawn_ssh(
             .await;
         });
     }
+    // Phase 112 (Yossi, 2026-10-06: automatic on connect): a host with the
+    // ymux-web add-on gets this desktop's frontend when its label differs.
+    // Background, once per host and label per run; never blocks the pane.
+    web_addon::spawn_auto_update(Arc::clone(&handle_arc), hkey.clone());
 
     let id_for_task = id.clone();
     let pane_for_task = pane_id.clone();
@@ -12796,6 +12801,9 @@ pub fn run() {
             if let Some(dir) = &cfg_dir {
                 config_lock::hold_for_process(dir);
             }
+            // Phase 112: read the embedded frontend once — the ymux-web
+            // add-on uploads exactly this set to servers.
+            web_addon::init(app.handle());
 
             // Phase 53.G: was Phase 8.F.1 — the iframe-bridge
             // initialization script was the parent-side companion to
@@ -13103,6 +13111,7 @@ pub fn run() {
             pairing::mobile_pairing_list_devices,
             pairing::mobile_pairing_revoke,
             pairing::mobile_pairing_rename,
+            pairing::mobile_pairing_set_shell,
             workspaces_load,
             workspace_create,
             workspace_update,

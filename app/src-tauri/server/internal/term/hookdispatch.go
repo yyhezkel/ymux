@@ -52,6 +52,10 @@ type feedPushParams struct {
 type hookPayload struct {
 	NotificationType     string  `json:"notification_type"`
 	Prompt               string  `json:"prompt"`
+	// F3 (Phase 117): the Context Rail's keys (context.go).
+	SessionID string `json:"session_id"`
+	Cwd       string `json:"cwd"`
+	Reason    string `json:"reason"`
 	LastAssistantMessage *string `json:"last_assistant_message"`
 }
 
@@ -85,6 +89,12 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 
 	r.mu.Lock()
 	e := t.e
+	if e.released {
+		// Its pane belongs to a newer session now: no card, no light, no
+		// context — and no opinion, so the CLI falls back to Claude's own.
+		r.mu.Unlock()
+		return map[string]any{"request_id": p.RequestID, "decision": "passive"}
+	}
 	// Defense in depth: the HMAC already identified the session, so a hook
 	// naming another pane or another tmux session is something forging
 	// across sessions — refuse rather than fold it into the wrong light.
@@ -122,13 +132,27 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 		b := *e.brief.Brief
 		stopBrief = &b
 	}
-	pane, session, policy := e.paneID, e.name, e.policy
+	pane, session, policy, wsID := e.paneID, e.name, e.policy, e.workspaceID
 	logger.Debug("hook folded", "pane", pane, "subkind", p.Subkind,
 		"state", string(e.run.CurrentState()), "seq", e.run.Seq)
 	r.mu.Unlock()
 
 	if runEv != nil {
 		r.hub.publish("pane:agent-run", same(*runEv))
+	}
+	// F3: the session's context record (file I/O — never under r.mu).
+	switch p.Subkind {
+	case "user-prompt-submit", "stop", "session-end":
+		ev := contextEvent{sessionID: pl.SessionID, wsID: wsID, paneID: pane, cwd: pl.Cwd}
+		switch p.Subkind {
+		case "user-prompt-submit":
+			ev.prompt = strings.TrimSpace(pl.Prompt)
+		case "stop":
+			ev.stop = stopBrief
+		case "session-end":
+			ev.ended, ev.reason = true, pl.Reason
+		}
+		r.recordContext(ev)
 	}
 	if briefEv != nil {
 		r.hub.publish("pane:brief", same(map[string]any{"pane_id": pane, "entry": *briefEv}))
@@ -137,6 +161,12 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	passive := map[string]any{"request_id": p.RequestID, "decision": "passive"}
 	// The desktop's early returns: a prompt is turn bookkeeping, a
 	// notification or stop-failure is a state signal only — none ever makes a card.
+	if p.Subkind == "notification" && pl.NotificationType != "idle_prompt" && r.notify != nil {
+		// Phase 114: Claude asking for something is worth a notification
+		// even though it makes no card. idle_prompt follows a stop, whose
+		// card already sent one.
+		r.notify(attentionNote(p, pane, session))
+	}
 	if p.Subkind == "user-prompt-submit" || p.Subkind == "notification" || p.Subkind == "stop-failure" {
 		return passive
 	}
@@ -190,6 +220,9 @@ func (r *HookRegistry) addCard(p feedPushParams, pane, session string, stopBrief
 	ch := r.feed.add(entry)
 	logger.Info("feed item added", "request", reqID, "pane", pane, "subkind", p.Subkind, "blocking", blocking)
 	r.hub.publish("feed:item-added", func(lang string) any { return r.feed.viewOf(entry, lang) })
+	if n, ok := noteForCard(entry); ok && r.notify != nil {
+		r.notify(n)
+	}
 	return entry.item, ch
 }
 

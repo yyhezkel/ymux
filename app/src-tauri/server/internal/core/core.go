@@ -71,10 +71,24 @@ import (
 // (<data dir>/www/current) with the diagnostic page kept at /diag, and the
 // browser's settings document (GET/PUT /api/v2/settings, settings:changed).
 //
+// 2.10.0 (Phase 109, WEB-DESIGN C5): a session create takes the caller's
+// `pane_id`, so a browser layout leaf and its tmux session's hooks share one id.
+//
+// 2.11.0 (Phase 110, WEB-DESIGN C6): a session create takes an argv (`cmd`, a
+// browser pane in "claude" mode), and a gate card whose CLI title fell back to
+// "agent: pre-tool-use" is humanized from tool_name / tool_input.
+//
+// 2.12.0 (Phase 111): hook routing survives a restart — the hook listener
+// reclaims its previous port and browser sessions are re-registered from
+// their own tmux environment.
+//
+// 2.13.0 (Phase 113, WEB-DESIGN D2): the browser-pairing approve endpoint
+// validates its scopes with auth.NormalizeScopes, like the PUT does.
+//
 // Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
 // had already drifted apart, which made the desktop read a 2.2.1 remote as
 // NEWER than the version it ships and silently stop offering updates.
-const Version = "2.9.0"
+const Version = "2.19.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value
@@ -174,4 +188,18 @@ type FilesProvider interface {
 	Open(path string) (rc io.ReadCloser, size int64, err error)
 	// Root is the absolute sandbox root (for diagnostics).
 	Root() string
+
+	// Phase 116 (WEB-DESIGN F2): the File Manager's mutating ops — parity
+	// with the desktop's SFTP ones, inside the same sandbox.
+	Mkdir(path string) error
+	Rename(from, to string) error
+	// Copy copies a file or, recursively, a directory (symlinks skipped).
+	Copy(from, to string) error
+	// DeleteTree removes a file or a whole directory (never the root).
+	DeleteTree(path string) error
+	// Archive packs names (relative to cwd) into cwd/output; format is
+	// "zip" or "targz". Returns the archive's path.
+	Archive(cwd string, names []string, output, format string) (string, error)
+	// Unzip extracts a .zip into <dir>/<stem>/ and returns that path.
+	Unzip(path string) (string, error)
 }

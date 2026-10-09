@@ -112,6 +112,10 @@ pub mod routines {
     pub const NGINX_PROXY_INSTALL: &str = "nginx_proxy_install";
     pub const NGINX_PROXY_UNINSTALL: &str = "nginx_proxy_uninstall";
     pub const NGINX_PROXY_DETECT: &str = "nginx_proxy_detect";
+    // Phase 112 — the browser frontend (web_addon.rs in the app crate).
+    pub const WEB_INSTALL: &str = "web_install";
+    pub const WEB_UNINSTALL: &str = "web_uninstall";
+    pub const WEB_DETECT: &str = "web_detect";
 }
 
 /// Stable add-on ids.
@@ -121,7 +125,14 @@ pub mod ids {
     pub const HOOKS: &str = "hooks";
     pub const INSIGHTS: &str = "insights";
     pub const NGINX_PROXY: &str = "nginx-proxy";
+    pub const WEB: &str = "ymux-web";
 }
+
+/// The `ymux-web` manifest's placeholder version. The real one is the label of
+/// the frontend embedded in the desktop binary (`<app version>-<hash8>`),
+/// known only at run time — the app crate substitutes it (addons.rs
+/// `registry()`).
+pub const WEB_VERSION_PLACEHOLDER: &str = "embedded";
 
 /// Version of the `nginx-proxy` add-on (the installer logic, not nginx itself).
 pub const NGINX_PROXY_VERSION: &str = "1.0.0";
@@ -132,7 +143,7 @@ pub const NGINX_PROXY_VERSION: &str = "1.0.0";
 /// check compares the remote's `ymux-server --version` (falling back to the
 /// legacy `ymux-insights` symlink) against this. Major 2 = the API-stability
 /// guarantee; existing 1.2.x installs are offered the 2.0.0 upgrade.
-pub const INSIGHTS_VERSION: &str = "2.9.0";
+pub const INSIGHTS_VERSION: &str = "2.19.0";
 
 /// The add-ons ymux knows about, in dependency-friendly order
 /// (ymux-cli first — everything else needs the remote CLI present).
@@ -247,6 +258,29 @@ pub fn builtin_registry() -> Vec<AddonManifest> {
             },
             // nginx/apt/certbot require root (run-as-root or NOPASSWD sudo).
             needs_sudo: true,
+        },
+        AddonManifest {
+            id: ids::WEB.into(),
+            name: "ymux in the browser".into(),
+            description: "Serve this desktop's ymux frontend from the server daemon, \
+                          so a paired browser can open ymux at the server's address."
+                .into(),
+            version: WEB_VERSION_PLACEHOLDER.into(),
+            // The daemon serves it (2.9.0+), the CLI is what its sessions use.
+            dependencies: vec![ids::CLI.into(), ids::INSIGHTS.into()],
+            install: AddonAction::Builtin {
+                routine: routines::WEB_INSTALL.into(),
+            },
+            uninstall: AddonAction::Builtin {
+                routine: routines::WEB_UNINSTALL.into(),
+            },
+            update: AddonAction::Builtin {
+                routine: routines::WEB_INSTALL.into(),
+            },
+            detect: AddonAction::Builtin {
+                routine: routines::WEB_DETECT.into(),
+            },
+            needs_sudo: false,
         },
     ]
 }
