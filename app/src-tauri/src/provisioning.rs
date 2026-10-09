@@ -935,9 +935,7 @@ fn finalize_workspace(
     input: &ProvisionInput,
     local_key_path: &str,
 ) -> Result<(String, String), String> {
-    use crate::{
-        new_pane_id, new_workspace_id, persist, Connection, LayoutNode, PaneKind, Workspace,
-    };
+    use crate::{persist, Connection};
 
     let new_conn = Connection::Ssh {
         host: input.host.clone(),
@@ -980,44 +978,42 @@ fn finalize_workspace(
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| derive_workspace_name(&input.host));
 
-    let pane_id = new_pane_id();
-    let layout = LayoutNode::Pane {
-        pane_id,
-        pane_kind: PaneKind::Terminal,
-        connection: Some(new_conn.clone()),
-        browser: None,
-        title: None,
-        auto_title: None,
-        annotation: None,
-        color: None,
-        emoji: None,
-        help_topic: None,
-        diff_source: None,
-        smart_bidi: None,
-        diff_cwd: None,
-        claude_running: None,
+    let (root_id, _screen_id) = {
+        let mut file = state
+            .workspaces
+            .lock()
+            .map_err(|e| format!("workspaces lock poisoned: {e}"))?;
+        provisioned_root(&mut file, display_name.clone(), &input.host, new_conn)
     };
-    let ws = Workspace {
-        id: new_workspace_id(),
-        name: display_name.clone(),
-        // Cycle through a small accent palette so each newly-provisioned
-        // workspace gets a distinct sidebar dot rather than all sharing
-        // the same colour. Choice is deterministic by host so the same
-        // server gets the same colour across re-provisions.
-        color: Some(workspace_color_for_host(&input.host)),
-        connection: Some(new_conn),
-        layout: Some(layout),
-        ..Default::default()
-    };
-    let id_out = ws.id.clone();
-    {
-        let mut file = state.workspaces.lock().unwrap();
-        file.active_workspace_id = Some(id_out.clone());
-        file.workspaces.push(ws);
-    }
     persist(state)?;
     let _ = app.emit("workspaces:changed", ());
-    Ok((id_out, display_name))
+    Ok((root_id, display_name))
+}
+
+/// Branch 2's constructor: a root header plus its active `shell` screen
+/// (Phase 92), via the same path as workspace_create. Returns
+/// (root_id, screen_id); the wizard hands the ROOT id to the frontend.
+/// Caller holds the workspaces lock.
+fn provisioned_root(
+    file: &mut crate::WorkspacesFile,
+    name: String,
+    host: &str,
+    conn: crate::Connection,
+) -> (String, String) {
+    crate::create_root_with_screen(
+        file,
+        crate::CreateInput {
+            name,
+            connection: conn,
+            // Cycle through a small accent palette so each newly-provisioned
+            // workspace gets a distinct sidebar dot; deterministic by host.
+            color: Some(workspace_color_for_host(host)),
+            cwd: None,
+            setup_command: None,
+            teardown_command: None,
+            env: None,
+        },
+    )
 }
 
 /// Walk a layout tree and rewrite the connection on the first terminal
@@ -1727,4 +1723,49 @@ pub(crate) fn provisioning_step_catalog() -> Vec<(String, String)> {
     all.into_iter()
         .map(|k| (format!("{k:?}"), k.label().to_string()))
         .collect()
+}
+
+#[cfg(test)]
+mod connect_existing_tests {
+    use super::provisioned_root;
+    use crate::{Connection, WorkspacesFile};
+
+    fn ssh() -> Connection {
+        Connection::Ssh {
+            host: "203.0.113.5".into(),
+            user: "runner".into(),
+            port: 22,
+            key_path: None,
+        }
+    }
+
+    // Pins the "join existing server" fix: root is a layout-less header and
+    // an active `shell` screen sits under it; breaking it reopens the blank-pane bug.
+    #[test]
+    fn connect_existing_root_gets_an_active_shell_screen() {
+        let mut f = WorkspacesFile::default();
+        let (root_id, screen_id) = provisioned_root(&mut f, "box".into(), "203.0.113.5", ssh());
+        let root = f.workspaces.iter().find(|w| w.id == root_id).expect("root");
+        assert!(root.layout.is_none());
+        assert!(matches!(root.connection, Some(Connection::Ssh { .. })));
+        let screen = f.workspaces.iter().find(|w| w.id == screen_id).expect("screen");
+        assert_eq!(screen.name, "shell");
+        assert_eq!(screen.parent_id.as_deref(), Some(root_id.as_str()));
+        assert!(screen.layout.is_some());
+        assert_eq!(f.active_workspace_id.as_deref(), Some(screen_id.as_str()));
+    }
+
+    // Pins id uniqueness and activation hand-off when rows already exist.
+    #[test]
+    fn connect_existing_with_prior_rows_has_no_id_collision() {
+        let mut f = WorkspacesFile::default();
+        let (r1, s1) = provisioned_root(&mut f, "a".into(), "h1", ssh());
+        let (r2, s2) = provisioned_root(&mut f, "b".into(), "h2", ssh());
+        let mut ids = vec![r1, s1.clone(), r2, s2.clone()];
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), 4);
+        assert_ne!(s1, s2);
+        assert_eq!(f.active_workspace_id.as_deref(), Some(s2.as_str()));
+    }
 }
