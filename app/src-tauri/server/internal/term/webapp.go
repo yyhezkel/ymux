@@ -13,11 +13,12 @@ package term
 // stays at `/diag`. When it does not, `/` keeps serving the diagnostic page,
 // so a box without a bundle behaves exactly as before.
 //
-// Routes are explicit — `/{$}`, `/assets/…`, `/fonts/…` — never a `/{path...}`
+// Routes are explicit — `/{$}`, `/assets/…`, `/fonts/…`, and since Phase 114
+// (E, the PWA) `/icons/…`, `/manifest.webmanifest`, `/sw.js` — never a `/{path...}`
 // catch-all: the shared mux holds method-less `/api/...` patterns, and a
 // catch-all GET pattern next to them is a registration-time conflict panic in
-// Go 1.22+ routing. Vite emits everything hashed under /assets and the public
-// dir only holds /fonts.
+// Go 1.22+ routing. Vite emits everything hashed under /assets; the public
+// dir holds /fonts, /icons and the two PWA files.
 //
 // Everything here is PUBLIC, like the diagnostic page: it is static code with
 // no secrets, and the login screen inside it is how a browser gets a token.
@@ -33,8 +34,10 @@ import (
 // webAppCSP: the bundle is self-contained (fonts and chunks from its own
 // origin) and talks only to this daemon. Inline styles are Solid's `style=`
 // bindings; data:/blob: images are canvases and pasted screenshots.
+// worker-src / manifest-src name the PWA's own two files (Phase 114).
 const webAppCSP = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
 	"connect-src 'self' ws: wss:; img-src 'self' data: blob:; font-src 'self' data:; " +
+	"worker-src 'self'; manifest-src 'self'; " +
 	"frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 
 // SetWebRoot points the daemon at <dir>/www (called with the data dir).
@@ -70,7 +73,7 @@ func (s *Service) handleRoot(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, idx)
 }
 
-// handleWebAsset serves one file under /assets or /fonts from the bundle.
+// handleWebAsset serves one file under /assets, /fonts or /icons from the bundle.
 func (s *Service) handleWebAsset(w http.ResponseWriter, r *http.Request) {
 	if s.webIndex() == "" {
 		http.NotFound(w, r)
@@ -84,7 +87,7 @@ func (s *Service) handleWebAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	top := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)[0] // "assets" | "fonts"
+	top := strings.SplitN(strings.TrimPrefix(r.URL.Path, "/"), "/", 2)[0] // "assets" | "fonts" | "icons"
 	full := filepath.Join(s.webRoot, top, filepath.FromSlash(rel))
 	st, err := os.Stat(full)
 	if err != nil || !st.Mode().IsRegular() {
@@ -97,6 +100,30 @@ func (s *Service) handleWebAsset(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=86400")
+	}
+	http.ServeFile(w, r, full)
+}
+
+// handleWebTopFile serves the PWA's two root-level files. Both are revalidated
+// on every load: the browser checks sw.js for an update itself, and a stale
+// cached copy would pin the previous worker past a bundle update.
+func (s *Service) handleWebTopFile(w http.ResponseWriter, r *http.Request) {
+	if s.webIndex() == "" {
+		http.NotFound(w, r)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/") // "sw.js" | "manifest.webmanifest"
+	full := filepath.Join(s.webRoot, name)
+	st, err := os.Stat(full)
+	if err != nil || !st.Mode().IsRegular() {
+		http.NotFound(w, r)
+		return
+	}
+	setWebAppHeaders(w)
+	w.Header().Set("Cache-Control", "no-cache")
+	if name == "manifest.webmanifest" {
+		// Not in Go's built-in MIME table.
+		w.Header().Set("Content-Type", "application/manifest+json")
 	}
 	http.ServeFile(w, r, full)
 }

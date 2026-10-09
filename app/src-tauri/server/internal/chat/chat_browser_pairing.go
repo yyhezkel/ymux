@@ -39,6 +39,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ymux-server/internal/auth"
 )
 
 // requestTTL is how long an unanswered request lives. Same 5 minutes as a
@@ -303,12 +305,10 @@ func (c *ChatAPI) handleApproveRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Body != nil {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
-	scopes := "all"
-	if len(body.Scopes) > 0 {
-		if b, err := json.Marshal(body.Scopes); err == nil {
-			scopes = string(b)
-		}
-	}
+	// Phase 113: the same validation PUT /api/v2/devices/{id}/scopes applies —
+	// unknown names dropped, duplicates collapsed, a full ordinary set folded
+	// back to "all". It used to store the request's list verbatim.
+	scopes := auth.NormalizeScopes(body.Scopes)
 	if !c.store.approveRequest(r.PathValue("id"), scopes, time.Now().Unix()) {
 		http.Error(w, "no such pending request", http.StatusNotFound)
 		return

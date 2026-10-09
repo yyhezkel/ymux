@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClose, IconCheck, IconArrowUp } from "./icons";
 import type { AddonStatus } from "./bindings/AddonStatus";
@@ -22,7 +22,7 @@ export function AddonsTab(p: { workspaceId?: string }) {
     setErr(null);
     setLoading(true);
     try {
-      setRows(await invoke<AddonStatus[]>("addon_list", { workspaceId: p.workspaceId }));
+      setRows(await backend.call<AddonStatus[]>("addon_list", { workspaceId: p.workspaceId }));
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -36,7 +36,7 @@ export function AddonsTab(p: { workspaceId?: string }) {
     setBusy(id);
     setErr(null);
     try {
-      const s = await invoke<AddonStatus>(cmd, { workspaceId: p.workspaceId, id });
+      const s = await backend.call<AddonStatus>(cmd, { workspaceId: p.workspaceId, id });
       setRows((prev) => prev.map((r) => (r.id === id ? s : r)));
       if (s.last_error) setErr(s.last_error);
     } catch (e) {
@@ -49,7 +49,7 @@ export function AddonsTab(p: { workspaceId?: string }) {
   const viewLogs = async (id: string) => {
     if (!p.workspaceId) return;
     try {
-      const text = await invoke<string>("addon_logs", { workspaceId: p.workspaceId, id });
+      const text = await backend.call<string>("addon_logs", { workspaceId: p.workspaceId, id });
       setLogs({ id, text: text.trim() || "(empty)" });
     } catch (e) {
       setErr(String(e));

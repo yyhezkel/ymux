@@ -55,6 +55,11 @@ type hookEntry struct {
 	// 103) — "" for a session created outside one. It fences an agent's
 	// send / title verbs to its own workspace.
 	workspaceID string
+	// released (Phase 117): another session took this pane id over
+	// (create with replace_pane — "open a new session instead"). The session
+	// keeps running, but it no longer speaks for any pane: its hooks get a
+	// quiet passive answer and every pane-keyed lookup skips it.
+	released bool
 }
 
 // Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
@@ -95,6 +100,13 @@ type HookRegistry struct {
 
 	// C4 (Phase 108): the browser's settings document (settings.go).
 	settings *settingsStore
+
+	// E (Phase 114): sends a notification to subscribed browsers
+	// (webpush.go). Set once at boot, before the hook listener starts.
+	notify func(webNote)
+
+	// F3 (Phase 117): per-Claude-session context for the rail (context.go).
+	context *contextStore
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
@@ -103,7 +115,7 @@ type HookRegistry struct {
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
 		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore(""),
-		settings: newSettingsStore("")}
+		settings: newSettingsStore(""), context: newContextStore("")}
 }
 
 // SetHookAddr implements core.AddrSink.
@@ -121,22 +133,63 @@ func (r *HookRegistry) hookAddr() string {
 
 // mint creates the identity for a session about to be created and returns
 // the tmux environment that carries it. Nothing is registered until add.
-func (r *HookRegistry) mint(name, addr string) (*hookEntry, map[string]string, error) {
+//
+// paneID is the caller's own pane id (Phase 109: a browser layout leaf, so
+// the leaf a hook reports is the leaf the UI drew); "" mints term_<hex>.
+func (r *HookRegistry) mint(name, addr, paneID string) (*hookEntry, map[string]string, error) {
 	tok, err := randHex(32)
 	if err != nil {
 		return nil, nil, err
 	}
-	id, err := randHex(8)
-	if err != nil {
-		return nil, nil, err
+	if paneID == "" {
+		id, err := randHex(8)
+		if err != nil {
+			return nil, nil, err
+		}
+		paneID = "term_" + id
 	}
-	e := &hookEntry{name: name, token: tok, paneID: "term_" + id, policy: policyNone}
+	e := &hookEntry{name: name, token: tok, paneID: paneID, policy: policyNone}
 	env := map[string]string{
 		"YMUX_SOCKET_ADDR":  addr,
 		"YMUX_TUNNEL_TOKEN": tok,
 		"YMUX_PANE_ID":      e.paneID,
 	}
 	return e, env, nil
+}
+
+// hasSession reports whether name is registered (Phase 111).
+func (r *HookRegistry) hasSession(name string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	_, ok := r.byName[name]
+	return ok
+}
+
+// paneInUse reports whether a live session already carries paneID.
+func (r *HookRegistry) paneInUse(paneID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, e := range r.byName {
+		if e.paneID == paneID && !e.released {
+			return true
+		}
+	}
+	return false
+}
+
+// releasePane hands paneID over: whatever live session carried it stops
+// speaking for it (see hookEntry.released). Returns how many were released.
+func (r *HookRegistry) releasePane(paneID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, e := range r.byName {
+		if e.paneID == paneID && !e.released {
+			e.released = true
+			n++
+		}
+	}
+	return n
 }
 
 // add registers a session that tmux has just created.
@@ -191,6 +244,13 @@ func (r *HookRegistry) SetPolicy(name, policy string) bool {
 	}
 	e.policy = policy
 	logger.Info("hook policy set", "pane", e.paneID, "policy", policy)
+	// Phase 111: keep the session's own copy current, so a restart recovers
+	// the policy the user chose (RecoverHooks). Best-effort.
+	if r.tmux != nil {
+		if err := r.tmux.SetEnv(name, "YMUX_POLICY", policy); err != nil {
+			logger.Warn("could not record the policy in the session", "pane", e.paneID, "err", err)
+		}
+	}
 	return true
 }
 
@@ -254,6 +314,9 @@ func (r *HookRegistry) Snapshot() map[string]PaneSnapshot {
 	defer r.mu.Unlock()
 	out := make(map[string]PaneSnapshot, len(r.byName))
 	for _, e := range r.byName {
+		if e.released {
+			continue
+		}
 		out[e.paneID] = PaneSnapshot{Session: e.name, AgentRun: e.run.Event(e.paneID), Brief: e.brief}
 	}
 	return out

@@ -322,6 +322,19 @@ func (t *Tmux) CurrentPath(name string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// Capture is the last `lines` lines of a session's current pane, as text
+// (Phase 119, the sessions overview). "" on any failure.
+func (t *Tmux) Capture(name string, lines int) string {
+	if !ValidName(name) {
+		return ""
+	}
+	out, err := t.exec("capture-pane", "-p", "-t", paneTarget(name), "-S", "-"+strconv.Itoa(lines))
+	if err != nil {
+		return ""
+	}
+	return string(out)
+}
+
 // AttachArgs is the argv for attaching to a session, shared by the PTY layer.
 // `-u` forces UTF-8: the daemon runs under systemd with a minimal environment
 // where LANG is often unset, and without it tmux draws box characters as
@@ -329,3 +342,35 @@ func (t *Tmux) CurrentPath(name string) string {
 func AttachArgs(name string) []string {
 	return []string{"-u", "attach-session", "-t", target(name)}
 }
+
+// Environment reads a session's own environment (`show-environment`, the
+// variables set with -e at create or set-environment later). Removed
+// variables (`-NAME`) are skipped. Phase 111: RecoverHooks reads a session's
+// hook identity back from here after a daemon restart — the token included,
+// so the result is never logged (Rule #8).
+func (t *Tmux) Environment(name string) (map[string]string, error) {
+	if !ValidName(name) {
+		return nil, ErrBadName
+	}
+	out, err := t.exec("show-environment", "-t", target(name))
+	if err != nil {
+		return nil, err
+	}
+	env := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(k, "-") {
+			env[k] = v
+		}
+	}
+	return env, nil
+}
+
+// SetEnv sets one variable in a session's environment (Phase 111).
+func (t *Tmux) SetEnv(name, key, value string) error {
+	if !ValidName(name) {
+		return ErrBadName
+	}
+	_, err := t.exec("set-environment", "-t", target(name), key, value)
+	return err
+}
+

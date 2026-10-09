@@ -1,7 +1,5 @@
 import { createSignal, onCleanup, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { backend } from "../backend";
 import type { Workspace, WorkspacesFile } from "../types";
 import type { Geometry } from "../floatingWindow";
 import {
@@ -60,10 +58,10 @@ export function PopoutBrowser(props: { workspaceId: string }) {
   };
 
   const ensurePorts = (wsId: string): void => {
-    void invoke("workspace_ensure_port_watcher", { workspaceId: wsId }).catch(
+    void backend.call("workspace_ensure_port_watcher", { workspaceId: wsId }).catch(
       (e: unknown) => log.warn("workspace_ensure_port_watcher failed", e),
     );
-    void invoke<DetectedPort[]>("list_detected_ports", { workspaceId: wsId })
+    void backend.call<DetectedPort[]>("list_detected_ports", { workspaceId: wsId })
       .then((snapshot) => setDetectedPorts(snapshot))
       .catch((e: unknown) => log.warn("list_detected_ports failed", e));
   };
@@ -85,12 +83,12 @@ export function PopoutBrowser(props: { workspaceId: string }) {
     },
     onEnsurePorts: ensurePorts,
     onStartForward: (remotePort) =>
-      invoke<number>("forward_port_start", {
+      backend.call<number>("forward_port_start", {
         workspaceId: props.workspaceId,
         remotePort,
       }),
     slotRect,
-    windowLabel: getCurrentWindow().label,
+    windowLabel: backend.host.windowLabel(),
   });
 
   onMount(() => {
@@ -101,7 +99,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
 
     // The workspace row, for the window title and so the chrome has a
     // non-null `workspace` to key its persistence on.
-    void invoke<WorkspacesFile>("workspaces_load")
+    void backend.call<WorkspacesFile>("workspaces_load")
       .then((file) => {
         const ws = file.workspaces.find((w) => w.id === props.workspaceId);
         if (!ws) {
@@ -109,7 +107,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
           return;
         }
         setWorkspace(ws);
-        void getCurrentWindow().setTitle(`${ws.name} — Browser`).catch(() => {});
+        void backend.host.setTitle(`${ws.name} — Browser`).catch(() => {});
       })
       .catch((e: unknown) => log.error("workspaces_load failed", e));
 
@@ -120,7 +118,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
     const unlistens: (() => void)[] = [];
     void (async () => {
       unlistens.push(
-        await listen<DetectedPort & { workspace_id: string }>(
+        await backend.on<DetectedPort & { workspace_id: string }>(
           "port-detected",
           (e) => {
             if (e.payload.workspace_id !== props.workspaceId) return;
@@ -136,7 +134,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
         ),
       );
       unlistens.push(
-        await listen<{ workspace_id: string; remote_port: number }>(
+        await backend.on<{ workspace_id: string; remote_port: number }>(
           "port-undetected",
           (e) => {
             if (e.payload.workspace_id !== props.workspaceId) return;
@@ -147,13 +145,13 @@ export function PopoutBrowser(props: { workspaceId: string }) {
         ),
       );
       unlistens.push(
-        await listen<{ workspace_id: string }>("port-detection-cleared", (e) => {
+        await backend.on<{ workspace_id: string }>("port-detection-cleared", (e) => {
           if (e.payload.workspace_id !== props.workspaceId) return;
           setDetectedPorts([]);
         }),
       );
       unlistens.push(
-        await listen<{
+        await backend.on<{
           workspace_id: string;
           remote_port: number;
           local_port: number;
@@ -169,7 +167,7 @@ export function PopoutBrowser(props: { workspaceId: string }) {
         }),
       );
       unlistens.push(
-        await listen<{ workspace_id: string; remote_port: number }>(
+        await backend.on<{ workspace_id: string; remote_port: number }>(
           "port-forward-stopped",
           (e) => {
             if (e.payload.workspace_id !== props.workspaceId) return;

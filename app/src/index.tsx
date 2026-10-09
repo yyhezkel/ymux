@@ -2,8 +2,11 @@
 // logger.ts must load BEFORE the console monkeypatch below — it captures the
 // original console fns so logger output is never forwarded twice.
 import { enqueueLog } from "./logger";
+import { backend, initBackend, isBrowserHost } from "./backend";
+import { WebLogin } from "./WebLogin";
+import { WebPushPrompt } from "./WebPushPrompt";
+import { applyI18nSettings } from "./i18n";
 import { render } from "solid-js/web";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 // Global stylesheets live at the entry point so BOTH the main <App> and the
 // #4 pop-out window (which bypasses <App>) get xterm's CSS + our theme.
 // Previously these were imported inside App.tsx, so a popout webview rendered
@@ -60,12 +63,8 @@ import { initPlatform } from "./platform";
 // is a CLEAN `index.html` (no query/fragment) because Tauri's built-app asset
 // protocol serves a blank page for any suffixed path — so the label, not the
 // URL, carries the id.
-let winLabel = "";
-try {
-  winLabel = getCurrentWindow().label;
-} catch {
-  // window metadata not ready — treat as the main window
-}
+// "" when window metadata is not ready — treated as the main window.
+const winLabel = backend.host.windowLabel();
 const popoutSid = winLabel.startsWith("popout-")
   ? winLabel.slice("popout-".length)
   : null;
@@ -87,6 +86,14 @@ const popoutBrowserWs = winLabel.startsWith("browser-popout-")
 // An async IIFE rather than top-level await: Vite's default build target is
 // `es2020`, where esbuild refuses TLA outright.
 void (async () => {
+  // Phase 109: a browser tab first signs in and hydrates from the daemon;
+  // on the desktop this resolves "ready" immediately.
+  const boot = await initBackend();
+  if (boot !== "ready") {
+    applyI18nSettings({ language: navigator.language.startsWith("he") ? "he" : "en", direction: "auto" });
+    render(() => <WebLogin mode={boot} />, document.getElementById("root") as HTMLElement);
+    return;
+  }
   await initPlatform();
   if (popoutBrowserWs) {
     render(
@@ -100,5 +107,10 @@ void (async () => {
     );
   } else {
     render(() => <App />, document.getElementById("root") as HTMLElement);
+    // Phase 114: the notifications banner, browser only, outside App's tree.
+    if (isBrowserHost) {
+      const host = document.body.appendChild(document.createElement("div"));
+      render(() => <WebPushPrompt />, host);
+    }
   }
 })();

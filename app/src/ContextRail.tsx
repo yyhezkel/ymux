@@ -1,6 +1,5 @@
 import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { createLogger } from "./logger";
 import type { Workspace } from "./types";
@@ -113,7 +112,7 @@ export function ContextRail(p: Props) {
       return;
     }
     try {
-      const list = await invoke<SessionContext[]>("session_context_list", { wsId: id });
+      const list = await backend.call<SessionContext[]>("session_context_list", { wsId: id });
       if (mine !== fetchSeq) return; // a newer fetch (ws switch) won
       setSessions(list);
       setError(null);
@@ -131,7 +130,7 @@ export function ContextRail(p: Props) {
   onMount(() => {
     let un: (() => void) | null = null;
     let disposed = false;
-    void listen<{ session_id: string; ws_id: string | null }>("context:changed", (e) => {
+    void backend.on<{ session_id: string; ws_id: string | null }>("context:changed", (e) => {
       if (e.payload.ws_id === wsId()) void refetch();
     }).then((f) => {
       if (disposed) f();

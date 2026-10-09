@@ -24,7 +24,7 @@
 // The script is injected on demand (Dev Mode on) and removed again on
 // Dev Mode off — normal browsing never carries any of it.
 
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { createSignal } from "solid-js";
 import { createLogger } from "./logger";
 
@@ -476,7 +476,7 @@ export function teardownScript(): string {
  *  webview to talk to, which is not an error worth surfacing. */
 export async function applyDevMode(workspaceId: string, on: boolean): Promise<void> {
   try {
-    await invoke("workspace_browser_eval", {
+    await backend.call("workspace_browser_eval", {
       workspaceId,
       js: on ? inspectScript() : teardownScript(),
     });

@@ -13,7 +13,7 @@
 // resolve a Promise<string> with the transcribed text. The caller
 // (App.tsx push-to-talk handler) doesn't need to branch on backend.
 
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 export type SttBackend = "webspeech" | "local";
 
@@ -218,7 +218,7 @@ function makeLocalRecorder(language: string): SttRecorder {
                 // serializer turns a number[] into that shape. We pay
                 // an n*2-ish copy here but the payloads cap at ~30s
                 // of audio (a few MB), well under any pipe limit.
-                const text = await invoke<string>("stt_transcribe_local", {
+                const text = await backend.call<string>("stt_transcribe_local", {
                   audioBytes: Array.from(buf),
                   language: language === "auto" ? "" : language,
                 });

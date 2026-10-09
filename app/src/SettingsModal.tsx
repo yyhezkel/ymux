@@ -1,7 +1,6 @@
 import { createSignal, For, Show, onMount, createMemo, createEffect, onCleanup } from "solid-js";
 import type { RtlProfileKind } from "./types";
-import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { backend } from "./backend";
 import {
   Settings,
   PresetEntry,
@@ -389,7 +388,7 @@ export function SettingsModal(p: Props) {
   const refreshLogTail = async () => {
     try {
       setLogTail(
-        await invoke<string>("read_log_tail", { n: logFilter() ? 2000 : 200 }),
+        await backend.call<string>("read_log_tail", { n: logFilter() ? 2000 : 200 }),
       );
     } catch (e) {
       log.warn("read_log_tail failed", e);
@@ -418,7 +417,7 @@ export function SettingsModal(p: Props) {
   // Phase 75: clear the debug log now, then refresh the viewer.
   const clearLogs = async () => {
     try {
-      await invoke("clear_debug_log_cmd");
+      await backend.call("clear_debug_log_cmd");
       await refreshLogTail();
     } catch (e) {
       log.warn("clear_debug_log_cmd failed", e);
@@ -428,7 +427,7 @@ export function SettingsModal(p: Props) {
   const [doctorJson, setDoctorJson] = createSignal<string>("");
   const runDoctor = async () => {
     try {
-      const snapshot = await invoke<unknown>("doctor");
+      const snapshot = await backend.call<unknown>("doctor");
       setDoctorJson(JSON.stringify(snapshot, null, 2));
     } catch (e) {
       setDoctorJson(`error: ${String(e)}`);
@@ -520,13 +519,13 @@ export function SettingsModal(p: Props) {
     try { setFonts(await listSystemFonts()); } catch (e) { log.warn("listSystemFonts failed", e); }
     try { setCatalog(await fontCatalog()); } catch (e) { log.warn("fontCatalog failed", e); }
     // Phase 38: resolve the debug.log path for the Logs section.
-    try { setLogPath(await invoke<string>("log_dir_path")); } catch (e) { log.warn("log_dir_path failed", e); }
+    try { setLogPath(await backend.call<string>("log_dir_path")); } catch (e) { log.warn("log_dir_path failed", e); }
   });
 
   // Phase 38: Logs section actions.
   const onOpenLogFolder = () => {
     if (!logPath()) return;
-    void revealItemInDir(logPath()).catch((e) => log.warn("revealItemInDir failed", e));
+    void backend.host.revealInDir(logPath()).catch((e) => log.warn("revealItemInDir failed", e));
   };
   const onCopyLogPath = async () => {
     if (!logPath()) return;
@@ -963,7 +962,7 @@ export function SettingsModal(p: Props) {
                       />
                     </div>
                   </label>
-                  <Show when={missingFamily(fonts().ui, p.settings.font.ui_family)}>
+                  <Show when={backend.can("fonts") && missingFamily(fonts().ui, p.settings.font.ui_family)}>
                     {(family) => (
                       <FontMissingNotice
                         family={family()}
@@ -1008,7 +1007,7 @@ export function SettingsModal(p: Props) {
                       />
                     </div>
                   </label>
-                  <Show when={missingFamily(fonts().mono, p.settings.font.terminal_family)}>
+                  <Show when={backend.can("fonts") && missingFamily(fonts().mono, p.settings.font.terminal_family)}>
                     {(family) => (
                       <FontMissingNotice
                         family={family()}
@@ -1024,11 +1023,13 @@ export function SettingsModal(p: Props) {
                       update("font", { ...p.settings.font, terminal_family: family })
                     }
                   />
-                  <FontInstalledList
-                    catalog={catalog()}
-                    busy={fontBusy()}
-                    onUninstall={uninstallFont}
-                  />
+                  <Show when={backend.can("fonts")}>
+                    <FontInstalledList
+                      catalog={catalog()}
+                      busy={fontBusy()}
+                      onUninstall={uninstallFont}
+                    />
+                  </Show>
                   <Show when={fontNote()}>
                     {(note) => <p class="settings-hint">{note()}</p>}
                   </Show>
@@ -1648,7 +1649,9 @@ export function SettingsModal(p: Props) {
                       }
                     >
                       <option value="webspeech">{t("settings.stt.backend.webspeech")}</option>
-                      <option value="local">{t("settings.stt.backend.local")}</option>
+                      <Show when={backend.can("stt")}>
+                        <option value="local">{t("settings.stt.backend.local")}</option>
+                      </Show>
                     </select>
                   </label>
                   <Show when={(p.settings.stt?.backend ?? "webspeech") === "local"}>
@@ -1730,6 +1733,7 @@ export function SettingsModal(p: Props) {
               </Show>
 
               <Show when={tab() === "system"}>
+                <Show when={backend.can("updater")}>
                 <section>
                   <h4>{t("settings.updates.title")}</h4>
                   <label class="settings-checkbox">
@@ -1781,6 +1785,7 @@ export function SettingsModal(p: Props) {
                     }
                   />
                 </section>
+                </Show>
                 <section>
                   <h4>{t("settings.logs.recent")}</h4>
                   {/* Component filter — tags discovered from the tail itself. */}
@@ -1880,8 +1885,12 @@ export function SettingsModal(p: Props) {
                     <pre class="settings-logs-viewer">{doctorJson()}</pre>
                   </Show>
                 </section>
-                <AddonsTab workspaceId={p.activeWorkspaceId} />
-                <YmuxToolsTab workspaceId={p.activeWorkspaceId} />
+                <Show when={backend.can("addons")}>
+                  <AddonsTab workspaceId={p.activeWorkspaceId} />
+                </Show>
+                <Show when={backend.can("skills")}>
+                  <YmuxToolsTab workspaceId={p.activeWorkspaceId} />
+                </Show>
               </Show>
             </div>
           </div>

@@ -1,5 +1,5 @@
 import { createEffect, createSignal, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { createLogger } from "./logger";
@@ -91,7 +91,7 @@ export function CreateWorkspaceModal(p: Props) {
   const saveIdentity = async (nextColor: string | null, nextEmoji: string | null) => {
     if (!p.editing) return;
     try {
-      const ws = await invoke<Workspace>("workspace_set_identity", {
+      const ws = await backend.call<Workspace>("workspace_set_identity", {
         workspaceId: p.editing.id,
         color: nextColor,
         emoji: nextEmoji,
@@ -156,7 +156,7 @@ export function CreateWorkspaceModal(p: Props) {
   const onToggleAutoPortForward = (enabled: boolean) => {
     setAutoPortForward(enabled);
     if (!p.editing) return;
-    void invoke("workspace_set_auto_port_forward", {
+    void backend.call("workspace_set_auto_port_forward", {
       workspaceId: p.editing.id,
       enabled,
     }).catch((e) => log.error("workspace_set_auto_port_forward failed", e));
@@ -173,7 +173,7 @@ export function CreateWorkspaceModal(p: Props) {
     setWtBusy(true);
     setWtErr(null);
     try {
-      await invoke("workspace_create_worktree", {
+      await backend.call("workspace_create_worktree", {
         workspaceId: p.editing.id,
         branchName: branch,
         baseBranch: base,
@@ -198,7 +198,7 @@ export function CreateWorkspaceModal(p: Props) {
       setTeardownCmd(w.teardown_command || "");
       setEnvRows(w.env ? [...w.env] : []);
       setStoredSecretKeys([]);
-      invoke<string[]>("workspace_secret_env_keys", { workspaceId: w.id })
+      backend.call<string[]>("workspace_secret_env_keys", { workspaceId: w.id })
         .then(setStoredSecretKeys)
         .catch((e) => log.error("workspace_secret_env_keys failed", e));
       setAutoPortForward(w.auto_port_forward ?? true);
@@ -352,8 +352,10 @@ export function CreateWorkspaceModal(p: Props) {
 
           {/* Phase 49-B: worktree creator. Shown only for local
               workspaces. If a worktree already exists for this
-              workspace, the path is shown instead. */}
-          <Show when={type() === "local"}>
+              workspace, the path is shown instead. Phase 118: not in a
+              browser — the worktree there is made from the Diff pane's
+              strip (workspace_create_project_worktree). */}
+          <Show when={type() === "local" && backend.can("localPanes")}>
             <div class="ws-worktree-block">
               <Show
                 when={!p.editing?.git_worktree}

@@ -30,7 +30,7 @@ func newTestManagerWithRPC(t *testing.T) *SessionManager {
 	}
 	t.Cleanup(store.Close)
 	m := NewSessionManager(store)
-	hooks.Start(m) // listener → SetHookAddr + MatchHookHMAC (Phase 100)
+	hooks.Start("", m) // listener → SetHookAddr + MatchHookHMAC (Phase 100)
 	if m.rpcAddr == "" {
 		t.Fatal("rpcAddr not set after hooks.Start")
 	}

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +127,7 @@ func TestVersionAtLeast(t *testing.T) {
 
 func TestRegistryFollowsRenameKillAndList(t *testing.T) {
 	r := NewHookRegistry()
-	e, _, _ := r.mint("a", "127.0.0.1:1")
+	e, _, _ := r.mint("a", "127.0.0.1:1", "")
 	r.add(e)
 	r.Rename("a", "b")
 	if snap := r.Snapshot(); snap[e.paneID].Session != "b" {
@@ -173,7 +174,7 @@ func TestDispatchFoldsATurn(t *testing.T) {
 	r := NewHookRegistry()
 	clock := time.Unix(1_700_000_000, 0)
 	r.now = func() time.Time { return clock }
-	e, _, _ := r.mint("web", "127.0.0.1:1")
+	e, _, _ := r.mint("web", "127.0.0.1:1", "")
 	r.add(e)
 	tg := matched(t, r, e)
 
@@ -220,7 +221,7 @@ func TestDispatchFoldsATurn(t *testing.T) {
 
 func TestPermissionRequestIsAllowedUnderPolicyNone(t *testing.T) {
 	r := NewHookRegistry()
-	e, _, _ := r.mint("web", "127.0.0.1:1")
+	e, _, _ := r.mint("web", "127.0.0.1:1", "")
 	r.add(e)
 	res := push(t, matched(t, r, e), map[string]any{
 		"request_id": "p1", "kind": "permission_request", "subkind": "pre-tool-use",
@@ -236,7 +237,7 @@ func TestPermissionRequestIsAllowedUnderPolicyNone(t *testing.T) {
 
 func TestMismatchedPaneOrSessionIsDenied(t *testing.T) {
 	r := NewHookRegistry()
-	e, _, _ := r.mint("web", "127.0.0.1:1")
+	e, _, _ := r.mint("web", "127.0.0.1:1", "")
 	r.add(e)
 	tg := matched(t, r, e)
 	for _, p := range []map[string]any{
@@ -255,7 +256,7 @@ func TestMismatchedPaneOrSessionIsDenied(t *testing.T) {
 
 func TestPingAndUnknownMethod(t *testing.T) {
 	r := NewHookRegistry()
-	e, _, _ := r.mint("web", "127.0.0.1:1")
+	e, _, _ := r.mint("web", "127.0.0.1:1", "")
 	r.add(e)
 	tg := matched(t, r, e)
 	if res, err := tg.DispatchHook("ping", nil); err != nil || res.(map[string]any)["ok"] != true {
@@ -263,5 +264,28 @@ func TestPingAndUnknownMethod(t *testing.T) {
 	}
 	if _, err := tg.DispatchHook("no.such.method", nil); err == nil || err.Code != -32000 {
 		t.Errorf("unknown method → %+v", err)
+	}
+}
+
+func TestCreateWithCallerPaneID(t *testing.T) {
+	// Phase 109: a browser leaf names its own pane id, so the id a hook
+	// reports is the leaf the UI drew — and it survives a reconnect.
+	s, calls := hookService("tmux 3.4")
+	s.hooks.SetHookAddr("127.0.0.1:4321")
+	w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{"name":"web1","pane_id":"p_leaf-1"}`)
+	if w.Code != http.StatusCreated || !strings.Contains(w.Body.String(), `"pane_id":"p_leaf-1"`) {
+		t.Fatalf("create = %d %s", w.Code, w.Body.String())
+	}
+	if env := envArgs(lastCreate(t, calls)); env["YMUX_PANE_ID"] != "p_leaf-1" {
+		t.Errorf("YMUX_PANE_ID = %q, want the caller's id", env["YMUX_PANE_ID"])
+	}
+	if w := do(s, "POST", "/api/v2/term/sessions", "owner-token", `{"name":"web2","pane_id":"p_leaf-1"}`); w.Code != http.StatusConflict {
+		t.Errorf("a pane id already live = %d, want 409", w.Code)
+	}
+	for _, bad := range []string{`p leaf`, `p;rm`, `p"x`, strings.Repeat("a", 65)} {
+		body := `{"name":"web3","pane_id":` + strconv.Quote(bad) + `}`
+		if w := do(s, "POST", "/api/v2/term/sessions", "owner-token", body); w.Code != http.StatusBadRequest {
+			t.Errorf("pane_id %q = %d, want 400", bad, w.Code)
+		}
 	}
 }

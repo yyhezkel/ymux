@@ -1,5 +1,5 @@
 import { createSignal, createMemo, createEffect, on, onCleanup, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { createNarrow } from "./useNarrow";
 import { IconClipboard, IconRefresh, IconTerminal } from "./icons";
 import { t, currentLanguage } from "./i18n";
@@ -70,7 +70,7 @@ export function InsightsClaudeCost(p: Props) {
     setErr(null);
     const since = Math.floor(Date.now() / 1000) - rangeSeconds();
     try {
-      const raw = await invoke<string>("insights_fetch", {
+      const raw = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: `/claude-usage?since=${since}`,
       });

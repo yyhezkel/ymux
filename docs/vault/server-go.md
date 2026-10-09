@@ -15,6 +15,7 @@ covers:
   - app/src-tauri/server/internal/logging/*.go
   - app/src-tauri/server/internal/logs/*.go
   - app/src-tauri/server/internal/push/*.go
+  - app/src-tauri/server/internal/webpush/*.go
   - app/src-tauri/server/internal/term/*.go
   - app/src-tauri/server/internal/workspace/*.go
   - app/src-tauri/server/go.mod
@@ -63,14 +64,15 @@ dependency arrow points one way, so there is no cycle to break later.
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
 | `config` | 469 | API token, filesystem paths, the log janitor (size cap + age prune), and the one-time data-dir migration |
 | `core` | 110 | the leaf interface package |
-| `desktop` | 290 | the daemon's only OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96) |
-| `files` | 682 | the Files API (`/api/v2/files/*`) |
+| `desktop` | 290 | an OUTBOUND client — dials the ymux desktop through the reverse tunnel (Phase 96). The other one is `webpush` |
+| `files` | 1178 | the Files API (`/api/v2/files/*`) |
 | `hooks` | 178 | the hook-RPC endpoint: localhost listener + the Phase-66 challenge/response, asking each `core.HookResolver` (chat, term) whose token signed it (Phase 100) |
 | `insights` | 2,653 | sampler, store, Docker, the hygiene reaper, and the two Phase-84 rollups |
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), and serving the web bundle + the browser settings document (108) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), and the PWA's files + Web Push notifications (114) |
+| `webpush` | 418 | Phase 114 (WEB-DESIGN E): Web Push to a browser's push service — RFC 8291 encryption, RFC 8292 VAPID, the subscriptions file. Stdlib only; the second OUTBOUND client |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
 ## `agent/` — the desktop's agent logic, ported (Phase 99)
@@ -295,6 +297,20 @@ browser's workspaces and agent automation.**
   daemon-side edit. Only three operations exist: find a leaf, split a leaf (the
   desktop's `split_pane_in`: `{first: leaf, second: new, ratio 0.5}`, `sp_<hex>_<hex>`
   ids), set/clear a leaf's title or annotation. Everything else is the browser's (§4).
+- **The tree (Phase 115, F1).** A row's `meta` is an opaque JSON object of the desktop's
+  tree fields (parent_id, cwd, is_folder, sort_order, group_id, colour…); POST accepts
+  the whole row (name, layout, meta, intent, is_project_root, tabs_mode), PUT replaces
+  `meta` when given and keeps it when absent, and both reject a non-object. The browser
+  owns the semantics (`frontend-lib.md` § the workspace tree). The file also holds
+  `groups` (an opaque array) + `groups_version`: `GET/PUT /api/v2/web/groups`, 409 with
+  the current document on a stale version. **`migrateFlat`** runs at load: a pre-F1 row
+  (a layout, no meta) gets a header of the same name and becomes its child — same id,
+  name and layout, so its tmux sessions and the restore hints still match; saved once.
+- **`gitprobe.go`** — `POST /api/v2/web/git/worktrees {path}`: `git -C <path> worktree
+  list --porcelain` as an argv (Rule #3), 10 s timeout, `GIT_TERMINAL_PROMPT=0`. 400 for
+  an empty or relative path (`~` expands), 404 "directory not found on the host" (the
+  probe's only hard error), else 200 `{ok, worktrees, error}` — git's own fatal line when
+  not a repo. `parseWorktreePorcelain` is worktrees.rs's parser. Behind `gate`.
 - **A pane is a tmux session.** Its leaf's `pane_id` is the session's hook pane id
   (`term_<hex>`); `POST /api/v2/term/sessions` takes `workspace_id` (must exist) and
   answers `pane_id`. `hookEntry.workspaceID` is the membership.
@@ -335,6 +351,54 @@ see the CLI vault page) and Claude Code's transcripts:
   history again. `claude` is resolved to an absolute path by the daemon (its PATH was
   augmented at start), so the tmux server's PATH does not matter.
 
+**Caller-chosen pane ids (Phase 109, 2.10.0).** `POST /api/v2/term/sessions` takes an
+optional `pane_id`; `spawnSession` passes it to `mint`, so the session's
+`YMUX_PANE_ID` (and every hook it reports) is the browser layout leaf's own id instead of
+a minted `term_<hex>`. `ValidPaneID`: 1–64 of `[A-Za-z0-9_-]` (it lands in an env var
+and in hook payloads), else 400; an id a live session already carries → 409. Agent
+splits and resumes still mint.
+
+**Hook routing survives a restart (Phase 111, 2.12.0, `term/recover.go` + `hooks.Start`).**
+The registry is in memory, so a restart (every add-on update) used to leave browser sessions
+running with dead hooks — refused as unknown, no light, feed or gate. Two halves fix it:
+`hooks.Start(portFile, …)` re-binds the port recorded in `<data dir>/hook-port` (0600) before
+falling back to an ephemeral one — `YMUX_SOCKET_ADDR` is frozen in the environment of every
+process already running in a session, claude included, so a new port would orphan them all.
+Then `Service.RecoverHooks()` (main.go, after `SetDataDir`) reads each tmux session's own
+environment (`Tmux.Environment` = `show-environment`): a session whose `YMUX_SOCKET_ADDR`
+is this listener, with a 64-hex token and a valid pane id not already registered, is added
+back with `YMUX_POLICY` (written at create, and by `SetPolicy` via `set-environment`) and
+`YMUX_WORKSPACE_ID` (dropped if that workspace is gone). **Desktop sessions carry the same
+variable names pointed at the desktop's tunnel and are never claimed.** No new store and no
+token on disk: tmux already holds it for the hook processes; the env is never logged (only
+counts). Sessions created before 2.12.0 recover with policy `none`. Tests: `term/recover_test.go`, `hooks/port_test.go`; every test that
+starts the listener passes `""` as the port file (ephemeral, nothing recorded).
+
+**Session argv (Phase 110, 2.11.0).** The create body also takes `cmd` — an argv the
+session runs instead of a shell (a browser pane opened in "claude" mode). `sessionArgv`
+bounds it (≤ 32 args, ≤ 4096 bytes each, no NUL, non-empty argv[0]) and resolves a bare
+`claude` to the daemon's absolute path; it lands after `--` in `tmux new-session`, never
+in a shell (Rule #3).
+
+**Browser-pairing approve validates scopes (Phase 113, 2.13.0).**
+`POST /api/pairing/requests/{id}/approve` used to store the request's `scopes` list
+verbatim; it now goes through `auth.NormalizeScopes` like `PUT /api/v2/devices/{id}/scopes`
+(unknown names dropped, duplicates collapsed, an ordinary full set folded to "all").
+
+**Insights auth (Phase 110).** The Insights routes (legacy `/current` … and
+`/api/v2/insights/*`) were behind `auth.Bearer` — the shared token only — so a device's
+`insights:read` grant existed but nothing honored it, and the browser's Monitor got 401.
+`Server.insightsAuth` now lets the shared token through as before, and a valid device
+token holding `insights:read` for **GET only**; docker actions and hygiene/kill (POSTs)
+stay owner-only (WEB-DESIGN §7). Workspace routes still use `auth.Bearer`.
+
+**Gate card text fallback (Phase 110).** `cardText` normally leaves a `pre-tool-use`
+card alone — the CLI's title IS the approval prompt. But the CLI derives that title from
+`payload.command` / `payload.tool`, while Claude Code sends `tool_name` + `tool_input`,
+so it falls back to `agent: pre-tool-use` with the raw hook JSON as the summary (seen
+live in the browser). Exactly that fallback is now humanized (`Claude wants to run: Bash`
+/ the command); a title the CLI did derive is untouched.
+
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a
 symlink to `www/<version>/`, holding the desktop's own vite build. Nothing here uploads or
@@ -347,11 +411,51 @@ ci-windows `ymux-web` artifact.
 - `GET /assets/{file...}` (immutable, a year — vite hashes those names) and
   `GET /fonts/{file...}` (a day). A name containing `..`, `\` or a leading-dot segment is
   a 404 before any stat.
+- Phase 114 (the PWA): `GET /icons/{file...}` (a day), and `GET /sw.js` +
+  `GET /manifest.webmanifest` (`handleWebTopFile`, `no-cache` — the browser re-checks the
+  worker itself and a cached copy would pin the previous one; the manifest gets
+  `application/manifest+json`, which Go's MIME table lacks). The CSP adds
+  `worker-src 'self'; manifest-src 'self'`. All 404 without a bundle.
 - **No `/{path...}` catch-all, on purpose:** the shared mux carries method-less `/api/...`
   patterns, and a method-qualified catch-all beside them is a registration-time conflict
   panic in Go 1.22 routing.
 - Public, like the diagnostic page: static code, no secrets, and the app's login screen is
   how a browser gets a token in the first place.
+
+**`webpush/` + `term/webpush.go` (Phase 114, WEB-DESIGN E, 2.14.0) — notifications for the
+browser app, also when it is closed.** Yossi 2026-10-06 chose real Web Push over
+"notifications only while open", knowing it means the daemon POSTs to the browser's push
+service (FCM for Chrome, autopush, Apple). That service sees the endpoint, size and timing;
+the content is encrypted for the subscribing browser only. `internal/push` (the phone's
+own WebSocket) is untouched.
+- `webpush.go` is the protocol, stdlib only: `LoadOrCreateKeys` (`<data>/vapid.pem`, P-256,
+  0600 — a new key orphans every subscription), `encrypt` (RFC 8291 key schedule over
+  `crypto/hkdf`, one aes128gcm record, pinned to the RFC's Appendix A vector byte for
+  byte), `authorization` (an ES256 JWT for the endpoint's origin, 12 h), `Send` (TTL /
+  Urgency / Topic headers, returns the service's status; a non-2xx also returns an error
+  carrying the service's own reason — first line, printable ASCII, 160 bytes, any 40+ char
+  run masked so nothing token-shaped is logged). `MaxPayload` is 3993 bytes.
+- `store.go` is `<data>/webpush.json`: `{device_id, lang, subscription, created_ms}`,
+  upsert by endpoint, at most 64 records, tmp + rename, 0600.
+- Routes (behind `term.gate`, so `shell:attach`): `GET /api/v2/webpush/key`,
+  `POST` / `DELETE /api/v2/webpush/subscriptions` (PushSubscription JSON + `lang`; a
+  caller removes only its own record), `POST /api/v2/webpush/test` (one notification to
+  the caller's own browsers). 503 when the key could not be loaded. The owner token's
+  records belong to `"owner"`.
+- What notifies: a **gate** card (blocking; Approve/Deny in the notification — the
+  service worker answers via `feed/{id}/decide`), Claude's own **Notification** hook
+  (`attention`; `idle_prompt` skipped, the stop already said it) and a **stop** card
+  (`done`). Fired from `addCard` / `feedPush` through `HookRegistry.notify`, sent from a
+  goroutine — a hook never waits on the network. Gate: TTL 10 min, urgency high, Topic
+  = request id; done collapses per pane. Text is rendered per record's language, with
+  the session's browser-workspace name appended to the title.
+- Before every send the device must still be active with `shell:attach`
+  (`chat.ActiveDeviceScopes`); otherwise, or on a 404/410 from the push service, the
+  record is dropped. `main.go` wires it with `SetWebPush` **before** `hooks.Start`, so
+  `notify` is set before any hook can read it.
+- Logs: kind, device, status, the push service's HOST and its `reason` — never the endpoint
+  or the card text (Rule #1). The status decides the branch; `err` with code 0 is a
+  transport failure.
 
 **`term/settings.go` (Phase 108, WEB-DESIGN C4) — the browser's settings.** Decided
 2026-10-05: one document on the daemon, shared by every browser. `GET /api/v2/settings` →
@@ -479,6 +583,76 @@ object (code -32000, as the desktop's `rpc_server` does). `main.go` starts it af
 resolvers exist and **no longer only when chat.db opened** — a failed chat store must not
 cost browser sessions their hooks. hooks → core, chat → core, term → core: still no
 cycle.
+
+**`term/context.go` + `claudesessions.go` (Phase 117, WEB-DESIGN F3) — the browser's
+Context Rail and resume picker.** `context.go` ports `context_store.rs` (docs/CONTEXT.md):
+one `SessionContext` per Claude session id, fed from `feedPush` AFTER `r.mu` is released
+(file I/O) — the first prompt only while empty (≤ 2000 chars), a `turn` line per Stop from
+the stop brief (degraded included), a `closed` line per SessionEnd with the payload's
+`reason`; goal / done sticky (last non-empty). `ws_id` is the hook entry's browser
+workspace, `cwd` the payload's; an empty value never erases a known one. Files
+`<data>/context/sessions/<id>.json` (atomic, id `[A-Za-z0-9_-]{1,128}`, a corrupt file is
+never overwritten and its session refused, > 30 days pruned at load), log capped at 200,
+`version` bumps per write, `context:changed {session_id, ws_id}` on the hub,
+`GET /api/v2/context/sessions?ws_id=` newest activity first. Injection back into the agent
+(105.C, `context.inject`) is NOT ported. `agent/brief.go` gained the sticky `goal` /
+`done` keys (`done-when`, `done_when`, `done when` too) — parity with brief.rs.
+`claudesessions.go` ports `pane_list_claude_sessions`' local path: `GET
+/api/v2/claude/sessions?limit=&project_path=` over `~/.claude/projects/*/*.jsonl`, newest
+first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
+assistant line via `extractTextField`, 80 chars + …); the scope is the transcript's own
+`cwd` (trailing `/` ignored), applied before the limit, and a mismatch skips the tail read.
+**`replace_pane` (Phase 117)** on term-create: a pane id is carried by at most one live
+session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
+With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
+hooks get a quiet `passive` (no card, light or context — the CLI falls back to Claude's
+own), and `byPane` / `Snapshot` / the hello skip it. A daemon restart's `RecoverHooks`
+does not know `released` (both sessions carry the pane id again) — a known edge.
+
+**`term/gitdiff.go` (Phase 118, WEB-DESIGN F4) — the Diff pane and worktree creation.**
+`POST /api/v2/git/diff {cwd, source}` is ONE snapshot, a port of `diff_pane.rs`
+`fetch_bundle_local`: `rev-parse --show-toplevel` → `status --porcelain=v1 -z --branch
+--untracked-files=all` (`parseStatusZ` / `parseBranchHeader`) → `diff --no-color
+--no-ext-diff [HEAD|<ref>] --` → the first 40 untracked files as `--no-index /dev/null`
+diffs (256 KB each) → a 2 MB cap (cut on a rune boundary — the Rust would panic mid-
+codepoint) with `… ymux: output truncated`. Every git carries `gitG`'s `-c` block; always
+200, a failure is the bundle's `error` ("git: <first line>"). A ref that reads as an option
+or holds a control char is refused. The desktop polls per pane in Rust; the browser polls
+this endpoint itself, so the daemon keeps no per-pane state. `POST /api/v2/git/worktree-add
+{cwd, branch, base, target}` ports `workspace_create_project_worktree`: branch sanitized for
+the directory only (`sanitizeBranch`, `defaultWorktreeTarget` = `<parent>/<base>-<safe>`),
+base / branch refused when option-shaped, `git worktree add -b <branch> -- <target>
+<base>` (the `--` the Rust lacks), then the parsed list. `runGit` is the test seam.
+
+**`term/claudetools.go` (Phase 119, WEB-DESIGN F5) — the desktop's `claude -p` tools for a
+browser.** `GET /api/v2/claude/usage?force=1` ports `claude_usage.rs` (`claude -p /usage
+--output-format json`, `parseUsage` pinned to the Rust sample; cached 5 min, a failure backs
+off 5 min, one probe at a time — the others get the cached value). `POST
+/api/v2/claude/summarize {pane_id, session, workspace_id}` ports `claude_summary.rs`: the
+session is the pane's newest context record, else session-meta's id for the tmux session,
+else the newest transcript; its last N user/assistant turns (`parseTranscript`, N and the
+prompt from the settings document, `{N}` substituted) go on stdin; the answer becomes a
+note tagged `summary` + `notes:changed`. `POST /api/v2/term/sessions/summarize {names, lang}`
+ports `sessions_overview.rs`: `Tmux.Capture` (40 lines) → `clipCapture` (escapes stripped,
+240 chars) → `### SESSION i` frames → `parseOverview` (lenient: a bad row is `unknown`).
+Beyond the desktop: prompts never come from the request, every model call that reads
+transcript / screen text gets `--tools ""` (untrusted input must not act) and
+`--no-session-persistence` (a summary is not a session to resume), one call per kind at a
+time (`TryLock` → 409), timeouts 20 / 45 / 90 s, names `ValidName`d, logs carry counts only.
+`runClaude` is the test seam.
+
+**`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
+Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against
+"/", symlinked ancestors re-checked). List / read / upload / download / delete were Phase
+77; F2 added, as huma ops with `ErrExists` → 409: `POST mkdir {path}` (one level, the
+desktop's sftp create_dir), `POST rename {from,to}` and `POST copy {from,to}` (never
+overwrite; copy recurses into a directory and SKIPS symlinks, refuses a folder into itself),
+`DELETE delete?recursive=true` (`DeleteTree`, never the root — plain delete stays
+non-recursive for the phone), `POST archive {cwd, names, output, format: zip|targz}` and
+`POST unzip {path}` → `<dir>/<stem>/`. Archives run `zip` / `tar` / `unzip` as argv in the
+folder (Rule #3), names prefixed `./` so none reads as a flag, 10 min cap; a missing binary
+fails as "`zip failed (exit 127): zip: command not found`" (422) — the exact shape the UI
+reads to offer tar.gz. Returned paths are root-relative. Tests: `mutate_test.go`.
 
 **`insights/analytics.go`** (424) — `GET /analytics`, the Monitor's Analytics tab. It is a
 separate endpoint from `/history` for two reasons, both of them about the transport.

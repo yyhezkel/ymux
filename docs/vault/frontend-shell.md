@@ -39,7 +39,8 @@ unowned:
 # Frontend shell — App, sidebar, layout, panes, panel chrome
 
 **SolidJS**, not React. Signals and `createEffect`, no virtual DOM, no hooks rules.
-`index.tsx` (121 lines) mounts `<App/>` — **unless the window label says otherwise**.
+`index.tsx` (116 lines) mounts `<App/>` (plus, in a browser tab, the Phase 114
+notifications banner `WebPushPrompt` in its own root beside it) — **unless the window label says otherwise**.
 It is the whole router, and there is no other one: no query params, no `location.search`
 anywhere in the tree. A built app's asset protocol serves a blank page for any suffixed
 path (`index.html?x`, `index.html#x`), so every pop-out URL is a clean `index.html` and
@@ -147,7 +148,7 @@ nearest ancestor colour; `allPaneAgentRows` labels every Queue row `machine › 
 header `+` (§ Sessions as rows).
 
 **The event subscriptions are the map of the backend↔frontend contract.** Around
-lines 2778–3200, `App.tsx` registers `listen()` for: `pty:data`, `pty:exit`,
+the onMount block (~3840–4100), `App.tsx` registers `backend.on()` for: `pty:data`, `pty:exit`,
 `ssh-disconnected`, CLI alignment, the feed (`FeedItem` + resolved), notifications,
 `notes:changed`, `workspaces:changed`, `settings:changed`, `pane:agent-run` (the
 per-pane Claude traffic light), hooks-outdated, and `update:available`. If you are hunting "who reacts to event X", it is almost always
@@ -155,6 +156,11 @@ here.
 
 An `ErrorBoundary` wraps the tree — a thrown render error shows a recovery panel rather
 than a white window.
+
+**"New workspace" in a browser** (`openNewWorkspace`, web branch) skips the wizard — the
+browser has no wizard targets — and creates `workspace N` directly, N counted over ROOTS
+(a root comes with its screens since Phase 115) and bumped past any name in use.
+`popOutPane` toasts a failed `popout_pane` (in a browser: a blocked popup) instead of only logging it.
 
 **Pinning a project folder no longer requires git.** `pinProjectFolder` calls
 `project_folder_probe` (hard error only for a missing directory or a dead SSH host),
@@ -596,8 +602,9 @@ four layers.
 
 ## Invariants
 
-- **Rule #5** — no `any`. `unknown` and narrow, or define the type. `invoke` return
-  types are always explicit.
+- **Rule #5** — no `any`. `unknown` and narrow, or define the type. `backend.call<T>`
+  return types are always explicit (the Tauri imports live only in `src/backend/`, see
+  frontend-lib.md § The backend seam).
 - **Rule #9** — `createLogger(tag)` from `logger.ts`, never raw `console.*`.
 - **Nothing idle may cost IPC or paint.** An effect that invokes must track only what it
   needs (`set_tray_badge` goes through the `unreadCount` memo; the modal browser-hide

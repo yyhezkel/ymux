@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClose, IconFolder, IconGitBranch, IconWarning } from "./icons";
 import type { Connection, Workspace, WorktreeEntry } from "./types";
@@ -77,7 +76,7 @@ export function ProjectFolderModal(p: Props) {
   });
 
   const browse = async () => {
-    const picked = await openDialog({ directory: true, multiple: false });
+    const picked = await backend.host.pickPaths({ directory: true, multiple: false });
     if (typeof picked === "string") setPath(picked);
   };
 
@@ -92,11 +91,11 @@ export function ProjectFolderModal(p: Props) {
       // host with no live session) fails here instead of landing a dead
       // row in the sidebar. "No git there" is an answer, not a failure —
       // the folder pins demoted.
-      const isRepo = await invoke<boolean>("project_folder_probe", {
+      const isRepo = await backend.call<boolean>("project_folder_probe", {
         path: value,
         connection: p.mode.connection,
       });
-      await invoke("workspace_pin_project_folder", {
+      await backend.call("workspace_pin_project_folder", {
         parentWorkspaceId: p.mode.workspaceId,
         path: value,
         name: null,
@@ -119,7 +118,7 @@ export function ProjectFolderModal(p: Props) {
     setBusy(true);
     setError(null);
     try {
-      await invoke<WorktreeEntry[]>("workspace_create_project_worktree", {
+      await backend.call<WorktreeEntry[]>("workspace_create_project_worktree", {
         workspaceId: p.mode.workspace.id,
         branchName: b,
         baseBranch: bb,
