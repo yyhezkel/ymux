@@ -229,34 +229,66 @@ fn sanitize_tmux_session_name(pane_id: &str) -> String {
     format!("ymux-{}", cleaned)
 }
 
-/// The tmux session this process runs inside. Preferred: ask tmux itself
-/// (exact even when YMUX_PANE_ID is stale — `set-environment -g` is
-/// tmux-server-global, so on multi-machine servers the env var is
-/// last-connector-wins). Fallback: derive from YMUX_PANE_ID.
-pub fn resolve_session_name() -> Option<String> {
-    if std::env::var_os("TMUX").is_some() {
-        let mut cmd = std::process::Command::new("tmux");
-        cmd.arg("display-message").arg("-p");
-        if let Ok(pane) = std::env::var("TMUX_PANE") {
-            if !pane.is_empty() {
-                cmd.arg("-t").arg(pane);
-            }
-        }
-        cmd.arg("#S");
-        if let Ok(out) = cmd.output() {
-            if out.status.success() {
-                let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !name.is_empty() {
-                    return Some(name);
-                }
-            }
+/// Which multiplexer owns the key `resolve_session` returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionMux {
+    Tmux,
+    Zellij,
+    PaneId,
+}
+
+/// Writer-key order: tmux's own name, then `$ZELLIJ_SESSION_NAME` (zellij
+/// sets it per session and it equals what `zellij list-sessions -n` prints,
+/// i.e. the desktop picker's join key), then the pane-id-derived name.
+/// Empty strings count as absent. Pure so the order is testable without env.
+fn pick_session(
+    tmux: Option<String>,
+    zellij: Option<String>,
+    pane_id: Option<String>,
+) -> Option<(String, SessionMux)> {
+    let present = |v: Option<String>| v.filter(|s| !s.is_empty());
+    if let Some(n) = present(tmux) {
+        return Some((n, SessionMux::Tmux));
+    }
+    if let Some(n) = present(zellij) {
+        return Some((n, SessionMux::Zellij));
+    }
+    present(pane_id).map(|p| (sanitize_tmux_session_name(&p), SessionMux::PaneId))
+}
+
+/// Ask tmux for this pane's session name. `None` outside tmux or on failure.
+fn tmux_session_name() -> Option<String> {
+    std::env::var_os("TMUX")?;
+    let mut cmd = std::process::Command::new("tmux");
+    cmd.arg("display-message").arg("-p");
+    if let Ok(pane) = std::env::var("TMUX_PANE") {
+        if !pane.is_empty() {
+            cmd.arg("-t").arg(pane);
         }
     }
-    let pane_id = std::env::var("YMUX_PANE_ID").ok()?;
-    if pane_id.is_empty() {
+    cmd.arg("#S");
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
         return None;
     }
-    Some(sanitize_tmux_session_name(&pane_id))
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The multiplexer session this process runs inside, with its owner.
+/// tmux is asked directly (exact even when YMUX_PANE_ID is stale —
+/// `set-environment -g` is tmux-server-global, so on multi-machine servers
+/// the env var is last-connector-wins). Zellij panes use their
+/// `ZELLIJ_SESSION_NAME`. Fallback: derive from YMUX_PANE_ID.
+fn resolve_session() -> Option<(String, SessionMux)> {
+    pick_session(
+        tmux_session_name(),
+        std::env::var("ZELLIJ_SESSION_NAME").ok(),
+        std::env::var("YMUX_PANE_ID").ok(),
+    )
+}
+
+pub fn resolve_session_name() -> Option<String> {
+    resolve_session().map(|(n, _)| n)
 }
 
 /// Cap for anything that lands in a display field — shared by the
@@ -579,7 +611,9 @@ pub fn handle_hook(
     subcommand: &str,
     payload: &serde_json::Value,
 ) -> Result<(Option<String>, Option<String>), String> {
-    let name = resolve_session_name();
+    let resolved = resolve_session();
+    let zellij_owned = matches!(resolved, Some((_, SessionMux::Zellij)));
+    let name = resolved.map(|(n, _)| n);
     match subcommand {
         // Fires at the start of EVERY turn, in every permission mode. We
         // only act on the first one of each Claude session: that prompt
@@ -592,6 +626,9 @@ pub fn handle_hook(
 
             let mut meta = load_meta();
             let entry = meta.sessions.entry(name.clone()).or_default();
+            if zellij_owned {
+                entry.mux = Some("zellij".into()); // prune must not judge this row vs `tmux ls`
+            }
 
             if let Some(next) = decide_auto_name(
                 entry.auto_name.as_deref(),
@@ -624,6 +661,9 @@ pub fn handle_hook(
             let title = scan.as_ref().and_then(TranscriptScan::title);
             let mut meta = load_meta();
             let entry = meta.sessions.entry(name.clone()).or_default();
+            if zellij_owned {
+                entry.mux = Some("zellij".into()); // prune must not judge this row vs `tmux ls`
+            }
             if let Some(sid) = session_id {
                 entry.claude_session_id = Some(sid.to_string());
             }
@@ -697,6 +737,23 @@ mod tests {
         assert!(!prune_with(&mut m, &[], at("2026-10-05T10:00:00Z")));
         assert!(m.sessions["ymux-p1"].ended_at.is_none());
         assert!(m.sessions.contains_key("ymux-p1"));
+    }
+
+    #[test]
+    fn zellij_session_name_is_the_writer_key() {
+        // Pins: titled zellij pane keys by ZELLIJ_SESSION_NAME (the picker's join key), not ymux-<pane>.
+        let got = pick_session(None, Some("My_Title".into()), Some("p1".into()));
+        assert_eq!(got, Some(("My_Title".into(), SessionMux::Zellij)));
+        let got = pick_session(None, Some(String::new()), Some("p1".into()));
+        assert_eq!(got, Some(("ymux-p1".into(), SessionMux::PaneId)));
+        assert_eq!(pick_session(None, None, None), None);
+    }
+
+    #[test]
+    fn tmux_name_wins_over_zellij_env() {
+        // Pins: tmux stays first so existing tmux keys never change owner.
+        let got = pick_session(Some("ymux-p1".into()), Some("z".into()), Some("p1".into()));
+        assert_eq!(got, Some(("ymux-p1".into(), SessionMux::Tmux)));
     }
 
     #[test]

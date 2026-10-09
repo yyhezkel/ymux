@@ -154,6 +154,12 @@ READS this file (writes go through `ymux session-meta set`), so its struct copy 
 those rows: `tmux ls` never lists a zellij session, so judging them stamped every live
 one `ended_at`. Residue: a deleted zellij session's row is never reaped.
 
+**Writer key order** (`pick_session`, pure): `tmux display-message #S` → `$ZELLIJ_SESSION_NAME`
+(equals what `zellij list-sessions -n` prints, the picker's join key) → `ymux-<sanitized
+YMUX_PANE_ID>`; empty = absent. `resolve_session_name()` keeps its `Option<String>` shape;
+`handle_hook` uses `resolve_session()` and stamps `mux: "zellij"` on `user-prompt-submit` and
+`stop` when the zellij env supplied the key.
+
 ## Logging
 
 CLI-side logging goes through `hook_log(level, msg)`, which writes into the remote log
