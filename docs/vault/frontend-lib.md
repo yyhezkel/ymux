@@ -26,6 +26,14 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+  - app/src/backend/types.ts
+  - app/src/backend/tauri.ts
+  - app/src/backend/index.ts
+  - app/src/backend/web.ts
+  - app/src/backend/web/*.ts
+  - app/src/layoutOps.ts
+  - app/src/WebLogin.tsx
+  - app/src/WebPushPrompt.tsx
 unowned:
   - app/src/bindings/*.ts   # ts-rs generated
   - app/src/*.test.ts   # tests are the spec, deliberately uncovered
@@ -36,6 +44,206 @@ unowned:
 
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
+
+## The backend seam — `src/backend/` (Phase 106, WEB-DESIGN §5)
+
+Every host call goes through the `backend` singleton from `src/backend/index.ts`:
+`backend.call<T>(cmd, args)` (was `invoke`), `await backend.on<T>(event, cb)` (was
+`listen`), `backend.emit(event, payload)` (cross-window, popouts only). `TauriBackend`
+is a pass-through to Tauri IPC, so the desktop behaves exactly as before. The point is
+the second implementation: a browser build (Phase C5) swaps in a `WebBackend` that
+answers the same command names from the daemon's HTTP/WS API.
+
+- **`backend.host`** (Phase 107) — the window / OS affordances the components used to
+  take from `@tauri-apps/api/window|webview|app` and the dialog / opener plugins:
+  `windowLabel()` (index.tsx's popout router; "" when unknown), `setTitle`, `setZoom`,
+  `closeWindow`, `appVersion`, `openUrl`, `revealInDir`, `pickPaths` (native open dialog),
+  `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
+- **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
+  `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
+  host lacks the local-machine ones and the UI hides their entry points rather than
+  failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
+  the Welcome cards, palette `ssh.provision` / `pane.openDiff` (`PALETTE_CAPS` in
+  App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
+  pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
+  Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
+- **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
+  `src/backend/` imports anything from `@tauri-apps/*`.
+
+### The browser arm — `backend/web.ts` + `backend/web/` (Phase 109, WEB-DESIGN C5)
+
+`index.ts` picks `WebBackend` when `__TAURI_INTERNALS__` is absent (a tab served by the
+daemon, vault server-go § webapp.go). `index.tsx` awaits `initBackend()` before the first
+render: `ready` → `<App>`, `login` / `no-shell` → `<WebLogin>` (the Phase 96 pairing flow:
+request → code → approve on the desktop → redeem; `no-shell` = signed in without
+`shell:attach`). The same vite bundle serves both hosts.
+
+- **Commands** — `WebBackend.handlers`, one entry per desktop command name, answered from
+  the daemon. A name with no handler rejects (warned once): reaching one means a missing
+  `can()` gate. Rejections are strings, like Tauri's.
+- **Events** — `web/events.ts`: `EventBus` behind `backend.on`, fed by the daemon events
+  socket (`{type,data}` frames already carry the desktop's names) and by the backend.
+  `settings:changed` `{version, settings}` is unwrapped to the bare `Settings`;
+  `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
+  payload. The first `hello` answers `pane_agent_states` / `pane_briefs` / `feed_list` /
+  `notifications_list`; a reconnect's hello re-reads workspaces and emits
+  `backend:resync` (nothing listens yet).
+- **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
+  `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
+  `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
+  `TextDecoder` (the job `pty_decode.rs` does on the desktop) into `pty:data`; the
+  server's `{"type":"exit"}` or a close becomes `pty:exit`. `pane_disconnect` closes
+  without a `pty:exit`, as on the desktop.
+- **Panes and sessions** — a leaf's `pane_id` IS its tmux session's hook pane id (daemon
+  2.10.0 takes `pane_id` on create). `pane_connect` reuses the session the hello or a
+  create named for that leaf, else a live session with the leaf's derived name
+  (`<ws-slug>-<pane suffix>`), else creates that name with the leaf's id. So reload →
+  restore (on by default in browser settings) → the same session. `init()` also seeds
+  `sessionRestore`'s per-pane hints from the daemon (hello map, else the derived name),
+  so a second browser — or one whose storage was cleared — re-attaches too.
+- **Workspaces** — the daemon's `/api/v2/web/workspaces` documents mapped to `Workspace`
+  with a synthesized ssh-shaped connection (the panes ARE remote tmux: RTL profile and
+  `paneCaps` answer "remote"). Layout gestures run in `layoutOps.ts` (pure ports of
+  lib.rs `split_pane_in` / `close_pane_in` / `set_split_ratio_in` /
+  `swap_two_panes_in_layout` / `reset_all_split_ratios`, pinned by `layoutOps.test.ts`)
+  and PUT with the version; a 409 re-applies the op once on the returned document. The
+  active workspace is per browser (localStorage) and is always a screen (`screenOrSelf`).
+- **The workspace tree** (Phase 115, F1) — the desktop's header / pinned folder / screen
+  tree, same rules. The tree fields (`parent_id, cwd, is_folder, is_collapsed, sort_order,
+  group_id, color, emoji, tmux_session` — `META_KEYS`) travel in the row's opaque `meta`;
+  `body()` splits a `Partial<Workspace>` into the daemon's columns and that object,
+  `patch()` writes one row, `createRow()` POSTs a whole row (always with a `meta`, so the
+  daemon's pre-F1 migration never touches it). `web/tree.ts` holds lib.rs's rules as pure
+  functions, pinned by `webTree.test.ts`: `uniqueSiblingName`, `folderLabel` + `checkPin`
+  (the desktop's error strings), `reorder` / `reorderGroups` (scope + dense renumbering),
+  `subtreeIds` + `activeAfterDelete` (a delete takes the subtree and lands on a sibling
+  screen), `pickSessionParent`, `checkIdentity`. Implemented on top: `workspace_create`
+  (root + `shell` screen), `workspace_new_screen`, `workspace_pin_project_folder` (folder
+  picked in `DirPicker` over the Files API — the SSH path, since the connection is
+  ssh-shaped), `workspace_set_project_root`, `workspace_open_session` (the header `+`
+  when sessions are rows), collapse, intent, identity, reorder, the five group commands,
+  and `project_folder_probe` / `git_probe_worktrees` over `POST /api/v2/web/git/worktrees`.
+  Groups are one versioned document (`/api/v2/web/groups`, 409 → latest wins).
+  `pane_list_tmux_sessions` stamps the picker's scope like lib.rs `annotate_scope_with`
+  (no owners file): `owned` = a pane of this workspace holds the session (or the row is
+  that session), `in_cwd` = its path is under `projectPath`.
+- **File Manager, the rest of it** (Phase 116, F2) — mkdir / rename / copy / recursive
+  delete / zip / tar.gz / unzip (+ the overwrite pre-check, `exists` over a parent listing)
+  map onto the daemon's new Files ops; `file_open_remote` becomes a browser download.
+  **Files from the user's computer** (`web/localfiles.ts`): a page never sees a path, so
+  `host.pickPaths` (a hidden `<input type=file>`; directories → null) and `host.onDragDrop`
+  (window drag events with Files, positions × devicePixelRatio like Tauri on Windows) hand
+  out path-shaped tokens `webfile:<n>/<name>` that keep the File; the UI's basename logic
+  still works, and `file_upload` / `pane_upload_dropped` (→ `~/ymux-drops/<name>`, typed
+  into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
+  one request, not a tracked transfer. The notifications banner (`.web-push-prompt`) sits at
+  z-index 30, under panels and their confirm toasts, which it used to cover.
+- **Panes, F3** (Phase 117) — `pane_set_identity` / `pane_set_smart_bidi` /
+  `pane_set_claude_running` patch the layout leaf (the daemon keeps leaf fields opaque);
+  `pane_set_active` is a no-op (the desktop's only reader is the SSH ticket lookup);
+  `sessions_kill_by_name` kills through a holding pane or the DELETE route;
+  `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
+  `session_context_list` read the daemon (`/api/v2/claude/sessions`,
+  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
+  one filter per attach and applies it after the streaming TextDecoder — the desktop's
+  decode → filter order; `connect` seeds it from the leaf's `smart_bidi`, the toggle flips
+  it live. A popout's own attach starts with it off.
+  Every session create sends `replace_pane: true` (the leaf shows what it was last
+  connected to), and `api()` shows a problem+json error's `detail`, never the raw document.
+- **The Diff pane, F4** (Phase 118) — `caps` gains `diffPane` and `worktrees`. The desktop's
+  per-pane Rust poller becomes a browser poll (`diffStart` / `diffStop`, every 2 s) of
+  `POST /api/v2/git/diff` with the leaf's context (`diff_cwd ?? row cwd`, `diff_source ??
+  working`), emitting `diff-pane-updated` on the local bus by the desktop's rules — on a
+  hash change, an error once, the next success after an error always. `set_source` /
+  `set_cwd` patch the leaf and restart the poll; `refresh` emits once; `workspace_close_pane`
+  stops it; a pane gone from every layout stops itself. `diff_pane_worktrees` reuses the F1
+  git endpoint; `workspace_create_project_worktree` → `/api/v2/git/worktree-add`;
+  `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
+  path, or the existing one activated). The legacy local-only worktree block in
+  `CreateWorkspaceModal` is hidden without `localPanes`.
+- **Tools, F5** (Phase 119) — `settings_get_presets` / `settings_apply_preset` use
+  `web/presets.gen.ts`, GENERATED from `settings.rs` `list_presets()` (13 themes, palette
+  overrides resolved) and pinned to it by `webPresets.test.ts`; apply = the settings
+  document with that theme, saved. `claude_usage_fetch`, `claude_summarize` (sends the
+  pane's tmux session) and `sessions_overview_summarize` call the daemon's
+  `claudetools.go`; `read_log_tail` shows the DAEMON's log (`/api/v2/logs/daemon`, needs
+  insights:read), `clear_debug_log_cmd` is a no-op. Answered, not rejected:
+  `clipboard_read_text` "" (the server's clipboard is never read),
+  `workspace_secret_env_keys` [], `workspace_set_auto_port_forward` (returns the row),
+  `workspace_set_claude_separate_account`, `ssh_cancel_reconnect`. Tickets and skills stay
+  out (`can()` off): ticket capture needs the in-app browser, skills install from the
+  desktop's registry.
+- **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
+  blocker's null becomes a readable error), then DETACHES this window's own tmux client
+  (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the
+  pane's tmux session; a 1 s poll on `win.closed` re-attaches under the same sid and emits `popout:closed`, so App.tsx's
+  desktop hide / re-attach flow runs unchanged. In the new window `host.windowLabel()` is
+  `popout-<sid>` (index.tsx renders `PopoutTerminal`) and `init()` attaches its own tmux
+  client under the opener's sid (`PtySessions.open(name, cols, rows, sid)`), the only id
+  PopoutTerminal knows. `caps` holds `"popout"`, so PaneView shows the button.
+- **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
+  the required groups, merged one level deep; restore-on-start ON, update checks OFF).
+  A stored non-object where the default is a group is **ignored**, not merged — found
+  live: `{"theme":"dark"}` replaced the theme object and `applyTheme` crashed
+  (`webDefaults.test.ts`). `log_dir_path` answers `""` (the console is the log).
+  A 409 on save re-saves on the newer version: the whole document wins, as on the desktop.
+- **Monitor** (Phase 110) — `insights_fetch` / `insights_docker_action` /
+  `insights_hygiene_kill` fetch the daemon's insights paths same-origin (the desktop curls
+  the same paths over SSH) and hand the body back as text; a 401/403 says the device may
+  not read insights (needs `insights:read`; daemon 2.11.0 honors it for GETs). The
+  add-on install hint is hidden without the `addons` capability.
+- **File Manager, remote side** (Phase 110, `web/files.ts`) — the daemon's Files API,
+  sandboxed to its root ($HOME by default) with root-relative paths. `FilesBridge` learns
+  the root's absolute path from `list("/").cwd`, translates absolute ↔ relative, and
+  refuses paths outside it in words. Wired: home, list, read (NUL in the first 8 KB =
+  binary), write and create (upload), delete, and download — which in a browser goes to
+  the browser's own download (`download.ts` calls `web_download`; there is no Save
+  dialog or local path). Rename / mkdir / copy / zip have no daemon op yet and reject.
+- **The terminal font** (`web/fonts.ts`) — the font stacks (`quoteFamily` in
+  `settings.ts`, the default in `terminalInstance.ts`) name Windows fonts, and the generic
+  `monospace` is not reliably monospaced off Windows: on a box without mono fonts it is a
+  proportional face, xterm's DOM renderer pads every glyph with `letter-spacing`, and the
+  terminal reads "C l a u d e" (seen live in a headless Chrome, 2026-10-07); Hebrew came
+  from yet another face. `init()` declares `"YMUX Mono"` (unmodified Liberation Mono,
+  OFL, `app/public/fonts/liberation-mono-{400,700}.ttf`, Latin + Hebrew at one 0.6em
+  advance) and awaits its load before the first pane, since xterm measures its cell once.
+  Both stacks put it right after the named Windows fonts, BEFORE `ui-monospace` /
+  `monospace`; the desktop never declares it, so there it resolves to nothing.
+- **PWA + notifications** (Phase 114, WEB-DESIGN E) — `web/pwa.ts`. `init()` ends with
+  `startPwa` (never awaited): registers `/sw.js` (`app/public/sw.js`, served as-is — not a
+  vite module), posts the device token + language to the worker (it cannot read
+  localStorage; `forgetToken` posts an empty one), and when permission is already
+  granted re-sends the subscription (re-subscribing if the daemon's VAPID key changed),
+  so a daemon that lost its record heals on the next load. `enablePush` is the only call
+  that asks for permission — from a click, in `WebPushPrompt.tsx` (a fixed banner
+  index.tsx mounts beside `<App>` in a browser only; "Not now" is remembered per
+  browser; a click the browser refuses — or a browser-level setting refuses without
+  asking, as Zen does — turns the banner into "allow it in the site settings" + Try
+  again, instead of vanishing) — then subscribes and asks the daemon for a test notification. A
+  `feed:item-resolved` closes that gate's notification. The worker has **no fetch
+  handler and no cache** (a cached shell outlives a bundle update); it shows the push,
+  takes it straight down when an app window is focused, answers Approve/Deny with
+  `POST /api/v2/feed/{id}/decide` (on failure it focuses the app), and re-subscribes on
+  `pushsubscriptionchange`. `app/public/manifest.webmanifest` + `icons/` make it
+  installable ("Add to Home Screen").
+- **"claude" mode** (Phase 110) — `pane_connect` with `mode: "claude"` creates the
+  session with `cmd: ["claude", ...splitArgs(claudeArgs)]` (`web/argv.ts`: whitespace
+  and quotes only, nothing evaluated; `argv.test.ts`). A custom `cmd` string still opens
+  a shell.
+- **New workspace** — App's `openNewWorkspace()`: the desktop opens the wizard; the
+  browser (no wizard targets) creates `workspace N` directly.
+- `web/` cannot import `logger.ts` (cycle through `backend`), so it uses `console.*` — the
+  browser console is the sink there. No PTY bytes, no token.
+- `types.ts` imports nothing from the app — `logger.ts` calls through the backend, so a
+  logger import there would be a cycle.
+- `on` stays async on purpose: App.tsx awaits each registration so the "listeners
+  before session restore" ordering holds.
+- The singleton is picked synchronously at module load, so any module may call it from
+  its first line.
 
 ## `terminalInstance.ts` (1,954) — the xterm.js wrapper
 

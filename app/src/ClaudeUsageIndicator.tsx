@@ -1,5 +1,5 @@
 import { createSignal, createEffect, on, onCleanup, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t, currentLanguage } from "./i18n";
 import { formatResetLocal } from "./claudeUsageFmt";
 import { IconBot } from "./icons";
@@ -61,7 +61,7 @@ export function ClaudeUsageIndicator(p: Props) {
     if (!p.workspaceId || !p.live || inFlight) return;
     inFlight = true;
     try {
-      const u = await invoke<ClaudeUsage>("claude_usage_fetch", {
+      const u = await backend.call<ClaudeUsage>("claude_usage_fetch", {
         workspaceId: p.workspaceId,
         force,
       });

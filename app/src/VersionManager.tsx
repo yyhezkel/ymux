@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { getVersion } from "@tauri-apps/api/app";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { isMac } from "./platform";
 import { IconRefresh, IconBadgePlus, IconClose, IconCircle, IconCheck, IconWarning } from "./icons";
@@ -66,7 +65,7 @@ export function VersionManager(p: {
     setLoading(true);
     setErr(null);
     try {
-      const list = await invoke<ReleaseInfo[]>("updater_list_versions", { force });
+      const list = await backend.call<ReleaseInfo[]>("updater_list_versions", { force });
       setVersions(list);
     } catch (e) {
       setErr(String(e));
@@ -77,7 +76,7 @@ export function VersionManager(p: {
 
   onMount(async () => {
     try {
-      setCurrent(await getVersion());
+      setCurrent(await backend.host.appVersion());
     } catch {
       /* ignore */
     }
@@ -97,7 +96,7 @@ export function VersionManager(p: {
     setInstalling(true);
     setErr(null);
     try {
-      await invoke("updater_install_version", {
+      await backend.call("updater_install_version", {
         version: r.version,
         backupSettings: isDowngrade(r) && backup(),
       });

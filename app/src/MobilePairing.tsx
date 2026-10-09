@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { backend } from "./backend";
 import qrcode from "qrcode-generator";
 import { t } from "./i18n";
 import { IconClose, IconCircle, IconSmartphone } from "./icons";
@@ -51,7 +50,12 @@ interface PairedDevice {
   status: string;
   last_seen: number;
   last_ip: string;
+  /** Stored grants: "all", "" or a JSON array (daemon chat_pairing.go). */
+  scopes?: string;
 }
+
+/** Phase 113: `shell:attach` is never implied by "all" — only an explicit grant. */
+const hasShell = (d: PairedDevice): boolean => (d.scopes ?? "").includes('"shell:attach"');
 
 function fmtWhen(unix: number): string {
   if (!unix) return "—";
@@ -83,7 +87,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
   const refreshStatus = async () => {
     if (!ws()) return;
     try {
-      const s = JSON.parse(await invoke<string>("mobile_pairing_status", { workspaceId: ws() })) as PairStatus;
+      const s = JSON.parse(await backend.call<string>("mobile_pairing_status", { workspaceId: ws() })) as PairStatus;
       setStatus(s);
       if (s.domain && !domain()) setDomain(s.domain);
     } catch (e) {
@@ -94,7 +98,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
   const refreshDevices = async () => {
     if (!ws()) return;
     try {
-      const r = JSON.parse(await invoke<string>("mobile_pairing_list_devices", { workspaceId: ws() })) as {
+      const r = JSON.parse(await backend.call<string>("mobile_pairing_list_devices", { workspaceId: ws() })) as {
         devices: PairedDevice[];
       };
       setDevices(r.devices ?? []);
@@ -114,7 +118,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setNote(null);
     try {
       const r = JSON.parse(
-        await invoke<string>("mobile_pairing_init", {
+        await backend.call<string>("mobile_pairing_init", {
           workspaceId: ws(),
           domain: domain().trim(),
           cfToken: cfToken().trim(),
@@ -143,7 +147,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setErr(null);
     setNote(null);
     try {
-      await invoke("mobile_pairing_disconnect", { workspaceId: ws() });
+      await backend.call("mobile_pairing_disconnect", { workspaceId: ws() });
       setDomain(""); // clear the typed value so the setup form comes back empty
       await refreshStatus();
     } catch (e) {
@@ -183,7 +187,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
     setCopied(false);
     try {
       const issued = JSON.parse(
-        await invoke<string>("mobile_pairing_generate_qr", {
+        await backend.call<string>("mobile_pairing_generate_qr", {
           workspaceId: ws(),
           deviceName: pairName().trim() || "device",
         }),
@@ -254,18 +258,32 @@ export function MobilePairing(p: { workspaceId?: string }) {
 
   const revoke = async (id: string) => {
     try {
-      await invoke("mobile_pairing_revoke", { workspaceId: ws(), deviceId: id });
+      await backend.call("mobile_pairing_revoke", { workspaceId: ws(), deviceId: id });
       await refreshDevices();
     } catch (e) {
       setErr(String(e));
     }
   };
 
+  // Phase 113 (Web & devices): grant / withdraw a paired browser's terminal.
+  const setShell = async (id: string, enabled: boolean) => {
+    if (enabled && !window.confirm(t("mobile.shell.confirm"))) {
+      await refreshDevices(); // put the checkbox back
+      return;
+    }
+    try {
+      await backend.call("mobile_pairing_set_shell", { workspaceId: ws(), deviceId: id, enabled });
+    } catch (e) {
+      setErr(String(e));
+    }
+    await refreshDevices();
+  };
+
   const rename = async (id: string, current: string) => {
     const name = window.prompt(t("mobile.rename_prompt"), current);
     if (name == null) return;
     try {
-      await invoke("mobile_pairing_rename", { workspaceId: ws(), deviceId: id, name });
+      await backend.call("mobile_pairing_rename", { workspaceId: ws(), deviceId: id, name });
       await refreshDevices();
     } catch (e) {
       setErr(String(e));
@@ -345,7 +363,7 @@ export function MobilePairing(p: { workspaceId?: string }) {
             href="https://dash.cloudflare.com/profile/api-tokens"
             onClick={(e) => {
               e.preventDefault();
-              void openUrl("https://dash.cloudflare.com/profile/api-tokens").catch(() => {});
+              void backend.host.openUrl("https://dash.cloudflare.com/profile/api-tokens").catch(() => {});
             }}
           >
             {t("mobile.cf_open_tokens")} →
@@ -415,6 +433,15 @@ export function MobilePairing(p: { workspaceId?: string }) {
               <span class="mob-dev-meta settings-hint">
                 {d.status} · {fmtWhen(d.last_seen)}{d.last_ip ? ` · ${d.last_ip}` : ""}
               </span>
+              <label class="mob-dev-shell settings-checkbox" title={t("mobile.shell.hint")}>
+                <input
+                  type="checkbox"
+                  checked={hasShell(d)}
+                  disabled={d.status !== "active"}
+                  onChange={(e) => void setShell(d.device_id, e.currentTarget.checked)}
+                />
+                <span>{t("mobile.shell.label")}</span>
+              </label>
               <span class="mob-dev-actions">
                 <button onClick={() => void rename(d.device_id, d.device_name)}>{t("common.rename")}</button>
                 <button onClick={() => void revoke(d.device_id)}>{t("mobile.revoke")}</button>

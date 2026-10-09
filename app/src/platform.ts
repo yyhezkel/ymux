@@ -13,7 +13,7 @@
 // unresolved promise there would mean the first drop uses the wrong answer.
 // After init() the accessors are plain synchronous reads.
 
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 type HostOs = "windows" | "macos" | "linux";
 
@@ -24,7 +24,7 @@ let hostOs: HostOs = "windows";
 
 export async function initPlatform(): Promise<void> {
   try {
-    const os = await invoke<string>("host_platform");
+    const os = await backend.call<string>("host_platform");
     if (os === "macos" || os === "linux" || os === "windows") hostOs = os;
   } catch {
     // Probe failed (command missing / IPC not ready) — keep the default.

@@ -161,6 +161,7 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
   dependency the daemon does not have and REQUIRES signature verification (a fetched
   bundle served to the user's browser is code execution in their session).
   **Recommendation: (b), with (c) as a later opt-in.**
+  **→ DECIDED 2026-10-05: (b).** See Decided, "Phase C plan".
 - **Q3 "local parallel" — DEFERRED (Yossi, 2026-09-10): revisit after the remote path
   is proven end-to-end.** It means the Rust backend re-implementing the same HTTP/WS
   API (two implementations, two languages — the macOS-branch lesson). When it comes
@@ -464,6 +465,73 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-07 — Phase F: the browser reaches the desktop's usability, in five PRs
+- **Decided (Yossi):** "the browser must be as usable as the desktop" — a parity pass
+  over the 134 desktop commands the browser backend did not handle. Order approved:
+  **F1** workspaces + project folders (tree, groups, order) → **F2** File Manager
+  (mkdir/rename/copy/zip, upload, drag into a pane) → **F3** panes (resume a claude
+  session, identity, smart bidi, Context Rail) → **F4** git (Diff pane, worktrees) →
+  **F5** Claude summaries / usage, tickets, skills, presets, log tail.
+- **Decided (Yossi):** "more workspaces" means more on the SAME server; a browser that
+  talks to several daemons is out of scope for F.
+- **By design, not ported:** the in-app Browser (links open a new tab), the local
+  machine (files, shells, setup wizard), SSH out / provisioning / keys, the updater,
+  font install, device-pairing admin, add-ons, local STT.
+- **Decided (Claude):** the daemon stores the tree fields opaque (`meta`) and the
+  browser owns lib.rs's semantics (`backend/web/tree.ts`) — the B5 rule for layouts,
+  applied to the tree; pre-F1 flat rows migrate to header + screen once.
+
+### 2026-10-06 — Phase E: the PWA gets real Web Push (FCM/autopush), not just in-tab notifications
+- **Decided (Yossi):** "E1+E2 together" — the installable PWA **and** background
+  notifications via Web Push, delivered even with the app closed. Accepted trade-off:
+  the daemon POSTs to the push service the browser picked (FCM on Chrome/Android), which
+  departs from internal/push's "no Firebase" rule. The payload is encrypted end to end
+  (RFC 8291); the service sees endpoint, size and timing only. The phone's own push WS
+  is unchanged.
+- **Decided (Claude):** stdlib crypto, no web-push dependency; notify on gate, Claude's
+  Notification hook (not idle_prompt) and stop, so the default `none` policy is not
+  silent; the service worker has no fetch handler / cache.
+
+### 2026-10-06 — Phase D: the web add-on ships the embedded frontend, updates on connect; shell:attach is a device checkbox
+- **Decided (Claude, verified in tauri 2.10.3 source):** the `ymux-web` add-on uploads
+  the frontend already embedded in the desktop binary (`AssetResolver::iter` for the list,
+  `get` for the decompressed bytes) — no tarball in `resources/`, no second build, the
+  browser always runs the desktop's own frontend.
+- **Decided (Yossi):** the bundle updates **automatically on connect** when a host has the
+  add-on and its version differs (like the CLI), not by hand from Add-ons.
+- **Decided (Yossi):** `shell:attach` is granted with a **checkbox in the device list**
+  (Web & devices), separate from approving the pairing card — the generic feed card keeps
+  Allow / Deny.
+- **Decided (Claude):** before D, hook routing was made to survive a daemon restart
+  (Phase 111) — every add-on update restarts the daemon.
+
+### 2026-10-05 — C5 (WebBackend) starts before the C1 + C3 desktop smoke
+- **Decided (Yossi):** "let's move on to the next stage before we do smoke tests" —
+  Phase 109 (C5) is built on top of the unmerged C1 + C3 branches instead of waiting
+  for their desktop release. Supersedes "WebBackend work starts only after it" in the
+  Phase C plan entry below. The C1 + C3 smoke still gates their merge to `main`.
+- **Decided (Claude):** a browser leaf's `pane_id` is also its tmux session's hook pane
+  id — the daemon (2.10.0) takes `pane_id` on create rather than the client rewriting
+  the leaf to a minted `term_<hex>`. Keeps the id stable across reconnects and reloads,
+  and the agent verbs (tree / split / send) keep addressing the leaf the UI drew.
+
+### 2026-10-05 — Phase C plan: C1–C3 ship in one desktop release; settings on the daemon; Q2 = (b)
+- **Context:** Phase B is merged; Phase C moves the frontend onto a `Backend` seam
+  (WEB-DESIGN §5). The plan is WEB-DESIGN §8.2: C1 seam + codemod, C2 `TermStream`,
+  C3 capabilities, C4 the daemon serves the bundle + a settings store, C5/C6 `WebBackend`.
+- **Decided (Yossi):** C1–C3 (all "desktop behaviour unchanged") ship together in **one
+  desktop release** with one Windows + Mac smoke; `WebBackend` work starts only after it.
+- **Decided (Yossi):** browser-mode **settings live on the daemon**, shared by every
+  browser — an opaque JSON document with a `version` guard (`GET/PUT /api/v2/settings`),
+  not per-browser localStorage. The daemon never parses the fields.
+- **Decided (Claude, flagged to Yossi), same day:** **C2 (`TermStream`) is dropped.** The
+  WebBackend answers the desktop's own PTY contract (`pty_write` / `pty_resize` calls,
+  `pty:data` / `pty:exit` events) over the attach WS, so App.tsx, `TerminalInstance` and
+  PopoutTerminal never change. The release before `WebBackend` is C1 + C3, and the PTY
+  hot path — the main desktop risk in the survey — is out of it.
+- **Decided (Yossi):** **Q2 = (b), the `ymux-web` add-on.** Phase C4 builds the serving
+  half in the daemon (`~/.ymux/server/www/current/` at `/`, diagnostic page at `/diag`);
+  the add-on upload is Phase D. Until then a box is loaded by hand from the CI artifact.
 ### 2026-10-06 — workspace Browser webview: zero app commands
 - **Context:** FOLLOWUPS P2 (capabilities/default.json LATENT). Investigation found ymux has no app ACL manifest, so Tauri 2.10.3 never ACL-checks app commands; the `Local`-context capability only gated plugin commands. The tunneled third-party page could invoke any app command.
 - **Options:** A) label-based guard denying all app commands to `workspace-browser-*` / B) add an app ACL manifest (`permissions/`, build.rs) / C) leave as latent.

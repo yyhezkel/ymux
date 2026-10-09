@@ -127,3 +127,44 @@ func TestSettingsRoutes(t *testing.T) {
 		t.Errorf("oversized PUT = %d, want 413", w.Code)
 	}
 }
+
+// Phase 114 (E): the PWA files, each on its own named route.
+func TestPWAFilesAreServed(t *testing.T) {
+	dir := t.TempDir()
+	installBundle(t, dir)
+	cur := filepath.Join(dir, "www", "current")
+	_ = os.MkdirAll(filepath.Join(cur, "icons"), 0o755)
+	for name, body := range map[string]string{
+		"sw.js":                "self.addEventListener('push', () => {})",
+		"manifest.webmanifest": `{"name":"YMUX"}`,
+		"icons/icon-192.png":   "png",
+	} {
+		if err := os.WriteFile(filepath.Join(cur, filepath.FromSlash(name)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s, _ := testService(ok(""))
+	s.SetWebRoot(dir)
+
+	w := do(s, "GET", "/sw.js", "", "")
+	if w.Code != http.StatusOK || w.Header().Get("Cache-Control") != "no-cache" ||
+		!strings.Contains(w.Header().Get("Content-Type"), "javascript") {
+		t.Errorf("sw.js = %d cache=%q type=%q", w.Code, w.Header().Get("Cache-Control"), w.Header().Get("Content-Type"))
+	}
+	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "worker-src 'self'") {
+		t.Errorf("CSP lacks worker-src: %q", w.Header().Get("Content-Security-Policy"))
+	}
+	w = do(s, "GET", "/manifest.webmanifest", "", "")
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "application/manifest+json" {
+		t.Errorf("manifest = %d type=%q", w.Code, w.Header().Get("Content-Type"))
+	}
+	if w := do(s, "GET", "/icons/icon-192.png", "", ""); w.Code != http.StatusOK {
+		t.Errorf("icon = %d", w.Code)
+	}
+	// Without a bundle they do not exist.
+	s2, _ := testService(ok(""))
+	s2.SetWebRoot(t.TempDir())
+	if w := do(s2, "GET", "/sw.js", "", ""); w.Code != http.StatusNotFound {
+		t.Errorf("sw.js without a bundle = %d, want 404", w.Code)
+	}
+}

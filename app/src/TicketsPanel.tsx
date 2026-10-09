@@ -1,6 +1,5 @@
 import { createEffect, createResource, createSignal, For, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconBug, IconCheck, IconRefresh, IconTrash, IconFolder } from "./icons";
 import { PanelSurface } from "./PanelSurface";
@@ -38,7 +37,7 @@ function TicketShot(p: { workspaceId: string; ticketId: string }) {
   const [src] = createResource(
     () => [p.workspaceId, p.ticketId] as const,
     ([ws, id]) =>
-      invoke<string | null>("tickets_screenshot", {
+      backend.call<string | null>("tickets_screenshot", {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
         id,
@@ -72,7 +71,7 @@ export function TicketsPanel(p: Props) {
     setError(null);
     try {
       setItems(
-        await invoke<Ticket[]>("tickets_list", {
+        await backend.call<Ticket[]>("tickets_list", {
           workspaceId: ws,
           projectOverride: loadProjectOverride(ws),
         }),
@@ -102,7 +101,7 @@ export function TicketsPanel(p: Props) {
   const toggleResolved = async (tk: Ticket) => {
     const next = tk.status === "resolved" ? "open" : "resolved";
     try {
-      await invoke("tickets_update", {
+      await backend.call("tickets_update", {
         workspaceId: tk.workspace_id,
         projectOverride: loadProjectOverride(tk.workspace_id),
         id: tk.id,
@@ -116,7 +115,7 @@ export function TicketsPanel(p: Props) {
 
   const deleteOne = async (tk: Ticket) => {
     try {
-      await invoke("tickets_delete", {
+      await backend.call("tickets_delete", {
         workspaceId: tk.workspace_id,
         projectOverride: loadProjectOverride(tk.workspace_id),
         id: tk.id,
@@ -187,7 +186,7 @@ export function TicketsPanel(p: Props) {
     const ws = p.workspaceId;
     if (!ws) return;
     try {
-      const res = await invoke<ProjectResolution>("tickets_resolve_project", {
+      const res = await backend.call<ProjectResolution>("tickets_resolve_project", {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
       });
@@ -197,11 +196,11 @@ export function TicketsPanel(p: Props) {
         setTimeout(() => setCopied(false), 1800);
         return;
       }
-      const dir = await invoke<string>("tickets_dir_path", {
+      const dir = await backend.call<string>("tickets_dir_path", {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
       });
-      await revealItemInDir(dir);
+      await backend.host.revealInDir(dir);
     } catch (e) {
       log.warn("reveal tickets dir failed", e);
       setError(String(e));

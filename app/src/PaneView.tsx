@@ -1,9 +1,7 @@
 import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { Portal } from "solid-js/web";
-import { invoke } from "@tauri-apps/api/core";
-import { open as openNativeDialog } from "@tauri-apps/plugin-dialog";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { backend } from "./backend";
 import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSessionState, TmuxSessionInfo, RtlProfileKind } from "./types";
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
@@ -188,7 +186,7 @@ export function PaneView(p: Props) {
     );
   const saveIdentity = async (color: string | null, emoji: string | null) => {
     try {
-      await invoke("pane_set_identity", {
+      await backend.call("pane_set_identity", {
         workspaceId: p.workspaceId,
         paneId: p.pane.pane_id,
         color,
@@ -375,7 +373,7 @@ export function PaneView(p: Props) {
       // project on this machine", so picking a foreign session does not
       // fail — it succeeds, resuming another repo's conversation inside
       // this folder.
-      const list = await invoke<ClaudeSessionInfo[]>("pane_list_claude_sessions", {
+      const list = await backend.call<ClaudeSessionInfo[]>("pane_list_claude_sessions", {
         workspaceId: p.workspaceId,
         limit: 40,
         projectPath: folderAnchor(),
@@ -471,10 +469,10 @@ export function PaneView(p: Props) {
     // nothing at all.
     void (async () => {
       if (isSsh()) {
-        try { await invoke("workspace_ensure_connected", { workspaceId: p.workspaceId }); } catch { /* fall through */ }
+        try { await backend.call("workspace_ensure_connected", { workspaceId: p.workspaceId }); } catch { /* fall through */ }
       }
       try {
-        setTargetState(await invoke<TargetSessionState>("pane_target_session_state", {
+        setTargetState(await backend.call<TargetSessionState>("pane_target_session_state", {
           workspaceId: p.workspaceId,
           paneId: p.pane.pane_id,
           // Phase 91.G: fall back to the row's bound session name when the
@@ -517,7 +515,7 @@ export function PaneView(p: Props) {
   // the dialog itself is the UI, so no inline browse view is needed.
   const pickLocalFolder = async (): Promise<string | null> => {
     try {
-      const picked = await openNativeDialog({
+      const picked = await backend.host.pickPaths({
         directory: true,
         multiple: false,
         defaultPath: ncDir().trim() || undefined,
@@ -592,7 +590,7 @@ export function PaneView(p: Props) {
       // Idempotent, PTY-free, tmux-free; no-ops on password-auth (can't prompt
       // headlessly) — those simply yield an empty list and connect regular.
       if (isSsh()) {
-        try { await invoke("workspace_ensure_connected", { workspaceId: p.workspaceId }); } catch { /* fall through */ }
+        try { await backend.call("workspace_ensure_connected", { workspaceId: p.workspaceId }); } catch { /* fall through */ }
       }
       let list: TmuxSessionInfo[] = [];
       try {
@@ -601,7 +599,7 @@ export function PaneView(p: Props) {
         // decides what is shown — which is why the emptiness test stays on
         // the full list: opening straight into a regular shell because this
         // folder has no sessions would hide the ones that do exist.
-        list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        list = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: p.workspaceId,
           projectPath: folderAnchor(),
         });
@@ -640,7 +638,7 @@ export function PaneView(p: Props) {
     const base = targetState()?.name ?? p.pane.pane_id;
     let taken: string[] = [];
     try {
-      const list = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+      const list = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
         workspaceId: p.workspaceId,
         projectPath: null,
       });
@@ -759,7 +757,7 @@ export function PaneView(p: Props) {
     }
     try {
       setDropMsg(t("pane.drop.uploading", { name: basename }));
-      const remote = await invoke<string>("pane_upload_dropped", {
+      const remote = await backend.call<string>("pane_upload_dropped", {
         workspaceId: p.workspaceId,
         paneId: p.pane.pane_id,
         localPath: hostPath,
@@ -785,7 +783,7 @@ export function PaneView(p: Props) {
 
   const writeToPty = (s: string) => {
     if (!ti?.sessionId) return;
-    void invoke("pty_write", { sessionId: ti.sessionId, data: s }).catch(
+    void backend.call("pty_write", { sessionId: ti.sessionId, data: s }).catch(
       (e) => log.error("pty_write failed", e),
     );
   };
@@ -836,7 +834,7 @@ export function PaneView(p: Props) {
     let unlisten: (() => void) | undefined;
     void (async () => {
       try {
-        unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+        unlisten = await backend.host.onDragDrop((event) => {
           const payload = event.payload as
             | { type: "enter" | "over"; position: { x: number; y: number } }
             | { type: "drop"; paths: string[]; position: { x: number; y: number } }
@@ -1001,7 +999,7 @@ export function PaneView(p: Props) {
     // session rows. Dropping the buttons also means the overflow fitter
     // never engages in tabs mode.
     if (p.tabsMode) {
-      if (p.isConnected) list.push(popoutAction());
+      if (p.isConnected && backend.can("popout")) list.push(popoutAction());
       return list;
     }
     if (p.pane.annotation) {
@@ -1057,7 +1055,7 @@ export function PaneView(p: Props) {
       active: p.pane.smart_bidi === true,
       run: () => {
         const next = !(p.pane.smart_bidi === true);
-        void invoke("pane_set_smart_bidi", {
+        void backend.call("pane_set_smart_bidi", {
           workspaceId: p.workspaceId,
           paneId: p.pane.pane_id,
           enabled: next,
@@ -1094,7 +1092,7 @@ export function PaneView(p: Props) {
       icon: () => <IconRows size={14} />,
       run: () => p.onSplit(p.pane.pane_id, "vertical"),
     });
-    if (p.isConnected) list.push(popoutAction());
+    if (p.isConnected && backend.can("popout")) list.push(popoutAction());
     return list;
   });
 
@@ -1868,7 +1866,7 @@ export function PaneView(p: Props) {
                                   e.stopPropagation();
                                   if (!confirm(t("connect.tmuxPick.deleteConfirm", { name: s.name }))) return;
                                   try {
-                                    await invoke<KillSessionOutcome>("zellij_delete_session", { name: s.name });
+                                    await backend.call<KillSessionOutcome>("zellij_delete_session", { name: s.name });
                                   } catch (err) {
                                     log.warn("zellij_delete_session failed", err);
                                   }
@@ -1877,7 +1875,7 @@ export function PaneView(p: Props) {
                                   // actually there, including when the delete
                                   // did not take.
                                   try {
-                                    setTmuxPick(await invoke<TmuxSessionInfo[]>(
+                                    setTmuxPick(await backend.call<TmuxSessionInfo[]>(
                                       "pane_list_tmux_sessions",
                                       { workspaceId: p.workspaceId, projectPath: folderAnchor() },
                                     ));

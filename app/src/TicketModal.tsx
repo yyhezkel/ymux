@@ -1,5 +1,5 @@
 import { createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconBug, IconClose, IconWarning } from "./icons";
 import {
@@ -55,7 +55,7 @@ export function TicketModal(p: Props) {
   const [dest, { refetch: refetchDest }] = createResource(
     () => p.workspaceId,
     (ws) =>
-      invoke<ProjectResolution>("tickets_resolve_project", {
+      backend.call<ProjectResolution>("tickets_resolve_project", {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
       }),
@@ -102,7 +102,7 @@ export function TicketModal(p: Props) {
     setSaving(true);
     setError(null);
     try {
-      const created = await invoke<Ticket>("tickets_create", {
+      const created = await backend.call<Ticket>("tickets_create", {
         workspaceId: p.workspaceId,
         projectOverride: loadProjectOverride(p.workspaceId),
         data: {

@@ -1,5 +1,5 @@
 import { createSignal, For, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClock, IconClose, IconFolder, IconWarning } from "./icons";
 
@@ -100,7 +100,7 @@ export function DirPicker(p: Props) {
     setLoading(true);
     setError(null);
     try {
-      const list = await invoke<{ name: string; is_dir: boolean }[]>("file_list_remote", {
+      const list = await backend.call<{ name: string; is_dir: boolean }[]>("file_list_remote", {
         workspaceId: p.workspaceId,
         path: to,
         showHidden: false,
@@ -127,7 +127,7 @@ export function DirPicker(p: Props) {
       }
       let start = "/";
       try {
-        start = await invoke<string>("file_home_remote", { workspaceId: p.workspaceId });
+        start = await backend.call<string>("file_home_remote", { workspaceId: p.workspaceId });
       } catch {
         // No $HOME (or no session yet) — "/" is still a valid place to
         // start, and navigate() surfaces the real error if there is one.

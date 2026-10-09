@@ -240,7 +240,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9356](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9361](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -258,8 +258,12 @@ a wide argument list because every connection mode funnels through it: `persiste
   explicit key file (optional passphrase) → default `~/.ssh/id_*` → password. Then
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
-  `request_shell`, channel-pump task.
-- `emit_data` ([emit_data@lib.rs:2646](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+  `request_shell`, channel-pump task. Next to the background `check_remote_hooks` it also
+  spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
+  add-on is brought to this desktop's frontend in the background. `setup()` calls
+  `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
+  `pairing::mobile_pairing_set_shell`, Phase 113.)
+- `emit_data` ([emit_data@lib.rs:2647](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

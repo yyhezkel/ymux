@@ -62,7 +62,7 @@ func (r *HookRegistry) byPane(paneID string) (hookEntry, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for _, e := range r.byName {
-		if e.paneID == paneID {
+		if e.paneID == paneID && !e.released {
 			return *e, true
 		}
 	}
