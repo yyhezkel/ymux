@@ -37,7 +37,7 @@
     "app/src-tauri/src/addons.rs": "c48a281c4fbd412256e42f270fcb4665411e57b343d6d14b5435f0207ddc15f0",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "e9eb2e82df82efd3ce793177a3c80a502ce261d14c551355b85b91fb4dd79664",
-    "app/src-tauri/src/provisioning.rs": "b145e020a73b9cda1022182662cdb05a8396bff2825ff2a6f56c3ba6ace4383f",
+    "app/src-tauri/src/provisioning.rs": "e728eb9da0f6a9109ec965b9672aab9fe5f61040de7b8aebb2db1d9e62c95bdf",
     "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd",
     "app/src-tauri/src/web_addon.rs": "84bcd9c980c9b8e49b264f48b977ddfff09a9d06ab4378d6c7bdfccd990fc02d"
   },
