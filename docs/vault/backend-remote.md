@@ -97,6 +97,9 @@ Insights panel — the frontend does not make it. Shared helpers `exec`, `exec_s
 hand** — a Go change that skips the rebake ships the old server to every remote, which
 is why `ci-windows.yml` has a gate for exactly that.
 
+The install script's no-`systemd --user` (nohup) branch stops `ymux-*` and the pre-rename
+`winmux-server` / `winmux-insights` daemons before starting, so the old and new never both run.
+
 ## `web_addon.rs` — the `ymux-web` add-on (Phase 112, WEB-DESIGN Phase D)
 
 Puts the browser frontend on a server so its daemon (2.9.0+) serves it at `/`. The

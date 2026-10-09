@@ -650,6 +650,8 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev
 else
   pkill -x ymux-server 2>/dev/null; pkill -f 'ymux-server serve' 2>/dev/null
   pkill -x ymux-insights 2>/dev/null; pkill -f 'ymux-insights serve' 2>/dev/null
+  pkill -x winmux-server 2>/dev/null; pkill -f 'winmux-server serve' 2>/dev/null
+  pkill -x winmux-insights 2>/dev/null; pkill -f 'winmux-insights serve' 2>/dev/null
   sleep 1
   if [ "$WRAP" = "sg" ] && [ -n "$SG" ]; then
     nohup "$SG" docker -c "exec $DAEMON serve" >/dev/null 2>&1 &
