@@ -3664,6 +3664,7 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
 /// 2026-10: join `session-meta.json` onto zellij rows by session name, same
 /// fields as the tmux join in `parse_tmux_sessions`. Garbled or empty JSON is
 /// no metadata, never an error; a session without an entry keeps its raw name.
+/// The CLI writer keys rows by `$ZELLIJ_SESSION_NAME`, the name listed here.
 fn apply_session_meta(sessions: &mut [TmuxSessionInfo], meta_text: &str) {
     let meta: SessionMetaFileMirror =
         serde_json::from_str(meta_text.trim()).unwrap_or_default();
@@ -15669,6 +15670,22 @@ mod zellij_tests {
         assert_eq!(out[0].auto_name.as_deref(), Some("A"));
         assert_eq!(out[0].claude_session_id.as_deref(), Some("S"));
         assert_eq!(out[0].origin.as_deref(), Some("O"));
+    }
+
+    #[test]
+    fn titled_pane_zellij_key_joins_its_meta_row() {
+        // Pins reader key == writer key ($ZELLIJ_SESSION_NAME) for a titled
+        // pane; breaking it blanks that pane's picker title again.
+        let name = session_name_for_pane(None, Some("My Title"), "p1");
+        assert_eq!(name, "My_Title");
+        assert!(build_zellij_attach_command(&name).is_some_and(|c| c.contains(&name)));
+        let mut out = parse_zellij_sessions("My_Title [Created 5s ago]\n");
+        apply_session_meta(&mut out, r#"{"sessions":{"My_Title":{"auto_name":"A"}}}"#);
+        assert_eq!(out[0].auto_name.as_deref(), Some("A"));
+        // The pane-id fallback key must not join a titled pane's row.
+        let mut out = parse_zellij_sessions("My_Title [Created 5s ago]\n");
+        apply_session_meta(&mut out, r#"{"sessions":{"ymux-p1":{"auto_name":"A"}}}"#);
+        assert!(out[0].auto_name.is_none());
     }
 
     #[test]

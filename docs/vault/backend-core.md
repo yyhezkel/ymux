@@ -302,7 +302,10 @@ a verb — zellij.dev documents a different version.
 
 `list_zellij_sessions` joins `~/.ymux/session-meta.json` (fallback `~/.winmux/`) onto the
 `parse_zellij_sessions` rows via `apply_session_meta`, by session name — same fields as the tmux
-join; bad JSON or an unknown name is a no-op, so the row keeps its raw name.
+join; bad JSON or an unknown name is a no-op, so the row keeps its raw name. Writer key
+contract: the CLI keys rows by `$ZELLIJ_SESSION_NAME`, which equals the name listed here (a
+titled pane is `session_name_for_pane`, e.g. `My_Title`, not `ymux-<pane>`); pinned by
+`titled_pane_zellij_key_joins_its_meta_row`.
 
 tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` marker frame
 the listing output so `parse_tmux_sessions` can read it back unambiguously.
