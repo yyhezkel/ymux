@@ -149,6 +149,11 @@ pre-0.5.x CLI deletes ended rows until the desktop re-bootstraps it. The desktop
 READS this file (writes go through `ymux session-meta set`), so its struct copy in
 `lib.rs` needs no change; it simply ignores the new fields.
 
+**Zellij rows are never judged.** An entry may carry optional `mux: "zellij"`
+(`SessionMetaEntry.mux`, additive; absent = tmux/legacy). `prune_with` `continue`s past
+those rows: `tmux ls` never lists a zellij session, so judging them stamped every live
+one `ended_at`. Residue: a deleted zellij session's row is never reaped.
+
 ## Logging
 
 CLI-side logging goes through `hook_log(level, msg)`, which writes into the remote log

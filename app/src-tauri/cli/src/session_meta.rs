@@ -33,6 +33,10 @@
 // disables the bundled tmux.conf). Instead every write prunes against
 // `tmux ls`, and the desktop-side join ignores keys it can't match.
 //
+// Zellij rows (`mux: "zellij"`) are never judged against `tmux ls`: a live
+// zellij session is absent from it, so judging would stamp every one ended.
+// Residue: a deleted zellij session's row is therefore never reaped.
+//
 // Phase 104 (WEB-DESIGN §4.2, session history): prune no longer DELETES a
 // gone session that ran Claude — it stamps `ended_at`, so the row keeps
 // the mapping to its transcript and can be opened or resumed later. A row
@@ -77,6 +81,10 @@ pub struct SessionMetaEntry {
     /// — where `claude --resume` must start to find its transcript.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    /// Owning multiplexer. `Some("zellij")` = a zellij-keyed row: `tmux ls`
+    /// knows nothing about it, so prune never judges it. Absent = tmux/legacy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux: Option<String>,
     /// Fields this CLI does not know, kept verbatim so a newer writer's
     /// additions survive an older reader's re-save.
     #[serde(flatten, default)]
@@ -169,6 +177,9 @@ pub fn prune_with(
     let now_s = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let mut changed = false;
     for (name, e) in meta.sessions.iter_mut() {
+        if e.mux.as_deref() == Some("zellij") {
+            continue; // not a tmux session — `live` cannot judge it
+        }
         let alive = live.iter().any(|l| l == name);
         if alive && e.ended_at.is_some() {
             e.ended_at = None; // the name is back (resumed, or reused)
@@ -673,6 +684,32 @@ mod tests {
         // A second pass keeps the FIRST ended time and reports no change.
         assert!(!prune_with(&mut m, &["live".into()], at("2026-10-05T11:00:00Z")));
         assert_eq!(m.sessions["gone"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+    }
+
+    #[test]
+    fn prune_leaves_live_zellij_rows_alone() {
+        // Pins: tmux ls never lists zellij sessions; judging them ended-stamps live rows.
+        let mut m = SessionMetaFile::default();
+        let mut e = claude_entry();
+        e.claude_session_id = None;
+        e.mux = Some("zellij".into());
+        m.sessions.insert("ymux-p1".into(), e);
+        assert!(!prune_with(&mut m, &[], at("2026-10-05T10:00:00Z")));
+        assert!(m.sessions["ymux-p1"].ended_at.is_none());
+        assert!(m.sessions.contains_key("ymux-p1"));
+    }
+
+    #[test]
+    fn prune_still_ends_a_gone_tmux_row() {
+        // Pins: the zellij skip must not weaken tmux judging (mux absent or non-zellij).
+        let mut m = SessionMetaFile::default();
+        m.sessions.insert("gone".into(), claude_entry());
+        let mut t = claude_entry();
+        t.mux = Some("tmux".into());
+        m.sessions.insert("gone2".into(), t);
+        assert!(prune_with(&mut m, &[], at("2026-10-05T10:00:00Z")));
+        assert_eq!(m.sessions["gone"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+        assert_eq!(m.sessions["gone2"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
     }
 
     #[test]
