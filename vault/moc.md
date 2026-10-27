@@ -26,3 +26,4 @@
 - Pure-module pattern: zero-import `app/src/<x>.ts` + `<x>.test.ts` (e.g. `termMenuCopy.ts`); new module must be added to a `docs/vault/*.md` `covers:` list
 - [session-meta-keys](session-meta-keys.md) — session-meta writer key vs zellij picker join key; prune ownership
 - [device-scopes](device-scopes.md) — which scope gates each huma op (opScopes), fail-open AllScopes, scope-test helpers
+- Desktop-smoke tickets (WEB-DESIGN C1+C3, `backend.can`/`backend.host`): gate list + host methods = `docs/vault/frontend-lib.md` § The backend seam; live sites = `grep -rn 'backend\.can(' app/src`; desktop caps all true (`app/src/backend/tauri.ts` caps = `ALL_CAPABILITIES`, picked when `__TAURI_INTERNALS__` present, `app/src/backend/index.ts:24-31`) → pipeline output = report, outcomes unprovable-by-design
