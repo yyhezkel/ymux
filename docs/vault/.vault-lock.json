@@ -250,6 +250,7 @@
     "app/src-tauri/server/internal/agent/state_test.go": "05f7da542e08902bd0e06f2af9776fc93933b2c6972978dd10a41bcc7f789c25",
     "app/src-tauri/server/internal/api/api.go": "eec81c551707aefcabb6abe42a24a6b05404aa069236f61e937da817a244bb77",
     "app/src-tauri/server/internal/api/api_test.go": "9f0bb84c40297350681a90ddbe052a4e831674e481559d59bb9baab478ac8849",
+    "app/src-tauri/server/internal/api/files_logs_scope_test.go": "2286eec90cfd29ba297a77a0e366bb29ef7de96f8cb1af23590f35145b2c5a09",
     "app/src-tauri/server/internal/api/forward_test.go": "3667d977f1333c7bdb807d74b45fde3bcfef5eee1cb101d96cf299d548665e23",
     "app/src-tauri/server/internal/api/huma.go": "36e0c8453e2ae8cbd2417f34b3c489e9af19007070ae00859bb071db7099a799",
     "app/src-tauri/server/internal/api/integration_test.go": "9032d1e0a60f4038afbc61a90d74c57e7d751b9c3afd323fcfe93e72fd951bea",

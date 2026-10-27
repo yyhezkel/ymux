@@ -167,7 +167,10 @@ neither shared token nor scope resolver rejects everything), unlike the workspac
 `files:read`, `files-upload|delete|mkdir|rename|copy|archive|unzip` → `files:write`, and
 `logs-list|read|stream` → `insights:read` (logs reuse it, like `/api/v2/logs/daemon`; no
 logs scope exists). A narrowed device gets 403 `missing scope: <s>`; the owner token and
-default "all" devices are unaffected. The Go change needs a blob rebake from CI.
+default "all" devices are unaffected. Pinned by `internal/api/files_logs_scope_test.go`
+(narrowed device → 403 on all 13 ops with the seeded file untouched; `files:read` device reads
+but cannot write; "all" device passes), using `pairDevice`/`termDo` from `term_test.go`.
+The Go change needs a blob rebake from CI.
 
 **`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
 oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
