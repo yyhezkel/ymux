@@ -398,6 +398,9 @@ card alone — the CLI's title IS the approval prompt. But the CLI derives that 
 so it falls back to `agent: pre-tool-use` with the raw hook JSON as the summary (seen
 live in the browser). Exactly that fallback is now humanized (`Claude wants to run: Bash`
 / the command); a title the CLI did derive is untouched.
+The CLI's `derive_hook_title`/`derive_hook_summary` now read `tool_name` / `tool_input`
+too (title ``Allow `Bash` ?``, summary = command/file_path/path/pattern/url clipped to
+100), so this fallback only fires for payloads with no `tool_name`.
 
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a

@@ -85,7 +85,7 @@
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
     "app/src-tauri/cli/src/hooks.rs": "797d32d03f9f610dfca9438674964999117f38e5f1fa190aa670eebf557e0240",
-    "app/src-tauri/cli/src/main.rs": "8f1eee4c43c95546afa87e86e3e2d40a661b500efa2d9d1cc7bd12e801cf200e",
+    "app/src-tauri/cli/src/main.rs": "b82df6e3b517f160efd955ef27134796d3f4dd1ae8104c6bdd85009cb3b6a5fa",
     "app/src-tauri/cli/src/port_watch.rs": "3ec40dfe01ce2f70ded0186e70184c2346371ce5868f55b06cfea447ed1c4b46",
     "app/src-tauri/cli/src/session_meta.rs": "e51cfa3e0bba15ee820b02e81504431678b79373638091a742058f9814f23640"
   },
