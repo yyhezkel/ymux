@@ -163,6 +163,12 @@ are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a
 neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
 "no auth configured => open".
 
+**Files and Logs ops are scoped too.** `opScopes` also maps `files-list|read|download` →
+`files:read`, `files-upload|delete|mkdir|rename|copy|archive|unzip` → `files:write`, and
+`logs-list|read|stream` → `insights:read` (logs reuse it, like `/api/v2/logs/daemon`; no
+logs scope exists). A narrowed device gets 403 `missing scope: <s>`; the owner token and
+default "all" devices are unaffected. The Go change needs a blob rebake from CI.
+
 **`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
 oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
 malformed, so every scope in that list is reachable by a device nobody ever restricted.
