@@ -18,6 +18,7 @@
 ## Notes
 - [phase92-headers-screens](phase92-headers-screens.md) — Phase 92 header/screen symbols, RPC select, delete landing: file:line anchors
 - [macos-signing](macos-signing.md) — macOS signing / hardened runtime / notarisation: where config + CI live, what blocks live proof
+- [web-capability-gate](web-capability-gate.md) — browser-mode `not available in the browser: <cmd>` → add a Capability + `backend.can()` gate
 - [pane-close-cleanup](pane-close-cleanup.md) — what each pane-retire path drops (sessions, watchers, agent_runs, briefs)
 
 ## Test facts
