@@ -164,6 +164,7 @@
     "app/src/terminalInstance.ts": "979d5a29b867992e6280a0d4854393c194fb8f0a0fdaab81f652b169f2f08613",
     "app/src/textDirection.ts": "a15d1af75e5967b52c401c95733dc9bd2daf2e18f396bdc8968cc7c6e1c51ef0",
     "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
+    "app/src/unicodeIsolates.ts": "a827e9ca9d24aa4ea77b09c82b3c0bae78aa30997d41e69034447f71816f2472",
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
   },
   "frontend-panes": {

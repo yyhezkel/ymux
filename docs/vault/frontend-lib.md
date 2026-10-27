@@ -3,6 +3,7 @@ vault: frontend-lib
 covers:
   - app/src/terminalInstance.ts
   - app/src/termMenuCopy.ts
+  - app/src/unicodeIsolates.ts
   - app/src/selectAllShortcut.ts
   - app/src/types.ts
   - app/src/settings.ts
@@ -456,6 +457,14 @@ past installs), `fontInstall`, and `fontUninstall`.
 
 ## Small modules
 
+- **`unicodeIsolates.ts` (~150, pure, zero imports)** — xterm 6.0.0 `UnicodeV6` vendored
+  (tables, wcwidth, charProperties) as `isolateAwareV6`, version key
+  `ISOLATE_AWARE_UNICODE_VERSION = "6-isolates"`. Only U+2066-2069 (LRI/RLI/FSI/PDI, which
+  the smart-bidi filter inserts) differ: width 0 and `charProperties` always joins the
+  preceding cell, keeping its width, so an isolate after an SGR (join state reset) costs no
+  cell. Residual: at column 0 xterm still writes it into its own cell. Not yet registered
+  (wiring is a separate task). `unicodeIsolates.test.ts` pins this and diffs the tables
+  against `node_modules/@xterm/xterm/.../UnicodeV6.ts` when present.
 - **`logger.ts` (~115)** — `createLogger(tag)`. Lines reach both devtools and the single
   local `debug.log`, tagged `[UI:TAG]`. **Batched**: `enqueueLog` queues, and one
   `ui_log_batch` invoke ships the queue at most once a second, capped at 100 lines (the
