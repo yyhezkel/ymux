@@ -488,11 +488,14 @@ function onTermMenuKey(e: KeyboardEvent): void {
 }
 function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): void {
   dismissTerminalMenu();
+  const xsel = ti.term.getSelection();
   const sel = menuCopyText(
-    ti.term.getSelection(),
+    xsel,
     ti.term.modes.mouseTrackingMode !== "none",
     ti.getLastOsc52(),
   );
+  const copySrc = xsel ? "xterm" : sel ? "osc52" : "none";
+  termLog.info(`[ctx-menu] open pane=${ti.paneId} copy=${copySrc}`);
   const menu = document.createElement("div");
   menu.className = "term-ctx-menu";
   const addItem = (label: string, enabled: boolean, action: () => void) => {

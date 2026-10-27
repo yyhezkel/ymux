@@ -161,7 +161,7 @@
     "app/src/shortcuts.ts": "020e14da8b0185e4ef5b17f73a8b7b4a37eb8ee75e72c54cd81506e4a0e7ac03",
     "app/src/stt.ts": "5205c9885931d016c8b4f3f97afe980f1d14f60ecd3af940ed458924061176e5",
     "app/src/termMenuCopy.ts": "ae92e517ab4d8bc5d2784b326fe262ba65ddcc22d2ab2f746c52e424f6c61904",
-    "app/src/terminalInstance.ts": "979d5a29b867992e6280a0d4854393c194fb8f0a0fdaab81f652b169f2f08613",
+    "app/src/terminalInstance.ts": "e2fd498f8168089651b5bba1641e84912a9105a089da36f4eb6800cacaa366b4",
     "app/src/textDirection.ts": "a15d1af75e5967b52c401c95733dc9bd2daf2e18f396bdc8968cc7c6e1c51ef0",
     "app/src/types.ts": "e3e902ff8b970104632f26474ae9b664130ea949f99b306baa98fd916bb0ba27",
     "app/src/wheelSteps.ts": "0a273be70778cf5f359392869d76ee29da712bcd049ba8fed9dae8a0e0b25ce2"
