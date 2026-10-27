@@ -246,7 +246,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
 - The singleton is picked synchronously at module load, so any module may call it from
   its first line.
 
-## `terminalInstance.ts` (1,954) — the xterm.js wrapper
+## `terminalInstance.ts` (1,958) — the xterm.js wrapper
+
+**Unicode width:** right after `new Terminal({...})` the constructor calls `term.unicode.register(isolateAwareV6)` then sets `activeVersion = ISOLATE_AWARE_UNICODE_VERSION` (register first; activating an unregistered version throws). Effect: the FSI/PDI the smart-bidi filter inserts take no cell, so cursor-addressed TUIs stop shifting. Residual: an isolate at column 0 still gets its own cell; in the DOM renderer each cell is an inline-block span, so the isolate's span stays but is zero-width.
 
 **Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
@@ -462,8 +464,8 @@ past installs), `fontInstall`, and `fontUninstall`.
   `ISOLATE_AWARE_UNICODE_VERSION = "6-isolates"`. Only U+2066-2069 (LRI/RLI/FSI/PDI, which
   the smart-bidi filter inserts) differ: width 0 and `charProperties` always joins the
   preceding cell, keeping its width, so an isolate after an SGR (join state reset) costs no
-  cell. Residual: at column 0 xterm still writes it into its own cell. Not yet registered
-  (wiring is a separate task). `unicodeIsolates.test.ts` pins this and diffs the tables
+  cell. Residual: at column 0 xterm still writes it into its own cell. Registered and activated in the
+  `TerminalInstance` constructor. `unicodeIsolates.test.ts` pins this and diffs the tables
   against `node_modules/@xterm/xterm/.../UnicodeV6.ts` when present.
 - **`logger.ts` (~115)** — `createLogger(tag)`. Lines reach both devtools and the single
   local `debug.log`, tagged `[UI:TAG]`. **Batched**: `enqueueLog` queues, and one

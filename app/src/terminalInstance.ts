@@ -28,6 +28,7 @@ import { wheelSteps, type WheelDeltaMode } from "./wheelSteps";
 import type { RtlProfileKind } from "./types";
 import { t } from "./i18n";
 import { menuCopyText } from "./termMenuCopy";
+import { isolateAwareV6, ISOLATE_AWARE_UNICODE_VERSION } from "./unicodeIsolates";
 
 // Phase 62.B (item J): parse a `file://` URI (as emitted in Claude Code's
 // OSC 8 hyperlinks, e.g. `file:///home/runner/.env.prod`) into the bare
@@ -890,6 +891,9 @@ export class TerminalInstance {
       // out — we still get reflow because that's now the unconditional
       // behaviour.)
     });
+    // Isolate-aware V6 width provider: U+2066-2069 zero-width, no cell shift.
+    this.term.unicode.register(isolateAwareV6);
+    this.term.unicode.activeVersion = ISOLATE_AWARE_UNICODE_VERSION;
     this.fit = new FitAddon();
     this.term.loadAddon(this.fit);
     // Phase LL: OSC 52 clipboard support. Claude Code's new fullscreen
