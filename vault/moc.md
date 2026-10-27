@@ -14,6 +14,7 @@
 ## Pipeline how-tos
 - [howto/run-committed-server-blob.md](howto/run-committed-server-blob.md): query the committed Go daemon on a side port without building (Rule #17)
 - [howto/redeploy-server-blob.md](howto/redeploy-server-blob.md): detect a stale deployed daemon + redeploy the committed blob
+- [howto/live-browser-verify.md](howto/live-browser-verify.md): verify web surfaces live in host headless Chrome against a side daemon + CI web bundle
 
 ## Notes
 - [phase92-headers-screens](phase92-headers-screens.md) — Phase 92 header/screen symbols, RPC select, delete landing: file:line anchors
