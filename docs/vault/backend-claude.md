@@ -90,7 +90,7 @@ mtime-pruned files still count in `skipped_files`. `scan` returns
 | D1 | no file cap; `scanned_files` == every file in window |
 | D2 | an oversized line costs nothing but itself — later lines still count (Go reads with `bufio.Reader`, no Scanner limit) |
 | D3 | invalid UTF-8 line → one `parse_errors`, scan continues |
-| D4 | token fields are non-negative integers; null/absent → 0; float, negative, string, bool → `parse_errors`, no call |
+| D4 | token fields are integers in 0..=i64::MAX (Go `tokenCount` bound too); null/absent → 0; float, negative, > i64::MAX, string, bool → `parse_errors`, no call |
 | D5 | assistant line with no/null `usage` → skipped, not an error |
 | D6 | missing or non-string timestamp → `parse_errors` |
 | D7 | walk follows symlinks (dirs and files); only regular files named `*.jsonl` count |
