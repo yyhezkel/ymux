@@ -4546,6 +4546,7 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
   overflow: hidden;
   text-overflow: ellipsis;
   direction: ltr;
+  flex-shrink: 0;
 }
 .dir-picker-recent {
   padding: 8px 18px 0;
