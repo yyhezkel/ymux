@@ -51,6 +51,13 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
 - **Ops** — `port-watch`, `session-meta`, `doctor`, `check-updates`
 - **Dev** — `dev get-state`, `console-tail`, `debug-log-tail`, `report-bug`
 
+**Hook card text (`derive_hook_title` / `derive_hook_summary`, main.rs).** For
+`pre-tool-use` / `tool-permission`, a string `tool_name` gives title ``Allow `<tool>` ?``.
+For `pre-tool-use` with `tool_name`, the summary is the first of `tool_input.command |
+file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else empty
+(never a JSON dump). Without `tool_name` the old chain (command / tool / title /
+`agent: <sub>`, JSON-dump summary) is unchanged, as are all other subcommands.
+
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
 Registers agent hooks that point at the local `ymux` binary, so Claude Code (and codex,
