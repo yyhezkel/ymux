@@ -163,6 +163,15 @@ are still raw `gate`-guarded handlers; `service.go`'s `gate` **fails closed** (a
 neither shared token nor scope resolver rejects everything), unlike the workspace subsystem's
 "no auth configured => open".
 
+**Files and Logs ops are scoped too.** `opScopes` also maps `files-list|read|download` →
+`files:read`, `files-upload|delete|mkdir|rename|copy|archive|unzip` → `files:write`, and
+`logs-list|read|stream` → `insights:read` (logs reuse it, like `/api/v2/logs/daemon`; no
+logs scope exists). A narrowed device gets 403 `missing scope: <s>`; the owner token and
+default "all" devices are unaffected. Pinned by `internal/api/files_logs_scope_test.go`
+(narrowed device → 403 on all 13 ops with the seeded file untouched; `files:read` device reads
+but cannot write; "all" device passes), using `pairDevice`/`termDo` from `term_test.go`.
+The Go change needs a blob rebake from CI.
+
 **`auth.ScopeShellAttach` is not in `AllScopes`, and that is the security design, not an
 oversight.** `ParseScopes` fails open to `AllScopes` for `""`, `"all"` and anything
 malformed, so every scope in that list is reachable by a device nobody ever restricted.
@@ -397,7 +406,18 @@ card alone — the CLI's title IS the approval prompt. But the CLI derives that 
 `payload.command` / `payload.tool`, while Claude Code sends `tool_name` + `tool_input`,
 so it falls back to `agent: pre-tool-use` with the raw hook JSON as the summary (seen
 live in the browser). Exactly that fallback is now humanized (`Claude wants to run: Bash`
-/ the command); a title the CLI did derive is untouched.
+/ the command); a title the CLI did derive is kept.
+
+The text now comes from `gateText` (`term/feed.go`), for every `pre-tool-use` card. A
+fallback title (`agent: ` prefix, or `(no title)` from `addCard`) is humanized when the
+payload has a `tool_name`, else it becomes `Claude wants to use a tool` (he `Claude רוצה
+להשתמש בכלי`) with the clipped `tool_input.command` as summary. A derived title keeps,
+but a summary starting with `{` (the CLI's raw-JSON fallback) is replaced by that command.
+A nil payload (bad JSON) follows the same rules.
+
+The CLI's `derive_hook_title`/`derive_hook_summary` now read `tool_name` / `tool_input`
+too (title ``Allow `Bash` ?``, summary = command/file_path/path/pattern/url clipped to
+100), so the fallback title path only fires for payloads with no `tool_name`.
 
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a

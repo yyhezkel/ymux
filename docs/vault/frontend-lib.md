@@ -88,7 +88,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   socket (`{type,data}` frames already carry the desktop's names) and by the backend.
   `settings:changed` `{version, settings}` is unwrapped to the bare `Settings`;
   `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
-  payload. The first `hello` answers `pane_agent_states` / `pane_briefs` / `feed_list` /
+  payload. The first `hello` answers `pane_agent_states` / `pane_briefs` (filtered by `web/hello.ts` `touchedEntries` to hook-written `seq > 0` entries, since the daemon ships zero-value seq 0 entries for every live session) / `feed_list` /
   `notifications_list`; a reconnect's hello re-reads workspaces and emits
   `backend:resync` (nothing listens yet).
 - **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
