@@ -63,6 +63,7 @@ import {
 import { WEB_DEFAULT_SETTINGS, withDefaults } from "./web/defaults";
 import { EventBus, EventsSocket, type Hello } from "./web/events";
 import { splitArgs } from "./web/argv";
+import { touchedEntries } from "./web/hello";
 import { FilesBridge, LARGE_FILE_BYTES } from "./web/files";
 import { fileFor, onDragDrop as onLocalDragDrop, pickPaths as pickLocalFiles } from "./web/localfiles";
 import { PtySessions } from "./web/pty";
@@ -1120,8 +1121,8 @@ export class WebBackend implements Backend {
     },
 
     // hydration (from the events socket's hello) + the ymux surfaces
-    pane_agent_states: async () => this.hello?.pane_agent_states ?? {},
-    pane_briefs: async () => this.hello?.pane_briefs ?? {},
+    pane_agent_states: async () => touchedEntries(this.hello?.pane_agent_states),
+    pane_briefs: async () => touchedEntries(this.hello?.pane_briefs),
     feed_list: async () => this.hello?.feed ?? [],
     feed_decide: (a) =>
       api("POST", `/api/v2/feed/${encodeURIComponent(str(a.requestId))}/decide`, { decision: str(a.decision) }),
