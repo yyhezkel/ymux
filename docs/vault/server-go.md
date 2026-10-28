@@ -397,7 +397,18 @@ card alone — the CLI's title IS the approval prompt. But the CLI derives that 
 `payload.command` / `payload.tool`, while Claude Code sends `tool_name` + `tool_input`,
 so it falls back to `agent: pre-tool-use` with the raw hook JSON as the summary (seen
 live in the browser). Exactly that fallback is now humanized (`Claude wants to run: Bash`
-/ the command); a title the CLI did derive is untouched.
+/ the command); a title the CLI did derive is kept.
+
+The text now comes from `gateText` (`term/feed.go`), for every `pre-tool-use` card. A
+fallback title (`agent: ` prefix, or `(no title)` from `addCard`) is humanized when the
+payload has a `tool_name`, else it becomes `Claude wants to use a tool` (he `Claude רוצה
+להשתמש בכלי`) with the clipped `tool_input.command` as summary. A derived title keeps,
+but a summary starting with `{` (the CLI's raw-JSON fallback) is replaced by that command.
+A nil payload (bad JSON) follows the same rules.
+
+The CLI's `derive_hook_title`/`derive_hook_summary` now read `tool_name` / `tool_input`
+too (title ``Allow `Bash` ?``, summary = command/file_path/path/pattern/url clipped to
+100), so the fallback title path only fires for payloads with no `tool_name`.
 
 **`term/webapp.go` (Phase 108, WEB-DESIGN C4) — the daemon serves the web bundle.**
 `SetWebRoot(dataDir)` (main.go) points it at `<data dir>/www/current` — a directory or a
