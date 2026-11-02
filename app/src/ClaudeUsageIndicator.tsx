@@ -99,10 +99,11 @@ export function ClaudeUsageIndicator(p: Props) {
   const metrics = (): Metric[] => {
     const u = usage();
     if (!u) return [];
-    const list: Metric[] = [
-      { key: "session", label: t("claudeUsage.session"), pct: u.session_pct, reset: u.session_reset },
-      { key: "week", label: t("claudeUsage.week"), pct: u.week_pct, reset: u.week_reset },
-    ];
+    // Session (5h window) is null on plans without one (Ultra) — skip it.
+    const list: Metric[] = [];
+    if (u.session_pct != null)
+      list.push({ key: "session", label: t("claudeUsage.session"), pct: u.session_pct, reset: u.session_reset ?? "" });
+    list.push({ key: "week", label: t("claudeUsage.week"), pct: u.week_pct, reset: u.week_reset });
     const top = [...u.models].sort((a, b) => b.pct - a.pct)[0];
     if (top) list.push({ key: "model", label: top.name, pct: top.pct, reset: top.reset });
     return list;
@@ -135,7 +136,7 @@ export function ClaudeUsageIndicator(p: Props) {
     const line = (label: string, pct: number, reset: string) =>
       `${label} ${pct}% · ${t("claudeUsage.resetsAt")} ${formatResetLocal(reset, anchor, currentLanguage())}`;
     return [
-      line(t("claudeUsage.session"), u.session_pct, u.session_reset),
+      ...(u.session_pct != null ? [line(t("claudeUsage.session"), u.session_pct, u.session_reset ?? "")] : []),
       line(t("claudeUsage.week"), u.week_pct, u.week_reset),
       ...u.models.map((m) => line(m.name, m.pct, m.reset)),
     ].join("\n");

@@ -345,11 +345,13 @@ export function InsightsWindow(p: Props) {
                 {(u) => (
                   <>
                     <div class="ins-metrics">
-                      <div class="ins-metric">
-                        <div class="ins-metric-head"><span>{t("claudeUsage.session")}</span><b>{u().session_pct}%</b></div>
-                        {bar(u().session_pct, true)}
-                        <div class="ins-metric-sub" title={u().session_reset}>{t("claudeUsage.resetsAt")} {formatResetLocal(u().session_reset, Number(u().fetched_unix), currentLanguage())}</div>
-                      </div>
+                      <Show when={u().session_pct != null}>
+                        <div class="ins-metric">
+                          <div class="ins-metric-head"><span>{t("claudeUsage.session")}</span><b>{u().session_pct ?? 0}%</b></div>
+                          {bar(u().session_pct ?? 0, true)}
+                          <div class="ins-metric-sub" title={u().session_reset ?? ""}>{t("claudeUsage.resetsAt")} {formatResetLocal(u().session_reset ?? "", Number(u().fetched_unix), currentLanguage())}</div>
+                        </div>
+                      </Show>
                       <div class="ins-metric">
                         <div class="ins-metric-head"><span>{t("claudeUsage.week")}</span><b>{u().week_pct}%</b></div>
                         {bar(u().week_pct, true)}

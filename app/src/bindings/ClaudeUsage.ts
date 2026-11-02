@@ -4,7 +4,12 @@ import type { ModelUsage } from "./ModelUsage";
 /**
  * Parsed `/usage` snapshot for one workspace's Claude account.
  */
-export type ClaudeUsage = { session_pct: number, session_reset: string, week_pct: number, week_reset: string, 
+export type ClaudeUsage = { 
+/**
+ * 5-hour session window. `None` when the plan has no session limit
+ * (Ultra dropped it in late 2026 — `/usage` prints no "Current session" line).
+ */
+session_pct: number | null, session_reset: string | null, week_pct: number, week_reset: string, 
 /**
  * Per-model weekly rows (excludes the "all models" aggregate).
  */

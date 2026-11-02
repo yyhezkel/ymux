@@ -646,7 +646,8 @@ base / branch refused when option-shaped, `git worktree add -b <branch> -- <targ
 
 **`term/claudetools.go` (Phase 119, WEB-DESIGN F5) — the desktop's `claude -p` tools for a
 browser.** `GET /api/v2/claude/usage?force=1` ports `claude_usage.rs` (`claude -p /usage
---output-format json`, `parseUsage` pinned to the Rust sample; cached 5 min, a failure backs
+--output-format json`, `parseUsage` pinned to the Rust samples — `session_pct`/`session_reset` are pointers, `null`
+when the plan has no 5-hour window; cached 5 min, a failure backs
 off 5 min, one probe at a time — the others get the cached value). `POST
 /api/v2/claude/summarize {pane_id, session, workspace_id}` ports `claude_summary.rs`: the
 session is the pane's newest context record, else session-meta's id for the tmux session,

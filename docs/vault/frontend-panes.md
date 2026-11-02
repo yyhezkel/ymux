@@ -182,7 +182,7 @@ root feeds them all into a single list.
 
 ## Monitoring
 
-**`InsightsWindow.tsx` (586)** — pull-based server monitor and the tab host. Fetches the
+**`InsightsWindow.tsx` (592)** — pull-based server monitor and the tab host. Fetches the
 live snapshot through the `insights_fetch` Tauri command, which curls `127.0.0.1:7879`
 over the workspace SSH session — **or serves it from `insights_local.rs` for a local
 workspace; the routing is transparent to this component.** No mock data: if the daemon is
@@ -269,8 +269,9 @@ shared with the Briefing card and the Context Rail — see `frontend-shell.md`.
 `goal:` / `done:` keys and the "≤ 80 chars, imperative, goal/done once, repeat only
 on change" rule since the Phase 105 follow-up; keep it in sync with `docs/BRIEF.md`.
 
-**`ClaudeUsageIndicator.tsx` (181)** + **`claudeUsageFmt.ts` (120)** — the always-visible
-subscription-usage chip. With room it shows session · week · top model; narrow, it
+**`ClaudeUsageIndicator.tsx` (182)** + **`claudeUsageFmt.ts` (120)** — the always-visible
+subscription-usage chip. With room it shows session · week · top model (session only when
+`session_pct` is non-null — Ultra has no 5-hour window; `InsightsWindow` hides that tile too); narrow, it
 collapses to the single most-critical metric with the rest in the tooltip, one per line,
 reset times converted to the viewer's **local** timezone.
 
