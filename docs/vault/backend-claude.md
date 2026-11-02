@@ -40,11 +40,16 @@ move together — that is the point of not copying them.
   `settings.claude.auto_summarize_on_stop` is on. `rpc_server`'s dispatcher calls
   `summarize_session_for_pane` in the background. **Failures are logged, never fatal.**
 
-## `claude_usage.rs` (423) — real subscription quota
+## `claude_usage.rs` (441) — real subscription quota
 
 `claude -p "/usage" --output-format json` returns the user's actual Pro/Max quota —
 session %, weekly %, per-model %, reset times, and a "what's contributing" breakdown —
 inside the envelope's `result` string.
+
+**The session (5-hour) window is optional.** Plans without one (Ultra, since 2026-11)
+print no `Current session:` line, so `session_pct`/`session_reset` are `Option` (`null`
+in TS) and the UI drops that metric. The parse fails only when there is neither a
+session line nor a `Current week (all models):` line.
 
 The call is **free** (`total_cost_usd: 0`, `num_turns: 0`) but costs **~8 seconds** of
 real round-trip. So: cached per workspace for **5 minutes**, fetched on demand or on a

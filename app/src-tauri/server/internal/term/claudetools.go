@@ -85,8 +85,8 @@ type ModelUsage struct {
 }
 
 type ClaudeUsage struct {
-	SessionPct      int          `json:"session_pct"`
-	SessionReset    string       `json:"session_reset"`
+	SessionPct      *int         `json:"session_pct"`   // nil: plan has no 5h session window (Ultra, 2026-11)
+	SessionReset    *string      `json:"session_reset"`
 	WeekPct         int          `json:"week_pct"`
 	WeekReset       string       `json:"week_reset"`
 	Models          []ModelUsage `json:"models"`
@@ -117,17 +117,17 @@ func parseUsage(raw string, now int64) (ClaudeUsage, error) {
 		return ClaudeUsage{}, errors.New("could not parse /usage output (claude installed & authenticated?)")
 	}
 	u := ClaudeUsage{Models: []ModelUsage{}, Contributing24h: []string{}, Contributing7d: []string{}, FetchedUnix: now}
-	found := false
+	foundWeek := false
 	mode := 0 // 0 none, 1 day, 2 week
 	for _, line := range strings.Split(*env.Result, "\n") {
 		t := strings.TrimSpace(line)
 		switch {
 		case strings.HasPrefix(t, "Current session:"):
-			u.SessionPct, u.SessionReset = pctAndReset(strings.TrimPrefix(t, "Current session:"))
-			found, mode = true, 0
+			p, reset := pctAndReset(strings.TrimPrefix(t, "Current session:"))
+			u.SessionPct, u.SessionReset, mode = &p, &reset, 0
 		case strings.HasPrefix(t, "Current week (all models):"):
 			u.WeekPct, u.WeekReset = pctAndReset(strings.TrimPrefix(t, "Current week (all models):"))
-			mode = 0
+			foundWeek, mode = true, 0
 		case strings.HasPrefix(t, "Current week ("):
 			if _, r, ok := strings.Cut(t, "("); ok {
 				if name, _, ok := strings.Cut(r, "):"); ok {
@@ -156,8 +156,8 @@ func parseUsage(raw string, now int64) (ClaudeUsage, error) {
 			mode = 0
 		}
 	}
-	if !found {
-		return ClaudeUsage{}, errors.New("unexpected /usage format — no session line")
+	if u.SessionPct == nil && !foundWeek {
+		return ClaudeUsage{}, errors.New("unexpected /usage format — no usage lines")
 	}
 	return u, nil
 }

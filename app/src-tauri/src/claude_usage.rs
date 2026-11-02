@@ -32,8 +32,10 @@ pub(crate) struct ModelUsage {
 #[derive(Clone, Serialize, ts_rs::TS)]
 #[ts(export, export_to = "../../src/bindings/")]
 pub(crate) struct ClaudeUsage {
-    pub session_pct: u8,
-    pub session_reset: String,
+    /// 5-hour session window. `None` when the plan has no session limit
+    /// (Ultra dropped it in late 2026 — `/usage` prints no "Current session" line).
+    pub session_pct: Option<u8>,
+    pub session_reset: Option<String>,
     pub week_pct: u8,
     pub week_reset: String,
     /// Per-model weekly rows (excludes the "all models" aggregate).
@@ -177,14 +179,14 @@ fn parse_usage(raw: &str, now_unix: i64) -> Result<ClaudeUsage, String> {
         .and_then(|v| v.get("result").and_then(|r| r.as_str()).map(str::to_string))
         .ok_or("could not parse /usage output (claude installed & authenticated?)")?;
 
-    let mut session_pct = 0u8;
-    let mut session_reset = String::new();
+    let mut session_pct: Option<u8> = None;
+    let mut session_reset: Option<String> = None;
     let mut week_pct = 0u8;
     let mut week_reset = String::new();
     let mut models: Vec<ModelUsage> = Vec::new();
     let mut c24: Vec<String> = Vec::new();
     let mut c7: Vec<String> = Vec::new();
-    let mut found_session = false;
+    let mut found_week = false;
 
     enum Mode {
         None,
@@ -197,14 +199,14 @@ fn parse_usage(raw: &str, now_unix: i64) -> Result<ClaudeUsage, String> {
         let trimmed = line.trim();
         if let Some(rest) = trimmed.strip_prefix("Current session:") {
             let (p, r) = pct_and_reset(rest);
-            session_pct = p;
-            session_reset = r;
-            found_session = true;
+            session_pct = Some(p);
+            session_reset = Some(r);
             mode = Mode::None;
         } else if let Some(rest) = trimmed.strip_prefix("Current week (all models):") {
             let (p, r) = pct_and_reset(rest);
             week_pct = p;
             week_reset = r;
+            found_week = true;
             mode = Mode::None;
         } else if trimmed.starts_with("Current week (") {
             // Per-model: "Current week (<Name>): NN% used · resets …"
@@ -239,8 +241,8 @@ fn parse_usage(raw: &str, now_unix: i64) -> Result<ClaudeUsage, String> {
         }
     }
 
-    if !found_session {
-        return Err("unexpected /usage format — no session line".into());
+    if session_pct.is_none() && !found_week {
+        return Err("unexpected /usage format — no usage lines".into());
     }
     Ok(ClaudeUsage {
         session_pct,
@@ -293,7 +295,7 @@ pub(crate) async fn claude_usage_fetch(
             crate::log_debug(
                 "USAGE",
                 &format!(
-                    "workspace={workspace_id} session={}% week={}%",
+                    "workspace={workspace_id} session={:?}% week={}%",
                     usage.session_pct, usage.week_pct
                 ),
             );
@@ -404,8 +406,8 @@ mod tests {
     #[test]
     fn parses_real_usage() {
         let u = parse_usage(SAMPLE, 1_700_000_000).expect("should parse");
-        assert_eq!(u.session_pct, 33);
-        assert_eq!(u.session_reset, "Jul 8, 4:10am (Europe/Berlin)");
+        assert_eq!(u.session_pct, Some(33));
+        assert_eq!(u.session_reset.as_deref(), Some("Jul 8, 4:10am (Europe/Berlin)"));
         assert_eq!(u.week_pct, 11);
         assert_eq!(u.models.len(), 1);
         assert_eq!(u.models[0].name, "Fable");
@@ -413,6 +415,22 @@ mod tests {
         assert_eq!(u.contributing_24h.len(), 3); // header + 2 bullets
         assert_eq!(u.contributing_7d.len(), 2); // header + 1 bullet
         assert_eq!(u.fetched_unix, 1_700_000_000);
+    }
+
+    /// Real Ultra output (2026-11): no "Current session" line, new contributing format.
+    const SAMPLE_NO_SESSION: &str = r#"{"type":"result","subtype":"success","is_error":false,"result":"You are currently using your subscription to power your Claude Code usage\n\nCurrent week (all models): 70% used · resets Nov 3, 9pm (Europe/Berlin)\nCurrent week (Fable): 0% used · resets Nov 3, 9pm (Europe/Berlin)\n\nWhat's contributing to your usage?\nApproximate · sessions on this machine only · shares overlap\n\nLast 24h · 6481 requests · 12 sessions\n  88%  Give \"general-purpose\" subagents a cheaper model\n  Top subagents: workflow-subagent 49%, general-purpose 16%\n\nLast 7d · 25883 requests · 26 sessions\n  94%  Give simple subagents a cheaper model","total_cost_usd":0}"#;
+
+    #[test]
+    fn parses_usage_without_session_window() {
+        let u = parse_usage(SAMPLE_NO_SESSION, 1_700_000_000).expect("should parse");
+        assert_eq!(u.session_pct, None);
+        assert_eq!(u.session_reset, None);
+        assert_eq!(u.week_pct, 70);
+        assert_eq!(u.week_reset, "Nov 3, 9pm (Europe/Berlin)");
+        assert_eq!(u.models.len(), 1);
+        assert_eq!(u.models[0].name, "Fable");
+        assert_eq!(u.contributing_24h.len(), 3);
+        assert_eq!(u.contributing_7d.len(), 2);
     }
 
     #[test]
