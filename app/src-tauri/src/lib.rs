@@ -15456,7 +15456,7 @@ mod zellij_tests {
     use super::{
         apply_session_meta, build_zellij_attach_command, parse_zellij_duration, parse_zellij_sessions,
         pick_zellij_resources, sanitize_tmux_session_name_for_title,
-        session_name_char_is_safe, zellij_args_delete_force, zellij_args_list,
+        session_name_char_is_safe, session_name_for_pane, zellij_args_delete_force, zellij_args_list,
         zellij_args_write_chars, zellij_spawn_error_outcome, KillSessionOutcome,
         ZellijOutcome,
     };
