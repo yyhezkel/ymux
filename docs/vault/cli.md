@@ -51,6 +51,13 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
 - **Ops** — `port-watch`, `session-meta`, `doctor`, `check-updates`
 - **Dev** — `dev get-state`, `console-tail`, `debug-log-tail`, `report-bug`
 
+**Hook card text (`derive_hook_title` / `derive_hook_summary`, main.rs).** For
+`pre-tool-use` / `tool-permission`, a string `tool_name` gives title ``Allow `<tool>` ?``.
+For `pre-tool-use` with `tool_name`, the summary is the first of `tool_input.command |
+file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else empty
+(never a JSON dump). Without `tool_name` the old chain (command / tool / title /
+`agent: <sub>`, JSON-dump summary) is unchanged, as are all other subcommands.
+
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
 Registers agent hooks that point at the local `ymux` binary, so Claude Code (and codex,
@@ -62,6 +69,24 @@ observability-only; it is back with a different job — the CLI filters on
 `notification_type` and pushes the type alone, and the desktop turns that into per-pane
 agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 `hooks.claude-code.version` is what tells existing installs to re-sync.
+
+**`StopFailure` is registered as of hooks v1.8.0.** The `stop-failure` branch (right after
+`notification`, before the feed-item dispatch) reads `payload["error"]` (absent/empty →
+`"unknown"`), logs and pushes the type alone — never `error_details` /
+`last_assistant_message` — as a passive `feed.push` subkind `stop-failure` with
+`tmux_session`, ignores the RPC result and exits 0. The desktop paints the pane light
+`failed`; never a card or toast.
+
+**`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
+new job, and still never a feed card. The `session-start` branch (after the env gate)
+sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
+`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
+nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
+stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":
+"SessionStart","additionalContext":…}}` line, so the text cannot break the JSON. The log
+line carries the source and the byte count, never the text. `manifest.json` is bumped at
+release time, not with the spec.
 
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
@@ -102,7 +127,7 @@ metadata only.
 workspaces on the same (host, port, user) subscribe to the owner's events. Duplicates
 and ppid=1 orphans are the two things `insights/hygiene.go` reaps.
 
-## `session_meta.rs` (818) — multi-machine session labels
+## `session_meta.rs` (982) — multi-machine session labels and session history
 
 `~/.ymux/session-meta.json` on the **server** maps a tmux session name to the Claude
 session running inside it plus display metadata, so any ymux desktop connecting to that
@@ -114,6 +139,33 @@ desktop writes labels and origin. `origin` carries the desktop's `machine_id`
 (`lib.rs::machine_id`) so the picker can say which machine created a session. Labels cross
 the SSH exec **hex-encoded** (`--label-hex`, `lib.rs::hex_utf8`) so Hebrew never meets
 shell quoting.
+
+**Session history (Phase 104, WEB-DESIGN §4.2).** `prune` (every `stop`, every
+`session-end`, every `session-meta set`) no longer deletes a row whose tmux session is
+gone: `prune_with` stamps **`ended_at`** once (a later pass keeps the first time), clears
+it when the name is live again, and keeps the row's mapping to its transcript so the
+daemon can list, open and resume it (`server/internal/term/history.go`). Retention:
+an ended row with **no `claude_session_id`** is dropped at once (nothing to open — the
+old behaviour), one older than `HISTORY_MAX_DAYS` (90) is dropped, and only the
+`HISTORY_MAX_ENDED` (100) newest ended rows are kept; an unparsable `ended_at` counts as
+"now", never as ancient. `record_live` (user-prompt-submit / stop) clears `ended_at` and
+records the hook payload's **`cwd`**. `SessionMetaEntry.extra` is a `serde(flatten)`
+map, so a field a newer writer adds **survives an older reader's re-save** — before
+this, an older CLI silently dropped unknown fields. Mixed-version caveat: a box still on a
+pre-0.5.x CLI deletes ended rows until the desktop re-bootstraps it. The desktop only
+READS this file (writes go through `ymux session-meta set`), so its struct copy in
+`lib.rs` needs no change; it simply ignores the new fields.
+
+**Zellij rows are never judged.** An entry may carry optional `mux: "zellij"`
+(`SessionMetaEntry.mux`, additive; absent = tmux/legacy). `prune_with` `continue`s past
+those rows: `tmux ls` never lists a zellij session, so judging them stamped every live
+one `ended_at`. Residue: a deleted zellij session's row is never reaped.
+
+**Writer key order** (`pick_session`, pure): `tmux display-message #S` → `$ZELLIJ_SESSION_NAME`
+(equals what `zellij list-sessions -n` prints, the picker's join key) → `ymux-<sanitized
+YMUX_PANE_ID>`; empty = absent. `resolve_session_name()` keeps its `Option<String>` shape;
+`handle_hook` uses `resolve_session()` and stamps `mux: "zellij"` on `user-prompt-submit` and
+`stop` when the zellij env supplied the key.
 
 ## Logging
 
@@ -146,8 +198,11 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
 - **Rule #8** — the tunnel HMAC token passes through here; never log it.
 - A new verb is: clap subcommand + a `dispatch` arm in `rpc_server.rs` + a line in
   `docs/CLI.md`. Nothing generates one from another.
-- The legacy `winmux-` pipe name is still answered by the app, so an old CLI on a PATH
-  keeps working. Do not "finish the rename" here in isolation.
+- The app no longer answers on the legacy `winmux-` pipe; the CLI's `default_pipe_name_legacy`
+  dial is only a client-side fallback and now finds no listener.
+- `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`
+  (`adopt_legacy_env` / `migrate_legacy_home_dir` removed); the `WINMUX_*` read fallbacks stay,
+  and the remote `~/.winmux` fold is the bootstrap's `migrate_legacy_remote_dir`.
 
 ## Read the source when
 

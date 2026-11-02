@@ -10,6 +10,12 @@ package workspace
 import "encoding/json"
 
 // SessionKind enumerates what a session drives.
+//
+// KindTerminal is RESERVED, not implemented here, and that is deliberate: a
+// terminal's bytes must never land in this package's append-only SQLite event
+// log (it would be enormous, and Rule #1 keeps shell content out of storage).
+// Server-side terminals live in internal/term, keyed by their tmux session
+// name rather than by an id this package mints — see docs/WEB-DESIGN.md §3.
 const (
 	KindClaudeChat = "claude_chat"
 	KindTerminal   = "terminal"

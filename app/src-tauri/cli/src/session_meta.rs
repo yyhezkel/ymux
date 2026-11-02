@@ -30,9 +30,23 @@
 // are sometimes NFS where flock lies.
 //
 // Cleanup: no tmux session-closed hook (it wouldn't fire when the user
-// disables the bundled tmux.conf). Instead every write prunes keys that
-// no longer exist in `tmux ls`, and the desktop-side join ignores keys
-// it can't match, so stale entries are invisible even before pruning.
+// disables the bundled tmux.conf). Instead every write prunes against
+// `tmux ls`, and the desktop-side join ignores keys it can't match.
+//
+// Zellij rows (`mux: "zellij"`) are never judged against `tmux ls`: a live
+// zellij session is absent from it, so judging would stamp every one ended.
+// Residue: a deleted zellij session's row is therefore never reaped.
+//
+// Phase 104 (WEB-DESIGN §4.2, session history): prune no longer DELETES a
+// gone session that ran Claude — it stamps `ended_at`, so the row keeps
+// the mapping to its transcript and can be opened or resumed later. A row
+// that comes back to life (same tmux name) loses its `ended_at`. Retention:
+// ended rows older than HISTORY_MAX_DAYS, beyond the HISTORY_MAX_ENDED
+// newest, or with no Claude session to show are really removed. `cwd` is
+// recorded from the hook payload so a resume starts where Claude ran.
+//
+// Unknown fields survive (`extra`, serde flatten): before this, an older
+// CLI re-saving the file silently dropped any field a newer one wrote.
 //
 // Rule #1: claude_title / auto_name / label contain user content. They
 // live in the meta FILE by design (that's the feature) but must never be
@@ -60,7 +74,27 @@ pub struct SessionMetaEntry {
     pub origin: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub updated_at: Option<String>,
+    /// Phase 104: when the tmux session was first seen gone. `None` = live.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<String>,
+    /// Phase 104: the Claude session's working directory (hook payload `cwd`)
+    /// — where `claude --resume` must start to find its transcript.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    /// Owning multiplexer. `Some("zellij")` = a zellij-keyed row: `tmux ls`
+    /// knows nothing about it, so prune never judges it. Absent = tmux/legacy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mux: Option<String>,
+    /// Fields this CLI does not know, kept verbatim so a newer writer's
+    /// additions survive an older reader's re-save.
+    #[serde(flatten, default)]
+    pub extra: BTreeMap<String, serde_json::Value>,
 }
+
+/// Session-history retention (Phase 104): an ended row is kept for at most
+/// this many days, and at most this many ended rows are kept (newest first).
+pub const HISTORY_MAX_DAYS: i64 = 90;
+pub const HISTORY_MAX_ENDED: usize = 100;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct SessionMetaFile {
@@ -127,13 +161,62 @@ fn live_tmux_sessions() -> Option<Vec<String>> {
     )
 }
 
-/// Drop entries whose tmux session no longer exists. Returns true when
-/// anything was removed.
+/// Reconcile the map with `tmux ls`. Returns true when anything changed.
+/// Phase 104: a gone session is marked ended, not deleted (see the header).
 pub fn prune(meta: &mut SessionMetaFile) -> bool {
     let Some(live) = live_tmux_sessions() else { return false };
+    prune_with(meta, &live, chrono::Utc::now())
+}
+
+/// `prune` with the live set and the clock injected, for tests.
+pub fn prune_with(
+    meta: &mut SessionMetaFile,
+    live: &[String],
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let now_s = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let mut changed = false;
+    for (name, e) in meta.sessions.iter_mut() {
+        if e.mux.as_deref() == Some("zellij") {
+            continue; // not a tmux session — `live` cannot judge it
+        }
+        let alive = live.iter().any(|l| l == name);
+        if alive && e.ended_at.is_some() {
+            e.ended_at = None; // the name is back (resumed, or reused)
+            changed = true;
+        } else if !alive && e.ended_at.is_none() {
+            e.ended_at = Some(now_s.clone());
+            changed = true;
+        }
+    }
+    // Retention. An ended row with no Claude session has nothing to open
+    // or resume — drop it at once, as prune always did. An ended_at that
+    // will not parse counts as "now" (kept), never as ancient (dropped).
+    let cutoff = now - chrono::Duration::days(HISTORY_MAX_DAYS);
+    let ended_time = |e: &SessionMetaEntry| {
+        e.ended_at.as_deref().map(|t| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .map(|d| d.with_timezone(&chrono::Utc))
+                .unwrap_or(now)
+        })
+    };
     let before = meta.sessions.len();
-    meta.sessions.retain(|name, _| live.iter().any(|l| l == name));
-    meta.sessions.len() != before
+    meta.sessions.retain(|_, e| match ended_time(e) {
+        None => true,
+        Some(t) => e.claude_session_id.is_some() && t >= cutoff,
+    });
+    let mut ended: Vec<(chrono::DateTime<chrono::Utc>, String)> = meta
+        .sessions
+        .iter()
+        .filter_map(|(k, e)| ended_time(e).map(|t| (t, k.clone())))
+        .collect();
+    if ended.len() > HISTORY_MAX_ENDED {
+        ended.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+        for (_, k) in ended.drain(HISTORY_MAX_ENDED..) {
+            meta.sessions.remove(&k);
+        }
+    }
+    changed || meta.sessions.len() != before
 }
 
 /// Copy of the desktop's `sanitize_tmux_session_name` (lib.rs) — keep in
@@ -146,34 +229,66 @@ fn sanitize_tmux_session_name(pane_id: &str) -> String {
     format!("ymux-{}", cleaned)
 }
 
-/// The tmux session this process runs inside. Preferred: ask tmux itself
-/// (exact even when YMUX_PANE_ID is stale — `set-environment -g` is
-/// tmux-server-global, so on multi-machine servers the env var is
-/// last-connector-wins). Fallback: derive from YMUX_PANE_ID.
-pub fn resolve_session_name() -> Option<String> {
-    if std::env::var_os("TMUX").is_some() {
-        let mut cmd = std::process::Command::new("tmux");
-        cmd.arg("display-message").arg("-p");
-        if let Ok(pane) = std::env::var("TMUX_PANE") {
-            if !pane.is_empty() {
-                cmd.arg("-t").arg(pane);
-            }
-        }
-        cmd.arg("#S");
-        if let Ok(out) = cmd.output() {
-            if out.status.success() {
-                let name = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                if !name.is_empty() {
-                    return Some(name);
-                }
-            }
+/// Which multiplexer owns the key `resolve_session` returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionMux {
+    Tmux,
+    Zellij,
+    PaneId,
+}
+
+/// Writer-key order: tmux's own name, then `$ZELLIJ_SESSION_NAME` (zellij
+/// sets it per session and it equals what `zellij list-sessions -n` prints,
+/// i.e. the desktop picker's join key), then the pane-id-derived name.
+/// Empty strings count as absent. Pure so the order is testable without env.
+fn pick_session(
+    tmux: Option<String>,
+    zellij: Option<String>,
+    pane_id: Option<String>,
+) -> Option<(String, SessionMux)> {
+    let present = |v: Option<String>| v.filter(|s| !s.is_empty());
+    if let Some(n) = present(tmux) {
+        return Some((n, SessionMux::Tmux));
+    }
+    if let Some(n) = present(zellij) {
+        return Some((n, SessionMux::Zellij));
+    }
+    present(pane_id).map(|p| (sanitize_tmux_session_name(&p), SessionMux::PaneId))
+}
+
+/// Ask tmux for this pane's session name. `None` outside tmux or on failure.
+fn tmux_session_name() -> Option<String> {
+    std::env::var_os("TMUX")?;
+    let mut cmd = std::process::Command::new("tmux");
+    cmd.arg("display-message").arg("-p");
+    if let Ok(pane) = std::env::var("TMUX_PANE") {
+        if !pane.is_empty() {
+            cmd.arg("-t").arg(pane);
         }
     }
-    let pane_id = std::env::var("YMUX_PANE_ID").ok()?;
-    if pane_id.is_empty() {
+    cmd.arg("#S");
+    let out = cmd.output().ok()?;
+    if !out.status.success() {
         return None;
     }
-    Some(sanitize_tmux_session_name(&pane_id))
+    Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// The multiplexer session this process runs inside, with its owner.
+/// tmux is asked directly (exact even when YMUX_PANE_ID is stale —
+/// `set-environment -g` is tmux-server-global, so on multi-machine servers
+/// the env var is last-connector-wins). Zellij panes use their
+/// `ZELLIJ_SESSION_NAME`. Fallback: derive from YMUX_PANE_ID.
+fn resolve_session() -> Option<(String, SessionMux)> {
+    pick_session(
+        tmux_session_name(),
+        std::env::var("ZELLIJ_SESSION_NAME").ok(),
+        std::env::var("YMUX_PANE_ID").ok(),
+    )
+}
+
+pub fn resolve_session_name() -> Option<String> {
+    resolve_session().map(|(n, _)| n)
 }
 
 /// Cap for anything that lands in a display field — shared by the
@@ -483,11 +598,22 @@ pub fn decode_hex_utf8(hex: &str) -> Result<String, String> {
 /// `auto_name` when the session has one (stable, set at the first prompt)
 /// and the churning transcript title otherwise — so a session named on
 /// turn 1 keeps that name on the pane header for its whole life.
+/// A hook fired inside this session, so it is live: clear any `ended_at`,
+/// and record where Claude runs (Phase 104).
+fn record_live(entry: &mut SessionMetaEntry, payload: &serde_json::Value) {
+    entry.ended_at = None;
+    if let Some(cwd) = payload.get("cwd").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
+        entry.cwd = Some(cwd.to_string());
+    }
+}
+
 pub fn handle_hook(
     subcommand: &str,
     payload: &serde_json::Value,
 ) -> Result<(Option<String>, Option<String>), String> {
-    let name = resolve_session_name();
+    let resolved = resolve_session();
+    let zellij_owned = matches!(resolved, Some((_, SessionMux::Zellij)));
+    let name = resolved.map(|(n, _)| n);
     match subcommand {
         // Fires at the start of EVERY turn, in every permission mode. We
         // only act on the first one of each Claude session: that prompt
@@ -500,6 +626,9 @@ pub fn handle_hook(
 
             let mut meta = load_meta();
             let entry = meta.sessions.entry(name.clone()).or_default();
+            if zellij_owned {
+                entry.mux = Some("zellij".into()); // prune must not judge this row vs `tmux ls`
+            }
 
             if let Some(next) = decide_auto_name(
                 entry.auto_name.as_deref(),
@@ -512,6 +641,7 @@ pub fn handle_hook(
             if let Some(sid) = session_id {
                 entry.claude_session_id = Some(sid.to_string());
             }
+            record_live(entry, payload);
             entry.updated_at = Some(now_rfc3339());
             let display = entry.auto_name.clone();
             // Phase 86: no prune here — it forks `tmux list-sessions`, and
@@ -531,12 +661,16 @@ pub fn handle_hook(
             let title = scan.as_ref().and_then(TranscriptScan::title);
             let mut meta = load_meta();
             let entry = meta.sessions.entry(name.clone()).or_default();
+            if zellij_owned {
+                entry.mux = Some("zellij".into()); // prune must not judge this row vs `tmux ls`
+            }
             if let Some(sid) = session_id {
                 entry.claude_session_id = Some(sid.to_string());
             }
             if title.is_some() {
                 entry.claude_title = title.clone();
             }
+            record_live(entry, payload);
             // Phase 81.G: heal a missing auto_name from the transcript.
             // `stop` fires every turn, so this is what makes a write-once
             // field survive a lost read-modify-write in a last-writer-wins
@@ -568,6 +702,119 @@ pub fn handle_hook(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn at(s: &str) -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc)
+    }
+
+    fn claude_entry() -> SessionMetaEntry {
+        SessionMetaEntry { claude_session_id: Some("sid".into()), ..Default::default() }
+    }
+
+    #[test]
+    fn prune_marks_ended_instead_of_deleting() {
+        let mut m = SessionMetaFile::default();
+        m.sessions.insert("gone".into(), claude_entry());
+        m.sessions.insert("live".into(), claude_entry());
+        m.sessions.insert("shell-only".into(), SessionMetaEntry::default());
+        assert!(prune_with(&mut m, &["live".into()], at("2026-10-05T10:00:00Z")));
+        assert_eq!(m.sessions["gone"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+        assert!(m.sessions["live"].ended_at.is_none());
+        assert!(!m.sessions.contains_key("shell-only"), "no Claude session → nothing to keep");
+        // A second pass keeps the FIRST ended time and reports no change.
+        assert!(!prune_with(&mut m, &["live".into()], at("2026-10-05T11:00:00Z")));
+        assert_eq!(m.sessions["gone"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+    }
+
+    #[test]
+    fn prune_leaves_live_zellij_rows_alone() {
+        // Pins: tmux ls never lists zellij sessions; judging them ended-stamps live rows.
+        let mut m = SessionMetaFile::default();
+        let mut e = claude_entry();
+        e.claude_session_id = None;
+        e.mux = Some("zellij".into());
+        m.sessions.insert("ymux-p1".into(), e);
+        assert!(!prune_with(&mut m, &[], at("2026-10-05T10:00:00Z")));
+        assert!(m.sessions["ymux-p1"].ended_at.is_none());
+        assert!(m.sessions.contains_key("ymux-p1"));
+    }
+
+    #[test]
+    fn zellij_session_name_is_the_writer_key() {
+        // Pins: titled zellij pane keys by ZELLIJ_SESSION_NAME (the picker's join key), not ymux-<pane>.
+        let got = pick_session(None, Some("My_Title".into()), Some("p1".into()));
+        assert_eq!(got, Some(("My_Title".into(), SessionMux::Zellij)));
+        let got = pick_session(None, Some(String::new()), Some("p1".into()));
+        assert_eq!(got, Some(("ymux-p1".into(), SessionMux::PaneId)));
+        assert_eq!(pick_session(None, None, None), None);
+    }
+
+    #[test]
+    fn tmux_name_wins_over_zellij_env() {
+        // Pins: tmux stays first so existing tmux keys never change owner.
+        let got = pick_session(Some("ymux-p1".into()), Some("z".into()), Some("p1".into()));
+        assert_eq!(got, Some(("ymux-p1".into(), SessionMux::Tmux)));
+    }
+
+    #[test]
+    fn prune_still_ends_a_gone_tmux_row() {
+        // Pins: the zellij skip must not weaken tmux judging (mux absent or non-zellij).
+        let mut m = SessionMetaFile::default();
+        m.sessions.insert("gone".into(), claude_entry());
+        let mut t = claude_entry();
+        t.mux = Some("tmux".into());
+        m.sessions.insert("gone2".into(), t);
+        assert!(prune_with(&mut m, &[], at("2026-10-05T10:00:00Z")));
+        assert_eq!(m.sessions["gone"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+        assert_eq!(m.sessions["gone2"].ended_at.as_deref(), Some("2026-10-05T10:00:00Z"));
+    }
+
+    #[test]
+    fn a_revived_name_loses_ended_at() {
+        let mut m = SessionMetaFile::default();
+        let mut e = claude_entry();
+        e.ended_at = Some("2026-10-01T00:00:00Z".into());
+        m.sessions.insert("back".into(), e);
+        assert!(prune_with(&mut m, &["back".into()], at("2026-10-05T00:00:00Z")));
+        assert!(m.sessions["back"].ended_at.is_none());
+    }
+
+    #[test]
+    fn retention_drops_old_and_excess_ended_rows() {
+        let mut m = SessionMetaFile::default();
+        let mut old = claude_entry();
+        old.ended_at = Some("2026-06-01T00:00:00Z".into()); // > 90 days before now
+        m.sessions.insert("old".into(), old);
+        for i in 0..(HISTORY_MAX_ENDED + 5) {
+            let mut e = claude_entry();
+            e.ended_at = Some(format!("2026-10-01T00:{:02}:{:02}Z", i / 60, i % 60));
+            m.sessions.insert(format!("s{i:03}"), e);
+        }
+        prune_with(&mut m, &[], at("2026-10-05T00:00:00Z"));
+        assert!(!m.sessions.contains_key("old"));
+        assert_eq!(m.sessions.len(), HISTORY_MAX_ENDED);
+        assert!(m.sessions.contains_key(&format!("s{:03}", HISTORY_MAX_ENDED + 4)), "newest kept");
+        assert!(!m.sessions.contains_key("s000"), "oldest of the excess dropped");
+    }
+
+    #[test]
+    fn unknown_fields_survive_a_round_trip() {
+        let raw = r#"{"version":1,"sessions":{"a":{"claude_session_id":"x","future":{"k":1}}}}"#;
+        let m: SessionMetaFile = serde_json::from_str(raw).unwrap();
+        let out = serde_json::to_string(&m).unwrap();
+        assert!(out.contains(r#""future":{"k":1}"#), "{out}");
+    }
+
+    #[test]
+    fn a_hook_records_cwd_and_clears_ended() {
+        let mut e = claude_entry();
+        e.ended_at = Some("2026-10-01T00:00:00Z".into());
+        record_live(&mut e, &serde_json::json!({"cwd": "/srv/api"}));
+        assert!(e.ended_at.is_none());
+        assert_eq!(e.cwd.as_deref(), Some("/srv/api"));
+        record_live(&mut e, &serde_json::json!({}));
+        assert_eq!(e.cwd.as_deref(), Some("/srv/api"), "an absent cwd keeps the last one");
+    }
 
     #[test]
     fn sanitizer_matches_desktop() {

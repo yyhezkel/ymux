@@ -41,6 +41,8 @@ export function queueStatus(r: QueueRow): QueueStatus {
   // Live signals first — a permission card or a needs-input notification
   // is "blocked on you right now" regardless of any brief.
   if (r.waitingOnPermission || r.state === "needs-input") return "needs-input";
+  // StopFailure: the turn died on an API error; it needs a look, not an answer.
+  if (r.state === "failed") return "stuck";
   if (r.brief?.session_ended) return "ended";
   if (r.state === "running") return "working";
   const bs = r.brief?.brief?.status;

@@ -273,6 +273,12 @@ pub enum LayoutNode {
         // all; v3 bumped for `intent`, which the user typed, not for this).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff_cwd: Option<String>,
+        // Per-pane "Claude is running in me" flag, persisted so a reattach
+        // to a persistent session starts in the right bidi state before the
+        // first hook fires. None = unknown/not running. View state: schema
+        // version did NOT bump (same reasoning as diff_cwd).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        claude_running: Option<bool>,
     },
     Split {
         split_id: String,
@@ -285,11 +291,15 @@ pub enum LayoutNode {
 
 // ─── EnvVar ─────────────────────────────────────────────────────────
 
-#[derive(Clone, Serialize, Deserialize, ts_rs::TS)]
+#[derive(Clone, Default, Serialize, Deserialize, ts_rs::TS)]
 #[ts(export, export_to = "../../../../src/bindings/")]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
+    /// Secret rows keep their value out of workspaces.json and RPC output;
+    /// delivered only at spawn. Absent in legacy files → false.
+    #[serde(default)]
+    pub secret: bool,
 }
 
 // ─── Workspace ──────────────────────────────────────────────────────
@@ -396,6 +406,14 @@ pub struct Workspace {
     // per row, per render, against the rule that scans are lazy.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_project_root: bool,
+    // This workspace is a pinned folder (a header, never a screen),
+    // whether or not it is a git repo. Stored because a pinned non-git
+    // folder has a parent but is not a project root, so neither
+    // `parent_id.is_none()` nor `is_project_root` identifies it and it
+    // would be read as a screen on the next load. Written by the pin
+    // command; healed for older files by `load_from_disk`.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_folder: bool,
     // Persisted collapse state of this workspace's subtree.
     #[serde(default, skip_serializing_if = "is_false")]
     pub is_collapsed: bool,
@@ -731,6 +749,7 @@ mod tests {
             diff_source: None,
             smart_bidi: None,
             diff_cwd: None,
+            claude_running: None,
         }
     }
 
@@ -746,7 +765,7 @@ mod tests {
         // pane_kind MUST be absent from the JSON.
         assert!(v.get("pane_kind").is_none());
         // browser / title / annotation / color / emoji / help_topic /
-        // diff_source / smart_bidi / diff_cwd all elided too.
+        // diff_source / smart_bidi / diff_cwd / claude_running all elided too.
         for f in [
             "browser",
             "title",
@@ -758,6 +777,7 @@ mod tests {
             "diff_source",
             "smart_bidi",
             "diff_cwd",
+            "claude_running",
         ] {
             assert!(v.get(f).is_none(), "field {f} should be elided");
         }
@@ -779,6 +799,7 @@ mod tests {
             diff_source: Some(DiffSource::Head),
             smart_bidi: None,
             diff_cwd: Some("/home/y/src/ymux-feature".into()),
+            claude_running: None,
         };
         let v = serde_json::to_value(&p).unwrap();
         assert_eq!(v["pane_kind"], "diff");
@@ -804,6 +825,30 @@ mod tests {
                 assert_eq!(pane_id, "old1");
                 assert!(matches!(pane_kind, PaneKind::Terminal));
             }
+            _ => panic!("expected Pane"),
+        }
+    }
+
+    #[test]
+    fn pane_claude_running_legacy_json_is_none_and_some_true_round_trips() {
+        // Pins: workspaces.json written before the field existed loads as
+        // None; Some(true) persists and survives a round trip. Breaking it
+        // loses the reattach bidi state or rejects old files.
+        let raw = json!({ "kind": "pane", "pane_id": "old2", "connection": { "type": "local" } });
+        let n: LayoutNode = serde_json::from_value(raw).unwrap();
+        match &n {
+            LayoutNode::Pane { claude_running, .. } => assert_eq!(*claude_running, None),
+            _ => panic!("expected Pane"),
+        }
+        let mut p = term_pane("p9", Some(Connection::Local { shell: None }));
+        if let LayoutNode::Pane { claude_running, .. } = &mut p {
+            *claude_running = Some(true);
+        }
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["claude_running"], true);
+        let back: LayoutNode = serde_json::from_value(v).unwrap();
+        match back {
+            LayoutNode::Pane { claude_running, .. } => assert_eq!(claude_running, Some(true)),
             _ => panic!("expected Pane"),
         }
     }
@@ -886,6 +931,7 @@ mod tests {
         assert!(w.git_worktree.is_none());
         assert!(w.parent_id.is_none());
         assert!(!w.is_project_root);
+        assert!(!w.is_folder);
         assert!(!w.is_collapsed);
         assert!(!w.tabs_mode);
         assert!(w.known_sessions.is_empty());
@@ -917,6 +963,7 @@ mod tests {
         for key in [
             "parent_id",
             "is_project_root",
+            "is_folder",
             "is_collapsed",
             "tabs_mode",
             "tmux_session",
@@ -1040,6 +1087,7 @@ mod tests {
             env: vec![EnvVar {
                 key: "FOO".into(),
                 value: "bar".into(),
+                secret: false,
             }],
             auto_port_forward: true,
             last_active_at: 1_700_000_000,
@@ -1062,6 +1110,16 @@ mod tests {
         assert_eq!(back.color.as_deref(), Some("#7aa2f7"));
         assert!(back.auto_port_forward);
         assert_eq!(back.env.len(), 1);
+    }
+
+    // Legacy workspaces.json rows carry no `secret`; they must load as plain.
+    #[test]
+    fn env_var_secret_defaults_false() {
+        let e: EnvVar = serde_json::from_value(json!({"key": "K", "value": "v"})).unwrap();
+        assert!(!e.secret);
+        let s: EnvVar =
+            serde_json::from_value(json!({"key": "K", "value": "v", "secret": true})).unwrap();
+        assert!(s.secret);
     }
 
     // ── SplitDirection ──────────────────────────────────────────────

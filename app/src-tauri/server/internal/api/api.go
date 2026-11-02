@@ -8,6 +8,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"ymux-server/internal/logging"
 	"ymux-server/internal/logs"
 	"ymux-server/internal/push"
+	"ymux-server/internal/term"
 	"ymux-server/internal/workspace"
 )
 
@@ -33,6 +35,7 @@ type Deps struct {
 	Logs      *logs.Service      // nil if logs disabled
 	Workspace *workspace.Service // nil if workspace disabled
 	Push      *push.Server       // nil if native push disabled
+	Term      *term.Service      // nil if the terminal API is disabled
 }
 
 // Server wires the subsystems into one HTTP listener.
@@ -107,7 +110,7 @@ func (s *Server) Handler() http.Handler {
 	// Insights keeps its raw legacy + /api/v2 stdlib handlers behind auth
 	// (desktop Monitor surface — not part of the generated SDK spec).
 	if s.deps.Insights != nil {
-		s.deps.Insights.RegisterRoutes(mux, authMW)
+		s.deps.Insights.RegisterRoutes(mux, s.insightsAuth)
 	}
 	// Files + Logs are already registered on the huma API above.
 	if s.deps.Workspace != nil {
@@ -123,6 +126,12 @@ func (s *Server) Handler() http.Handler {
 	// Bearer/?token=), so it's mounted raw rather than behind authMW.
 	if s.deps.Push != nil {
 		mux.HandleFunc("/api/v2/push/subscribe", s.deps.Push.Handler)
+	}
+	// Terminal API (Phase 95). list/create/rename/kill are huma ops (newHumaAPI,
+	// scoped via opScopes → ScopeShellAttach); only history + the attach WS stay
+	// raw, behind term.Service.gate (shared token or a shell:attach device).
+	if s.deps.Term != nil {
+		s.deps.Term.RegisterRoutes(mux)
 	}
 	return mux
 }
@@ -143,4 +152,34 @@ func (s *Server) Run() error {
 		return err
 	}
 	return nil
+}
+
+// insightsAuth gates the Insights (Monitor) routes. The shared token passes,
+// as before. Since Phase 110 a paired device holding insights:read may READ
+// them — the browser's Monitor — which `auth.Bearer` (shared token only)
+// never allowed, so the scope existed but nothing honored it. Writes stay
+// owner-only: docker actions and hygiene/kill are POSTs, and WEB-DESIGN §7
+// keeps exec-like actions off device tokens.
+func (s *Server) insightsAuth(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if got != "" && got == s.token {
+			h(w, r)
+			return
+		}
+		if s.deps.Chat == nil || !s.tokenOK(got) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "owner token required", http.StatusForbidden)
+			return
+		}
+		scopes, admin, _ := s.deps.Chat.DeviceScopes(got)
+		if !admin && !auth.HasScope(scopes, auth.ScopeInsightsRead) {
+			http.Error(w, "missing scope: "+string(auth.ScopeInsightsRead), http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
 }

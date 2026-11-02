@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import {
   trafficLight,
   trafficLightKey,
+  agentAnnounceKey,
   elapsedLabel,
   STALE_AFTER_MS,
   type AgentLightInput,
@@ -36,6 +37,17 @@ test("the three colours map to the three states", () => {
   assert.equal(trafficLight(input({ state: "running" })), "green");
   assert.equal(trafficLight(input({ state: "done" })), "yellow");
   assert.equal(trafficLight(input({ state: "needs-input" })), "red");
+});
+
+test("a failed turn paints the failed light, but only while trustworthy", () => {
+  // StopFailure must not look like yellow "done"; a disconnected or stale
+  // failed pane is no evidence, same gates as every other state.
+  assert.equal(trafficLight(input({ state: "failed" })), "failed");
+  assert.equal(trafficLight(input({ state: "failed", connected: false })), null);
+  assert.equal(
+    trafficLight(input({ state: "failed", stateSince: NOW - STALE_AFTER_MS - 1 })),
+    null,
+  );
 });
 
 test("a disconnected pane shows nothing, whatever it last said", () => {
@@ -97,6 +109,7 @@ test("the tooltip key distinguishes our card from the agent's own ask", () => {
   assert.equal(trafficLightKey("red", false), "pane.agent.state.needs_input");
   assert.equal(trafficLightKey("green", false), "pane.agent.state.running");
   assert.equal(trafficLightKey("yellow", false), "pane.agent.state.done");
+  assert.equal(trafficLightKey("failed", false), "pane.agent.state.failed");
 });
 
 test("elapsed renders M:SS and never counts backwards", () => {
@@ -106,4 +119,62 @@ test("elapsed renders M:SS and never counts backwards", () => {
   // Clock skew between the backend's stamp and the frontend's tick must
   // not produce "-1:-1".
   assert.equal(elapsedLabel(NOW + 5_000, NOW), "0:00");
+});
+
+// Phase 84.C: focused-pane announcement rule. Breaking any of these means a
+// screen reader either misses the focused pane's transition or chatters about
+// panes/focus changes the user did not cause.
+const snap = (paneId: string | null, key: string | null) => ({ paneId, key });
+
+test("O1: same focused pane, key changed -> announce the new key", () => {
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p1", "pane.agent.state.done")),
+    "pane.agent.state.done",
+  );
+});
+
+test("O2: same focused pane -> red announced (needs input / waiting approval)", () => {
+  // Red states are the ones the user must act on; missing either means a
+  // blind user never learns Claude is blocked on them.
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.done"), snap("p1", "pane.agent.state.needs_input")),
+    "pane.agent.state.needs_input",
+  );
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p1", "pane.agent.state.waiting_approval")),
+    "pane.agent.state.waiting_approval",
+  );
+});
+
+test("O3: same pane, same key -> silent (no repeat on unrelated ticks)", () => {
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.done"), snap("p1", "pane.agent.state.done")),
+    null,
+  );
+});
+
+test("O4: focus moved to another pane -> silent; next change on that pane announced", () => {
+  // Focus move re-baselines: speaking the new pane's state would be chatter
+  // the user did not cause, but its following change must still be heard.
+  assert.equal(
+    agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p2", "pane.agent.state.done")),
+    null,
+  );
+  assert.equal(
+    agentAnnounceKey(snap("p2", "pane.agent.state.done"), snap("p2", "pane.agent.state.needs_input")),
+    "pane.agent.state.needs_input",
+  );
+});
+
+test("mount from no focus -> silent", () => {
+  assert.equal(
+    agentAnnounceKey(snap(null, null), snap("p1", "pane.agent.state.running")),
+    null,
+  );
+});
+
+test("a null next key or null next pane never announces", () => {
+  // Light vanished (agent gone) or nothing focused: nothing to say.
+  assert.equal(agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap("p1", null)), null);
+  assert.equal(agentAnnounceKey(snap("p1", "pane.agent.state.running"), snap(null, null)), null);
 });

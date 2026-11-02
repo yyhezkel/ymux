@@ -19,4 +19,4 @@ skipped_steps: Array<string>,
  * clean; a Local workspace is still created when no chain step was
  * requested at all.
  */
-wsl_chain_ok: boolean, };
+persistence_chain_ok: boolean, };

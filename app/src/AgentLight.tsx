@@ -18,8 +18,8 @@ interface Props {
 // Phase 84.B: the per-pane Claude traffic light.
 //
 // Shape carries the meaning, not just hue: a filled disc for running, a
-// hollow ring for done, a triangle for needs-input. Colour alone fails
-// WCAG 1.4.1 and fails anyone with a red-green deficiency, and these three
+// hollow ring for done, a triangle for needs-input, a square for failed. Colour alone fails
+// WCAG 1.4.1 and fails anyone with a red-green deficiency, and these four
 // have to be told apart at 8px in peripheral vision — which is the entire
 // use case, glancing at a strip of tabs.
 export function AgentLight(p: Props) {

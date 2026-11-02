@@ -5,53 +5,31 @@ package chat
 // session, reach the phone for approval with ZERO changes to the ymux CLI
 // or hooks/claude-code.json.
 //
-// Flow: the daemon injects YMUX_SOCKET_ADDR=<this listener>,
+// Flow: the daemon injects YMUX_SOCKET_ADDR=<the hook listener>,
 // YMUX_TUNNEL_TOKEN=<per-session token>, YMUX_PANE_ID=mob_<id> into the
 // claude child (see spawnEnv). When Claude fires a PreToolUse hook, the CLI
-// dials here, does the HMAC challenge-response, and pushes a
+// dials the listener, does the HMAC challenge-response, and pushes a
 // permission_request. We map it to the session (by which session's token
 // validates the HMAC), forward a hook_request over the WS, wait for the
 // phone's allow/deny, and reply with the decision the CLI expects.
 //
-// Wire format (ported from cli/src/main.rs perform_handshake + rpc_via):
-//   S->C  "YMUX-CHALLENGE <nonce-hex>\n"
-//   C->S  "YMUX-RESPONSE <hmac_sha256(token, nonce_bytes)-hex>\n"
-//   S->C  "YMUX-OK\n"  |  "YMUX-DENIED <reason>\n"
-//   C->S  {"jsonrpc":"2.0","id":1,"method":"feed.push","params":{…}}\n
-//   S->C  {"jsonrpc":"2.0","id":1,"result":{"request_id":…,"decision":…}}\n
+// Phase 100: the handshake itself now lives in internal/hooks (term mints
+// hook tokens too, for browser-created tmux sessions). This file is chat's
+// core.HookResolver: MatchHookHMAC identifies the session, dispatchHook
+// answers the request — both unchanged in behaviour.
 
 import (
-	"bufio"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
-	"net"
-	"strings"
 	"time"
-)
 
-// Handshake wire tags (winmux → ymux rename). The challenge we EMIT stays
-// on the legacy tag for one release because a pre-rename `winmux` CLI does
-// a literal prefix match and hangs up on anything else; both ends read
-// either dialect and mirror whatever they were spoken to. Mirrors the same
-// constants in crates/ymux-tunnel/src/lib.rs — flip both together.
-//
-// FOLLOWUPS P1: set challengeTag = ymuxTag in the release after 0.5.0,
-// once every provisioned remote has been re-bootstrapped.
-const (
-	ymuxTag      = "YMUX"
-	legacyTag    = "WINMUX"
-	challengeTag = legacyTag
+	"ymux-server/internal/core"
 )
 
 // SetHookAddr records the hook-RPC listener's bound address so spawned claude
-// children get YMUX_SOCKET_ADDR pointed at it. Called by the hooks.Listener
-// (SessionManager satisfies core.AddrSink). Phase 77: the listener boilerplate
-// moved to internal/hooks; the protocol (HandleHookConn ↓) stays here because
-// it is inseparable from per-session state — this is the concrete cycle break.
+// children get YMUX_SOCKET_ADDR pointed at it. Called by hooks.Start
+// (SessionManager satisfies core.AddrSink).
 func (m *SessionManager) SetHookAddr(addr string) {
 	m.mu.Lock()
 	m.rpcAddr = addr
@@ -88,80 +66,26 @@ func (m *SessionManager) resolveWorkspace(_ *Session) (string, string) {
 	return defaultWorkspaceID, ""
 }
 
-func (m *SessionManager) HandleHookConn(conn net.Conn) {
-	defer conn.Close()
-	br := bufio.NewReader(conn)
+// chatHookTarget is a matched chat session as a core.HookTarget.
+type chatHookTarget struct {
+	m *SessionManager
+	s *Session
+}
 
-	// 1. Challenge.
-	nonce := make([]byte, 16)
-	if _, err := rand.Read(nonce); err != nil {
-		return
-	}
-	_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	if _, err := fmt.Fprintf(conn, "%s-CHALLENGE %s\n", challengeTag, hex.EncodeToString(nonce)); err != nil {
-		return
-	}
+// DispatchHook answers the request. Chat never returns a JSON-RPC error
+// object: an unknown method is a `deny` result, as it always was.
+func (t chatHookTarget) DispatchHook(method string, params json.RawMessage) (any, *core.RPCError) {
+	return t.m.dispatchHook(t.s, method, params), nil
+}
 
-	// 2. Response → identify the session by which token validates the HMAC.
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	respLine, err := br.ReadString('\n')
-	if err != nil {
-		return
+// MatchHookHMAC implements core.HookResolver: the session whose per-session
+// token produced mac over nonce.
+func (m *SessionManager) MatchHookHMAC(nonce, mac []byte) (core.HookTarget, bool) {
+	s := m.matchSessionByHMAC(nonce, mac)
+	if s == nil {
+		return nil, false
 	}
-	// Accept either dialect and answer in the one we were spoken to, so a
-	// pre-rename `winmux` CLI never sees a verdict tag it can't parse.
-	trimmed := strings.TrimSpace(respLine)
-	replyTag := challengeTag
-	respHex := ""
-	switch {
-	case strings.HasPrefix(trimmed, ymuxTag+"-RESPONSE "):
-		replyTag = ymuxTag
-		respHex = strings.TrimSpace(strings.TrimPrefix(trimmed, ymuxTag+"-RESPONSE "))
-	case strings.HasPrefix(trimmed, legacyTag+"-RESPONSE "):
-		replyTag = legacyTag
-		respHex = strings.TrimSpace(strings.TrimPrefix(trimmed, legacyTag+"-RESPONSE "))
-	}
-	respMAC, err := hex.DecodeString(respHex)
-	if err != nil || respHex == "" {
-		_, _ = conn.Write([]byte(replyTag + "-DENIED bad-response\n"))
-		return
-	}
-	sess := m.matchSessionByHMAC(nonce, respMAC)
-	if sess == nil {
-		_, _ = conn.Write([]byte(replyTag + "-DENIED unknown-session\n"))
-		return
-	}
-	if _, err := conn.Write([]byte(replyTag + "-OK\n")); err != nil {
-		return
-	}
-
-	// 3. One JSON-RPC request.
-	_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
-	reqLine, err := br.ReadString('\n')
-	if err != nil {
-		return
-	}
-	var req struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-	if json.Unmarshal([]byte(strings.TrimSpace(reqLine)), &req) != nil {
-		return
-	}
-
-	result := m.dispatchHook(sess, req.Method, req.Params)
-
-	// 4. Reply. No write deadline cap here beyond the OS — a blocking gate may
-	// legitimately hold for up to wait_timeout_seconds.
-	id := req.ID
-	if len(id) == 0 {
-		id = json.RawMessage("1")
-	}
-	resp := map[string]any{"jsonrpc": "2.0", "id": id, "result": result}
-	_ = conn.SetWriteDeadline(time.Time{})
-	out := jsonEvent(resp)
-	_, _ = conn.Write(append(out, '\n'))
+	return chatHookTarget{m: m, s: s}, true
 }
 
 // matchSessionByHMAC finds the session whose per-session token produces the

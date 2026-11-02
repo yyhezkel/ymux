@@ -1,4 +1,5 @@
 import { For, Show, createSignal, createMemo, onCleanup, onMount } from "solid-js";
+import { backend } from "./backend";
 import { collectPanes, findPane, isRemoteConn, wsCaps, type Workspace, type WorkspaceGroup, type ForwardRow, type WorkspaceCardInfo } from "./types";
 import { t } from "./i18n";
 import { TechText } from "./TechText";
@@ -836,10 +837,12 @@ export function Sidebar(p: Props) {
           <span class="ws-action-emoji"><IconSettings /></span>
           <span class="ws-action-label">{t("sidebar.settings.tooltip")}</span>
         </button>
-        <button class="ws-action-half" onClick={p.onOpenPortsGlobal} title={t("sidebar.ports.tooltip")}>
-          <span class="ws-action-emoji"><IconGlobe /></span>
-          <span class="ws-action-label">{t("sidebar.ports.label")}</span>
-        </button>
+        <Show when={backend.can("portForward")}>
+          <button class="ws-action-half" onClick={p.onOpenPortsGlobal} title={t("sidebar.ports.tooltip")}>
+            <span class="ws-action-emoji"><IconGlobe /></span>
+            <span class="ws-action-label">{t("sidebar.ports.label")}</span>
+          </button>
+        </Show>
       </div>
       <button class="ws-add" onClick={p.onCreate} title={t("sidebar.new_workspace")}>
         <span class="ws-action-emoji"><IconPlus /></span>
@@ -1125,9 +1128,11 @@ export function Sidebar(p: Props) {
             <button onClick={() => p.onAction(w.id, "sessions")}>
               {t("ws.context.sessions")}
             </button>
-            <button onClick={() => p.onAction(w.id, "addons")}>
-              {t("ws.context.addons")}
-            </button>
+            <Show when={backend.can("addons")}>
+              <button onClick={() => p.onAction(w.id, "addons")}>
+                {t("ws.context.addons")}
+              </button>
+            </Show>
             {/* Pinning happens from a workspace because that is what
                 gives the folder browser a host to walk: `file_list_remote`
                 resolves SFTP from this workspace's live SSH session. The

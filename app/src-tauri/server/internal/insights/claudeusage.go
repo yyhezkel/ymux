@@ -25,12 +25,16 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // Guard rails for a directory nobody else controls the size of. On a working
@@ -41,11 +45,8 @@ import (
 // hot path.
 var usageMarker = []byte(`"usage"`)
 
-const (
-	claudeMaxFiles    = 2000
-	claudeMaxLineSize = 8 * 1024 * 1024 // one assistant line with a big tool result
-	claudeSeriesStep  = 3600            // hourly buckets, always — see below
-)
+// hourly buckets, always — see below
+const claudeSeriesStep = 3600
 
 // ClaudeTokens is the token tally shared by every row in the report. Cache
 // writes are split because a 1-hour write costs materially more than a
@@ -116,6 +117,42 @@ type ClaudeUsageReport struct {
 
 // ─── the transcript line we care about ──────────────────────────────────
 
+// tokenCount is a token field that must be absent, null, or a JSON
+// non-negative integer. Anything else (1.5, -1, "7", true) fails the decode, so
+// the caller counts one parse error and drops the line — the same rule the Rust
+// mirror applies with as_u64. Values above int64 max are rejected too, since
+// the report fields are int64.
+type tokenCount int64
+
+func (t *tokenCount) UnmarshalJSON(b []byte) error {
+	s := string(b)
+	if s == "null" {
+		*t = 0
+		return nil
+	}
+	// digits only: rejects sign, fraction, exponent, strings, bools
+	n, err := strconv.ParseUint(s, 10, 63)
+	if err != nil {
+		return fmt.Errorf("token field %s is not a non-negative integer", s)
+	}
+	*t = tokenCount(n)
+	return nil
+}
+
+// claudeUsage is one message.usage block. claudeLine holds it by pointer so an
+// absent or null block (nil) is distinguishable from an all-zero one.
+type claudeUsage struct {
+	InputTokens         tokenCount `json:"input_tokens"`
+	OutputTokens        tokenCount `json:"output_tokens"`
+	CacheReadTokens     tokenCount `json:"cache_read_input_tokens"`
+	CacheCreationTokens tokenCount `json:"cache_creation_input_tokens"`
+	CacheCreation       struct {
+		Ephemeral5m tokenCount `json:"ephemeral_5m_input_tokens"`
+		Ephemeral1h tokenCount `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
+	Speed string `json:"speed"`
+}
+
 type claudeLine struct {
 	Type        string `json:"type"`
 	Timestamp   string `json:"timestamp"`
@@ -124,17 +161,7 @@ type claudeLine struct {
 	IsSidechain bool   `json:"isSidechain"`
 	Message     struct {
 		Model string `json:"model"`
-		Usage struct {
-			InputTokens         int64 `json:"input_tokens"`
-			OutputTokens        int64 `json:"output_tokens"`
-			CacheReadTokens     int64 `json:"cache_read_input_tokens"`
-			CacheCreationTokens int64 `json:"cache_creation_input_tokens"`
-			CacheCreation       struct {
-				Ephemeral5m int64 `json:"ephemeral_5m_input_tokens"`
-				Ephemeral1h int64 `json:"ephemeral_1h_input_tokens"`
-			} `json:"cache_creation"`
-			Speed string `json:"speed"`
-		} `json:"usage"`
+		Usage *claudeUsage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -245,10 +272,11 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 	byModel := newAgg()
 	byProject := newAgg()
 	bySession := newAgg()
-	seen := 0
 
 	for _, dir := range entries {
-		if !dir.IsDir() {
+		// os.Stat follows a symlinked project dir; a dangling one is skipped
+		// silently (same as Rust's is_dir()).
+		if st, err := os.Stat(filepath.Join(root, dir.Name())); err != nil || !st.IsDir() {
 			continue
 		}
 		files, err := os.ReadDir(filepath.Join(root, dir.Name()))
@@ -256,16 +284,18 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 			continue
 		}
 		for _, f := range files {
-			if f.IsDir() || !strings.HasSuffix(f.Name(), ".jsonl") {
+			if !strings.HasSuffix(f.Name(), ".jsonl") {
 				continue
 			}
-			if seen >= claudeMaxFiles {
-				rep.SkippedFiles++
-				continue
-			}
-			info, err := f.Info()
+			// Stat (not Lstat) so a symlinked transcript counts with its
+			// target's mtime; a dangling link is a skipped file. A dir named
+			// x.jsonl is not a transcript.
+			info, err := os.Stat(filepath.Join(root, dir.Name(), f.Name()))
 			if err != nil {
 				rep.SkippedFiles++
+				continue
+			}
+			if !info.Mode().IsRegular() {
 				continue
 			}
 			// The prune. Last write before the window ⇒ nothing in it.
@@ -273,7 +303,6 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 				rep.SkippedFiles++
 				continue
 			}
-			seen++
 			rep.ScannedFiles++
 			path := filepath.Join(root, dir.Name(), f.Name())
 			scanClaudeFile(path, since, until, rep, buckets, byModel, byProject, bySession)
@@ -313,10 +342,28 @@ func scanClaudeFile(
 	}
 	defer fh.Close()
 
-	sc := bufio.NewScanner(fh)
-	sc.Buffer(make([]byte, 0, 256*1024), claudeMaxLineSize)
-	for sc.Scan() {
-		raw := sc.Bytes()
+	// ReadBytes, not bufio.Scanner: Scanner aborts the whole file at its token
+	// limit, and a single huge tool-result line must not hide every usage line
+	// after it. Rust's BufRead::lines has no limit either, so the two agree.
+	br := bufio.NewReaderSize(fh, 256*1024)
+	for {
+		raw, rerr := br.ReadBytes('\n')
+		if rerr != nil && rerr != io.EOF {
+			rep.ParseErrors++
+			return
+		}
+		// One trailing \n then one \r, as Rust's lines() strips them.
+		raw = bytes.TrimSuffix(raw, []byte("\n"))
+		raw = bytes.TrimSuffix(raw, []byte("\r"))
+		if rerr == io.EOF && len(raw) == 0 {
+			return
+		}
+		// Rust's lines() errors on invalid UTF-8 for every line, marker or not,
+		// so check before the marker reject to count the same one parse error.
+		if !utf8.Valid(raw) {
+			rep.ParseErrors++
+			continue
+		}
 		// Cheap reject before the JSON decoder. Most lines in a transcript are
 		// user turns, attachments and tool results with no usage block at all,
 		// and unmarshalling them would dominate the scan.
@@ -331,6 +378,10 @@ func scanClaudeFile(
 		if l.Type != "assistant" || l.Message.Model == "" {
 			continue
 		}
+		// No usage object (absent or null): nothing to count, not an error.
+		if l.Message.Usage == nil {
+			continue
+		}
 		ts, err := time.Parse(time.RFC3339, l.Timestamp)
 		if err != nil {
 			rep.ParseErrors++
@@ -341,20 +392,20 @@ func scanClaudeFile(
 			continue
 		}
 
-		u := l.Message.Usage
-		w5, w1h := u.CacheCreation.Ephemeral5m, u.CacheCreation.Ephemeral1h
+		u := l.Message.Usage // non-nil: checked above
+		w5, w1h := int64(u.CacheCreation.Ephemeral5m), int64(u.CacheCreation.Ephemeral1h)
 		// Older transcripts have only the flat total. Attribute it to the
 		// 5-minute bucket — the cheaper of the two, so an unknown split
 		// under-states rather than over-states the cost.
 		if w5 == 0 && w1h == 0 && u.CacheCreationTokens > 0 {
-			w5 = u.CacheCreationTokens
+			w5 = int64(u.CacheCreationTokens)
 		}
 		tok := ClaudeTokens{
 			Calls:      1,
-			In:         u.InputTokens,
-			Out:        u.OutputTokens,
-			CacheRead:  u.CacheReadTokens,
-			CacheWrite: u.CacheCreationTokens,
+			In:         int64(u.InputTokens),
+			Out:        int64(u.OutputTokens),
+			CacheRead:  int64(u.CacheReadTokens),
+			CacheWrite: int64(u.CacheCreationTokens),
 			CacheW5m:   w5,
 			CacheW1h:   w1h,
 		}
@@ -398,9 +449,9 @@ func scanClaudeFile(
 				bySession.project[l.SessionID] = l.CWD
 			}
 		}
-	}
-	if err := sc.Err(); err != nil {
-		rep.ParseErrors++
+		if rerr == io.EOF {
+			return
+		}
 	}
 }
 

@@ -379,6 +379,12 @@ pub async fn bootstrap(
             // last bootstrap, or this is a fresh machine that has the
             // binary cached but no PATH entry. Idempotent.
             ensure_path_in_rc(handle).await;
+            // Phase 98: the tmux conf too. It has its own manifest entry and
+            // its own hash gate, and it changes far more often than the CLI
+            // binary — this early return used to skip it, so a host whose
+            // CLI was already current never received a new conf (the 91.D /
+            // Phase 98 wheel binds). Idempotent: a matching hash is a no-op.
+            ensure_tmux_conf(handle, resource_loader, home, &manifest, false).await;
             if auto_install_hooks {
                 ensure_hooks_installed(handle, &remote_symlink_abs).await;
             }
@@ -466,7 +472,9 @@ pub async fn bootstrap(
     // config at `~/.ymux/tmux.conf`. Whether tmux actually loads
     // it is decided per-pane at launch time (Settings →
     // `terminal.use_ymux_tmux_config`); we always upload so the
-    // toggle works without re-bootstrapping.
+    // toggle works without re-bootstrapping. The hash-matches branch
+    // above calls this as well (Phase 98), so "always" holds whether
+    // or not the CLI binary needed uploading.
     ensure_tmux_conf(handle, resource_loader, home, &manifest, force).await;
 
     // Phase 66 (66.B): install the Claude Code permission hooks now that

@@ -13,3 +13,6 @@ hmac = "0.12"
 sha2 = "0.10"
 rand = "0.8"
 tracing = "0.1"
+
+[dev-dependencies]
+ymux-core = { path = "../ymux-core", features = ["test-config-dir"] }

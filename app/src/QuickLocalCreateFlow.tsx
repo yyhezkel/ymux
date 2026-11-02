@@ -1,5 +1,5 @@
 import { createSignal, For, Show, onMount } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { createLogger } from "./logger";
@@ -54,7 +54,7 @@ export function QuickLocalCreateFlow(p: Props) {
   onMount(() => {
     void (async () => {
       try {
-        const shells = await invoke<ShellInfo[]>("detect_local_shells");
+        const shells = await backend.call<ShellInfo[]>("detect_local_shells");
         setDetectedShells(shells);
         // macOS port: the "powershell" seed only exists on Windows. If the
         // seeded id isn't in the detected list, default to the first
@@ -67,7 +67,7 @@ export function QuickLocalCreateFlow(p: Props) {
         log.warn("detect_local_shells failed", e);
       }
       try {
-        const paths = await invoke<RecentPathSuggestion[]>("list_recent_paths");
+        const paths = await backend.call<RecentPathSuggestion[]>("list_recent_paths");
         setRecentPaths(paths);
       } catch (e) {
         log.warn("list_recent_paths failed", e);
@@ -116,7 +116,7 @@ export function QuickLocalCreateFlow(p: Props) {
     // it shows up in the combobox next time. Best-effort — silently
     // ignore RPC failures.
     if (workspaceCwd) {
-      invoke("record_recent_path", { path: workspaceCwd }).catch(() => {});
+      backend.call("record_recent_path", { path: workspaceCwd }).catch(() => {});
     }
     p.onClose();
   };

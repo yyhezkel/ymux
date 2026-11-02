@@ -28,6 +28,7 @@ const pane = (id: string, title: string, emoji: string | null): PaneNode => ({
   diff_source: null,
   smart_bidi: null,
   diff_cwd: null,
+  claude_running: null,
 });
 
 function Harness() {

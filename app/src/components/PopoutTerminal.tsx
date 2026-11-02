@@ -1,7 +1,12 @@
 import { onCleanup, onMount } from "solid-js";
-import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { backend, type UnlistenFn } from "../backend";
 import { TerminalInstance, setTerminalFontSize } from "../terminalInstance";
+import { applyTheme, loadSettings } from "../settings";
+import { parsePopoutProfile, popoutProfileKey } from "../popoutProfile";
+import { createLogger } from "../logger";
+import { resolvePopoutTmuxArm } from "../popoutWheelArm";
+
+const log = createLogger("POPOUT");
 
 // Ctrl+wheel font zoom — pop-out windows only (the grid stays Settings-driven).
 // All open popouts share one zoom level, synced via the `popout:zoom` event and
@@ -23,6 +28,11 @@ function readPopoutFontPt(): number {
 // bootstrap. It reuses TerminalInstance (same onData→pty_write + resize
 // contract as an in-grid pane) and taps the app-wide `pty:data` / `pty:exit`
 // streams filtered to its own session.
+//
+// Theme/RTL: the fresh webview never ran App's settings bootstrap, so onMount
+// loads settings itself (applyTheme BEFORE the constructor -- the renderer is
+// fixed at construction and the font/theme/RTL caches feed it) and reads the origin pane's profile from
+// localStorage (written by App.tsx before popout_pane).
 //
 // Ownership while open: this window drives input + resize (pty_write /
 // pty_resize); the origin pane in the main window detaches to a read-only
@@ -49,8 +59,19 @@ export function PopoutTerminal(props: { sessionId: string }) {
   let sizePt = readPopoutFontPt();
   let onWheel: ((e: WheelEvent) => void) | null = null;
 
-  onMount(() => {
-    ti = new TerminalInstance(`popout-${props.sessionId}`);
+  let disposed = false;
+
+  onMount(async () => {
+    const profile = parsePopoutProfile(localStorage.getItem(popoutProfileKey(props.sessionId)));
+    try {
+      const s = await loadSettings();
+      applyTheme(s);
+    } catch (e) {
+      // AI-NOTE: settings unreadable → built-in defaults
+      log.warn(`settings load failed: ${e instanceof Error ? e.name : typeof e}`);
+    }
+    if (disposed) return;
+    ti = new TerminalInstance(`popout-${props.sessionId}`, profile);
     hostRef.appendChild(ti.container);
     ti.container.style.display = "block";
     // attach() binds onData→pty_write and pushes an initial pty_resize, so
@@ -60,6 +81,15 @@ export function PopoutTerminal(props: { sessionId: string }) {
     setTerminalFontSize(sizePt);
     requestAnimationFrame(() => ti?.fitAndResize(true));
     ti.focus();
+
+    // Arm the tmux wheel proxy when the origin pane is tmux-persisted. The
+    // pane id arrives via localStorage (App.tsx popOutPane); a missing key or
+    // failed lookup leaves the proxy unarmed (plain shell keeps xterm wheel).
+    void resolvePopoutTmuxArm(
+      localStorage.getItem(`ymux.popout.pane.${props.sessionId}`),
+      () => backend.call<Record<string, string>>("pane_persistence_list"),
+      (m, e) => log.warn(m, e),
+    ).then((armed) => ti?.setTmuxScroll(armed));
 
     // Ctrl+wheel zoom. Capture phase + non-passive so we beat xterm's own
     // viewport wheel handler and can preventDefault — a plain (no-Ctrl) wheel
@@ -77,7 +107,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
       } catch {
         // quota/private mode — zoom still applies for this session
       }
-      void emit("popout:zoom", sizePt); // equalize every open popout
+      void backend.emit("popout:zoom", sizePt); // equalize every open popout
     };
     ti.container.addEventListener("wheel", onWheel, {
       capture: true,
@@ -87,7 +117,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
     void (async () => {
       // Cross-popout equalize: match the latest wheel-set size.
       unlistens.push(
-        await listen<number>("popout:zoom", (e) => {
+        await backend.on<number>("popout:zoom", (e) => {
           const pt = clampPt(Math.round(e.payload));
           if (pt === sizePt) return;
           sizePt = pt;
@@ -95,14 +125,14 @@ export function PopoutTerminal(props: { sessionId: string }) {
         }),
       );
       unlistens.push(
-        await listen<PtyDataEvent>("pty:data", (e) => {
+        await backend.on<PtyDataEvent>("pty:data", (e) => {
           if (e.payload.session_id === props.sessionId) {
             ti?.writeData(e.payload.data);
           }
         }),
       );
       unlistens.push(
-        await listen<PtyExitEvent>("pty:exit", (e) => {
+        await backend.on<PtyExitEvent>("pty:exit", (e) => {
           if (e.payload.session_id !== props.sessionId) return;
           ti?.notice(
             `[session ended${e.payload.reason ? ` (${e.payload.reason})` : ""}]`,
@@ -110,7 +140,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
           // Let the notice land, then close the window. Rust's Destroyed
           // handler emits popout:closed so the main pane cleans up.
           setTimeout(() => {
-            void getCurrentWindow().close();
+            void backend.host.closeWindow();
           }, 1200);
         }),
       );
@@ -118,6 +148,7 @@ export function PopoutTerminal(props: { sessionId: string }) {
   });
 
   onCleanup(() => {
+    disposed = true;
     if (ti && onWheel) {
       ti.container.removeEventListener("wheel", onWheel, { capture: true });
     }

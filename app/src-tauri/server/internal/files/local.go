@@ -7,15 +7,18 @@
 package files
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"ymux-server/internal/core"
 )
@@ -247,4 +250,240 @@ func (l *LocalFiles) Open(p string) (io.ReadCloser, int64, error) {
 		return nil, 0, err
 	}
 	return f, fi.Size(), nil
+}
+
+// ── Phase 116 (WEB-DESIGN F2): the File Manager's mutating ops ─────────
+
+// ErrExists is returned when a create/rename/copy target is already there.
+var ErrExists = errors.New("already exists")
+
+// archiveTimeout bounds one zip / tar / unzip run.
+const archiveTimeout = 10 * time.Minute
+
+// Mkdir creates one directory (the desktop's sftp create_dir: no parents).
+func (l *LocalFiles) Mkdir(p string) error {
+	full, err := l.resolve(p)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(full); err == nil {
+		return ErrExists
+	}
+	if err := os.Mkdir(full, 0o755); err != nil {
+		if os.IsNotExist(err) {
+			return ErrNotFound
+		}
+		return err
+	}
+	return nil
+}
+
+// Rename moves within the sandbox; it never overwrites.
+func (l *LocalFiles) Rename(from, to string) error {
+	src, err := l.resolve(from)
+	if err != nil {
+		return err
+	}
+	dst, err := l.resolve(to)
+	if err != nil {
+		return err
+	}
+	if src == l.root {
+		return ErrOutsideSandbox
+	}
+	if _, err := os.Lstat(src); err != nil {
+		return ErrNotFound
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return ErrExists
+	}
+	return os.Rename(src, dst)
+}
+
+// Copy copies a file, or a directory recursively. Symlinks are skipped, not
+// followed, so a link cannot pull outside content into the copy.
+func (l *LocalFiles) Copy(from, to string) error {
+	src, err := l.resolve(from)
+	if err != nil {
+		return err
+	}
+	dst, err := l.resolve(to)
+	if err != nil {
+		return err
+	}
+	fi, err := os.Lstat(src)
+	if err != nil {
+		return ErrNotFound
+	}
+	if _, err := os.Lstat(dst); err == nil {
+		return ErrExists
+	}
+	if fi.IsDir() && (dst == src || strings.HasPrefix(dst, src+string(filepath.Separator))) {
+		return fmt.Errorf("cannot copy a folder into itself")
+	}
+	if !fi.IsDir() {
+		return copyFile(src, dst, fi.Mode())
+	}
+	return filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(src, p)
+		out := filepath.Join(dst, rel)
+		switch {
+		case d.Type()&os.ModeSymlink != 0:
+			return nil
+		case d.IsDir():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return os.Mkdir(out, info.Mode().Perm()|0o700)
+		case d.Type().IsRegular():
+			info, err := d.Info()
+			if err != nil {
+				return err
+			}
+			return copyFile(p, out, info.Mode())
+		}
+		return nil // devices, sockets, fifos: not copied
+	})
+}
+
+func copyFile(src, dst string, mode os.FileMode) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode.Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		_ = os.Remove(dst)
+		return err
+	}
+	return out.Close()
+}
+
+// DeleteTree removes a file or a directory with everything under it — the
+// desktop's recursive SFTP delete, behind the same confirm in the UI. The
+// sandbox root itself is refused.
+func (l *LocalFiles) DeleteTree(p string) error {
+	full, err := l.resolve(p)
+	if err != nil {
+		return err
+	}
+	if full == l.root {
+		return ErrOutsideSandbox
+	}
+	if _, err := os.Lstat(full); err != nil {
+		return ErrNotFound
+	}
+	return os.RemoveAll(full)
+}
+
+// Archive runs `zip -r -q <out> ./name…` or `tar -czf <out> -- ./name…` in
+// cwd (Rule #3: argv). Each name must sit directly or deeper under cwd; the
+// output is a basename. A missing zip binary reads like the desktop's remote
+// failure ("exit 127"), which is what makes the UI offer tar instead.
+func (l *LocalFiles) Archive(cwd string, names []string, output, format string) (string, error) {
+	if len(names) == 0 {
+		return "", fmt.Errorf("%s: no items selected", format)
+	}
+	if output == "" || strings.ContainsAny(output, `/\`) || output == "." || output == ".." {
+		return "", fmt.Errorf("output must be a file name, not a path")
+	}
+	dir, err := l.resolve(cwd)
+	if err != nil {
+		return "", err
+	}
+	args := make([]string, 0, len(names))
+	for _, n := range names {
+		if n == "" || filepath.IsAbs(n) {
+			return "", fmt.Errorf("bad item %q", n)
+		}
+		full := filepath.Join(dir, n)
+		if !l.within(full) || full == dir {
+			return "", ErrOutsideSandbox
+		}
+		if _, err := os.Lstat(full); err != nil {
+			return "", ErrNotFound
+		}
+		rel, _ := filepath.Rel(dir, full)
+		args = append(args, "."+string(filepath.Separator)+rel) // never read as a flag
+	}
+	out := filepath.Join(dir, output)
+	if _, err := os.Lstat(out); err == nil {
+		return "", ErrExists
+	}
+	var bin string
+	var argv []string
+	switch format {
+	case "zip":
+		bin, argv = "zip", append([]string{"-r", "-q", out}, args...)
+	case "targz":
+		bin, argv = "tar", append([]string{"-czf", out, "--"}, args...)
+	default:
+		return "", fmt.Errorf("unknown archive format %q", format)
+	}
+	if err := runIn(dir, bin, argv...); err != nil {
+		return "", err
+	}
+	return out, nil
+}
+
+// Unzip extracts into <dir>/<stem>/ (created; existing files overwritten,
+// as the desktop's `unzip -o`). Info-ZIP refuses `..` entries itself.
+func (l *LocalFiles) Unzip(p string) (string, error) {
+	zp, err := l.resolve(p)
+	if err != nil {
+		return "", err
+	}
+	fi, err := os.Stat(zp)
+	if err != nil {
+		return "", ErrNotFound
+	}
+	if fi.IsDir() {
+		return "", ErrIsDir
+	}
+	stem := strings.TrimSuffix(filepath.Base(zp), filepath.Ext(zp))
+	if stem == "" || stem == "." {
+		return "", fmt.Errorf("unzip: the archive has no name to extract into")
+	}
+	dest := filepath.Join(filepath.Dir(zp), stem)
+	if err := os.MkdirAll(dest, 0o755); err != nil {
+		return "", err
+	}
+	if err := runIn(filepath.Dir(zp), "unzip", "-o", "-q", zp, "-d", dest); err != nil {
+		return "", err
+	}
+	return dest, nil
+}
+
+// runIn runs bin with argv in dir; a non-zero exit carries its output.
+func runIn(dir, bin string, argv ...string) error {
+	if _, err := exec.LookPath(bin); err != nil {
+		return fmt.Errorf("%s failed (exit 127): %s: command not found", bin, bin)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), archiveTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, argv...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		code := -1
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			code = ee.ExitCode()
+		}
+		msg := strings.TrimSpace(string(out))
+		if len(msg) > 400 {
+			msg = msg[:400]
+		}
+		return fmt.Errorf("%s failed (exit %d): %s", bin, code, msg)
+	}
+	return nil
 }

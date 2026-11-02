@@ -22,7 +22,7 @@ use tauri::State;
 use tokio::io::AsyncWriteExt;
 
 use ymux_addons::{
-    builtin_registry, ids, manifest_for, routines, AddonAction, AddonManifest, AddonStatus,
+    builtin_registry, ids, routines, AddonAction, AddonManifest, AddonStatus,
 };
 
 use crate::{AppState, SshClient};
@@ -240,6 +240,9 @@ async fn run_builtin(
                 .into(),
         ),
         routines::NGINX_PROXY_UNINSTALL => nginx_proxy_uninstall(handle).await,
+        routines::WEB_DETECT => crate::web_addon::detect(handle, home).await,
+        routines::WEB_INSTALL => crate::web_addon::install(handle, home).await,
+        routines::WEB_UNINSTALL => crate::web_addon::uninstall(handle, home).await,
         other => Err(format!("unknown builtin routine {other}")),
     }
 }
@@ -641,6 +644,8 @@ if command -v systemctl >/dev/null 2>&1 && systemctl --user daemon-reload 2>/dev
 else
   pkill -x ymux-server 2>/dev/null; pkill -f 'ymux-server serve' 2>/dev/null
   pkill -x ymux-insights 2>/dev/null; pkill -f 'ymux-insights serve' 2>/dev/null
+  pkill -x winmux-server 2>/dev/null; pkill -f 'winmux-server serve' 2>/dev/null
+  pkill -x winmux-insights 2>/dev/null; pkill -f 'winmux-insights serve' 2>/dev/null
   sleep 1
   if [ "$WRAP" = "sg" ] && [ -n "$SG" ]; then
     nohup "$SG" docker -c "exec $DAEMON serve" >/dev/null 2>&1 &
@@ -733,6 +738,22 @@ PY"#
 }
 
 /// Detect → AddonStatus for one manifest.
+/// The registry with run-time versions filled in: `ymux-web` is versioned by
+/// the frontend embedded in this binary (Phase 112, web_addon.rs).
+fn registry() -> Vec<AddonManifest> {
+    builtin_registry()
+        .into_iter()
+        .map(|mut m| {
+            if m.id == ymux_addons::ids::WEB {
+                if let Some(l) = crate::web_addon::label() {
+                    m.version = l.to_string();
+                }
+            }
+            m
+        })
+        .collect()
+}
+
 async fn status_for(m: &AddonManifest, handle: &SshHandle<SshClient>, home: &str) -> AddonStatus {
     let detected = run_action(&m.detect, handle, home).await.unwrap_or_default();
     let v = detected.trim();
@@ -778,7 +799,7 @@ pub(crate) async fn addon_list(
         return Err("could not resolve remote $HOME".into());
     }
     let mut out = Vec::new();
-    for m in builtin_registry() {
+    for m in registry() {
         out.push(status_for(&m, &handle, &home).await);
     }
     Ok(out)
@@ -792,7 +813,10 @@ async fn run_lifecycle(
     pick: impl Fn(&AddonManifest) -> AddonAction,
 ) -> Result<AddonStatus, String> {
     crate::log_debug("ADDON", &format!("{op} id={id} — begin"));
-    let m = manifest_for(id).ok_or_else(|| format!("unknown add-on {id}"))?;
+    let m = registry()
+        .into_iter()
+        .find(|m| m.id == id)
+        .ok_or_else(|| format!("unknown add-on {id}"))?;
     let handle =
         pick_handle(state, workspace_id).ok_or("no active SSH session for this workspace")?;
     let home = remote_home(&handle).await;

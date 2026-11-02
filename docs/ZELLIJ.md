@@ -371,6 +371,7 @@ What `true` costs, and why each cost is covered:
   OSC 52. With keybinds cleared **that is the only way to copy inside the pane**, so
   leaving `copy_on_select` alone is load-bearing.
 - a native xterm.js selection still works with **Shift** held.
+- right-click Copy: xterm has no selection when zellij owns the drag, so the menu falls back to the last OSC 52 write (`menuCopyText`, `app/src/termMenuCopy.ts`); the `contextmenu` listener is capture-phase so the click is not forwarded to zellij.
 - mouse-tracking escapes leaking into a bare shell after an unclean exit are already
   handled transport-agnostically by `resetMouseModes()` on connect and on `pty:exit`.
 

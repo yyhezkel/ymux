@@ -240,9 +240,9 @@ impl BidiFilter {
         if accum.is_empty() {
             return;
         }
-        // Convert to string (lossy). UTF-8 splits across chunk
-        // boundaries get a U+FFFD replacement; the filter treats that
-        // as a non-text char which is acceptable degradation.
+        // Input is whole chars: `emit_data` decodes (pty_decode) before
+        // filtering, so chunk-boundary splits never reach here. Lossy only
+        // covers the escape-cap flush edge.
         let s = String::from_utf8_lossy(accum);
 
         // Count box-drawing chars vs total. If box dominates, bail.
@@ -337,19 +337,23 @@ fn is_rtl(c: char) -> bool {
 pub type BidiFilterMap = Arc<Mutex<HashMap<String, BidiFilter>>>;
 
 /// Look up (or lazily create) the per-pane filter and run the chunk
-/// through it. Returns owned bytes — when the filter is disabled the
-/// allocation is a straight memcpy, which is the cheapest non-zero
-/// price we pay for the abstraction.
-pub fn apply_to_pane(
-    filters: &BidiFilterMap,
-    pane_id: &str,
-    bytes: &[u8],
-) -> Vec<u8> {
+/// through it. Returns owned text — when the filter is disabled the
+/// allocation is skipped: the text is returned as-is.
+/// Input is already-decoded text (whole chars).
+pub fn apply_to_pane(filters: &BidiFilterMap, pane_id: &str, text: String) -> String {
     let mut map = filters.lock().unwrap();
     let filter = map
         .entry(pane_id.to_string())
         .or_insert_with(|| BidiFilter::new(false));
-    filter.process(bytes)
+    if !filter.enabled {
+        return text;
+    }
+    let out = filter.process(text.as_bytes());
+    match String::from_utf8(out) {
+        Ok(s) => s,
+        // AI-NOTE: escape-cap flush (OSC_BUF_MAX) can cut a char; pre-existing edge
+        Err(e) => String::from_utf8_lossy(e.as_bytes()).into_owned(),
+    }
 }
 
 /// Idempotent toggle. Creates the entry if missing.
@@ -498,5 +502,51 @@ mod tests {
         let s = "שלום \x1b[10;5HDEV\x1b[0m";
         let out = run(&mut f, s);
         assert!(out.contains("\x1b[10;5H"), "cursor seq mangled: {out:?}");
+    }
+
+    fn enabled_map() -> BidiFilterMap {
+        let m: BidiFilterMap = Arc::new(Mutex::new(HashMap::new()));
+        set_pane_enabled(&m, "p", true);
+        m
+    }
+
+    #[test]
+    fn hebrew_split_across_chunks_decode_then_filter() {
+        // Pins decode-before-filter: a Hebrew char cut mid-byte across two
+        // reads must survive intact; filtering raw bytes gave U+FFFD.
+        let m = enabled_map();
+        let mut st = crate::pty_decode::Utf8Stream::new();
+        let full = "שלום".as_bytes();
+        let mut out = String::new();
+        for chunk in [&full[..1], &full[1..]] {
+            let d = st.push(chunk);
+            out.push_str(&apply_to_pane(&m, "p", d.text));
+        }
+        assert_eq!(out, "שלום");
+        assert!(!out.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn mixed_hebrew_latin_split_chunks_wrap_without_fffd() {
+        // Pins wrap behaviour on a split stream: Latin after Hebrew is
+        // isolated and no replacement char appears.
+        let m = enabled_map();
+        let mut st = crate::pty_decode::Utf8Stream::new();
+        let full = "שלום main.rs".as_bytes();
+        let mut out = String::new();
+        for chunk in [&full[..3], &full[3..]] {
+            let d = st.push(chunk);
+            out.push_str(&apply_to_pane(&m, "p", d.text));
+        }
+        assert_eq!(out, "שלום \u{2068}main.rs\u{2069}");
+        assert!(!out.contains('\u{FFFD}'));
+    }
+
+    #[test]
+    fn disabled_pane_apply_is_passthrough() {
+        // Pins the off fast path: a disabled pane returns text unchanged.
+        let m: BidiFilterMap = Arc::new(Mutex::new(HashMap::new()));
+        let s = "שלום main.rs".to_string();
+        assert_eq!(apply_to_pane(&m, "q", s.clone()), s);
     }
 }

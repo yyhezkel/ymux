@@ -1,5 +1,5 @@
 import { createResource, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconBug, IconClose, IconWarning } from "./icons";
 import {
@@ -34,6 +34,15 @@ export function TicketModal(p: Props) {
   // The snapshot is taken at right-click time, before this modal exists,
   // so the choice here is whether to KEEP it — not whether to take it.
   const [includeShot, setIncludeShot] = createSignal(true);
+  // Reason text for a missing snapshot; null (legacy script) → generic.
+  const shotReason = () =>
+    t(`tickets.modal.shot.reason.${p.capture.shot_error ?? "unknown"}`);
+  // A transparent element renders light text invisible on the checkerboard.
+  const shotIsTransparent = () => {
+    const raw = p.capture.style.background;
+    const bg = typeof raw === "string" ? raw.replace(/\s+/g, "") : "";
+    return bg === "transparent" || /^rgba\(.*,0\)$/.test(bg);
+  };
   const [copied, setCopied] = createSignal(false);
   const [editingDest, setEditingDest] = createSignal(false);
   const [overrideDraft, setOverrideDraft] = createSignal(
@@ -46,7 +55,7 @@ export function TicketModal(p: Props) {
   const [dest, { refetch: refetchDest }] = createResource(
     () => p.workspaceId,
     (ws) =>
-      invoke<ProjectResolution>("tickets_resolve_project", {
+      backend.call<ProjectResolution>("tickets_resolve_project", {
         workspaceId: ws,
         projectOverride: loadProjectOverride(ws),
       }),
@@ -93,7 +102,7 @@ export function TicketModal(p: Props) {
     setSaving(true);
     setError(null);
     try {
-      const created = await invoke<Ticket>("tickets_create", {
+      const created = await backend.call<Ticket>("tickets_create", {
         workspaceId: p.workspaceId,
         projectOverride: loadProjectOverride(p.workspaceId),
         data: {
@@ -154,7 +163,16 @@ export function TicketModal(p: Props) {
             </code>
           </div>
 
-          <Show when={p.capture.shot}>
+          <Show
+            when={p.capture.shot}
+            fallback={
+              <div class="ticket-modal-field">
+                <div class="ticket-modal-shot-missing" role="status">
+                  {t("tickets.modal.shot.failed", { reason: shotReason() })}
+                </div>
+              </div>
+            }
+          >
             {(shot) => (
               <div class="ticket-modal-field">
                 <label class="ticket-modal-check">
@@ -173,6 +191,11 @@ export function TicketModal(p: Props) {
                     src={shot()}
                     alt={t("tickets.modal.shot.alt")}
                   />
+                  <Show when={shotIsTransparent()}>
+                    <div class="ticket-modal-shot-note">
+                      {t("tickets.modal.shot.transparent")}
+                    </div>
+                  </Show>
                 </Show>
               </div>
             )}

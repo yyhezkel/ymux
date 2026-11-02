@@ -1,6 +1,6 @@
 import { createSignal, createMemo, createEffect, on, onCleanup, For, Show } from "solid-js";
 import { createNarrow } from "./useNarrow";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { IconClipboard, IconRefresh, IconTerminal } from "./icons";
 import { t, currentLanguage } from "./i18n";
 import { fmtBytes, fmtBps, fmtPct, fmtSpan } from "./insightsFmt";
@@ -104,7 +104,7 @@ export function InsightsAnalytics(p: Props) {
     setHover(null);
     const since = Math.floor(Date.now() / 1000) - rangeSeconds();
     try {
-      const raw = await invoke<string>("insights_fetch", {
+      const raw = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: `/analytics?since=${since}&points=120`,
       });
@@ -134,12 +134,10 @@ export function InsightsAnalytics(p: Props) {
 
   // ── Derived ──────────────────────────────────────────────────────────
 
-  /** The local workspace shim answers with a marker instead of a report. */
-  const localOnly = () => rep()?.unavailable === "local";
   /** A daemon predating the endpoint has no route for it — curl gets a 404. */
   const oldDaemon = () => /HTTP 40[34]/.test(err() ?? "");
   const series = () => rep()?.series ?? [];
-  const hasData = () => !localOnly() && series().length > 0;
+  const hasData = () => series().length > 0;
 
   const activeMetric = () => METRICS.find((m) => m.id === metric()) ?? METRICS[0];
 
@@ -231,7 +229,7 @@ export function InsightsAnalytics(p: Props) {
   // does not quietly fetch a different one.
   const copyForClaude = async () => {
     const r = rep();
-    if (!r || localOnly()) return;
+    if (!r) return;
     const ok = await copyText(
       buildAnalyticsReport(r, {
         intro: t("insights.an.copy_intro"),
@@ -333,17 +331,10 @@ export function InsightsAnalytics(p: Props) {
         </div>
       </Show>
 
-      <Show when={localOnly()}>
-        <div class="ins-docker-err">
-          <div class="ins-docker-err-msg">{t("insights.an.local_title")}</div>
-          <div class="ins-docker-err-hint">{t("insights.an.local_hint")}</div>
-        </div>
-      </Show>
-
       <Show
         when={hasData() ? rep() : null}
         fallback={
-          <Show when={!err() && !localOnly()}>
+          <Show when={!err()}>
             <div class="settings-hint">
               {loading() ? t("insights.logs.loading") : t("insights.an.empty")}
             </div>

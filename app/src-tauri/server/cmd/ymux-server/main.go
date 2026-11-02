@@ -19,12 +19,14 @@ import (
 	"ymux-server/internal/chat"
 	"ymux-server/internal/config"
 	"ymux-server/internal/core"
+	"ymux-server/internal/desktop"
 	"ymux-server/internal/push"
 	"ymux-server/internal/files"
 	"ymux-server/internal/hooks"
 	"ymux-server/internal/insights"
 	"ymux-server/internal/logging"
 	"ymux-server/internal/logs"
+	"ymux-server/internal/term"
 	"ymux-server/internal/workspace"
 )
 
@@ -49,6 +51,7 @@ func main() {
 			srv := api.NewServer("", 0, api.Deps{
 				Files:     files.NewService(nil),
 				Logs:      logs.NewService(nil),
+				Term:      term.NewService("", ""),
 				Chat:      chat.NewChatAPI(nil, nil, ""),
 				Workspace: workspace.NewService(workspace.NewManager(nil, nil), ""),
 			})
@@ -165,7 +168,19 @@ func main() {
 		defer chatStore.Close()
 		chatMgr = chat.NewSessionManager(chatStore)
 		chatAPI = chat.NewChatAPI(chatMgr, chatStore, token)
-		hooks.Start(chatMgr) // thin listener → SessionManager.HandleHookConn (cycle-safe)
+		// Phase 96: browser-initiated pairing needs a human's Allow/Deny, and
+		// the only human here is at the ymux desktop. Wire the outbound tunnel
+		// client as a closure so `chat` never imports `desktop` — same shape as
+		// SetPushLister / SetDeviceAuth. Unresolvable home ⇒ left nil, and a
+		// pairing request then fails closed with "ymux is not connected".
+		if homeErr == nil {
+			chatAPI.SetApprovalAsker(func(reqID, title, summary string, payload map[string]any, wait int) (string, error) {
+				d, err := desktop.AskApproval(home, reqID, title, summary, payload, wait)
+				return string(d), err
+			})
+		} else {
+			logger.Warn("browser pairing disabled: home directory unresolvable")
+		}
 		go chat.RunSessionSweeper(chatMgr, stop)
 		logger.Info("Claude chat subsystem enabled")
 	}
@@ -267,8 +282,57 @@ func main() {
 		logger.Info("workspace API enabled")
 	}
 
+	// Terminal API (Phase 95) — tmux session management plus the attach WS that
+	// gives a browser a real terminal. No store and no state: tmux is the
+	// truth, a session's identity is its tmux name, and each attach is one
+	// `tmux attach` process (internal/term).
+	//
+	// Access needs auth.ScopeShellAttach, which "all" deliberately does NOT
+	// imply — so every phone paired before this release keeps working and none
+	// of them gains a shell. The owner/shared token always passes.
+	//
+	// An unresolvable home only costs the session-meta labels (LoadMeta
+	// degrades to an empty map); tmux itself still lists.
+	termSvc := term.NewService(token, home)
+	if chatAPI != nil {
+		termSvc.SetScopeResolver(chatAPI.DeviceScopes)
+	} else {
+		logger.Warn("terminal API: chat disabled, only the shared token is accepted")
+	}
+	logger.Info("terminal API enabled", "device_scopes", chatAPI != nil)
+	// Phase 114 (E): Web Push for the browser app. Before hooks.Start — the
+	// registry's notify hook is set here and read by every hook after.
+	if chatAPI != nil {
+		termSvc.SetWebPush(*base, chatAPI.ResolveToken, chatAPI.ActiveDeviceScopes)
+	} else {
+		termSvc.SetWebPush(*base, nil, nil)
+	}
+
+	// Hook RPC (Phase 100): one listener, two kinds of caller. term's registry
+	// answers for tmux sessions a browser created; chat (when its store opened)
+	// for the claude children it spawned for the phone. Started after both
+	// exist so each learns the listener address before its first session, and
+	// no longer conditional on chat — a failed chat.db must not cost browser
+	// sessions their hooks.
+	hookResolvers := []core.HookResolver{termSvc.Hooks()}
+	if chatMgr != nil {
+		hookResolvers = append(hookResolvers, chatMgr)
+	}
+	hooks.Start(filepath.Join(*base, "hook-port"), hookResolvers...)
+	// Phase 102 (B4): notes persist next to the other stores, and the box's
+	// listening ports are detected for browser clients. Port watch starts
+	// after hooks.Start so the hook listener's own port is known and skipped.
+	termSvc.SetDataDir(*base)
+	termSvc.SetWebRoot(*base)
+	// Phase 111: sessions created before a restart get their hook routing
+	// back from their own tmux environment (same port, same token). After
+	// SetDataDir, so a recovered session's workspace can be checked.
+	termSvc.RecoverHooks()
+	termSvc.StartPortWatch(context.Background(), *port)
+
 	srv := api.NewServer(token, *port, api.Deps{
-		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc, Workspace: wsSvc, Push: pushSrv,
+		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,
+		Workspace: wsSvc, Push: pushSrv, Term: termSvc,
 	})
 
 	go func() {

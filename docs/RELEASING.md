@@ -107,10 +107,10 @@ the `xattr -dr com.apple.quarantine` step — the bundles are ad-hoc signed and
 Gatekeeper blocks the first launch without it.
 
 In step 5, also fill the `dmg_x64_*` / `dmg_aarch64_*` manifest fields (url,
-sha256, size — same `gh release view` digest workflow). The desktop updater
-does not consume them yet (in-app update is Windows-only; the macOS banner
-links to the release page), but the manifest is the record a future macOS
-self-update will read.
+sha256 — same `gh release view` digest workflow). The desktop updater
+now consumes them on macOS: "Install" downloads the dmg for the running arch,
+verifies the sha256 and swaps the `.app` in place. A missing url falls back to
+the release page; a missing sha256 refuses the install.
 
 ## 4½. Bump hook specs (only when hooks changed)
 
@@ -143,13 +143,13 @@ installs won't know there's an update.
 
 Workflow:
 
-1. Get the SHA256s and sizes of the assets you just uploaded:
+1. Get the SHA256s of the assets you just uploaded:
 
    ```pwsh
    gh release view vX.Y.Z --json assets
    ```
 
-   Look for the `digest` (format `sha256:abcdef…`) and `size` fields.
+   Look for the `digest` (format `sha256:abcdef…`) field.
 
 2. Edit `manifest.json` at the repo root:
 
@@ -160,13 +160,17 @@ Workflow:
      "notes_url": "https://github.com/yyhezkel/ymux/releases/tag/vX.Y.Z",
      "msi_url": "https://github.com/yyhezkel/ymux/releases/download/vX.Y.Z/ymux_X.Y.Z_x64_en-US.msi",
      "msi_sha256": "<from gh release view>",
-     "msi_size": <bytes>,
      "nsis_url": "https://github.com/yyhezkel/ymux/releases/download/vX.Y.Z/ymux_X.Y.Z_x64-setup.exe",
      "nsis_sha256": "<from gh release view>",
-     "nsis_size": <bytes>,
+     "dmg_x64_url": "https://github.com/yyhezkel/ymux/releases/download/vX.Y.Z/ymux_X.Y.Z_x64.dmg",
+     "dmg_x64_sha256": "<from gh release view>",
+     "dmg_aarch64_url": "https://github.com/yyhezkel/ymux/releases/download/vX.Y.Z/ymux_X.Y.Z_aarch64.dmg",
+     "dmg_aarch64_sha256": "<from gh release view>",
      "min_supported_version": "<oldest version that should be told to upgrade>"
    }
    ```
+
+   There is no byte-length key: the sha256 check already rejects any altered download.
 
 3. Commit + push to `main`. `raw.githubusercontent.com` picks up changes
    within ~1 minute.

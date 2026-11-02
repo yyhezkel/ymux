@@ -8,8 +8,6 @@ import {
   detectDirection,
   detectRowDirections,
   classifyRow,
-  nextTuiOwnsBidi,
-  foldTuiOwnsBidi,
   strongCounts,
   RTL_DOMINANCE,
   stripPaneFrame,
@@ -416,94 +414,6 @@ test("bonus: empty rows array", () => {
 // Extra sanity: single Hebrew standalone line still works.
 test("bonus: single standalone Hebrew line -> RTL", () => {
   assert.deepEqual(detectRowDirections(["שלום עולם"]), ["rtl"]);
-});
-
-// -- nextTuiOwnsBidi (Claude visual-order RTL) tests --------------------------
-// The title-driven state machine: ON on a "claude" title, OFF on an empty
-// title, hold on anything else (shell paths, Claude's auto topic titles).
-
-// -- foldTuiOwnsBidi: explicit beats the title -------------------------------
-//
-// The title-only machine never turned ON in practice — inside zellij the title
-// reaching ymux is zellij's own. So the connect wizard (ymux launched Claude)
-// and the Claude hooks (session-start/end, already carrying YMUX_PANE_ID) each
-// supply an out-of-band answer, and those outrank an inference from a title.
-
-test("fold: no explicit signal defers to the title", () => {
-  assert.equal(foldTuiOwnsBidi(null, true), true);
-  assert.equal(foldTuiOwnsBidi(null, false), false);
-});
-
-test("fold: an explicit ON wins over a title that never matched", () => {
-  // The whole zellij case: the title says nothing useful, the wizard knows.
-  assert.equal(foldTuiOwnsBidi(true, false), true);
-});
-
-test("fold: an explicit OFF wins over a stale ON title", () => {
-  // Claude exited without resetting the title — the machine below holds ON
-  // for any non-empty title, so something has to be able to say otherwise.
-  assert.equal(foldTuiOwnsBidi(false, true), false);
-});
-
-test("fold: session-end clears to null, it does not assert false", () => {
-  // Clearing hands the decision back to the title rather than pinning it, so
-  // a later manually-typed `claude` can still be picked up if titles ever
-  // start arriving. This asserts the SHAPE the App.tsx wiring relies on.
-  const afterEnd: boolean | null = null;
-  assert.equal(foldTuiOwnsBidi(afterEnd, true), true, "title may still speak");
-  assert.equal(foldTuiOwnsBidi(afterEnd, false), false);
-});
-
-
-test("tuiOwnsBidi: 'claude' startup title turns on", () => {
-  assert.equal(nextTuiOwnsBidi(false, "claude"), true);
-});
-
-test("tuiOwnsBidi: 'claude · resume' variant turns on", () => {
-  assert.equal(nextTuiOwnsBidi(false, "claude · resume"), true);
-});
-
-test("tuiOwnsBidi: case-insensitive match", () => {
-  assert.equal(nextTuiOwnsBidi(false, "Claude Code"), true);
-});
-
-test("tuiOwnsBidi: empty title (claude exit cleanup) turns off", () => {
-  assert.equal(nextTuiOwnsBidi(true, ""), false);
-});
-
-test("tuiOwnsBidi: whitespace-only title also turns off", () => {
-  assert.equal(nextTuiOwnsBidi(true, "   "), false);
-});
-
-test("tuiOwnsBidi: auto topic title mid-session holds ON", () => {
-  assert.equal(nextTuiOwnsBidi(true, "fixing the RTL bug"), true);
-});
-
-test("tuiOwnsBidi: Hebrew topic title mid-session holds ON", () => {
-  assert.equal(nextTuiOwnsBidi(true, "תיקון באג RTL"), true);
-});
-
-test("tuiOwnsBidi: shell path title while off stays off", () => {
-  assert.equal(
-    // String.raw: in a plain "" literal `\v` is a vertical tab and `\W \S \p`
-    // are dropped, so this asserted against a mangled string, not a path.
-    nextTuiOwnsBidi(false, String.raw`C:\WINDOWS\System32\WindowsPowerShell\v1.0\powershell.exe`),
-    false,
-  );
-});
-
-test("tuiOwnsBidi: unrelated title while off stays off", () => {
-  assert.equal(nextTuiOwnsBidi(false, "vim - notes.md"), false);
-});
-
-test("tuiOwnsBidi: full lifecycle start -> topic -> exit", () => {
-  let s = false;
-  s = nextTuiOwnsBidi(s, "claude");            // startup
-  assert.equal(s, true);
-  s = nextTuiOwnsBidi(s, "צ׳אט על באגים");      // auto topic rename
-  assert.equal(s, true);
-  s = nextTuiOwnsBidi(s, "");                  // clean exit
-  assert.equal(s, false);
 });
 
 // -- rowDirections: the whole-pane decision ----------------------------------

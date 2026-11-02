@@ -76,6 +76,10 @@ notify-rust = "4"
 whoami = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 base64 = "0.22"
+# Local Insights metrics history (insights_store.rs): SQLite, same schema
+# as the remote daemon. `bundled` compiles SQLite via cc so Windows and
+# macOS need no system libsqlite3.
+rusqlite = { version = "0.32", features = ["bundled"] }
 # v0.2.3 → beta.3 (netfree): native HTTPS client for the updater.
 # History: v0.2.2 used SChannel (native-tls) — some AV/EDR products
 # intercepted its TLS and broke "Check for updates".
@@ -157,6 +161,8 @@ winreg = "0.55"
 windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
+    # Phase secret-env: CryptProtectData / CryptUnprotectData for secret-env.json.
+    "Win32_Security_Cryptography",
     "Win32_System_Threading",
     # SHELLEXECUTEINFOW carries an HKEY field, so the Shell struct is
     # gated behind the Registry feature even though we never touch it.
@@ -169,3 +175,5 @@ windows-sys = { version = "0.61", features = [
 # Phase 50 (#2.4): integration test for diff_pane::fetch_diff against a
 # real git repo seeded under a temporary directory.
 tempfile = "3"
+# Tests must not write the real %APPDATA%\ymux (see ymux-core config_dir).
+ymux-core = { path = "crates/ymux-core", features = ["test-config-dir"] }

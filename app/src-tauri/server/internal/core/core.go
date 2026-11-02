@@ -6,8 +6,8 @@
 package core
 
 import (
+	"encoding/json"
 	"io"
-	"net"
 )
 
 // Version is the ymux-server release version. Major 2 marks the API-stability
@@ -27,24 +27,103 @@ import (
 // pick up the daemon that knows about the new paths.
 // 2.2.1 (Phase 86): server load — docker stats one-shot + 30s cadence, top
 // every 10s, hygiene reaper also kills orphaned (ppid 1) port-watchers.
-const Version = "2.2.1"
+// 2.3.0 (Phase 95): the terminal API — /api/v2/term/* lists, creates, renames
+// and kills tmux sessions, and a binary WebSocket attaches a real PTY to one
+// (internal/term). Gated on the new opt-in auth.ScopeShellAttach. This is the
+// first slice of "ymux in the browser" (docs/WEB-DESIGN.md) and a remote needs
+// it before any browser client can reach a terminal, so it is a minor bump the
+// add-on offers to every existing install.
+//
+// 2.4.0 (Phase 96): browser-initiated pairing — a browser asks for access at
+// /api/pairing/request, the daemon pushes a blocking Allow/Deny card to the
+// ymux desktop through the reverse tunnel (internal/desktop, the daemon's
+// first OUTBOUND client), and an approved request then redeems through the
+// unchanged one-shot path. The remote needs this before any browser can be
+// let in, so the add-on offers it. Phase 97 (the embedded diagnostic page at
+// `/` plus its browser log sink) rides the SAME 2.4.0 rather than bumping
+// again: 2.4.0 has not shipped anywhere yet, and the page is what makes the
+// rest of 2.4.0 testable, so releasing them apart would be releasing a
+// feature and its only client separately.
+//
+// 2.4.1 (Phase 100, WEB-DESIGN B2): hooks from tmux sessions a browser
+// creates reach the daemon (internal/hooks + term's hook registry). Bumped
+// so the add-on offers it — the desktop only offers an update when this
+// string differs, and 2.4.0 had already reached test servers.
+//
+// 2.4.2 (Phase 100 fix, live test 2026-10-05): term List() parsed nothing on
+// a real tmux (its \x1f separator came back escaped), which also wiped every
+// hook token on each list; and the diagnostic page's xterm URLs 404'd. Bumped
+// because 2.4.1 had already reached a test server.
+//
+// 2.5.0 (Phase 101, WEB-DESIGN B3): the feed, the per-session gate and the
+// events socket (GET /api/v2/events) for browser-created sessions.
+//
+// 2.6.0 (Phase 102, WEB-DESIGN B4): set-status, notify, note-* and port.*
+// from browser sessions; notes on disk; the daemon detects listening ports.
+//
+// 2.7.0 (Phase 103, WEB-DESIGN B5): browser workspaces + their layout
+// document, and the agent verbs tree / split / send / titles.
+//
+// 2.8.0 (Phase 104, WEB-DESIGN B6): session history — ended rows, their
+// transcript, and resume (`claude --resume` in a new tmux session).
+//
+// 2.9.0 (Phase 108, WEB-DESIGN C4): `/` serves the installed web bundle
+// (<data dir>/www/current) with the diagnostic page kept at /diag, and the
+// browser's settings document (GET/PUT /api/v2/settings, settings:changed).
+//
+// 2.10.0 (Phase 109, WEB-DESIGN C5): a session create takes the caller's
+// `pane_id`, so a browser layout leaf and its tmux session's hooks share one id.
+//
+// 2.11.0 (Phase 110, WEB-DESIGN C6): a session create takes an argv (`cmd`, a
+// browser pane in "claude" mode), and a gate card whose CLI title fell back to
+// "agent: pre-tool-use" is humanized from tool_name / tool_input.
+//
+// 2.12.0 (Phase 111): hook routing survives a restart — the hook listener
+// reclaims its previous port and browser sessions are re-registered from
+// their own tmux environment.
+//
+// 2.13.0 (Phase 113, WEB-DESIGN D2): the browser-pairing approve endpoint
+// validates its scopes with auth.NormalizeScopes, like the PUT does.
+//
+// Keep ymux-addons' INSIGHTS_VERSION equal to this string. 2.2.0 vs 2.2.1
+// had already drifted apart, which made the desktop read a 2.2.1 remote as
+// NEWER than the version it ships and silently stop offering updates.
+const Version = "2.19.0"
 
 // FrameVersion is the WebSocket frame-contract version (PHASE-77-DESIGN §4.4).
 // It is sent in the WS `hello` frame; a client that refuses an unknown value
 // must fail loudly rather than silently drift.
 const FrameVersion = 2
 
-// HookConnHandler consumes a freshly-accepted hook-RPC connection and speaks the
-// Phase-66 challenge/response + JSON-RPC protocol on it. It is implemented by
-// chat's SessionManager (which owns the per-session HMAC tokens + pending-hook
-// state) and driven by the thin hooks.Listener. This indirection is the cycle
-// break: hooks → core, chat → core, and cmd wires the concrete handler in.
-type HookConnHandler interface {
-	HandleHookConn(conn net.Conn)
+// HookResolver identifies the caller on a hook-RPC connection. The listener
+// (internal/hooks) owns the Phase-66 challenge/response; after reading the
+// client's HMAC over the nonce it asks each resolver in turn whether one of its
+// per-session tokens produced it. Implemented by chat's SessionManager (claude
+// children it spawned for the phone) and by term's hook registry (tmux
+// sessions the browser created, Phase 100). This indirection is the cycle
+// break: hooks → core, chat → core, term → core, and cmd wires them.
+type HookResolver interface {
+	MatchHookHMAC(nonce, mac []byte) (HookTarget, bool)
 }
 
-// AddrSink receives the hook listener's bound localhost address so the session
-// manager can inject it (as YMUX_SOCKET_ADDR) into spawned claude children.
+// HookTarget is the session a resolver matched. DispatchHook answers the ONE
+// JSON-RPC request the connection carries: a non-nil RPCError becomes a
+// JSON-RPC `error` object, otherwise result becomes `result`. A blocking
+// permission gate may hold the call for up to its wait timeout.
+type HookTarget interface {
+	DispatchHook(method string, params json.RawMessage) (result any, err *RPCError)
+}
+
+// RPCError is a JSON-RPC error object. -32000 is the code the desktop's
+// rpc_server uses for every application error.
+type RPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
+// AddrSink receives the hook listener's bound localhost address so a resolver
+// can inject it (as YMUX_SOCKET_ADDR) into the processes it starts: chat's
+// claude children, term's tmux sessions.
 type AddrSink interface {
 	SetHookAddr(addr string)
 }
@@ -109,4 +188,18 @@ type FilesProvider interface {
 	Open(path string) (rc io.ReadCloser, size int64, err error)
 	// Root is the absolute sandbox root (for diagnostics).
 	Root() string
+
+	// Phase 116 (WEB-DESIGN F2): the File Manager's mutating ops — parity
+	// with the desktop's SFTP ones, inside the same sandbox.
+	Mkdir(path string) error
+	Rename(from, to string) error
+	// Copy copies a file or, recursively, a directory (symlinks skipped).
+	Copy(from, to string) error
+	// DeleteTree removes a file or a whole directory (never the root).
+	DeleteTree(path string) error
+	// Archive packs names (relative to cwd) into cwd/output; format is
+	// "zip" or "targz". Returns the archive's path.
+	Archive(cwd string, names []string, output, format string) (string, error)
+	// Unzip extracts a .zip into <dir>/<stem>/ and returns that path.
+	Unzip(path string) (string, error)
 }

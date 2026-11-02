@@ -1,6 +1,5 @@
 import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import html2canvas from "html2canvas";
 import { t } from "./i18n";
 import { createLogger } from "./logger";
@@ -97,7 +96,7 @@ export function BrowserPane(p: Props) {
       setResolvedUrl("");
       return;
     }
-    invoke<string>("pane_browser_resolve_url", {
+    backend.call<string>("pane_browser_resolve_url", {
       workspaceId: p.workspaceId,
       paneId: p.pane.pane_id,
       url: u,
@@ -132,7 +131,7 @@ export function BrowserPane(p: Props) {
     if (!u) return;
     setResolveErr(null);
     try {
-      const rewritten = await invoke<string>("pane_browser_resolve_url", {
+      const rewritten = await backend.call<string>("pane_browser_resolve_url", {
         workspaceId: p.workspaceId,
         paneId: p.pane.pane_id,
         url: u,
@@ -143,7 +142,7 @@ export function BrowserPane(p: Props) {
       // Phase 53: route navigation through the native Webview command
       // rather than mutating iframe.src.
       if (webviewLive() && rewritten) {
-        await invoke("browser_pane_navigate", {
+        await backend.call("browser_pane_navigate", {
           paneId: p.pane.pane_id,
           url: rewritten,
         }).catch((err) => log.error("browser_pane_navigate failed", err));
@@ -151,7 +150,7 @@ export function BrowserPane(p: Props) {
     } catch (err) {
       setResolveErr(String(err));
       if (webviewLive() && u) {
-        await invoke("browser_pane_navigate", {
+        await backend.call("browser_pane_navigate", {
           paneId: p.pane.pane_id,
           url: u,
         }).catch(() => {});
@@ -185,7 +184,7 @@ export function BrowserPane(p: Props) {
   // signaling lands in 53.C alongside the MCP bridge rewire.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleIframeLoad = () => {
-    invoke("pane_browser_loaded", {
+    backend.call("pane_browser_loaded", {
       paneId: p.pane.pane_id,
       url: browser().url || "",
     }).catch(() => {});
@@ -210,7 +209,7 @@ export function BrowserPane(p: Props) {
       return;
     }
     lastRect = { x, y, w, h };
-    invoke("browser_pane_resize", {
+    backend.call("browser_pane_resize", {
       paneId: p.pane.pane_id,
       x,
       y,
@@ -229,7 +228,7 @@ export function BrowserPane(p: Props) {
     // First-paint: snapshot the rect, spawn the Webview.
     const r = slotRef.getBoundingClientRect();
     const spawnUrl = resolvedUrl() || browser().url || "about:blank";
-    invoke("browser_pane_spawn", {
+    backend.call("browser_pane_spawn", {
       workspaceId: p.workspaceId,
       paneId: p.pane.pane_id,
       url: spawnUrl,
@@ -260,7 +259,7 @@ export function BrowserPane(p: Props) {
       window.removeEventListener("resize", queueResize);
       window.removeEventListener("scroll", queueResize, true);
       if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
-      invoke("browser_pane_close", {
+      backend.call("browser_pane_close", {
         paneId: p.pane.pane_id,
       }).catch(() => {});
     });
@@ -282,7 +281,7 @@ export function BrowserPane(p: Props) {
   onMount(() => {
     let cancelledStale = false;
     let unlistenStale: UnlistenFn | undefined;
-    listen<{ workspace_id: string }>("pane:browser:resolve-stale", (e) => {
+    backend.on<{ workspace_id: string }>("pane:browser:resolve-stale", (e) => {
       if (cancelledStale) return;
       if (e.payload?.workspace_id !== p.workspaceId) return;
       void forceResolveAndReload();
@@ -302,7 +301,7 @@ export function BrowserPane(p: Props) {
   onMount(() => {
     let cancelled = false;
     let unlisten: UnlistenFn | undefined;
-    listen<BrowserRequest>("browser:request", async (e) => {
+    backend.on<BrowserRequest>("browser:request", async (e) => {
       if (cancelled) return;
       const r = e.payload;
       if (r.pane_id !== p.pane.pane_id) return;
@@ -337,7 +336,7 @@ export function BrowserPane(p: Props) {
           } catch {
             serialized = String(result);
           }
-          await invoke("pane_browser_response", {
+          await backend.call("pane_browser_response", {
             requestId: r.request_id,
             ok: { value: serialized },
             err: null,
@@ -357,14 +356,14 @@ export function BrowserPane(p: Props) {
               !sameOrigin((el as HTMLIFrameElement).src),
           });
           const dataUrl = canvas.toDataURL("image/png");
-          await invoke("pane_browser_response", {
+          await backend.call("pane_browser_response", {
             requestId: r.request_id,
             ok: dataUrl,
             err: null,
           });
         }
       } catch (err) {
-        await invoke("pane_browser_response", {
+        await backend.call("pane_browser_response", {
           requestId: r.request_id,
           ok: null,
           err: String(err),

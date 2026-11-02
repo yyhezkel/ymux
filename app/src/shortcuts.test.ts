@@ -10,6 +10,7 @@ import assert from "node:assert/strict";
 
 import {
   DEFAULT_SHORTCUTS,
+  DEPRECATED_SHORTCUT_IDS,
   SHORTCUT_ACTION_IDS,
   SHORTCUT_GROUPS,
   buildShortcutTable,
@@ -250,5 +251,30 @@ test("SHORTCUT_GROUPS covers every action exactly once", () => {
 
 test("SHORTCUT_ACTION_IDS excludes the one non-accelerator field", () => {
   assert.ok(!(SHORTCUT_ACTION_IDS as string[]).includes("copy_on_select_with_ctrl_c"));
-  assert.equal(SHORTCUT_ACTION_IDS.length, Object.keys(DEFAULT_SHORTCUTS).length - 1);
+  assert.equal(
+    SHORTCUT_ACTION_IDS.length,
+    Object.keys(DEFAULT_SHORTCUTS).length - 1 - DEPRECATED_SHORTCUT_IDS.length,
+  );
+});
+
+test("deprecated ids get no row but keep their default", () => {
+  // Pins the schema-compat half: `find` must stay in the defaults so old
+  // settings.json round-trips, while never reaching the UI or the table.
+  for (const id of DEPRECATED_SHORTCUT_IDS) {
+    assert.ok(!(SHORTCUT_ACTION_IDS as string[]).includes(id), id);
+    assert.ok(!SHORTCUT_GROUPS.some((g) => (g.ids as string[]).includes(id)), id);
+    assert.equal(typeof DEFAULT_SHORTCUTS[id], "string", id);
+  }
+});
+
+test("select_all rebind: the new chord matches, the old default does not", () => {
+  const t = buildShortcutTable({ ...DEFAULT_SHORTCUTS, select_all: "Ctrl+Alt+A" });
+  assert.ok(matches(ev({ ctrlKey: true, altKey: true, key: "a", code: "KeyA" }), t.select_all));
+  assert.ok(!matches(ev({ ctrlKey: true, shiftKey: true, key: "A", code: "KeyA" }), t.select_all));
+});
+
+test("a live binding on the deprecated find chord is not a conflict", () => {
+  // Breaking this means the hidden `find` default (Ctrl+F) blocks users from
+  // binding Ctrl+F to a real action.
+  assert.deepEqual([...conflictingAccels({ ...DEFAULT_SHORTCUTS, copy: "Ctrl+F" })], []);
 });

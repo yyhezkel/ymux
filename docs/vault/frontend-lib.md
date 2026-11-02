@@ -2,6 +2,8 @@
 vault: frontend-lib
 covers:
   - app/src/terminalInstance.ts
+  - app/src/termMenuCopy.ts
+  - app/src/selectAllShortcut.ts
   - app/src/types.ts
   - app/src/settings.ts
   - app/src/claudePricing.ts
@@ -13,7 +15,10 @@ covers:
   - app/src/bidi.ts
   - app/src/copyBidi.ts
   - app/src/mouseRtl.ts
+  - app/src/popoutProfile.ts
+  - app/src/wheelSteps.ts
   - app/src/sessionRestore.ts
+  - app/src/claudeRunning.ts
   - app/src/logger.ts
   - app/src/shortcuts.ts
   - app/src/stt.ts
@@ -21,6 +26,18 @@ covers:
   - app/src/download.ts
   - app/src/fontProbe.ts
   - app/src/i18n/index.ts
+  - app/src/backend/types.ts
+  - app/src/backend/tauri.ts
+  - app/src/backend/index.ts
+  - app/src/backend/web.ts
+  - app/src/backend/web/*.ts
+  - app/src/layoutOps.ts
+  - app/src/WebLogin.tsx
+  - app/src/WebPushPrompt.tsx
+unowned:
+  - app/src/bindings/*.ts   # ts-rs generated
+  - app/src/*.test.ts   # tests are the spec, deliberately uncovered
+  - app/src/vite-env.d.ts   # vite type shim
 ---
 
 # Frontend library modules
@@ -28,26 +45,240 @@ covers:
 The non-component half of `app/src/`. Two things dominate: the terminal wrapper, and
 **RTL** — four separate modules exist because Hebrew broke in four different places.
 
-## `terminalInstance.ts` (1,958) — the xterm.js wrapper
+## The backend seam — `src/backend/` (Phase 106, WEB-DESIGN §5)
+
+Every host call goes through the `backend` singleton from `src/backend/index.ts`:
+`backend.call<T>(cmd, args)` (was `invoke`), `await backend.on<T>(event, cb)` (was
+`listen`), `backend.emit(event, payload)` (cross-window, popouts only). `TauriBackend`
+is a pass-through to Tauri IPC, so the desktop behaves exactly as before. The point is
+the second implementation: a browser build (Phase C5) swaps in a `WebBackend` that
+answers the same command names from the daemon's HTTP/WS API.
+
+- **`backend.host`** (Phase 107) — the window / OS affordances the components used to
+  take from `@tauri-apps/api/window|webview|app` and the dialog / opener plugins:
+  `windowLabel()` (index.tsx's popout router; "" when unknown), `setTitle`, `setZoom`,
+  `closeWindow`, `appVersion`, `openUrl`, `revealInDir`, `pickPaths` (native open dialog),
+  `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
+- **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
+  `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
+  host lacks the local-machine ones and the UI hides their entry points rather than
+  failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
+  the Welcome cards, palette `ssh.provision` / `pane.openDiff` (`PALETTE_CAPS` in
+  App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
+  pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
+  Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
+- **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
+  `src/backend/` imports anything from `@tauri-apps/*`.
+
+### The browser arm — `backend/web.ts` + `backend/web/` (Phase 109, WEB-DESIGN C5)
+
+`index.ts` picks `WebBackend` when `__TAURI_INTERNALS__` is absent (a tab served by the
+daemon, vault server-go § webapp.go). `index.tsx` awaits `initBackend()` before the first
+render: `ready` → `<App>`, `login` / `no-shell` → `<WebLogin>` (the Phase 96 pairing flow:
+request → code → approve on the desktop → redeem; `no-shell` = signed in without
+`shell:attach`). The same vite bundle serves both hosts.
+
+- **Commands** — `WebBackend.handlers`, one entry per desktop command name, answered from
+  the daemon. A name with no handler rejects (warned once): reaching one means a missing
+  `can()` gate. Rejections are strings, like Tauri's.
+- **Events** — `web/events.ts`: `EventBus` behind `backend.on`, fed by the daemon events
+  socket (`{type,data}` frames already carry the desktop's names) and by the backend.
+  `settings:changed` `{version, settings}` is unwrapped to the bare `Settings`;
+  `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
+  payload. The first `hello` answers `pane_agent_states` / `pane_briefs` (filtered by `web/hello.ts` `touchedEntries` to hook-written `seq > 0` entries, since the daemon ships zero-value seq 0 entries for every live session) / `feed_list` /
+  `notifications_list`; a reconnect's hello re-reads workspaces and emits
+  `backend:resync` (nothing listens yet).
+- **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
+  `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
+  `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
+  `TextDecoder` (the job `pty_decode.rs` does on the desktop) into `pty:data`; the
+  server's `{"type":"exit"}` or a close becomes `pty:exit`. `pane_disconnect` closes
+  without a `pty:exit`, as on the desktop.
+- **Panes and sessions** — a leaf's `pane_id` IS its tmux session's hook pane id (daemon
+  2.10.0 takes `pane_id` on create). `pane_connect` reuses the session the hello or a
+  create named for that leaf, else a live session with the leaf's derived name
+  (`<ws-slug>-<pane suffix>`), else creates that name with the leaf's id. So reload →
+  restore (on by default in browser settings) → the same session. `init()` also seeds
+  `sessionRestore`'s per-pane hints from the daemon (hello map, else the derived name),
+  so a second browser — or one whose storage was cleared — re-attaches too.
+- **Workspaces** — the daemon's `/api/v2/web/workspaces` documents mapped to `Workspace`
+  with a synthesized ssh-shaped connection (the panes ARE remote tmux: RTL profile and
+  `paneCaps` answer "remote"). Layout gestures run in `layoutOps.ts` (pure ports of
+  lib.rs `split_pane_in` / `close_pane_in` / `set_split_ratio_in` /
+  `swap_two_panes_in_layout` / `reset_all_split_ratios`, pinned by `layoutOps.test.ts`)
+  and PUT with the version; a 409 re-applies the op once on the returned document. The
+  active workspace is per browser (localStorage) and is always a screen (`screenOrSelf`).
+- **The workspace tree** (Phase 115, F1) — the desktop's header / pinned folder / screen
+  tree, same rules. The tree fields (`parent_id, cwd, is_folder, is_collapsed, sort_order,
+  group_id, color, emoji, tmux_session` — `META_KEYS`) travel in the row's opaque `meta`;
+  `body()` splits a `Partial<Workspace>` into the daemon's columns and that object,
+  `patch()` writes one row, `createRow()` POSTs a whole row (always with a `meta`, so the
+  daemon's pre-F1 migration never touches it). `web/tree.ts` holds lib.rs's rules as pure
+  functions, pinned by `webTree.test.ts`: `uniqueSiblingName`, `folderLabel` + `checkPin`
+  (the desktop's error strings), `reorder` / `reorderGroups` (scope + dense renumbering),
+  `subtreeIds` + `activeAfterDelete` (a delete takes the subtree and lands on a sibling
+  screen), `pickSessionParent`, `checkIdentity`. Implemented on top: `workspace_create`
+  (root + `shell` screen), `workspace_new_screen`, `workspace_pin_project_folder` (folder
+  picked in `DirPicker` over the Files API — the SSH path, since the connection is
+  ssh-shaped), `workspace_set_project_root`, `workspace_open_session` (the header `+`
+  when sessions are rows), collapse, intent, identity, reorder, the five group commands,
+  and `project_folder_probe` / `git_probe_worktrees` over `POST /api/v2/web/git/worktrees`.
+  Groups are one versioned document (`/api/v2/web/groups`, 409 → latest wins).
+  `pane_list_tmux_sessions` stamps the picker's scope like lib.rs `annotate_scope_with`
+  (no owners file): `owned` = a pane of this workspace holds the session (or the row is
+  that session), `in_cwd` = its path is under `projectPath`.
+- **File Manager, the rest of it** (Phase 116, F2) — mkdir / rename / copy / recursive
+  delete / zip / tar.gz / unzip (+ the overwrite pre-check, `exists` over a parent listing)
+  map onto the daemon's new Files ops; `file_open_remote` becomes a browser download.
+  **Files from the user's computer** (`web/localfiles.ts`): a page never sees a path, so
+  `host.pickPaths` (a hidden `<input type=file>`; directories → null) and `host.onDragDrop`
+  (window drag events with Files, positions × devicePixelRatio like Tauri on Windows) hand
+  out path-shaped tokens `webfile:<n>/<name>` that keep the File; the UI's basename logic
+  still works, and `file_upload` / `pane_upload_dropped` (→ `~/ymux-drops/<name>`, typed
+  into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
+  one request, not a tracked transfer. The notifications banner (`.web-push-prompt`) sits at
+  z-index 30, under panels and their confirm toasts, which it used to cover.
+- **Panes, F3** (Phase 117) — `pane_set_identity` / `pane_set_smart_bidi` /
+  `pane_set_claude_running` patch the layout leaf (the daemon keeps leaf fields opaque);
+  `pane_set_active` is a no-op (the desktop's only reader is the SSH ticket lookup);
+  `sessions_kill_by_name` kills through a holding pane or the DELETE route;
+  `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
+  `session_context_list` read the daemon (`/api/v2/claude/sessions`,
+  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
+  one filter per attach and applies it after the streaming TextDecoder — the desktop's
+  decode → filter order; `connect` seeds it from the leaf's `smart_bidi`, the toggle flips
+  it live. A popout's own attach starts with it off.
+  Every session create sends `replace_pane: true` (the leaf shows what it was last
+  connected to), and `api()` shows a problem+json error's `detail`, never the raw document.
+- **The Diff pane, F4** (Phase 118) — `caps` gains `diffPane` and `worktrees`. The desktop's
+  per-pane Rust poller becomes a browser poll (`diffStart` / `diffStop`, every 2 s) of
+  `POST /api/v2/git/diff` with the leaf's context (`diff_cwd ?? row cwd`, `diff_source ??
+  working`), emitting `diff-pane-updated` on the local bus by the desktop's rules — on a
+  hash change, an error once, the next success after an error always. `set_source` /
+  `set_cwd` patch the leaf and restart the poll; `refresh` emits once; `workspace_close_pane`
+  stops it; a pane gone from every layout stops itself. `diff_pane_worktrees` reuses the F1
+  git endpoint; `workspace_create_project_worktree` → `/api/v2/git/worktree-add`;
+  `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
+  path, or the existing one activated). The legacy local-only worktree block in
+  `CreateWorkspaceModal` is hidden without `localPanes`.
+- **Tools, F5** (Phase 119) — `settings_get_presets` / `settings_apply_preset` use
+  `web/presets.gen.ts`, GENERATED from `settings.rs` `list_presets()` (13 themes, palette
+  overrides resolved) and pinned to it by `webPresets.test.ts`; apply = the settings
+  document with that theme, saved. `claude_usage_fetch`, `claude_summarize` (sends the
+  pane's tmux session) and `sessions_overview_summarize` call the daemon's
+  `claudetools.go`; `read_log_tail` shows the DAEMON's log (`/api/v2/logs/daemon`, needs
+  insights:read), `clear_debug_log_cmd` is a no-op. Answered, not rejected:
+  `clipboard_read_text` "" (the server's clipboard is never read),
+  `workspace_secret_env_keys` [], `workspace_set_auto_port_forward` (returns the row),
+  `workspace_set_claude_separate_account`, `ssh_cancel_reconnect`. Tickets and skills stay
+  out (`can()` off): ticket capture needs the in-app browser, skills install from the
+  desktop's registry.
+- **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
+  blocker's null becomes a readable error), then DETACHES this window's own tmux client
+  (`pty.close`, no exit — two clients of different sizes get tmux's dot fill) after storing `ymux.web.popout.<sid>` = the
+  pane's tmux session; a 1 s poll on `win.closed` re-attaches under the same sid and emits `popout:closed`, so App.tsx's
+  desktop hide / re-attach flow runs unchanged. In the new window `host.windowLabel()` is
+  `popout-<sid>` (index.tsx renders `PopoutTerminal`) and `init()` attaches its own tmux
+  client under the opener's sid (`PtySessions.open(name, cols, rows, sid)`), the only id
+  PopoutTerminal knows. `caps` holds `"popout"`, so PaneView shows the button.
+- **Settings** — `GET/PUT /api/v2/settings` over `web/defaults.ts` (Rust's defaults for
+  the required groups, merged one level deep; restore-on-start ON, update checks OFF).
+  A stored non-object where the default is a group is **ignored**, not merged — found
+  live: `{"theme":"dark"}` replaced the theme object and `applyTheme` crashed
+  (`webDefaults.test.ts`). `log_dir_path` answers `""` (the console is the log).
+  A 409 on save re-saves on the newer version: the whole document wins, as on the desktop.
+- **Monitor** (Phase 110) — `insights_fetch` / `insights_docker_action` /
+  `insights_hygiene_kill` fetch the daemon's insights paths same-origin (the desktop curls
+  the same paths over SSH) and hand the body back as text; a 401/403 says the device may
+  not read insights (needs `insights:read`; daemon 2.11.0 honors it for GETs). The
+  add-on install hint is hidden without the `addons` capability.
+- **File Manager, remote side** (Phase 110, `web/files.ts`) — the daemon's Files API,
+  sandboxed to its root ($HOME by default) with root-relative paths. `FilesBridge` learns
+  the root's absolute path from `list("/").cwd`, translates absolute ↔ relative, and
+  refuses paths outside it in words. Wired: home, list, read (NUL in the first 8 KB =
+  binary), write and create (upload), delete, and download — which in a browser goes to
+  the browser's own download (`download.ts` calls `web_download`; there is no Save
+  dialog or local path). Rename / mkdir / copy / zip have no daemon op yet and reject.
+- **The terminal font** (`web/fonts.ts`) — the font stacks (`quoteFamily` in
+  `settings.ts`, the default in `terminalInstance.ts`) name Windows fonts, and the generic
+  `monospace` is not reliably monospaced off Windows: on a box without mono fonts it is a
+  proportional face, xterm's DOM renderer pads every glyph with `letter-spacing`, and the
+  terminal reads "C l a u d e" (seen live in a headless Chrome, 2026-10-07); Hebrew came
+  from yet another face. `init()` declares `"YMUX Mono"` (unmodified Liberation Mono,
+  OFL, `app/public/fonts/liberation-mono-{400,700}.ttf`, Latin + Hebrew at one 0.6em
+  advance) and awaits its load before the first pane, since xterm measures its cell once.
+  Both stacks put it right after the named Windows fonts, BEFORE `ui-monospace` /
+  `monospace`; the desktop never declares it, so there it resolves to nothing.
+- **PWA + notifications** (Phase 114, WEB-DESIGN E) — `web/pwa.ts`. `init()` ends with
+  `startPwa` (never awaited): registers `/sw.js` (`app/public/sw.js`, served as-is — not a
+  vite module), posts the device token + language to the worker (it cannot read
+  localStorage; `forgetToken` posts an empty one), and when permission is already
+  granted re-sends the subscription (re-subscribing if the daemon's VAPID key changed),
+  so a daemon that lost its record heals on the next load. `enablePush` is the only call
+  that asks for permission — from a click, in `WebPushPrompt.tsx` (a fixed banner
+  index.tsx mounts beside `<App>` in a browser only; "Not now" is remembered per
+  browser; a click the browser refuses — or a browser-level setting refuses without
+  asking, as Zen does — turns the banner into "allow it in the site settings" + Try
+  again, instead of vanishing) — then subscribes and asks the daemon for a test notification. A
+  `feed:item-resolved` closes that gate's notification. The worker has **no fetch
+  handler and no cache** (a cached shell outlives a bundle update); it shows the push,
+  takes it straight down when an app window is focused, answers Approve/Deny with
+  `POST /api/v2/feed/{id}/decide` (on failure it focuses the app), and re-subscribes on
+  `pushsubscriptionchange`. `app/public/manifest.webmanifest` + `icons/` make it
+  installable ("Add to Home Screen").
+- **"claude" mode** (Phase 110) — `pane_connect` with `mode: "claude"` creates the
+  session with `cmd: ["claude", ...splitArgs(claudeArgs)]` (`web/argv.ts`: whitespace
+  and quotes only, nothing evaluated; `argv.test.ts`). A custom `cmd` string still opens
+  a shell.
+- **New workspace** — App's `openNewWorkspace()`: the desktop opens the wizard; the
+  browser (no wizard targets) creates `workspace N` directly.
+- `web/` cannot import `logger.ts` (cycle through `backend`), so it uses `console.*` — the
+  browser console is the sink there. No PTY bytes, no token.
+- `types.ts` imports nothing from the app — `logger.ts` calls through the backend, so a
+  logger import there would be a cycle.
+- `on` stays async on purpose: App.tsx awaits each registration so the "listeners
+  before session restore" ordering holds.
+- The singleton is picked synchronously at module load, so any module may call it from
+  its first line.
+
+## `terminalInstance.ts` (1,954) — the xterm.js wrapper
+
+**Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
 **The mouse contract (Phase 91.B + 91.D):** tmux's mouse is off since the conf lock, so
 xterm.js owns every button — native selection, ymux's own right-click menu. The wheel is
 the one thing proxied, and only on a **multiplexer pane**: `setTmuxScroll(on)` is set by
 App from `pane_persistence_list` (the backend's answer, never a title guess — Phase
 65.O's proxy fired in a plain shell and walked bash history), and the constructor's
-`attachCustomWheelEventHandler` turns a wheel event into Shift+Up/Down ×3 via
+`attachCustomWheelEventHandler` turns a wheel event into Shift+Up/Down via
 `term.input` (through `onData` → `pty_write`) **only when** armed, no Shift/Ctrl held,
 the ALT buffer is active (tmux attached) and `term.modes.mouseTrackingMode === "none"`;
 every other case returns `true` and xterm keeps its own behaviour. Why it exists: with
 mouse off, xterm.js 6.0 converts a wheel event on the alt buffer into one `\e[A`/`\e[B`,
 which at a shell prompt inside tmux is HISTORY. xterm consults the hook before that
 conversion and never when the app requested wheel reports (zellij, vim `mouse=a`), so
-those step aside by themselves. The conf side (`ymux-tmux.conf`) binds `S-Up`/`S-Down`
-to copy-mode scrolling on the main screen and passes them through as plain Up/Down under
-`#{alternate_on}`. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
+those step aside by themselves. **One key per notch (Phase 98)**: `wheelSteps.ts` (pure,
+unit-tested) turns `deltaY`/`deltaMode` into whole steps — a mouse notch (~100px, or 3
+lines) is one step, anything from half a notch counts, a touchpad's small deltas
+accumulate in the instance's `wheelCarry`, a reversal drops the carry, ≤10 per event.
+91.D sent a fixed 3 keys per event; tmux's paste detection then skipped the bindings of
+all but the first (dropped in copy-mode, typed into the program as `^[[1;2B` once `-e`
+had left it). The conf side (`ymux-tmux.conf`) binds `S-Up`/`S-Down` to a 3-line
+`send-keys -X -N 3 scroll-up/-down` on the main screen and in copy-mode (the pre-91
+per-notch rate, as one operation), passes them through as 3× plain Up/Down under
+`#{alternate_on}`, and sets `assume-paste-time 0` so a burst of keys still runs its
+bindings. `installRtlMouseCapture` gates on row `dir`, not on tracking, so it
 always feeds native selection inside tmux. `resetMouseModes()` (connect + pty:exit) is
 leak cleanup for the display and is unrelated to tmux's option; `pty:exit` also disarms
 the proxy.
+
+**`selectAllShortcut.ts`** (pure, zero-import, unit-tested): `inTerminal(e)` (target inside `.terminal-container`, also used by `toggle_sidebar_soft`) and `makeSelectAllBinding({ activePaneId, termFor })` (`App.tsx` wires only its `when`; `run` stays inline), whose `when` is `inTerminal && active pane` and whose `run` does `preventDefault` then `termFor(pid)?.selectAll()`.
+
+**Right-click Copy under an app-owned mouse:** the `contextmenu` listener is registered in the capture phase so xterm never forwards the click to zellij, and `showTerminalContextMenu` builds Copy from `menuCopyText` (`termMenuCopy.ts`, pure, unit-tested): xterm selection, else the raw last OSC 52 write (private `lastOsc52`, set in the write-only provider, read via `getLastOsc52()`) when `mouseTrackingMode !== "none"`, else empty (plain shell, Copy stays disabled). Opening the menu logs `[ctx-menu] open pane=<id> copy=<xterm|osc52|none>` (source label only, never the text) so a live run shows which copy source fed the menu.
 
 `class TerminalInstance` owns one xterm `Terminal`, its `FitAddon`, the optional
 `WebglAddon`, and the DOM container. Module-scope globals cache font family/size, theme,
@@ -63,9 +294,8 @@ Things it does that are easy to get wrong:
   most 40 times — never an unbounded rAF chain (same for `scheduleInitialFontMeasure`
   waiting for the container to be attached).
 - **Diagnostic log lines on per-frame paths are rate-gated.** `rtl-dirs` speaks when the
-  direction vector changes, at most once per 2 s per pane; `title-seen` only when the
-  match flag or a coarse length bucket changes — Claude animates a spinner in its title,
-  and "every title" was several lines a second per pane.
+  direction vector changes, at most once per 2 s per pane. There is no title log line:
+  the OSC-title Claude detector was removed 2026-10-06 (it never fired in practice).
 - **`fitAndResize`** is rAF-throttled — the `ResizeObserver` fires per pixel during a
   divider drag, and every call sends a SIGWINCH down the SSH channel. tmux cannot keep up
   and the renderer thrashes.
@@ -107,8 +337,9 @@ laid out **right-to-left** — so a multi-run Latin row (a diff's gutter, line
 number, two columns) came out with its fragments mirrored, while a single-run
 shell row merely sat at the right edge, which is why it went unnoticed for three
 weeks. The rule now, per row: Hebrew/Arabic present → `rtl` exactly as before; no
-RTL text and **Claude Code holds the pane** (the detected `foldTuiOwnsBidi` state
-— hook or OSC title — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
+RTL text and **Claude Code holds the pane** (the hook-driven `claudeActive` flag
+set by `setTuiSignal(on: boolean)` from the `YMUX_PANE_ID` Claude hooks, so it works over
+SSH, zellij and tmux — NOT the profile's `tui_owns_bidi` switch) → plain `ltr`, so a
 two-column TUI keeps both halves where it drew them; no RTL text in a shell →
 **`ltr-end`**, a third `RowDir` value meaning `dir="ltr"` plus
 `text-align: right` and `data-ymux-align="end"`: reading order kept, the run
@@ -147,8 +378,8 @@ Two traps around `force_rtl`, both of which produce reversed letters if missed:
   own layout.
 
 **It is keyed on the pane class, never on what is running inside the pane.** The vote
-first shipped gated on `tuiOwnsBidi`, and because the OSC title propagates over SSH — that
-is how Claude Code is detected at all — it fired on remote panes and broke them. Yossi's
+first shipped gated on `tuiOwnsBidi`, and because the OSC-title detector (since removed;
+detection is now the Claude hook signal) fired on remote panes and broke them. Yossi's
 instruction afterwards was a total separation between local and remote, so a change aimed
 at local panes cannot reach remote ones. A per-profile field is that separation, and
 `remote_direction_policy_is_the_pre_2026_08_19_rule` in `settings.rs` plus the parity
@@ -174,6 +405,8 @@ modules the tests *are* the specification.
 **`bidi.ts` (71)** — the `bidi_reorder` path (bidi-js, no type defs). Exports the escape
 matcher so the visual→logical pass protects escapes **exactly** the way this file does —
 one definition of "what an escape looks like".
+
+**Known limit (DEFERRED):** `bidi_reorder` has the terminal-wg "cursed cursor" — caret stays pinned right and a partial repaint can leave a line half-reordered, because the transform runs per rAF chunk while the TUI addresses untransformed columns. Fix needs whole-line reassembly + cursor tracking; see `docs/DECISIONS.md` and `docs/RTL-TEST.md` § `bidi_reorder` — known limits.
 
 **`copyBidi.ts` (185)** — visual→logical for text on its way to the **clipboard**.
 Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on screen but
@@ -215,7 +448,8 @@ Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cw
 what the backend emits for anything the model did not say cleanly).
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
-apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it. Also
+apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
+(`BriefSettings` gained `inject_context`, default true, in Phase 105.C). Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.
@@ -229,8 +463,11 @@ past installs), `fontInstall`, and `fontUninstall`.
   per line was how a chatty call site became a steady IPC stream. `index.tsx`'s
   console.warn/error forwarder uses the same `enqueueLog`. Level filtering is
   **double-gated**: skip below the threshold here (cheap), and the backend filters
-  again — the backend is authoritative, so a popout window that never loads settings still
+  again — the backend is authoritative, so a popout window (which loads settings and runs `applyTheme`) still
   behaves. **Import this before the console monkeypatch.** Rule #9.
+- **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
+  `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
+  hand-off of the origin pane's RTL profile to its popout window.
 - **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
   `dir` react together. A missing key returns the key itself.
@@ -239,6 +476,10 @@ past installs), `fontInstall`, and `fontUninstall`.
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
   positions divided by `devicePixelRatio` (WebView2 reports physical pixels, wry's macOS
   backend reports logical points).
+- **`claudeRunning.ts` (26)** — pure decisions for the persisted `claude_running` flag:
+  `tuiSignalOnConnect(mode, restoring, persisted)` (claude→true; non-restoring→false; restoring
+  with persisted true→true; else null = untouched) and `claudeRunningWrite(persisted, on)`
+  (null when no transition). App.tsx owns the invokes.
 - **`sessionRestore.ts` (102)** — remembers which tmux session each SSH pane was attached
   to, so the next start re-attaches instead of showing [Connect]. **localStorage on
   purpose**: per-machine, high-churn session state, the same class as window rects and
@@ -247,8 +488,12 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
-  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), parses
+  Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
+  `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
+  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  kept in the schema and defaults so old `settings.json` loads, but filtered out of
+  `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
+  entry or conflict check), parses
   `settings.shortcuts.<name>` into a table on settings load, and exposes
   `matches(event, accelerator)`. Same vocabulary in the hand-editable JSON and the
   click-to-record picker. **Phase 87: the defaults live HERE, not in `settings.ts`,
@@ -287,13 +532,13 @@ Four pure modules behind the Monitor's Analytics and Claude tabs
 already-translated strings in — which is what makes `insightsReport.test.ts` and
 `claudePricing.test.ts` runnable as plain node tests.
 
-- **`claudePricing.ts` (247)** — **the one place ymux knows what Claude costs.** Both
+- **`claudePricing.ts` (245)** — **the one place ymux knows what Claude costs.** Both
   backends count tokens and refuse to price them, because token counts are facts and
   prices are a table that goes stale; keeping the table here makes a price change a
   one-file edit instead of a server rebake plus a matching edit in the Rust mirror.
-  `PRICING_AS_OF` records when it was last checked. Rates are **Anthropic first-party API
+  `PRICING_AS_OF` records when it was last checked (2026-10-06). Opus 5.5 and Sonnet 5.5 have their own rows because the `claude-opus-5` / `claude-sonnet-5` prefixes misprice them. The cache-read multiple is per model: `ModelPrice.cacheReadMult` (0.025x Fable 5.1 / Mythos 5.1, 0.05x Opus 5.5), absent = flat `CACHE_READ_MULT` 0.1x. Sonnet 5 is a flat $2/$10. Rates are **Anthropic first-party API
   list prices** (Bedrock and Vertex are partner-priced and not modelled), and
-  `ModelPrice.promo`/`until` exists so a launch rate expires instead of silently
+  `ModelPrice.intro` (`{in,out,until}`) is the generic launch-rate mechanism (no row uses it now), so a launch rate expires instead of silently
   under-reporting forever. ⚠️ **Claude Code on a Pro/Max subscription is not billed per
   token.** Everything here is the API-*equivalent* cost — right for "where is my quota
   going, in money terms", wrong for "what will my card be charged". **The UI must never
@@ -311,7 +556,7 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   queries so an assistant with shell access can slice the data itself. **No URL in it on
   purpose**: neither store is exposed over HTTP outside `127.0.0.1`, and nothing here
   suggests changing that — these are local reads on a box the user already has a session
-  on. `local` picks desktop paths over remote ones.
+  on. `local` picks desktop paths over remote ones; the metrics block keeps the same schema and queries for local, pointed at `insights-local.db` (`%APPDATA%\ymux` / `~/Library/Application Support/ymux`) — there is no "no history" variant any more.
 
 ## Invariants
 

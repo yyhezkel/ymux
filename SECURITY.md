@@ -53,9 +53,8 @@ accelerate disclosure with the reporter's cooperation.
 - Release binaries are built with `--remap-path-prefix` so that
   `$CARGO_HOME`, `$RUSTUP_HOME`, and `$HOME` are scrubbed from any
   panic-location strings the compiler embeds in `.rodata`.
-- Initial-credential storage in `%APPDATA%\ymux\provisioning-secrets.json`
-  is wrapped via Windows DPAPI (`ProtectedData.Protect`, `CurrentUser`
-  scope) — moving the file to another user account yields nothing.
+- The provisioning initial password is held in memory only; it is never
+  written to disk.
 - The reverse-SSH RPC channel between the remote `ymux` CLI and the
   desktop app authenticates each connection via an HMAC-SHA256
   challenge-response. The shared token is never sent on the wire.

@@ -1,5 +1,4 @@
-import { save } from "@tauri-apps/plugin-dialog";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 
 // Phase 65 (bug K): "always ask where to save" downloads. Opens a native
 // Save dialog (Tauri dialog plugin), defaulting to the last folder the
@@ -39,13 +38,19 @@ export async function saveRemoteFileAs(
   suggestedName: string,
   defaultDir?: string,
 ): Promise<string | null> {
+  // Phase 110: a browser has no local paths and no Save dialog — the file
+  // goes to the browser's own download, and there is no path to return.
+  if (backend.kind === "web") {
+    await backend.call("web_download", { remotePath, name: suggestedName });
+    return suggestedName;
+  }
   const dir = defaultDir ?? lastDir() ?? "";
   const defaultPath = dir
     ? `${dir.replace(/[\\/]+$/, "")}/${suggestedName}`
     : suggestedName;
-  const dest = await save({ defaultPath });
+  const dest = await backend.host.savePath({ defaultPath });
   if (!dest) return null; // cancelled
-  await invoke("file_download", {
+  await backend.call("file_download", {
     workspaceId,
     remotePath,
     localPath: dest,

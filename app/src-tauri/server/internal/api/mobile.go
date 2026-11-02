@@ -317,6 +317,15 @@ func (s *Server) registerMobileOps(api huma.API) {
 		if in.Body.ReqID == "" {
 			return nil, huma.Error400BadRequest("req_id required")
 		}
+		// A browser-created tmux session (pane id term_…, Phase 100) is the
+		// DAEMON's own: its hook already arrived over the hook RPC, where
+		// term folds it and, under a gate, waits for a feed.decide. The CLI
+		// forwards every pre-tool-use regardless of where its RPC went, so
+		// forwarding this one too would push a phone a second card whose
+		// answer nobody polls for. Acknowledge and drop (Phase 101).
+		if strings.HasPrefix(in.Body.PaneID, "term_") {
+			return &struct{ Body HookForwardResponse }{Body: HookForwardResponse{OK: true}}, nil
+		}
 		vsess := virtualDesktopSession(in.Body.WorkspaceID, in.Body.PaneID)
 		payload, _ := json.Marshal(map[string]any{
 			"req_id":            in.Body.ReqID,

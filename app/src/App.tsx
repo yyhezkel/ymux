@@ -1,23 +1,23 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { backend, type Capability, type UnlistenFn } from "./backend";
 import { Sidebar } from "./Sidebar";
 import { CreateWorkspaceModal } from "./CreateWorkspaceModal";
 import { NotificationCenter, NotifHeaderActions, type NotifItem } from "./NotificationCenter";
 import { WelcomeScreen } from "./WelcomeScreen";
 import { LayoutView } from "./LayoutView";
 import { PaneTabs } from "./PaneTabs";
-import { trafficLight, type PaneAgentState, type TrafficLight } from "./paneAgentState";
+import { agentAnnounceKey, trafficLight, trafficLightKey, type AnnounceSnapshot, type PaneAgentState, type TrafficLight } from "./paneAgentState";
 import type { PaneAgentSnapshot } from "./bindings/PaneAgentSnapshot";
 import type { PaneBriefEntry } from "./bindings/PaneBriefEntry";
 import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
+import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
+import { RAIL_COLLAPSED_W } from "./contextModel";
 import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
+import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
@@ -27,7 +27,9 @@ import {
   prunePaneSessions,
   rememberPaneSession,
 } from "./sessionRestore";
+import { claudeRunningWrite, tuiSignalOnConnect } from "./claudeRunning";
 import { pruneFmPaths } from "./fmPaths";
+import { popoutProfileKey } from "./popoutProfile";
 import { FeedPanel } from "./FeedPanel";
 import { NotesModal } from "./NotesModal";
 import { SetupWizard } from "./SetupWizard";
@@ -57,7 +59,6 @@ import { TicketModal } from "./TicketModal";
 import { ProjectFolderModal, type ProjectFolderModalMode } from "./ProjectFolderModal";
 import { ConfirmDeleteWorkspace } from "./ConfirmDeleteWorkspace";
 import { DirPicker } from "./DirPicker";
-import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { TicketsPanel } from "./TicketsPanel";
 import { parseCapture, pendingCapture, setPendingCapture } from "./browserDevMode";
 import { FileManagerPane } from "./FileManagerPane";
@@ -97,6 +98,7 @@ import {
   type ShortcutActionId,
   type ShortcutTable,
 } from "./shortcuts";
+import { inTerminal, makeSelectAllBinding } from "./selectAllShortcut";
 import { makeSttRecorder, type SttRecorder } from "./stt";
 import {
   collectPanes,
@@ -139,6 +141,12 @@ import "./tokens.css"; // Design Pass 01 (#2): --wmx-* tokens + dark/light mode 
 import "./themes-redesign.css"; // Claude Design handoff: 4 direction themes (must load after tokens.css)
 
 const log = createLogger("APP");
+
+// Phase 107: palette commands that need a host capability (WEB-DESIGN §4.1).
+const PALETTE_CAPS: Partial<Record<string, Capability>> = {
+  "ssh.provision": "ssh",
+  "pane.openDiff": "diffPane",
+};
 
 type PaneStatus = { msg: string; err: boolean };
 
@@ -211,7 +219,7 @@ function App() {
     if (!ws || !isRemoteWorkspace(ws)) return;
     setConnectingWs(ws.id);
     try {
-      await invoke("workspace_ensure_connected", { workspaceId: ws.id });
+      await backend.call("workspace_ensure_connected", { workspaceId: ws.id });
     } catch (e) {
       log.warn("armWorkspaceConnection failed", e);
     } finally {
@@ -257,7 +265,7 @@ function App() {
       return n;
     });
   const clearNotifs = () => {
-    void invoke("notifications_clear").catch(() => {});
+    void backend.call("notifications_clear").catch(() => {});
     setNotifications([]);
   };
   const unreadNotifs = () => notifications().filter((n) => !notifRead().has(n.id)).length;
@@ -268,7 +276,7 @@ function App() {
   const unreadCount = createMemo(unreadNotifs);
   createEffect(() => {
     const c = unreadCount();
-    void invoke("set_tray_badge", { count: c }).catch(() => {});
+    void backend.call("set_tray_badge", { count: c }).catch(() => {});
   });
   // #1 fix: map a FeedItem (hooks/permissions/passive) to a NotifItem so the
   // Notification Center shows the same stream the user sees in the feed. The
@@ -349,6 +357,17 @@ function App() {
   // must read last_active_at BEFORE workspace_set_active stamps it),
   // idle-return (below), and the show_briefing shortcut/palette command.
   const [briefingWs, setBriefingWs] = createSignal<string | null>(null);
+  // Phase 105: the Context Rail — a docked third grid column. Width and
+  // collapsed state are per-machine UI prefs (localStorage, see
+  // ContextRail.loadRailPrefs), not workspaces.json.
+  const railPrefs = loadRailPrefs();
+  const [railWidth, setRailWidth] = createSignal(railPrefs.width);
+  const [railCollapsed, setRailCollapsed] = createSignal(railPrefs.collapsed);
+  const railPx = () => (railCollapsed() ? RAIL_COLLAPSED_W : railWidth());
+  const toggleContextRail = () => {
+    setRailCollapsed((v) => !v);
+    saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() });
+  };
   // cmux-A A1: pane_ids that received an OSC 9/99/777 notification and
   // haven't been focused since. Drives the amber pulse ring on the pane
   // + the sidebar aggregate badge. Cleared when the pane is focused.
@@ -390,7 +409,7 @@ function App() {
       // Backend will exit() the app ~800ms after this returns; the
       // invoke promise resolves before exit so we can show "downloading"
       // → "installing" cleanly. On error the app keeps running.
-      await invoke("download_and_install_update");
+      await backend.call("download_and_install_update");
       // We're still alive briefly; the user sees the button locked in
       // "downloading…" state until the process actually exits.
     } catch (e) {
@@ -402,7 +421,7 @@ function App() {
   // Phase 65 (U): snooze the banner for a day.
   const remindUpdateLater = async () => {
     try {
-      await invoke("updater_remind_later", { hours: 24 });
+      await backend.call("updater_remind_later", { hours: 24 });
     } catch (e) {
       log.warn("updater_remind_later failed", e);
     }
@@ -414,7 +433,7 @@ function App() {
     const v = updateBanner()?.latest_version;
     if (v) {
       try {
-        await invoke("updater_skip_version", { version: v });
+        await backend.call("updater_skip_version", { version: v });
       } catch (e) {
         log.warn("updater_skip_version failed", e);
       }
@@ -490,7 +509,7 @@ function App() {
     setPoppedOutBrowsers((prev) => new Set(prev).add(ws.id));
     setShowBrowserWindow(false);
     try {
-      await invoke("browser_popout_open", {
+      await backend.call("browser_popout_open", {
         workspaceId: ws.id,
         title: `${ws.name} — Browser`,
       });
@@ -593,20 +612,20 @@ function App() {
   const [sttListening, setSttListening] = createSignal(false);
   const [sttError, setSttError] = createSignal<string | null>(null);
   const stopForward = (workspaceId: string, remotePort: number) => {
-    void invoke("port_forward_stop", { workspaceId, remotePort });
+    void backend.call("port_forward_stop", { workspaceId, remotePort });
   };
   // Phase 46: open a forward on demand from PortsWindow. The backend
   // sanity-probes the local port before returning, so on success we
   // know the browser tab will actually reach something. Returns the
   // assigned local port (or throws).
   const startForward = (workspaceId: string, remotePort: number): Promise<number> =>
-    invoke<number>("forward_port_start", { workspaceId, remotePort });
+    backend.call<number>("forward_port_start", { workspaceId, remotePort });
   // Phase 35: webview zoom factor for view.zoom.* palette commands.
   const [zoomFactor, setZoomFactor] = createSignal(1);
   const applyZoom = (f: number) => {
     const clamped = Math.max(0.3, Math.min(3, f));
     setZoomFactor(clamped);
-    void getCurrentWebview().setZoom(clamped).catch((e) => log.warn("setZoom failed", e));
+    void backend.host.setZoom(clamped).catch((e) => log.warn("setZoom failed", e));
   };
   // Phase 18: hooks-outdated banners — at most one banner per agent
   // at a time; the user dismisses (skip-this-version persists), defers
@@ -662,7 +681,7 @@ function App() {
     untrack(() => {
       for (const w of file().workspaces) {
         if (poppedOutBrowsers().has(w.id)) continue;
-        void invoke("workspace_browser_hide", {
+        void backend.call("workspace_browser_hide", {
           workspaceId: w.id,
         }).catch(() => {});
       }
@@ -758,7 +777,7 @@ function App() {
       if (run) run.cancelled = true;
       endReconnect(id);
       // Best-effort — a "no such pane" is fine (session may already be gone).
-      invoke("ssh_cancel_reconnect", { paneId: id }).catch(() => {});
+      backend.call("ssh_cancel_reconnect", { paneId: id }).catch(() => {});
     }
   };
   type SshDisconnectedEvent = {
@@ -785,7 +804,7 @@ function App() {
       // own pane runs the CLI under their PATH (which AddYmuxToPath
       // sets up). The command writes settings.json, then a fresh
       // restart of Claude picks up the new hooks.
-      await invoke("ssh_exec_in_workspace", {
+      await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
         cmd: "ymux setup-hooks --agent claude --force --source github",
       }).catch(async () => {
@@ -842,7 +861,7 @@ function App() {
       return;
     }
     try {
-      const r: any = await invoke("claude_summarize", {
+      const r: any = await backend.call("claude_summarize", {
         workspaceId: ws.id,
         paneId: activePaneId() ?? null,
         sessionId: null,
@@ -882,7 +901,7 @@ function App() {
   const [sessionLists, setSessionLists] = createSignal<Record<string, SessionListState>>({});
   const refreshPersistence = async () => {
     try {
-      const m = await invoke<Record<string, string>>("pane_persistence_list");
+      const m = await backend.call<Record<string, string>>("pane_persistence_list");
       setPanePersistence(m ?? {});
       // Phase 91.D: the wheel proxy is armed from THIS map and nothing else —
       // a pane the backend lists holds a tmux/zellij session, a pane it
@@ -909,7 +928,7 @@ function App() {
   };
   const refreshNotes = async () => {
     try {
-      const f = await invoke<NotesFile>("notes_load");
+      const f = await backend.call<NotesFile>("notes_load");
       setNotes(f.notes ?? []);
     } catch (e) {
       log.warn("notes_load failed", e);
@@ -963,14 +982,31 @@ function App() {
     const dir = document.documentElement.dir === "rtl" ? "rtl" : "ltr";
     // Seed the popout's Ctrl+wheel zoom from the configured terminal size the
     // first time only — later wheel zooms own it (localStorage, shared origin).
-    if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
-      localStorage.setItem(
-        "ymux.popout.font_size_pt",
-        String(settings()?.font.terminal_size_pt ?? 13),
-      );
+    try {
+      if (localStorage.getItem("ymux.popout.font_size_pt") == null) {
+        localStorage.setItem(
+          "ymux.popout.font_size_pt",
+          String(settings()?.font.terminal_size_pt ?? 13),
+        );
+      }
+    } catch (e) {
+      log.warn("popout font-size seed failed", e);
+    }
+    // The popout window only knows its sid; hand it the pane id so it can ask
+    // pane_persistence_list whether to arm the tmux wheel proxy.
+    try {
+      localStorage.setItem(`ymux.popout.pane.${sid}`, paneId);
+    } catch (e) {
+      log.warn("popout pane-id seed failed", e);
+    }
+    // Hand the origin pane's RTL profile to the popout webview (same origin).
+    try {
+      localStorage.setItem(popoutProfileKey(sid), ti.profile);
+    } catch (e) {
+      log.warn("popout profile handoff failed", e);
     }
     try {
-      await invoke("popout_pane", {
+      await backend.call("popout_pane", {
         sessionId: sid,
         title: `${label} — ymux`,
         cols: ti.term.cols,
@@ -995,6 +1031,7 @@ function App() {
       }
     } catch (e) {
       log.error("popout_pane failed", e);
+      flashSummaryToast("err", String(e)); // e.g. the browser blocked the popup
     }
   };
 
@@ -1033,6 +1070,19 @@ function App() {
     if (wsId) lastPaneByWs.set(wsId, paneId);
     terms.get(paneId)?.focus();
   };
+
+  // Active terminal pane → backend, so ticket pane-cwd picks its tmux session.
+  // Non-terminal focus (diff/files/browser) sends nothing: last terminal stays.
+  createEffect(() => {
+    const ws = activeWs();
+    const pid = activePaneId();
+    if (!ws?.layout || !pid) return;
+    const node = findPane(ws.layout, pid);
+    if (!node || paneKindOf(node) !== "terminal") return;
+    backend.call<void>("pane_set_active", { workspaceId: ws.id, paneId: pid }).catch((e) =>
+      log.warn(`pane_set_active failed: ${e}`),
+    );
+  });
 
   // Phase 35 (#1.3): cycle focus through the active workspace's panes.
   const focusAdjacentPane = (delta: number) => {
@@ -1111,6 +1161,25 @@ function App() {
     void splitPane(cur, splitDir);
   };
 
+  // BRIEF: set or clear a workspace's 🎯 intent (the Briefing card).
+  const saveIntent = (wsId: string, text: string) => {
+    void (async () => {
+      try {
+        const updated = await backend.call<Workspace>("workspace_set_intent", {
+          workspaceId: wsId,
+          intent: text === "" ? null : text,
+        });
+        const f = file();
+        updateFile({
+          ...f,
+          workspaces: f.workspaces.map((w) => (w.id === updated.id ? updated : w)),
+        });
+      } catch (e) {
+        log.error("workspace_set_intent failed", e);
+      }
+    })();
+  };
+
   // Phase 35 (#1.3): the command-palette catalog. Each command reuses
   // the same handler the existing UI calls. `enabled` hides commands
   // that need context they don't have (no active workspace / pane).
@@ -1120,8 +1189,9 @@ function App() {
     const hasWs = !!ws;
     const hasPane = !!pid;
     return [
-      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => setShowSetup({}) },
+      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => openNewWorkspace() },
       { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "contextRail.toggle", label: t("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
       { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
       { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
@@ -1152,9 +1222,13 @@ function App() {
       { id: "view.zoom.out", label: t("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
       { id: "view.zoom.reset", label: t("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
       { id: "fm.open", label: t("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
-        if (ws && pid) void invoke("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
+        if (ws && pid) void backend.call("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
       } },
-    ];
+    ].filter((c) => {
+      // Phase 107: a command the host cannot serve is not offered at all.
+      const cap = PALETTE_CAPS[c.id];
+      return !cap || backend.can(cap);
+    });
   };
 
   const connectedPanes = (): Set<string> => {
@@ -1215,8 +1289,10 @@ function App() {
     for (const w of all) {
       if (!w.layout) continue;
       // Phase 92: every pane is on a screen, so the queue's label keeps
-      // the machine / project it belongs to: `runner › shell`.
-      const header = ancestorsOf(all, w.id)[0];
+      // the machine it belongs to: `runner › shell`. Root = LAST ancestor
+      // (nearest-first), so a pinned folder tier is never in the label.
+      const chain = ancestorsOf(all, w.id);
+      const header = chain[chain.length - 1];
       for (const pane of collectPaneNodes(w.layout)) {
         const pid = pane.pane_id;
         const run = runs[pid];
@@ -1246,6 +1322,26 @@ function App() {
     }
     return out;
   };
+  // Screen-reader announcement of the FOCUSED pane's light. The decision is
+  // agentAnnounceKey() alone; this only feeds it and speaks the result. Empty
+  // string first, text on the next frame, so a repeated phrase is re-read.
+  const [announceText, setAnnounceText] = createSignal("");
+  let announcePrev: AnnounceSnapshot = { paneId: null, key: null };
+  let announceRaf = 0;
+  createEffect(() => {
+    const pid = activePaneId();
+    const row = allPaneAgentRows().find((r) => r.paneId === pid);
+    const next: AnnounceSnapshot = {
+      paneId: pid ?? null,
+      key: row?.light ? trafficLightKey(row.light, row.waitingOnPermission) : null,
+    };
+    const spoken = agentAnnounceKey(announcePrev, next);
+    announcePrev = next;
+    if (spoken === null) return;
+    cancelAnimationFrame(announceRaf);
+    setAnnounceText("");
+    announceRaf = requestAnimationFrame(() => setAnnounceText(t(spoken)));
+  });
   const paneAgentLights = (): Record<string, TrafficLight | null> => {
     const wsId = activeWs()?.id;
     const out: Record<string, TrafficLight | null> = {};
@@ -1410,7 +1506,7 @@ function App() {
       // Phase 65 (bug CC): swallow rejection — needs the
       // core:window:allow-set-title capability; a missing/denied perm
       // shouldn't surface as an unhandled promise rejection.
-      void getCurrentWindow().setTitle("ymux").catch(() => {});
+      void backend.host.setTitle("ymux").catch(() => {});
       return;
     }
     const parts: string[] = [];
@@ -1418,13 +1514,11 @@ function App() {
     const focused = pid && ws.layout ? findPane(ws.layout, pid) : null;
     const ident = effectiveIdentity(focused ?? undefined, ws);
     if (ident.emoji) parts.push(ident.emoji);
-    const focusedName =
-      focused?.title ||
-      (focused?.connection ? describeConnection(focused.connection) : null);
+    const focusedName = focused ? windowPaneName(focused, describeConnection) : null;
     parts.push(focusedName ?? ws.name);
     if (waitingWorkspaceIds().has(ws.id)) parts.push("●");
     const title = parts.join(" ") + " — ymux";
-    void getCurrentWindow().setTitle(title).catch(() => {});
+    void backend.host.setTitle(title).catch(() => {});
   });
 
   // Phase 41: when the user activates an SSH workspace and the setting is
@@ -1448,7 +1542,7 @@ function App() {
     lastAutoConnectWs = ws.id;
     if (s.auto_connect_on_workspace_select === false) return;
     if (!isRemoteWorkspace(ws)) return;
-    void invoke("workspace_ensure_connected", { workspaceId: ws.id }).catch((e) =>
+    void backend.call("workspace_ensure_connected", { workspaceId: ws.id }).catch((e) =>
       log.warn("workspace_ensure_connected failed", e),
     );
   });
@@ -1465,10 +1559,10 @@ function App() {
   // call it on open / Refresh too — the Browser needs the port list even
   // when auto_port_forward is off (it forwards on demand per chosen port).
   const ensurePortsSnapshot = (wsId: string) => {
-    void invoke("workspace_ensure_port_watcher", { workspaceId: wsId }).catch((e) =>
+    void backend.call("workspace_ensure_port_watcher", { workspaceId: wsId }).catch((e) =>
       log.warn("workspace_ensure_port_watcher failed", e),
     );
-    void invoke<{ remote_port: number; addr: string; family: string }[]>(
+    void backend.call<{ remote_port: number; addr: string; family: string }[]>(
       "list_detected_ports",
       { workspaceId: wsId },
     )
@@ -1538,7 +1632,7 @@ function App() {
     const ws = activeWs();
     const pid = activePaneId();
     if (!ws || !pid) return;
-    void invoke("workspace_split", {
+    void backend.call("workspace_split", {
       workspaceId: ws.id,
       paneId: pid,
       direction: "horizontal",
@@ -1550,11 +1644,30 @@ function App() {
 
   const handleCreate = async (input: CreateWorkspaceInput) => {
     try {
-      const f = await invoke<WorkspacesFile>("workspace_create", { input });
+      const f = await backend.call<WorkspacesFile>("workspace_create", { input });
       updateFile(f);
     } catch (e) {
       log.error("workspace_create failed", e);
     }
+  };
+
+  // Phase 109: the browser host has no wizard targets (no local machine, no
+  // SSH out — both gated off), so "new workspace" there is just a named
+  // workspace on the daemon's own box. The desktop opens the wizard as before.
+  const openNewWorkspace = (opts: { target?: "local" | "server" } = {}) => {
+    if (backend.kind !== "web") {
+      setShowSetup(opts);
+      return;
+    }
+    // Count roots, not rows: a root comes with its screens (Phase 115).
+    const all = file().workspaces;
+    const names = new Set(all.map((w) => w.name));
+    let n = all.filter((w) => !w.parent_id).length + 1;
+    while (names.has(`workspace ${n}`)) n++;
+    void handleCreate({
+      name: `workspace ${n}`,
+      connection: { type: "local", shell: null },
+    });
   };
 
   const handleUpdate = async (
@@ -1570,7 +1683,7 @@ function App() {
     }
   ) => {
     try {
-      const f = await invoke<WorkspacesFile>("workspace_update", {
+      const f = await backend.call<WorkspacesFile>("workspace_update", {
         workspaceId: id,
         name: fields.name,
         color: fields.color,
@@ -1592,7 +1705,7 @@ function App() {
     const next = window.prompt("Rename workspace", ws.name);
     if (!next || !next.trim()) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_rename", {
+      const f = await backend.call<WorkspacesFile>("workspace_rename", {
         workspaceId: id,
         name: next.trim(),
       });
@@ -1671,18 +1784,18 @@ function App() {
       touchedSessions = true;
       if (!gone.has(w.id)) {
         if (wsCaps(w).sessionBound) {
-          try { await invoke("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
+          try { await backend.call("workspace_ensure_connected", { workspaceId: w.id }); } catch { /* best effort */ }
         }
         const out = await killSessionByName(w.id, name);
         const ok = !!out && ["killed", "already_gone", "no_session", "attempted"].includes(out.result);
         if (!ok) flashSummaryToast("err", t("workspace.delete.sessionKillFailed", { name }));
       }
       try {
-        await invoke("workspace_remember_sessions", { workspaceId: rootId, entries: [], forget: [name] });
+        await backend.call("workspace_remember_sessions", { workspaceId: rootId, entries: [], forget: [name] });
       } catch { /* memory only */ }
     }
     try {
-      const f = await invoke<WorkspacesFile>("workspace_delete", {
+      const f = await backend.call<WorkspacesFile>("workspace_delete", {
         workspaceId: id,
       });
       updateFile(f);
@@ -1715,7 +1828,7 @@ function App() {
     const prevActiveId = file().active_workspace_id;
     const prevSnapshot = file().workspaces.find((w) => w.id === id);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_set_active", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_active", {
         workspaceId: id,
       });
       updateFile(f);
@@ -1755,7 +1868,7 @@ function App() {
   // returns the updated workspace; patch it into the file state.
   const handleToggleAutoForward = async (workspaceId: string, enabled: boolean) => {
     try {
-      const updated = await invoke<Workspace>("workspace_set_auto_port_forward", {
+      const updated = await backend.call<Workspace>("workspace_set_auto_port_forward", {
         workspaceId,
         enabled,
       });
@@ -1802,8 +1915,8 @@ function App() {
     connection: Connection | null,
   ) => {
     try {
-      const isRepo = await invoke<boolean>("project_folder_probe", { path, connection });
-      const f = await invoke<WorkspacesFile>("workspace_pin_project_folder", {
+      const isRepo = await backend.call<boolean>("project_folder_probe", { path, connection });
+      const f = await backend.call<WorkspacesFile>("workspace_pin_project_folder", {
         parentWorkspaceId,
         path,
         name: null,
@@ -1831,13 +1944,13 @@ function App() {
     const ws = file().workspaces.find((w) => w.id === workspaceId);
     if (!ws?.cwd) return;
     try {
-      const list = await invoke<WorktreeEntry[]>("git_probe_worktrees", {
+      const list = await backend.call<WorktreeEntry[]>("git_probe_worktrees", {
         path: ws.cwd,
         connection: ws.connection ?? null,
       });
       // Phase 91.F: feed the sidebar card's branch line (branchForCard).
       setWorktreeLists((prev) => ({ ...prev, [workspaceId]: list }));
-      const f = await invoke<WorkspacesFile>("workspace_set_project_root", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_project_root", {
         workspaceId,
         isProjectRoot: true,
       });
@@ -1861,7 +1974,7 @@ function App() {
       // panes are all disconnected — otherwise the browser opens straight
       // onto "connect a terminal pane first". Idempotent and PTY-free.
       try {
-        await invoke("workspace_ensure_connected", { workspaceId });
+        await backend.call("workspace_ensure_connected", { workspaceId });
       } catch (e) {
         log.warn("ensure_connected before folder pick failed", e);
       }
@@ -1869,7 +1982,7 @@ function App() {
       return;
     }
     if (conn === null || conn.type === "local") {
-      const picked = await openFileDialog({ directory: true, multiple: false });
+      const picked = await backend.host.pickPaths({ directory: true, multiple: false });
       if (typeof picked === "string") await pinProjectFolder(workspaceId, picked, conn);
       return;
     }
@@ -1886,7 +1999,7 @@ function App() {
 
   /** Reload the workspaces file after a project-folder mutation. */
   const reloadWorkspaces = async () => {
-    const f = await invoke<WorkspacesFile>("workspaces_load");
+    const f = await backend.call<WorkspacesFile>("workspaces_load");
     updateFile(f);
   };
 
@@ -1902,7 +2015,7 @@ function App() {
   const openWorktree = async (rootWorkspaceId: string, wt: WorktreeEntry) => {
     const root = file().workspaces.find((w) => w.id === rootWorkspaceId);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_open_worktree", {
+      const f = await backend.call<WorkspacesFile>("workspace_open_worktree", {
         rootWorkspaceId,
         worktreePath: wt.path,
         // Branch name is what the user recognises; a detached worktree
@@ -1929,7 +2042,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_split", {
+      const f = await backend.call<WorkspacesFile>("workspace_split", {
         workspaceId: ws.id,
         paneId,
         direction,
@@ -1948,7 +2061,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_set_tabs_mode", {
+      const f = await backend.call<WorkspacesFile>("workspace_set_tabs_mode", {
         workspaceId: ws.id,
         tabsMode: enabled,
       });
@@ -2043,7 +2156,7 @@ function App() {
     if (!ws) return;
     if (paneAId === paneBId) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_swap_panes", {
+      const f = await backend.call<WorkspacesFile>("workspace_swap_panes", {
         workspaceId: ws.id,
         paneAId,
         paneBId,
@@ -2066,7 +2179,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_navigate", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_navigate", {
         workspaceId: ws.id,
         paneId,
         url,
@@ -2081,7 +2194,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_go_back", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_go_back", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2095,7 +2208,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_go_home", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_go_home", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2115,7 +2228,7 @@ function App() {
     )
       return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_reset_layout", {
+      const f = await backend.call<WorkspacesFile>("workspace_reset_layout", {
         workspaceId: id,
       });
       updateFile(f);
@@ -2128,7 +2241,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("pane_browser_set_forward", {
+      const f = await backend.call<WorkspacesFile>("pane_browser_set_forward", {
         workspaceId: ws.id,
         paneId,
         forward,
@@ -2143,7 +2256,7 @@ function App() {
     const ws = activeWs();
     if (!ws) return;
     try {
-      const f = await invoke<WorkspacesFile>("workspace_close_pane", {
+      const f = await backend.call<WorkspacesFile>("workspace_close_pane", {
         workspaceId: ws.id,
         paneId,
       });
@@ -2173,7 +2286,7 @@ function App() {
     });
     if (commit) {
       if (ratioCommitTimer) clearTimeout(ratioCommitTimer);
-      invoke("workspace_set_split_ratio", {
+      backend.call("workspace_set_split_ratio", {
         workspaceId: ws.id,
         splitId,
         ratio,
@@ -2228,6 +2341,22 @@ function App() {
     return needsInjection ? ws.cwd : null;
   };
 
+  // Persist the Claude-running flag, only on a transition.
+  const syncClaudeRunning = (paneId: string, on: boolean) => {
+    for (const w of file().workspaces) {
+      const node = w.layout ? findPane(w.layout, paneId) : null;
+      if (!node) continue;
+      const running = claudeRunningWrite(node.claude_running, on);
+      if (running === null) return;
+      backend.call("pane_set_claude_running", {
+        workspaceId: w.id,
+        paneId,
+        running,
+      }).catch((e) => log.warn(`pane_set_claude_running failed: ${e}`));
+      return;
+    }
+  };
+
   const connectPane = async (paneId: string, opts: ConnectOpts = {}) => {
     const ws = activeWs();
     if (!ws) return;
@@ -2237,16 +2366,22 @@ function App() {
     ti.workspaceId = ws.id;
     // 2026-08-19: when ymux itself launches Claude, nothing has to be
     // detected. Claude Code writes RTL pre-reordered, so the pane must not
-    // bidi it a second time — and the title-based detector never learns this
-    // inside zellij, which eats the title (measured: `title-seen … match=0`
-    // on every title, 57 chars of zellij's own).
+    // bidi it a second time.
     //
-    // A RESTORE is left alone rather than cleared. Re-attaching to a
-    // persistent session says nothing about what is running inside it — that
-    // is the whole point of persistence — so clearing here would throw away a
-    // signal a hook may have already delivered.
-    if (opts.mode === "claude") ti.setTuiSignal(true);
-    else if (!opts.restoring) ti.setTuiSignal(null);
+    // A RESTORE is not cleared. Re-attaching to a persistent session says
+    // nothing about what is running inside it, so the persisted
+    // `claude_running` flag seeds the signal instead. Stale-true (Claude died
+    // while the app was closed) stays reversed until a session-end hook or a
+    // fresh non-restoring connect corrects it.
+    const connectSignal = tuiSignalOnConnect(
+      opts.mode,
+      !!opts.restoring,
+      ws.layout ? findPane(ws.layout, paneId)?.claude_running : null,
+    );
+    if (connectSignal !== null) {
+      ti.setTuiSignal(connectSignal);
+      if (!opts.restoring) syncClaudeRunning(paneId, connectSignal);
+    }
     // Phase 90.B: a session row (`Workspace.tmux_session`) exists FOR one
     // session, and activation never auto-connects panes — so a plain
     // [Connect] on its first pane must attach to that session rather than
@@ -2258,7 +2393,7 @@ function App() {
         : null;
     setStatus(paneId, "connecting…", false);
     try {
-      const sessionId = await invoke<string>("pane_connect", {
+      const sessionId = await backend.call<string>("pane_connect", {
         workspaceId: ws.id,
         paneId,
         password: opts.password ?? null,
@@ -2421,7 +2556,7 @@ function App() {
           flashSummaryToast("err", t("reconnect.failed", { host: ev.host }));
           // Best-effort clear of the server flag so a future drop can
           // re-emit cleanly.
-          invoke("ssh_cancel_reconnect", { paneId }).catch(() => {});
+          backend.call("ssh_cancel_reconnect", { paneId }).catch(() => {});
           return;
         }
         const delay = reconnectJitter(RECONNECT_BACKOFFS_MS[nextAttempt]);
@@ -2438,7 +2573,7 @@ function App() {
 
   const disconnectPane = async (paneId: string) => {
     try {
-      await invoke("pane_disconnect", { paneId });
+      await backend.call("pane_disconnect", { paneId });
     } catch (e) {
       log.warn("disconnect failed", e);
     }
@@ -2460,7 +2595,7 @@ function App() {
     // with zellij uninstalled that is exactly what happened.
     let out: KillSessionOutcome | null = null;
     try {
-      out = await invoke<KillSessionOutcome>("pane_kill_session", { paneId });
+      out = await backend.call<KillSessionOutcome>("pane_kill_session", { paneId });
     } catch (e) {
       log.warn("kill_session failed", e);
     }
@@ -2532,7 +2667,7 @@ function App() {
     s: { name: string; display: string; cwd: string | null },
     autoConnect = true,
   ) => {
-    const f = await invoke<WorkspacesFile>("workspace_open_session", {
+    const f = await backend.call<WorkspacesFile>("workspace_open_session", {
       workspaceId: wsId,
       sessionName: s.name,
       displayName: s.display,
@@ -2573,7 +2708,7 @@ function App() {
     const paneId = paneHoldingSession(name);
     if (paneId) return killSession(paneId);
     try {
-      const out = await invoke<KillSessionOutcome>("sessions_kill_by_name", {
+      const out = await backend.call<KillSessionOutcome>("sessions_kill_by_name", {
         workspaceId: wsId,
         name,
       });
@@ -2650,7 +2785,7 @@ function App() {
         // Idempotent, PTY-free; a password-auth workspace no-ops here and
         // the list below comes back empty — which `reachable` records.
         try {
-          await invoke("workspace_ensure_connected", { workspaceId: rootId });
+          await backend.call("workspace_ensure_connected", { workspaceId: rootId });
         } catch (e) {
           patch({ loading: false, reachable: false, error: String(e) });
           return;
@@ -2658,7 +2793,7 @@ function App() {
       }
       let rows: TmuxSessionInfo[];
       try {
-        rows = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        rows = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: rootId,
           projectPath: null,
         });
@@ -2682,7 +2817,7 @@ function App() {
           cwd: r.cwd ?? r.owner_cwd ?? null,
         }));
       try {
-        const f = await invoke<WorkspacesFile>("workspace_remember_sessions", {
+        const f = await backend.call<WorkspacesFile>("workspace_remember_sessions", {
           workspaceId: rootId,
           entries: remembered,
           forget: [],
@@ -2697,7 +2832,7 @@ function App() {
       const candidates = mirrorCandidates(rows).filter((c) => !carried.has(c.name));
       if (candidates.length === 0) return;
       try {
-        const f = await invoke<WorkspacesFile>("workspace_mirror_sessions", {
+        const f = await backend.call<WorkspacesFile>("workspace_mirror_sessions", {
           workspaceId: rootId,
           sessions: candidates,
         });
@@ -2934,7 +3069,7 @@ function App() {
   const newScreen = async (w: Workspace) => {
     if (sessionsAsRows() && wsCaps(w).sessionPersistence) return newSessionRow(w);
     try {
-      const f = await invoke<WorkspacesFile>("workspace_new_screen", {
+      const f = await backend.call<WorkspacesFile>("workspace_new_screen", {
         parentWorkspaceId: w.id,
         name: null,
       });
@@ -2980,7 +3115,7 @@ function App() {
   // hint of the holding pane must follow, or the next boot probes a name
   // that no longer exists and skips the pane.
   const renameSessionByName = async (wsId: string, oldName: string, newName: string) => {
-    await invoke("tmux_rename_session", { workspaceId: wsId, oldName, newName });
+    await backend.call("tmux_rename_session", { workspaceId: wsId, oldName, newName });
     const paneId = paneHoldingSession(oldName);
     if (paneId) rememberPaneSession(paneId, newName);
     await refreshPersistence();
@@ -3040,7 +3175,7 @@ function App() {
   // content (Rule #1).
   const restoreLog = (msg: string): void => {
     console.log("session restore:", msg);
-    void invoke("diag_log", { level: "info", msg: `[restore] ${msg}` }).catch(
+    void backend.call("diag_log", { level: "info", msg: `[restore] ${msg}` }).catch(
       () => {},
     );
   };
@@ -3168,7 +3303,7 @@ function App() {
     if (wsc.sessionPersistence) {
       try {
         if (wsc.sessionBound) {
-          await invoke("workspace_ensure_connected", { workspaceId: ws.id });
+          await backend.call("workspace_ensure_connected", { workspaceId: ws.id });
         }
       } catch (e) {
         restoreLog(`abort: ensure_connected failed — ${String(e)}`);
@@ -3179,7 +3314,7 @@ function App() {
         // No projectPath: restore must see EVERY session on the host.
         // A pane whose session sits outside the workspace's folder still has
         // to come back — scoping this call would silently strand it.
-        sessions = await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        sessions = await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: ws.id,
           projectPath: null,
         });
@@ -3252,8 +3387,8 @@ function App() {
         // The answer is authoritative: [] really means "no live sessions".
         const list = isMac() && isLocalConn(conn)
           // projectPath: null — restore is unscoped, see above.
-          ? await invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", { workspaceId: wsId, projectPath: null })
-          : await invoke<TmuxSessionInfo[] | null>(
+          ? await backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", { workspaceId: wsId, projectPath: null })
+          : await backend.call<TmuxSessionInfo[] | null>(
               "pane_probe_tmux_sessions",
               { workspaceId: wsId, paneId },
             );
@@ -3413,7 +3548,7 @@ function App() {
       });
     }
     try {
-      const f = await invoke<WorkspacesFile>("workspace_distribute_evenly", {
+      const f = await backend.call<WorkspacesFile>("workspace_distribute_evenly", {
         workspaceId: ws.id,
       });
       updateFile(f);
@@ -3476,8 +3611,6 @@ function App() {
     when?: (e: KeyboardEvent) => boolean;
     run: (e: KeyboardEvent) => void;
   }
-  const inTerminal = (e: KeyboardEvent): boolean =>
-    !!(e.target as HTMLElement | null)?.closest?.(".terminal-container");
   const hasActivePane = (): boolean => !!activePaneId();
   const quadrant = (v: "up" | "down", h: "left" | "right") => {
     splitOrMove(v);
@@ -3505,7 +3638,7 @@ function App() {
     // clash conflictingAccels() now surfaces in Settings.
     { id: "focus_zoom", run: (e) => { e.preventDefault(); toggleMaximize(); } },
     // Phase 91.F: open (or focus) the git-diff pane.
-    { id: "open_diff", when: () => !!activeWs(), run: (e) => { e.preventDefault(); openDiffPane(); } },
+    { id: "open_diff", when: () => !!activeWs() && backend.can("diffPane"), run: (e) => { e.preventDefault(); openDiffPane(); } },
     // v0.4.4-beta.2: reset the active terminal — clears leaked mouse-tracking
     // modes (the escape-text leak from an unclean vim/fzf/less exit) + text
     // attributes.
@@ -3532,12 +3665,17 @@ function App() {
     } },
     { id: "toggle_notes", run: (e) => { e.preventDefault(); setShowNotes((v) => !v); } },
     { id: "toggle_settings", run: (e) => { e.preventDefault(); setShowSettings((v) => !v); } },
-    { id: "new_workspace", run: (e) => { e.preventDefault(); setShowSetup({}); } },
+    { id: "new_workspace", run: (e) => { e.preventDefault(); openNewWorkspace(); } },
     // BRIEF: the cross-workspace agent Queue.
     { id: "toggle_queue", run: (e) => {
       e.preventDefault();
       if (surfaceOf("queue") === "closed") openPanel("queue");
       else closePanel("queue");
+    } },
+    // Phase 105: collapse / expand the Context Rail.
+    { id: "toggle_context_rail", run: (e) => {
+      e.preventDefault();
+      toggleContextRail();
     } },
     // BRIEF: the Briefing card, on demand — works regardless of the
     // opt-in trigger toggles.
@@ -3565,6 +3703,13 @@ function App() {
         if (text) pasteIntoActiveTerminal(text);
       }).catch((err) => log.warn("paste failed", err));
     } },
+    { id: "select_all",
+      when: makeSelectAllBinding({ activePaneId, termFor: (id) => terms.get(id)?.term }).when,
+      run: (e) => {
+        e.preventDefault();
+        const pid = activePaneId();
+        if (pid) terms.get(pid)?.term.selectAll();
+      } },
     // Phase 17: Claude session summary.
     { id: "summarize_claude", run: (e) => { e.preventDefault(); void summarizeActivePane(); } },
 
@@ -3697,7 +3842,7 @@ function App() {
   const refreshFromBackend = async () => {
     try {
       const prevActive = file().active_workspace_id;
-      const f = await invoke<WorkspacesFile>("workspaces_load");
+      const f = await backend.call<WorkspacesFile>("workspaces_load");
       updateFile(f);
       // If active workspace changed externally (e.g. via CLI), pick a pane to focus.
       if (
@@ -3790,7 +3935,7 @@ function App() {
       // #1: seed the Notification Center with any notifications already
       // collected this session (RPC/agent items live in the backend Vec).
       try {
-        const seed = await invoke<NotifItem[]>("notifications_list");
+        const seed = await backend.call<NotifItem[]>("notifications_list");
         setNotifications(seed.map((n) => ({ ...n, kind: n.kind || "agent" })).reverse());
       } catch (e) {
         log.warn("notifications_list failed", e);
@@ -3816,7 +3961,7 @@ function App() {
     // keeps this in memory only, so an app restart legitimately starts
     // empty; it is a reload we are covering, which is far more common.
     try {
-      const snaps = await invoke<Record<string, PaneAgentSnapshot>>(
+      const snaps = await backend.call<Record<string, PaneAgentSnapshot>>(
         "pane_agent_states",
       );
       const seeded: ReturnType<typeof agentRuns> = {};
@@ -3836,21 +3981,21 @@ function App() {
 
     // BRIEF: same reload story for the brief entries.
     try {
-      setBriefs(await invoke<Record<string, PaneBriefEntry>>("pane_briefs"));
+      setBriefs(await backend.call<Record<string, PaneBriefEntry>>("pane_briefs"));
     } catch (e) {
       log.warn("pane_briefs failed", e);
     }
 
     const unlistens: UnlistenFn[] = [];
     unlistens.push(
-      await listen<PtyDataEvent>("pty:data", (e) => {
+      await backend.on<PtyDataEvent>("pty:data", (e) => {
         const pid = sessionToPane.get(e.payload.session_id);
         if (!pid) return;
         terms.get(pid)?.writeData(e.payload.data);
       })
     );
     unlistens.push(
-      await listen<PtyExitEvent>("pty:exit", (e) => {
+      await backend.on<PtyExitEvent>("pty:exit", (e) => {
         const pid = sessionToPane.get(e.payload.session_id);
         if (!pid) return;
         sessionToPane.delete(e.payload.session_id);
@@ -3890,7 +4035,7 @@ function App() {
     // drive the auto-reconnect toast + backoff loop. pty:exit fires
     // alongside — the `[disconnected]` terminal notice still shows.
     unlistens.push(
-      await listen<SshDisconnectedEvent>("ssh:disconnected", (e) => {
+      await backend.on<SshDisconnectedEvent>("ssh:disconnected", (e) => {
         // Guard: only handle transport drops; a clean Eof/Close doesn't
         // emit this event (backend filters), but defense in depth.
         if (e.payload.reason !== "transport-dropped") return;
@@ -3899,7 +4044,7 @@ function App() {
     );
     // Connect-time verdict on whether the remote CLI matches our build.
     unlistens.push(
-      await listen<CliAlignmentEvent>("workspace:cli-alignment", (e) => {
+      await backend.on<CliAlignmentEvent>("workspace:cli-alignment", (e) => {
         const p = e.payload;
         setCliSkew((prev) => {
           const next = { ...prev };
@@ -3917,7 +4062,7 @@ function App() {
     // The payload crossed a JSON boundary from an untrusted page, so it
     // is narrowed before anything opens (see parseCapture).
     unlistens.push(
-      await listen<unknown>("browser:ticket-captured", (e) => {
+      await backend.on<unknown>("browser:ticket-captured", (e) => {
         const raw = e.payload;
         if (typeof raw !== "object" || raw === null) return;
         const o = raw as Record<string, unknown>;
@@ -3929,8 +4074,9 @@ function App() {
     );
 
     unlistens.push(
-      await listen<string>("popout:closed", (e) => {
+      await backend.on<string>("popout:closed", (e) => {
         const sid = e.payload;
+        localStorage.removeItem(popoutProfileKey(sid));
         const pid = sessionToPane.get(sid);
         // pty:exit-driven close already cleared the maps AND un-pruned the
         // pane (see the pty:exit handler); nothing left to do here.
@@ -3957,7 +4103,7 @@ function App() {
     // the child under `main`. The Rust `Destroyed` handler already
     // dropped the Webview and cleared the persisted mode.
     unlistens.push(
-      await listen<string>("browser-popout:closed", (e) => {
+      await backend.on<string>("browser-popout:closed", (e) => {
         const wsId = e.payload;
         setPoppedOutBrowsers((prev) => {
           if (!prev.has(wsId)) return prev;
@@ -3969,7 +4115,7 @@ function App() {
     );
     // Initial feed load.
     try {
-      const items = await invoke<FeedItem[]>("feed_list");
+      const items = await backend.call<FeedItem[]>("feed_list");
       // The live feed now carries ONLY actionable blocking permission cards;
       // passive hooks (stop / notification / …) live in the Notification
       // Center. Re-hydrate just the still-pending permission requests so a
@@ -3982,7 +4128,7 @@ function App() {
     }
     // Phase 6.5 feed events.
     unlistens.push(
-      await listen<FeedItem>("feed:item-added", (e) => {
+      await backend.on<FeedItem>("feed:item-added", (e) => {
         const f = e.payload;
         const isBlocking = f.kind === "permission_request" && f.state === "pending";
         const isMeaningful = !isBlocking && MEANINGFUL_SUBKINDS.has(f.subkind);
@@ -3997,8 +4143,6 @@ function App() {
         // YMUX_PANE_ID (cli/src/main.rs) — so they drive the per-pane
         // "don't bidi this twice" state. This works over SSH and through any
         // multiplexer, unlike the terminal title, which zellij consumes.
-        // session-end clears back to null rather than asserting false, so the
-        // title can still speak if it ever starts arriving.
         // A Claude hook can only be fired from INSIDE Claude, and it already
         // carries YMUX_PANE_ID (cli/src/main.rs), so ANY of them is proof that
         // Claude holds that pane — which is what decides whether the pane may
@@ -4007,14 +4151,13 @@ function App() {
         // Not just session-start: the case that matters most is re-attaching
         // to a persistent zellij session where Claude never stopped, so no
         // session-start ever fires. `stop` lands after every reply, so the
-        // state corrects itself on the first interaction. Measured need —
-        // Yossi's log had `tui=0` on panes that had Claude running in them.
-        //
-        // Clears to null rather than false so the title can still speak, in
-        // case it ever starts arriving.
+        // state corrects itself on the first interaction. The flag is also
+        // persisted (`claude_running`) so a reattach starts right without
+        // waiting for that hook; session-end clears a stale true.
         if (f.pane_id) {
-          if (f.subkind === "session-end") setPaneTuiSignal(f.pane_id, null);
-          else setPaneTuiSignal(f.pane_id, true);
+          const running = f.subkind !== "session-end";
+          setPaneTuiSignal(f.pane_id, running);
+          syncClaudeRunning(f.pane_id, running);
         }
         // Every hook is recorded in the Notification Center history; feedToNotif
         // carries the workspace_id so the entry shows which workspace it's from.
@@ -4033,7 +4176,7 @@ function App() {
       })
     );
     unlistens.push(
-      await listen<FeedResolvedEvent>("feed:item-resolved", (e) => {
+      await backend.on<FeedResolvedEvent>("feed:item-resolved", (e) => {
         const verdict = e.payload.decision === "allow" ? "allowed" : e.payload.decision === "deny" ? "denied" : e.payload.decision === "timeout" ? "timedout" : "denied";
         setFeedItems((prev) =>
           prev.map((i) =>
@@ -4052,7 +4195,7 @@ function App() {
     // Claude-specific hooks — works for cargo, pytest, any tool that
     // prints the escape sequence.
     unlistens.push(
-      await listen<{ pane_id: string; title: string; body: string; kind: string }>(
+      await backend.on<{ pane_id: string; title: string; body: string; kind: string }>(
         "osc-notification",
         (e) => {
           const { title, body } = e.payload;
@@ -4091,11 +4234,11 @@ function App() {
     // #1: RPC/agent notifications (Claude hooks). Backend pushes to
     // state.notifications AND emits this — the center mirrors it live.
     unlistens.push(
-      await listen<NotifItem>("notification:new", (e) => pushNotif(e.payload)),
+      await backend.on<NotifItem>("notification:new", (e) => pushNotif(e.payload)),
     );
     // #2: tray menu actions routed from the Rust tray handler.
     unlistens.push(
-      await listen<string>("tray:action", (e) => {
+      await backend.on<string>("tray:action", (e) => {
         if (e.payload === "new_workspace") setShowSetup({});
         else if (e.payload === "settings") setShowSettings(true);
       }),
@@ -4112,7 +4255,7 @@ function App() {
     //   port-forwarded     → add to portForwards
     //   port-forward-stopped → remove from portForwards
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number; addr: string; family: string }>(
+      await backend.on<{ workspace_id: string; remote_port: number; addr: string; family: string }>(
         "port-detected",
         (e) => {
           setDetectedPorts((prev) => [
@@ -4130,7 +4273,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number }>(
+      await backend.on<{ workspace_id: string; remote_port: number }>(
         "port-undetected",
         (e) => {
           setDetectedPorts((prev) =>
@@ -4143,7 +4286,7 @@ function App() {
     );
     // Phase 47: detection toggled off → wipe the workspace's entries.
     unlistens.push(
-      await listen<{ workspace_id: string }>(
+      await backend.on<{ workspace_id: string }>(
         "port-detection-cleared",
         (e) => {
           setDetectedPorts((prev) =>
@@ -4153,7 +4296,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_addr: string; remote_port: number; local_port: number }>(
+      await backend.on<{ workspace_id: string; remote_addr: string; remote_port: number; local_port: number }>(
         "port-forwarded",
         (e) => {
           const row: ForwardRow = {
@@ -4173,7 +4316,7 @@ function App() {
       ),
     );
     unlistens.push(
-      await listen<{ workspace_id: string; remote_port: number }>(
+      await backend.on<{ workspace_id: string; remote_port: number }>(
         "port-forward-stopped",
         (e) => {
           setPortForwards((prev) =>
@@ -4194,7 +4337,7 @@ function App() {
     // silence. Only raised when there WAS a command; a plain attach is the
     // normal case and needs no announcement.
     unlistens.push(
-      await listen<{
+      await backend.on<{
         pane_id: string;
         session_name: string;
         skipped: string;
@@ -4218,13 +4361,13 @@ function App() {
     // Phase 7.B: notes
     await refreshNotes();
     unlistens.push(
-      await listen("notes:changed", () => {
+      await backend.on("notes:changed", () => {
         void refreshNotes();
       })
     );
     // Per-pane status events (e.g. remote-bootstrap progress).
     unlistens.push(
-      await listen<{ pane_id: string; text: string }>("pane:status", (e) => {
+      await backend.on<{ pane_id: string; text: string }>("pane:status", (e) => {
         const next = { ...paneStatusText() };
         if (e.payload.text) {
           next[e.payload.pane_id] = e.payload.text;
@@ -4236,7 +4379,7 @@ function App() {
     );
     // issue #4: per-pane agent turn timing for the chrome Ticker.
     unlistens.push(
-      await listen<{
+      await backend.on<{
         pane_id: string;
         started_at: number | null;
         avg_ms: number | null;
@@ -4276,7 +4419,7 @@ function App() {
     // BRIEF: per-pane brief entries. Same seq guard as pane:agent-run —
     // hooks race over a socket, drop anything not newer than what we hold.
     unlistens.push(
-      await listen<{ pane_id: string; entry: PaneBriefEntry }>("pane:brief", (e) => {
+      await backend.on<{ pane_id: string; entry: PaneBriefEntry }>("pane:brief", (e) => {
         const { pane_id, entry } = e.payload;
         const prev = briefs()[pane_id];
         if (prev && entry.seq <= prev.seq) return;
@@ -4285,13 +4428,13 @@ function App() {
     );
     // Live refresh when an external mutation happens (RPC over named pipe).
     unlistens.push(
-      await listen("workspaces:changed", () => {
+      await backend.on("workspaces:changed", () => {
         void refreshFromBackend();
       })
     );
     // Phase 9.A: settings updated externally (CLI / RPC) — re-apply theme.
     unlistens.push(
-      await listen<Settings>("settings:changed", (e) => {
+      await backend.on<Settings>("settings:changed", (e) => {
         setSettings(e.payload);
         setLoggerLevel(e.payload.logs?.level ?? "info");
         applyTheme(e.payload);
@@ -4307,14 +4450,14 @@ function App() {
     // Phase 18: agent-hooks outdated event from the backend's
     // post-bootstrap probe. Surface the banner once per connection.
     unlistens.push(
-      await listen<HooksOutdatedInfo>("hooks:outdated", (e) => {
+      await backend.on<HooksOutdatedInfo>("hooks:outdated", (e) => {
         setHooksBanner(e.payload);
       })
     );
 
     // Phase 9.B: update available — show a banner; user clicks to open notes.
     unlistens.push(
-      await listen<UpdateInfo>("update:available", (e) => {
+      await backend.on<UpdateInfo>("update:available", (e) => {
         setUpdateBanner(e.payload);
       })
     );
@@ -4432,7 +4575,7 @@ function App() {
         handleFileLinkRelative,
       );
       for (const [pid] of paneToSession) {
-        invoke("pane_disconnect", { paneId: pid }).catch(() => {});
+        backend.call("pane_disconnect", { paneId: pid }).catch(() => {});
       }
       for (const [, ti] of terms) ti.dispose();
       terms.clear();
@@ -4442,8 +4585,9 @@ function App() {
   return (
     <div
       class="app"
-      style={{ "grid-template-columns": `${sidebarPx()}px 1fr` }}
+      style={{ "grid-template-columns": `${sidebarPx()}px minmax(0, 1fr) ${railPx()}px` }}
     >
+      <div class="sr-only" aria-live="polite" aria-atomic="true">{announceText()}</div>
       {/* v0.4.4 (Task 1): headless auto-connect indicator — shown while a
           secondary panel arms the workspace's SSH handle in the background. */}
       <Show when={connectingWs()}>
@@ -4479,7 +4623,7 @@ function App() {
             <div class="sidebar-error">
               <p>{t("error.sidebarRender")}</p>
               <pre>{String(err)}</pre>
-              <button class="primary" onClick={() => setShowSetup({})}>
+              <button class="primary" onClick={() => openNewWorkspace()}>
                 + New workspace
               </button>
             </div>
@@ -4501,8 +4645,8 @@ function App() {
           groups={file().groups ?? []}
           onGroupCreate={async (name, color) => {
             try {
-              const g = await invoke<WorkspaceGroup>("workspace_group_create", { name, color });
-              const f = await invoke<WorkspacesFile>("workspaces_load");
+              const g = await backend.call<WorkspaceGroup>("workspace_group_create", { name, color });
+              const f = await backend.call<WorkspacesFile>("workspaces_load");
               updateFile(f);
               return g;
             } catch (e) {
@@ -4513,8 +4657,8 @@ function App() {
           onGroupRename={(id, name) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name, color: null, isCollapsed: null });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name, color: null, isCollapsed: null });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update rename failed", e); }
             })();
@@ -4522,8 +4666,8 @@ function App() {
           onGroupSetColor={(id, color) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name: null, color, isCollapsed: null });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name: null, color, isCollapsed: null });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update color failed", e); }
             })();
@@ -4531,8 +4675,8 @@ function App() {
           onGroupToggleCollapse={(id, isCollapsed) => {
             void (async () => {
               try {
-                await invoke("workspace_group_update", { id, name: null, color: null, isCollapsed });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_update", { id, name: null, color: null, isCollapsed });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_update collapse failed", e); }
             })();
@@ -4540,8 +4684,8 @@ function App() {
           onGroupDelete={(id) => {
             void (async () => {
               try {
-                await invoke("workspace_group_delete", { id });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_group_delete", { id });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_group_delete failed", e); }
             })();
@@ -4549,8 +4693,8 @@ function App() {
           onWorkspaceSetGroup={(workspaceId, groupId) => {
             void (async () => {
               try {
-                await invoke("workspace_set_group", { workspaceId, groupId });
-                const f = await invoke<WorkspacesFile>("workspaces_load");
+                await backend.call("workspace_set_group", { workspaceId, groupId });
+                const f = await backend.call<WorkspacesFile>("workspaces_load");
                 updateFile(f);
               } catch (e) { log.error("workspace_set_group failed", e); }
             })();
@@ -4562,7 +4706,7 @@ function App() {
           onWorkspaceReorder={(workspaceId, groupId, newIndex) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_reorder", {
+                const f = await backend.call<WorkspacesFile>("workspace_reorder", {
                   workspaceId,
                   groupId,
                   newIndex,
@@ -4574,7 +4718,7 @@ function App() {
           onGroupReorder={(groupId, newIndex) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_group_reorder", {
+                const f = await backend.call<WorkspacesFile>("workspace_group_reorder", {
                   groupId,
                   newIndex,
                 });
@@ -4583,7 +4727,7 @@ function App() {
             })();
           }}
           onActivate={handleSetActive}
-          onCreate={() => setShowSetup({})}
+          onCreate={() => openNewWorkspace()}
           onOpenSettings={() => setShowSettings(true)}
           onOpenNotes={() => setShowNotes(true)}
           onAction={(id, action) => {
@@ -4612,7 +4756,7 @@ function App() {
           onSetCollapsed={(workspaceId, isCollapsed) => {
             void (async () => {
               try {
-                const f = await invoke<WorkspacesFile>("workspace_set_collapsed", {
+                const f = await backend.call<WorkspacesFile>("workspace_set_collapsed", {
                   workspaceId,
                   collapsed: isCollapsed,
                 });
@@ -4710,14 +4854,16 @@ function App() {
                   in the global sidebar. The i18n keys keep their
                   historical "sidebar." prefix; renaming 8 keys × 4
                   locales for a cosmetic prefix isn't worth the churn. */}
-              <button
-                class="ws-header-btn"
-                title={t("sidebar.browser.tooltip")}
-                onClick={() => void armWorkspaceConnection().then(() => setShowBrowserWindow(true))}
-              >
-                <IconGlobe />
-                <span class="ws-header-btn-label">{t("sidebar.browser.label")}</span>
-              </button>
+              <Show when={backend.can("browserPane")}>
+                <button
+                  class="ws-header-btn"
+                  title={t("sidebar.browser.tooltip")}
+                  onClick={() => void armWorkspaceConnection().then(() => setShowBrowserWindow(true))}
+                >
+                  <IconGlobe />
+                  <span class="ws-header-btn-label">{t("sidebar.browser.label")}</span>
+                </button>
+              </Show>
               <button
                 class="ws-header-btn"
                 title={t("sidebar.files.tooltip")}
@@ -4790,16 +4936,18 @@ function App() {
                         ? t("ws_header.view_mode.split")
                         : t("ws_header.view_mode.tabs")}
                     </button>
-                    <button
-                      title={t("ws_header.split_diff_title")}
-                      onClick={() => {
-                        setWsMenuOpen(false);
-                        openDiffPane();
-                      }}
-                    >
-                      <IconGitCompare />
-                      {t("ws_header.add_diff")}
-                    </button>
+                    <Show when={backend.can("diffPane")}>
+                      <button
+                        title={t("ws_header.split_diff_title")}
+                        onClick={() => {
+                          setWsMenuOpen(false);
+                          openDiffPane();
+                        }}
+                      >
+                        <IconGitCompare />
+                        {t("ws_header.add_diff")}
+                      </button>
+                    </Show>
                     <button
                       title={t("sidebar.insights.tooltip")}
                       onClick={() => {
@@ -4812,16 +4960,18 @@ function App() {
                     </button>
                     {/* Tickets stays openPanel, not openPanelConnected —
                         local files, no connection needed. */}
-                    <button
-                      title={t("sidebar.tickets.tooltip")}
-                      onClick={() => {
-                        setWsMenuOpen(false);
-                        openPanel("tickets");
-                      }}
-                    >
-                      <IconBug />
-                      {t("sidebar.tickets.label")}
-                    </button>
+                    <Show when={backend.can("tickets")}>
+                      <button
+                        title={t("sidebar.tickets.tooltip")}
+                        onClick={() => {
+                          setWsMenuOpen(false);
+                          openPanel("tickets");
+                        }}
+                      >
+                        <IconBug />
+                        {t("sidebar.tickets.label")}
+                      </button>
+                    </Show>
                   </div>
                 </Show>
               </div>
@@ -4837,7 +4987,7 @@ function App() {
             Workspaces exist but none active → light "pick one" prompt. */}
         <Show when={file().workspaces.length === 0}>
           <WelcomeScreen
-            onCreate={() => setShowSetup({ target: "local" })}
+            onCreate={() => openNewWorkspace({ target: "local" })}
             onConnectSsh={() => setShowSetup({ target: "server" })}
             onProvision={() => setShowSetup({ target: "server" })}
           />
@@ -4845,7 +4995,7 @@ function App() {
         <Show when={file().workspaces.length > 0 && !activeWs()}>
           <div class="empty">
             <p>{t("ws.empty.none")}</p>
-            <button class="primary" onClick={() => setShowSetup({})}>
+            <button class="primary" onClick={() => openNewWorkspace()}>
               {t("ws.empty.new")}
             </button>
           </div>
@@ -5035,7 +5185,7 @@ function App() {
                     onSetTitle={(pid, title) => {
                       const ws = activeWs();
                       if (!ws) return;
-                      invoke<WorkspacesFile>("pane_set_title", {
+                      backend.call<WorkspacesFile>("pane_set_title", {
                         workspaceId: ws.id,
                         paneId: pid,
                         title: title.trim() === "" ? null : title,
@@ -5046,7 +5196,7 @@ function App() {
                     onSetAnnotation={(pid, annotation) => {
                       const ws = activeWs();
                       if (!ws) return;
-                      invoke<WorkspacesFile>("pane_set_annotation", {
+                      backend.call<WorkspacesFile>("pane_set_annotation", {
                         workspaceId: ws.id,
                         paneId: pid,
                         annotation:
@@ -5070,6 +5220,20 @@ function App() {
           </div>
         </Show>
       </div>
+
+      {/* Phase 105: the Context Rail — third grid column, inline-end. */}
+      <ContextRail
+        ws={activeWs()}
+        paneId={activeWs() ? activePaneId() : null}
+        row={allPaneAgentRows().find((r) => r.paneId === activePaneId() && r.wsId === activeWs()?.id) ?? null}
+        nowMs={agentClockMs()}
+        collapsed={railCollapsed()}
+        onToggleCollapsed={toggleContextRail}
+        width={railWidth()}
+        onResize={setRailWidth}
+        onResizeEnd={() => saveRailPrefs({ width: railWidth(), collapsed: railCollapsed() })}
+        onJumpPane={focusPane}
+      />
 
       {/* Phase GG: in-app Markdown viewer (floating window). Reads its
           own global store, opened by FileManager .md double-click. */}
@@ -5143,19 +5307,28 @@ function App() {
         onDrawer={() => openPanel("files")}
         onFloat={() => floatPanel("files")}
         onFullscreen={() => expandPanel("files")}
-        body={() => {
-          const ws = activeWs();
-          return ws ? (
-            <FileManagerPane
-              workspaceId={ws.id}
-              hasSsh={isRemoteWorkspace(ws)}
-              hasActiveSession={liveWorkspaceIds().has(ws.id)}
-              rememberPath={settings()?.file_manager_remember_path === true}
-            />
-          ) : (
-            <></>
-          );
-        }}
+        // Phase 98: keyed on the workspace ID, never on the workspace object.
+        // Reading activeWs() here made the body re-run on EVERY setFile —
+        // each one hands over fresh objects — and every re-run mounted a new
+        // FileManagerPane: folder, list, scroll and an open FileEditor (with
+        // its unsaved text) all reset. Phase 91's 30 s session-rows poll made
+        // that happen twice a minute. The props below are compiled into
+        // getters, so they still follow the workspace without a remount.
+        body={() => (
+          <Show when={file().active_workspace_id} keyed>
+            {(id) => (
+              <FileManagerPane
+                workspaceId={id}
+                hasSsh={(() => {
+                  const ws = activeWs();
+                  return ws ? isRemoteWorkspace(ws) : false;
+                })()}
+                hasActiveSession={liveWorkspaceIds().has(id)}
+                rememberPath={settings()?.file_manager_remember_path === true}
+              />
+            )}
+          </Show>
+        )}
       />
 
       <CreateWorkspaceModal
@@ -5291,7 +5464,7 @@ function App() {
         onToggleSeparateClaudeAccount={(v) => {
           const id = addonsWin()?.id;
           if (!id) return;
-          void invoke("workspace_set_claude_separate_account", {
+          void backend.call("workspace_set_claude_separate_account", {
             workspaceId: id,
             enabled: v,
           }).catch((e) =>
@@ -5341,25 +5514,7 @@ function App() {
               ws={ws}
               rows={allPaneAgentRows().filter((r) => r.wsId === wsId)}
               nowMs={agentClockMs()}
-              onSaveIntent={(text) => {
-                void (async () => {
-                  try {
-                    const updated = await invoke<Workspace>("workspace_set_intent", {
-                      workspaceId: wsId,
-                      intent: text === "" ? null : text,
-                    });
-                    const f = file();
-                    updateFile({
-                      ...f,
-                      workspaces: f.workspaces.map((w) =>
-                        w.id === updated.id ? updated : w,
-                      ),
-                    });
-                  } catch (e) {
-                    log.error("workspace_set_intent failed", e);
-                  }
-                })();
-              }}
+              onSaveIntent={(text) => saveIntent(wsId, text)}
               onJumpPane={(paneId) => {
                 setBriefingWs(null);
                 focusPane(paneId);
@@ -5696,7 +5851,7 @@ function App() {
         activeWorkspaceId={file().active_workspace_id}
         onClose={() => setShowNotes(false)}
         onAdd={(text, tag, workspaceId) => {
-          invoke<Note>("notes_add", {
+          backend.call<Note>("notes_add", {
             text,
             tag: tag ?? null,
             workspaceId: workspaceId ?? null,
@@ -5706,17 +5861,17 @@ function App() {
             .catch((e) => log.error("notes_add failed", e));
         }}
         onDone={(id) =>
-          invoke("notes_update", { id, status: "done" })
+          backend.call("notes_update", { id, status: "done" })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_update done failed", e))
         }
         onReopen={(id) =>
-          invoke("notes_update", { id, status: "open" })
+          backend.call("notes_update", { id, status: "open" })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_update reopen failed", e))
         }
         onDelete={(id) =>
-          invoke("notes_delete", { id })
+          backend.call("notes_delete", { id })
             .then(() => refreshNotes())
             .catch((e) => log.error("notes_delete failed", e))
         }
@@ -5735,7 +5890,7 @@ function App() {
                 : i
             )
           );
-          invoke("feed_decide", { requestId: rid, decision: dec }).catch(
+          backend.call("feed_decide", { requestId: rid, decision: dec }).catch(
             (err) => log.error("feed_decide failed", err)
           );
         }}

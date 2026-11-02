@@ -305,3 +305,224 @@ func TestHandleClaudeUsageClamps(t *testing.T) {
 		}
 	}
 }
+
+// More than the old 2000-file cap: every in-window file must be scanned, or a
+// heavy user's totals silently shrink. Breaking this means the cap is back.
+func TestScanHasNoFileCap(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	const n = 2001
+	for i := 0; i < n; i++ {
+		writeTranscript(t, root, "proj", fmt.Sprintf("s%d", i), []string{
+			assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard"),
+		}, now)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != n || rep.Totals.Calls != n {
+		t.Fatalf("scanned=%d calls=%d, want %d/%d", rep.ScannedFiles, rep.Totals.Calls, n, n)
+	}
+}
+
+// Pruned files stay in skipped_files even past 2000 files; only the cap went.
+func TestScanCountsEveryFileInWindow(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	old := now.Add(-72 * time.Hour)
+	const n = 2001
+	for i := 0; i < n; i++ {
+		mt := now
+		if i%2 == 1 {
+			mt = old
+		}
+		writeTranscript(t, root, "proj", fmt.Sprintf("s%d", i), []string{
+			assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard"),
+		}, mt)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != 1001 || rep.SkippedFiles != 1000 || rep.Totals.Calls != 1001 {
+		t.Fatalf("scanned=%d skipped=%d calls=%d", rep.ScannedFiles, rep.SkippedFiles, rep.Totals.Calls)
+	}
+}
+
+// A line past the old 8 MiB Scanner limit must not hide the usage line after
+// it; the Rust scanner has no limit, so both sides must count the same call.
+func TestScanKeepsLinesAfterOversizedLine(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	big := `{"type":"user","content":"` + strings.Repeat("x", 9*1024*1024) + `"}`
+	writeTranscript(t, root, "proj", "s1", []string{
+		big,
+		assistantLine(now.Add(-time.Minute), "s1", "/p", "claude-opus-5", 5, 6, 0, 0, 0, false, "standard"),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.Totals.Calls != 1 || rep.Totals.In != 5 || rep.ParseErrors != 0 {
+		t.Fatalf("calls=%d in=%d parse_errors=%d, want 1/5/0", rep.Totals.Calls, rep.Totals.In, rep.ParseErrors)
+	}
+}
+
+// A line with invalid UTF-8 is one parse error and is dropped, matching Rust's
+// lines(); the usage line after it must still count.
+func TestScanInvalidUTF8LineIsOneParseError(t *testing.T) {
+	root := t.TempDir()
+	now := time.Now()
+	writeTranscript(t, root, "proj", "s1", []string{
+		"{\"type\":\"assistant\",\"usage\":\"\xff\xfe\"}",
+		assistantLine(now.Add(-time.Minute), "s1", "/p", "claude-opus-5", 5, 6, 0, 0, 0, false, "standard"),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 1 || rep.Totals.Calls != 1 {
+		t.Fatalf("parse_errors=%d calls=%d, want 1/1", rep.ParseErrors, rep.Totals.Calls)
+	}
+}
+
+// A token field must be absent, null, or a non-negative integer; anything else
+// makes the whole line one parse error (D4, mirrors Rust as_u64). Breaking this
+// means Go and Rust would total the same transcript differently.
+func TestScanRejectsNonUintTokenFields(t *testing.T) {
+	now := time.Now()
+	ts := now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	mk := func(usage string) string {
+		return `{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","usage":` + usage + `}}`
+	}
+	bad := []string{
+		`{"input_tokens":1.5}`,
+		`{"output_tokens":-1}`,
+		`{"cache_read_input_tokens":"7"}`,
+		`{"cache_creation_input_tokens":true}`,
+		`{"cache_creation":{"ephemeral_5m_input_tokens":1.5}}`,
+		`{"cache_creation":{"ephemeral_1h_input_tokens":-1}}`,
+		`{"input_tokens":1e3}`,
+		`{"cache_creation":"x"}`,
+		`"x"`,
+	}
+	for _, u := range bad {
+		root := t.TempDir()
+		writeTranscript(t, root, "proj", "s1", []string{mk(u)}, now)
+		rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if rep.ParseErrors != 1 || rep.Totals.Calls != 0 {
+			t.Fatalf("%s: parse_errors=%d calls=%d, want 1/0", u, rep.ParseErrors, rep.Totals.Calls)
+		}
+	}
+	// null and absent are valid zeros
+	root := t.TempDir()
+	writeTranscript(t, root, "proj", "s1", []string{
+		mk(`{"input_tokens":null,"cache_creation":null}`),
+		mk(`{"output_tokens":4}`),
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 0 || rep.Totals.Calls != 2 || rep.Totals.Out != 4 {
+		t.Fatalf("parse_errors=%d calls=%d out=%d, want 0/2/4", rep.ParseErrors, rep.Totals.Calls, rep.Totals.Out)
+	}
+}
+
+// D5 parity with Rust: an assistant line whose usage is null (or only named in
+// content) is skipped silently — no call, no parse error.
+func TestScanSkipsAssistantWithoutUsage(t *testing.T) {
+	now := time.Now()
+	ts := now.Add(-time.Minute).UTC().Format(time.RFC3339)
+	root := t.TempDir()
+	writeTranscript(t, root, "proj", "s1", []string{
+		`{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","usage":null}}`,
+		`{"type":"assistant","timestamp":"` + ts + `","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5","content":"mentions \"usage\""}}`,
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.Totals.Calls != 0 || rep.ParseErrors != 0 {
+		t.Fatalf("calls=%d parse_errors=%d, want 0/0", rep.Totals.Calls, rep.ParseErrors)
+	}
+}
+
+// D6: an assistant line with a missing or non-string timestamp is one parse
+// error, not a silent skip; a non-assistant line is filtered before the
+// timestamp is read. Mirrors Rust missing_timestamp_is_parse_error.
+func TestScanMissingTimestampIsParseError(t *testing.T) {
+	now := time.Now()
+	root := t.TempDir()
+	usage := `"usage":{"input_tokens":1,"output_tokens":2}`
+	writeTranscript(t, root, "proj", "s1", []string{
+		`{"type":"assistant","sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5",` + usage + `}}`,
+		`{"type":"assistant","timestamp":123,"sessionId":"s","cwd":"/p","message":{"model":"claude-opus-5",` + usage + `}}`,
+		`{"type":"user","sessionId":"s","cwd":"/p","message":{` + usage + `}}`,
+	}, now)
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ParseErrors != 2 || rep.Totals.Calls != 0 {
+		t.Fatalf("parse_errors=%d calls=%d, want 2/0", rep.ParseErrors, rep.Totals.Calls)
+	}
+}
+
+// D7: symlinked dirs/files are followed, a file named exactly ".jsonl" counts,
+// a dir named x.jsonl and a dangling link do not — mirrors the Rust walk.
+func TestScanWalkFollowsSymlinksAndDotJsonl(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	now := time.Now()
+	l := assistantLine(now.Add(-time.Minute), "s", "/p", "claude-opus-5", 1, 1, 0, 0, 0, false, "standard")
+	writeTranscript(t, root, "real", "a", []string{l}, now)
+	writeTranscript(t, root, "real", "", []string{l}, now) // ".jsonl"
+	writeTranscript(t, outside, "o", "t", []string{l}, now)
+	real := filepath.Join(root, "real")
+	if err := os.Symlink(filepath.Join(outside, "o", "t.jsonl"), filepath.Join(real, "ln.jsonl")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "gone"), filepath.Join(real, "dead.jsonl")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(real, "x.jsonl"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Symlink(real, filepath.Join(root, "link")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "gone"), filepath.Join(root, "deaddir")); err != nil {
+		t.Fatalf("symlink: %v", err)
+	}
+	rep, err := scanClaudeUsage(root, now.Add(-time.Hour).Unix(), now.Unix())
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if rep.ScannedFiles != 6 || rep.Totals.Calls != 6 || rep.SkippedFiles != 2 {
+		t.Fatalf("scanned=%d calls=%d skipped=%d, want 6/6/2", rep.ScannedFiles, rep.Totals.Calls, rep.SkippedFiles)
+	}
+}
+
+// TestScanUnreadableRootIsAnError pins D9: an existing but unreadable root is an
+// error, not an empty report; only a missing root is empty.
+func TestScanUnreadableRootIsAnError(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "projects")
+	if err := os.Mkdir(root, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.Chmod(root, 0o000); err != nil {
+		t.Skipf("chmod unsupported: %v", err)
+	}
+	defer os.Chmod(root, 0o755)
+	if _, err := os.ReadDir(root); err == nil {
+		t.Skip("root still readable (running as root?)")
+	}
+	if _, err := scanClaudeUsage(root, 0, 1); err == nil {
+		t.Fatal("expected error for unreadable root")
+	}
+}

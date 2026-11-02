@@ -25,16 +25,24 @@ type ChatStore struct {
 // expires_at); redeeming it issues the long-term token (token_hash) and flips
 // it to `active`.
 type PairedDevice struct {
-	ID         string
-	Name       string
-	TokenHash  string // long-term bearer (after redeem)
-	OtsHash    string // one-shot (pending only; cleared on redeem)
-	Scopes     string // JSON; "all" for now (decision #4)
-	Status     string // pending | active | revoked
-	CreatedAt  int64
-	ExpiresAt  int64 // one-shot expiry (pending only)
-	LastSeen   int64
-	LastIP     string
+	ID        string
+	Name      string
+	TokenHash string // long-term bearer (after redeem)
+	OtsHash   string // one-shot (pending only; cleared on redeem)
+	Scopes    string // JSON; "all" for now (decision #4)
+	Status    string // requested | pending | active | revoked
+	CreatedAt int64
+	ExpiresAt int64 // one-shot expiry (requested/pending only)
+	LastSeen  int64
+	LastIP    string
+
+	// Phase 96, browser-initiated pairing — set only while Status is
+	// "requested". Code is the short number shown on BOTH the browser and the
+	// approval card so a human can match them; RequestIP and UserAgent are what
+	// that human judges by. None is a secret — approval needs the owner token.
+	Code      string
+	RequestIP string
+	UserAgent string
 }
 
 // PendingEvent is a queued push envelope awaiting delivery to an offline device
@@ -122,6 +130,13 @@ func OpenChatStore(path string) (*ChatStore, error) {
 	// already there). push_seq is the per-device monotonic push cursor for the
 	// native push queue (never decreases, even after the queue drains).
 	_, _ = db.Exec(`ALTER TABLE paired_devices ADD COLUMN push_seq INTEGER DEFAULT 0`)
+	// Phase 96 — browser-initiated pairing. `code` is the short number shown
+	// on BOTH the browser and the approval card so a human can match them;
+	// request_ip and user_agent are what that human is shown to judge by.
+	// None of the three is a secret: approval still requires the owner token.
+	_, _ = db.Exec(`ALTER TABLE paired_devices ADD COLUMN code TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE paired_devices ADD COLUMN request_ip TEXT DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE paired_devices ADD COLUMN user_agent TEXT DEFAULT ''`)
 	return &ChatStore{db: db}, nil
 }
 
@@ -278,9 +293,110 @@ func (s *ChatStore) issueDevice(d *PairedDevice) error {
 	return err
 }
 
+// requestDevice records a BROWSER-INITIATED pairing request (Phase 96): a row
+// in the new `requested` status, holding a one-shot hash the browser already
+// has plus the three things a human needs to judge it — a short display code,
+// the requesting IP and the User-Agent.
+//
+// It is NOT redeemable in this state. `redeemDevice` matches `status='pending'`
+// only, so a request nobody approved cannot be exchanged for a credential —
+// which is the single most important property of this flow, and the test
+// `TestRequestedRowCannotBeRedeemed` is the one that guards it.
+func (s *ChatStore) requestDevice(d *PairedDevice, code, ip, userAgent string) error {
+	_, err := s.db.Exec(
+		`INSERT INTO paired_devices
+		   (device_id, device_name, token_hash, ots_hash, scopes, status,
+		    created_at, expires_at, last_seen, last_ip, code, request_ip, user_agent)
+		 VALUES (?,?,'',?,?,'requested',?,?,0,'',?,?,?)`,
+		d.ID, d.Name, d.OtsHash, d.Scopes, d.CreatedAt, d.ExpiresAt, code, ip, userAgent)
+	return err
+}
+
+// listRequests returns the unexpired pairing requests awaiting a decision.
+func (s *ChatStore) listRequests(now int64) ([]PairedDevice, error) {
+	rows, err := s.db.Query(
+		`SELECT device_id, device_name, code, request_ip, user_agent, created_at, expires_at
+		   FROM paired_devices WHERE status='requested' AND expires_at>=? ORDER BY created_at`, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []PairedDevice{}
+	for rows.Next() {
+		var d PairedDevice
+		if err := rows.Scan(&d.ID, &d.Name, &d.Code, &d.RequestIP, &d.UserAgent,
+			&d.CreatedAt, &d.ExpiresAt); err == nil {
+			d.Status = "requested"
+			out = append(out, d)
+		}
+	}
+	return out, rows.Err()
+}
+
+// countRequests reports how many unexpired requests are outstanding — the
+// backstop against an unauthenticated endpoint filling the table.
+func (s *ChatStore) countRequests(now int64) int {
+	var n int
+	_ = s.db.QueryRow(
+		`SELECT COUNT(*) FROM paired_devices WHERE status='requested' AND expires_at>=?`, now).Scan(&n)
+	return n
+}
+
+// approveRequest grants a request the given scopes and flips it to `pending`,
+// i.e. exactly the state a desktop-issued QR produces — from here the ordinary
+// redeem path takes over and nothing else in the system needs to know this
+// device arrived by a different road.
+func (s *ChatStore) approveRequest(id, scopes string, now int64) bool {
+	res, err := s.db.Exec(
+		`UPDATE paired_devices SET scopes=?, status='pending'
+		  WHERE device_id=? AND status='requested' AND expires_at>=?`, scopes, id, now)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// denyRequest removes a request outright. Deleting rather than marking it
+// revoked keeps the device list about real devices, and a denied request has
+// nothing worth auditing that the daemon log does not already carry.
+func (s *ChatStore) denyRequest(id string) bool {
+	res, err := s.db.Exec(`DELETE FROM paired_devices WHERE device_id=? AND status='requested'`, id)
+	if err != nil {
+		return false
+	}
+	n, _ := res.RowsAffected()
+	return n == 1
+}
+
+// requestByOts finds a request or freshly-approved row by the one-shot hash the
+// browser holds. That hash is the browser's proof of being the same client
+// that asked, so the poll endpoint needs no other credential.
+func (s *ChatStore) requestByOts(otsHash string) (*PairedDevice, bool) {
+	if otsHash == "" {
+		return nil, false
+	}
+	d := &PairedDevice{}
+	err := s.db.QueryRow(
+		`SELECT device_id, status, expires_at FROM paired_devices WHERE ots_hash=?`, otsHash).
+		Scan(&d.ID, &d.Status, &d.ExpiresAt)
+	if err != nil {
+		return nil, false
+	}
+	return d, true
+}
+
+// pruneRequests drops requests that expired without an answer.
+func (s *ChatStore) pruneRequests(now int64) {
+	_, _ = s.db.Exec(`DELETE FROM paired_devices WHERE status='requested' AND expires_at<?`, now)
+}
+
 // redeemDevice exchanges a valid one-shot (pending, unexpired) for a long-term
 // token: stores the long-term hash, clears the one-shot, flips to active.
 // Returns the device id, or ok=false if the one-shot is unknown/expired/used.
+//
+// The `status='pending'` match is load-bearing for Phase 96: a browser request
+// sits in `requested` until a human approves it, so this refuses it for free.
 func (s *ChatStore) redeemDevice(otsHash, longTermHash string, now int64) (string, bool) {
 	d := &PairedDevice{}
 	err := s.db.QueryRow(

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, For, Show, on, onCleanup } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import type { KillSessionOutcome, SessionSummary, TmuxSessionInfo } from "./types";
 import { sessionDisplay } from "./paneTitle";
 import { currentLanguage, t } from "./i18n";
@@ -96,7 +96,7 @@ export function SessionsOverviewWindow(p: Props) {
     try {
       for (let i = 0; i < names.length; i += SUMMARY_CHUNK) {
         const chunk = names.slice(i, i + SUMMARY_CHUNK);
-        const out = await invoke<SessionSummary[]>("sessions_overview_summarize", {
+        const out = await backend.call<SessionSummary[]>("sessions_overview_summarize", {
           workspaceId: p.workspaceId,
           names: chunk,
           lang: currentLanguage(),
@@ -170,7 +170,7 @@ export function SessionsOverviewWindow(p: Props) {
     setSummarizing(false);
     try {
       const listOnce = () =>
-        invoke<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
+        backend.call<TmuxSessionInfo[]>("pane_list_tmux_sessions", {
           workspaceId: wsId,
           projectPath: null,
         });
@@ -182,7 +182,7 @@ export function SessionsOverviewWindow(p: Props) {
       // again. A failed connect is shown as the error it is. Local machines
       // make `workspace_ensure_connected` a no-op.
       if (list.length === 0) {
-        await invoke("workspace_ensure_connected", { workspaceId: wsId });
+        await backend.call("workspace_ensure_connected", { workspaceId: wsId });
         if (id !== reqId) return;
         list = await listOnce();
       }

@@ -296,11 +296,28 @@ fn hash_bundle(diff_text: &str, files: &[StatusEntry], branch: &Option<String>) 
     h.finish()
 }
 
+/// Cut `s` to at most `cap` bytes, backing up to a char boundary (String::truncate panics mid-char).
+fn truncate_at_char_boundary(s: &mut String, cap: usize) {
+    if s.len() <= cap {
+        return;
+    }
+    let mut end = cap;
+    while !s.is_char_boundary(end) {
+        end -= 1; // 0 is always a boundary, so this terminates
+    }
+    s.truncate(end);
+}
+
+fn cap_untracked(mut chunk: String) -> String {
+    truncate_at_char_boundary(&mut chunk, UNTRACKED_BYTES_CAP);
+    chunk
+}
+
 fn cap_diff(mut text: String) -> (String, bool) {
     if text.len() <= DIFF_TEXT_CAP {
         return (text, false);
     }
-    text.truncate(DIFF_TEXT_CAP);
+    truncate_at_char_boundary(&mut text, DIFF_TEXT_CAP);
     text.push_str("\n… ymux: output truncated\n");
     (text, true)
 }
@@ -412,11 +429,7 @@ async fn fetch_bundle_local(cwd: &str, source: &DiffSource) -> Result<Fetched, S
             ])
             .collect();
         if let Ok(ur) = run_git_local_raw(&top, &ua).await {
-            let mut chunk = ur.out;
-            if chunk.len() > UNTRACKED_BYTES_CAP {
-                chunk.truncate(UNTRACKED_BYTES_CAP);
-            }
-            diff_text.push_str(&chunk);
+            diff_text.push_str(&cap_untracked(ur.out));
         }
     }
 
@@ -879,6 +892,37 @@ mod tests {
         let (small, trunc2) = cap_diff("hello".to_string());
         assert!(!trunc2);
         assert_eq!(small, "hello");
+    }
+
+    // pins: a multi-byte char straddling DIFF_TEXT_CAP must not panic the truncate
+    #[test]
+    fn cap_diff_multibyte_straddling_cap() {
+        let mut s = "x".repeat(DIFF_TEXT_CAP - 1);
+        s.push('é'); // 2 bytes: spans the cap boundary
+        s.push_str("tail");
+        let (out, trunc) = cap_diff(s);
+        assert!(trunc);
+        assert!(out.ends_with("\n… ymux: output truncated\n"));
+        assert!(out.len() <= DIFF_TEXT_CAP + "\n… ymux: output truncated\n".len());
+    }
+
+    // pins: same boundary rule for the per-file untracked cap
+    #[test]
+    fn cap_untracked_multibyte_straddling_cap() {
+        let mut s = "x".repeat(UNTRACKED_BYTES_CAP - 1);
+        s.push('é');
+        let out = cap_untracked(s);
+        assert!(out.len() <= UNTRACKED_BYTES_CAP);
+        assert_eq!(out.len(), UNTRACKED_BYTES_CAP - 1);
+    }
+
+    // pins: ASCII input still cuts at exactly the cap (behaviour unchanged)
+    #[test]
+    fn cap_diff_ascii_unchanged() {
+        let (out, trunc) = cap_diff("x".repeat(DIFF_TEXT_CAP + 5));
+        assert!(trunc);
+        assert_eq!(out.len(), DIFF_TEXT_CAP + "\n… ymux: output truncated\n".len());
+        assert_eq!(cap_untracked("y".repeat(UNTRACKED_BYTES_CAP + 5)).len(), UNTRACKED_BYTES_CAP);
     }
 
     // Real git: the local bundle sees an unstaged change AND an untracked

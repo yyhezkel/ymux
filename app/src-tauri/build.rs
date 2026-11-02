@@ -1,4 +1,5 @@
 fn main() {
+    check_staged_resources();
     emit_build_metadata();
     // Phase 65 (build reliability): re-run the build script — and thus
     // re-embed the frontend via generate_context! — whenever the built
@@ -8,6 +9,29 @@ fn main() {
     // appeared). Belt-and-suspenders over tauri_build's own watching.
     println!("cargo:rerun-if-changed=../dist");
     tauri_build::build()
+}
+
+// Fail fast when the gitignored staged CLI is absent (fresh checkout or
+// worktree). Without it tauri_build / include_bytes! die later with an
+// opaque "resource path doesn't exist" error. Windows stages
+// `ymux-cli.exe`, macOS stages `ymux-cli`; either satisfies the build.
+fn check_staged_resources() {
+    let resources = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("resources");
+    let candidates = [resources.join("ymux-cli.exe"), resources.join("ymux-cli")];
+    for path in &candidates {
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    if candidates.iter().any(|p| p.is_file()) {
+        return;
+    }
+    eprintln!(
+        "error: staged CLI missing: neither {} nor {} exists.\n\
+         These files are gitignored build outputs, so a fresh checkout or worktree lacks them.\n\
+         Run `npm run build:linux-cli` from `app/` first, then rebuild.",
+        candidates[0].display(),
+        candidates[1].display()
+    );
+    std::process::exit(1);
 }
 
 // Phase 8.E: emit `YMUX_GIT_HASH` and `YMUX_BUILD_TIME` so the dev

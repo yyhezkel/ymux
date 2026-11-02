@@ -161,7 +161,10 @@ fn pct_u32(v: f32) -> u32 {
 /// Take a full snapshot. CPU % / network bps need a diff → we sleep
 /// briefly on the first ever call (or if the caller polled faster than
 /// `MINIMUM_CPU_UPDATE_INTERVAL`), otherwise the delta is the poll gap.
-pub fn snapshot() -> Result<Snapshot, String> {
+///
+/// `include_top = false` skips the per-process refresh + sort (the sampler
+/// never stores top processes, and that walk is the expensive phase).
+pub fn snapshot(include_top: bool) -> Result<Snapshot, String> {
     let mut guard = shared()
         .lock()
         .map_err(|e| format!("insights_local snapshot: mutex poisoned: {e}"))?;
@@ -184,11 +187,13 @@ pub fn snapshot() -> Result<Snapshot, String> {
     let interval_secs = guard.last_refresh.elapsed().as_secs_f64().max(0.001);
     guard.sys.refresh_cpu_usage();
     guard.sys.refresh_memory();
-    guard.sys.refresh_processes_specifics(
-        ProcessesToUpdate::All,
-        true,
-        ProcessRefreshKind::new().with_cpu().with_memory(),
-    );
+    if include_top {
+        guard.sys.refresh_processes_specifics(
+            ProcessesToUpdate::All,
+            true,
+            ProcessRefreshKind::new().with_cpu().with_memory(),
+        );
+    }
     // sysinfo 0.32: Networks::refresh() takes no args; interface add/remove
     // is picked up by refresh_list(), which we don't need mid-poll (an added
     // Wi-Fi doesn't matter until the next full snapshot).
@@ -244,17 +249,21 @@ pub fn snapshot() -> Result<Snapshot, String> {
         })
         .collect();
 
-    let mut procs: Vec<TopProc> = guard
-        .sys
-        .processes()
-        .iter()
-        .map(|(pid, p)| TopProc {
-            pid: pid.as_u32() as i32,
-            name: p.name().to_string_lossy().to_string(),
-            cpu: p.cpu_usage().round() as u32,
-            rss: p.memory(),
-        })
-        .collect();
+    let mut procs: Vec<TopProc> = if include_top {
+        guard
+            .sys
+            .processes()
+            .iter()
+            .map(|(pid, p)| TopProc {
+                pid: pid.as_u32() as i32,
+                name: p.name().to_string_lossy().to_string(),
+                cpu: p.cpu_usage().round() as u32,
+                rss: p.memory(),
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Sort by CPU desc, RSS desc as tiebreaker so idle processes rank last.
     procs.sort_by(|a, b| b.cpu.cmp(&a.cpu).then(b.rss.cmp(&a.rss)));
     procs.truncate(20);
@@ -599,7 +608,7 @@ pub fn logs_tail(limit: usize) -> Result<LogsResp, String> {
 pub async fn insights_local_current() -> Result<String, String> {
     // sysinfo is sync + does file I/O — bounce to spawn_blocking so we
     // don't stall the Tauri runtime while walking /proc equivalents.
-    let snap = tokio::task::spawn_blocking(snapshot)
+    let snap = tokio::task::spawn_blocking(|| snapshot(true))
         .await
         .map_err(|e| format!("insights_local: join: {e}"))??;
     serde_json::to_string(&snap).map_err(|e| format!("insights_local serialize: {e}"))
@@ -613,7 +622,7 @@ pub async fn insights_local_docker() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn insights_local_processes(limit: u32) -> Result<String, String> {
-    let mut snap = tokio::task::spawn_blocking(snapshot)
+    let mut snap = tokio::task::spawn_blocking(|| snapshot(true))
         .await
         .map_err(|e| format!("insights_local processes: join: {e}"))??;
     let n = (limit as usize).clamp(1, 200);
@@ -645,14 +654,202 @@ pub async fn insights_local_docker_action(
     docker_action(&container_id, &action).await
 }
 
-/// `/analytics` — the Monitor's Analytics tab aggregates the metric history the
-/// remote daemon keeps in SQLite (7-day retention). A local workspace has no
-/// daemon and no store: `insights_local` samples on demand and persists
-/// nothing, so there is no history to roll up. Answer with an explicit marker
-/// rather than an error string, so the panel can explain itself instead of
-/// showing a raw "unsupported path" message.
-fn insights_local_analytics() -> Result<String, String> {
-    Ok(r#"{"unavailable":"local"}"#.to_string())
+/// `/analytics` — aggregates the local SQLite history the sampler writes
+/// (same report shape and 7-day retention as the remote daemon).
+async fn insights_local_analytics(query: &str) -> Result<String, String> {
+    let (since, until, points) = parse_analytics_query(query, unix_now());
+    let report = tokio::task::spawn_blocking(move || {
+        let store = crate::insights_store::Store::open_default()
+            .map_err(|e| format!("local metrics store unavailable: {e}"))?;
+        store
+            .analytics(since, until, points)
+            .map_err(|e| format!("local analytics query failed: {e}"))
+    })
+    .await
+    .map_err(|e| format!("insights_local analytics: join: {e}"))??;
+    serde_json::to_string(&report).map_err(|e| format!("insights_local analytics: encode: {e}"))
+}
+
+const ANALYTICS_MAX_SPAN_S: i64 = 7 * 24 * 3600;
+const ANALYTICS_MIN_SPAN_S: i64 = 5 * 60;
+
+/// Clamp `/analytics` query params exactly as `handleAnalytics` in analytics.go.
+fn parse_analytics_query(query: &str, now: i64) -> (i64, i64, i64) {
+    let get = |key: &str| -> Option<i64> {
+        query.split('&').find_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            if k == key { v.parse().ok() } else { None }
+        })
+    };
+    let until = match get("until") {
+        Some(u) if u > 0 && u <= now => u,
+        _ => now,
+    };
+    let mut since = match get("since") {
+        Some(s) if s > 0 => s,
+        _ => until - 24 * 3600,
+    };
+    since = since.max(until - ANALYTICS_MAX_SPAN_S);
+    since = since.min(until - ANALYTICS_MIN_SPAN_S);
+    let points = get("points").filter(|p| *p > 0).unwrap_or(120).clamp(20, 400);
+    (since, until, points)
+}
+
+// ─── Persistent sampler (feeds insights_store for /analytics) ─────────
+
+const SAMPLE_EVERY: Duration = Duration::from_secs(5);
+const SWEEP_EVERY: Duration = Duration::from_secs(3600);
+/// Docker list+stats is the slow phase: every 6th tick (30 s), carried
+/// forward in between — same cadence as the remote sampler.
+const DOCKER_EVERY: u64 = 6;
+
+/// A workspace with no connection is a legacy Local one (see
+/// `Workspace::connection`); WSL is rewritten to Local on load.
+fn has_local_workspace(workspaces: &[crate::Workspace]) -> bool {
+    workspaces.iter().any(|w| {
+        matches!(
+            w.connection,
+            None | Some(crate::Connection::Local { .. })
+        )
+    })
+}
+
+fn is_loopback_iface(name: &str) -> bool {
+    name == "lo" || name.to_ascii_lowercase().contains("loopback")
+}
+
+/// Sum of rx/tx bps over non-loopback interfaces.
+fn net_totals(net: &[NetMetric]) -> (u64, u64) {
+    net.iter()
+        .filter(|n| !is_loopback_iface(&n.iface))
+        .fold((0, 0), |(rx, tx), n| {
+            (rx.saturating_add(n.rx_bps), tx.saturating_add(n.tx_bps))
+        })
+}
+
+fn build_sample(
+    ts: i64,
+    snap: &Snapshot,
+    docker: &[crate::insights_store::DockerSample],
+) -> crate::insights_store::Sample {
+    use crate::insights_store::{DiskSample, Sample};
+    let (rx, tx) = net_totals(&snap.net);
+    let to_i64 = |v: u64| i64::try_from(v).unwrap_or(i64::MAX);
+    Sample {
+        ts,
+        cpu_pct: f64::from(snap.cpu.pct),
+        load1: snap.cpu.load.first().copied().map(f64::from).unwrap_or(0.0),
+        mem_used: to_i64(snap.mem.used),
+        mem_total: to_i64(snap.mem.total),
+        swap_used: to_i64(snap.mem.swap_used),
+        net_rx_bps: to_i64(rx),
+        net_tx_bps: to_i64(tx),
+        disks: snap
+            .disks
+            .iter()
+            .map(|d| DiskSample {
+                mount: d.mount.clone(),
+                used: to_i64(d.used),
+                total: to_i64(d.total),
+            })
+            .collect(),
+        docker: docker.to_vec(),
+    }
+}
+
+/// Docker list → store rows. Any failure or unavailable daemon → empty.
+async fn docker_samples() -> Vec<crate::insights_store::DockerSample> {
+    match docker_snapshot().await {
+        Ok(d) if d.available => d
+            .containers
+            .into_iter()
+            .map(|c| crate::insights_store::DockerSample {
+                cid: c.id,
+                name: c.name,
+                cpu_pct: f64::from(c.cpu_pct),
+                mem_used: i64::try_from(c.mem_used).unwrap_or(i64::MAX),
+                state: c.state,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn unix_now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
+}
+
+/// Spawn the 5 s sampler that persists local metrics for `/analytics`.
+/// sysinfo and SQLite both run on `spawn_blocking`; ticks are skipped while
+/// no Local workspace exists.
+pub fn spawn_sampler(state: crate::AppState) {
+    tauri::async_runtime::spawn(async move {
+        let store = match tokio::task::spawn_blocking(crate::insights_store::Store::open_default).await {
+            Ok(Ok(s)) => std::sync::Arc::new(s),
+            Ok(Err(e)) => {
+                crate::log_warn("INSIGHTS-LOCAL", &format!("sampler disabled: store open failed: {e}"));
+                return;
+            }
+            Err(e) => {
+                crate::log_warn("INSIGHTS-LOCAL", &format!("sampler disabled: store open join: {e}"));
+                return;
+            }
+        };
+        let sweep = |store: std::sync::Arc<crate::insights_store::Store>| async move {
+            match tokio::task::spawn_blocking(move || store.sweep(unix_now())).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => crate::log_warn("INSIGHTS-LOCAL", &format!("sweep failed: {e}")),
+                Err(e) => crate::log_warn("INSIGHTS-LOCAL", &format!("sweep join: {e}")),
+            }
+        };
+        sweep(store.clone()).await;
+        crate::log_info("INSIGHTS-LOCAL", "sampler started (5s)");
+
+        let mut interval = tokio::time::interval(SAMPLE_EVERY);
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let mut last_sweep = Instant::now();
+        let mut sampled: u64 = 0;
+        let mut docker: Vec<crate::insights_store::DockerSample> = Vec::new();
+        loop {
+            interval.tick().await;
+            let any_local = match state.workspaces.lock() {
+                Ok(f) => has_local_workspace(&f.workspaces),
+                Err(_) => false,
+            };
+            if !any_local {
+                continue;
+            }
+            let snap = match tokio::task::spawn_blocking(|| snapshot(false)).await {
+                Ok(Ok(s)) => s,
+                Ok(Err(e)) => {
+                    crate::log_warn("INSIGHTS-LOCAL", &format!("sample failed: {e}"));
+                    continue;
+                }
+                Err(e) => {
+                    crate::log_warn("INSIGHTS-LOCAL", &format!("sample join: {e}"));
+                    continue;
+                }
+            };
+            if sampled % DOCKER_EVERY == 0 {
+                docker = docker_samples().await;
+            }
+            sampled = sampled.wrapping_add(1);
+            let sample = build_sample(unix_now(), &snap, &docker);
+            let st = store.clone();
+            match tokio::task::spawn_blocking(move || st.insert(&sample)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => crate::log_warn("INSIGHTS-LOCAL", &format!("insert failed: {e}")),
+                Err(e) => crate::log_warn("INSIGHTS-LOCAL", &format!("insert join: {e}")),
+            }
+            if last_sweep.elapsed() >= SWEEP_EVERY {
+                last_sweep = Instant::now();
+                sweep(store.clone()).await;
+            }
+        }
+    });
 }
 
 // ─── Internal router used by addons::insights_fetch ───────────────────
@@ -668,7 +865,7 @@ pub async fn route_path(path: &str) -> Result<String, String> {
     };
     match base {
         "/current" => insights_local_current().await,
-        "/analytics" => insights_local_analytics(),
+        "/analytics" => insights_local_analytics(query).await,
         "/claude-usage" => crate::claude_usage_local::route(query),
         "/docker" => insights_local_docker().await,
         "/hygiene" => insights_local_hygiene().await,
@@ -703,7 +900,7 @@ mod tests {
     #[test]
     fn snapshot_returns_nonzero_cpu_after_workload() {
         // Two calls: the first primes sysinfo, the second reports real CPU %.
-        let _ = snapshot().expect("first snapshot");
+        let _ = snapshot(true).expect("first snapshot");
         // Busy-loop briefly so at least one core reports non-zero usage.
         let end = std::time::Instant::now() + std::time::Duration::from_millis(400);
         let mut acc: u64 = 0;
@@ -711,7 +908,7 @@ mod tests {
             acc = acc.wrapping_add(1);
         }
         std::hint::black_box(acc);
-        let s = snapshot().expect("second snapshot");
+        let s = snapshot(true).expect("second snapshot");
         assert!(s.mem.total > 0, "total memory should be non-zero");
         assert!(!s.cpu.per_core.is_empty(), "per_core should be populated");
         // pct <= 100 by construction (clamped); just make sure the field
@@ -735,6 +932,26 @@ mod tests {
     }
 
     #[test]
+    fn route_analytics_clamps_query() {
+        // Pins: Go-parity clamps; a drift would make local ranges differ from remote.
+        let now = 1_000_000_000;
+        // absent → 24h window, 120 points
+        assert_eq!(parse_analytics_query("", now), (now - 86400, now, 120));
+        // future until → now; garbage ignored
+        assert_eq!(parse_analytics_query("until=9999999999&since=x", now), (now - 86400, now, 120));
+        // since older than 7d → clamped
+        let (s, _, _) = parse_analytics_query("since=1", now);
+        assert_eq!(s, now - 7 * 86400);
+        // since too close → 5 min min span
+        let (s, _, _) = parse_analytics_query(&format!("since={}", now - 10), now);
+        assert_eq!(s, now - 300);
+        // points clamps
+        assert_eq!(parse_analytics_query("points=5", now).2, 20);
+        assert_eq!(parse_analytics_query("points=9999", now).2, 400);
+        assert_eq!(parse_analytics_query("points=-3", now).2, 120);
+    }
+
+    #[test]
     fn route_rejects_unknown_paths() {
         // Sync-block a small future so we don't need tokio in this test.
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -751,5 +968,70 @@ mod tests {
         assert_eq!(h.duplicate_count, 0);
         assert!(h.port_watchers.is_empty());
         assert!(h.orphan_sessions.is_empty());
+    }
+
+    fn net(iface: &str, rx: u64, tx: u64) -> NetMetric {
+        NetMetric { iface: iface.into(), rx_bps: rx, tx_bps: tx }
+    }
+
+    #[test]
+    fn net_totals_skips_loopback() {
+        // Pins: loopback traffic must not inflate the stored net bps.
+        let v = vec![
+            net("lo", 1000, 1000),
+            net("Loopback Pseudo-Interface 1", 500, 500),
+            net("eth0", 10, 20),
+            net("wlan0", 1, 2),
+        ];
+        assert_eq!(net_totals(&v), (11, 22));
+        assert_eq!(net_totals(&[]), (0, 0));
+    }
+
+    #[test]
+    fn has_local_workspace_matches_none_and_local_only() {
+        // Pins: SSH-only installs must not run the sampler.
+        let mk = |c: Option<crate::Connection>| {
+            let mut w: crate::Workspace = serde_json::from_str(r#"{"id":"a","name":"a"}"#).unwrap();
+            w.connection = c;
+            w
+        };
+        let ssh = crate::Connection::Ssh {
+            host: "h".into(),
+            user: "u".into(),
+            port: 22,
+            key_path: None,
+        };
+        assert!(!has_local_workspace(&[]));
+        assert!(!has_local_workspace(&[mk(Some(ssh.clone()))]));
+        assert!(has_local_workspace(&[mk(Some(ssh)), mk(None)]));
+        assert!(has_local_workspace(&[mk(Some(crate::Connection::Local { shell: None }))]));
+    }
+
+    #[test]
+    fn snapshot_without_top_has_no_processes() {
+        // Pins: include_top=false skips the process walk.
+        let s = snapshot(false).expect("snapshot");
+        assert!(s.top.is_empty());
+    }
+
+    #[test]
+    fn build_sample_maps_snapshot() {
+        // Pins: Snapshot → store Sample field mapping (load[0], net sum, disks).
+        let snap = Snapshot {
+            ts: 0,
+            cpu: CpuMetric { pct: 42, per_core: vec![], load: vec![1.5, 0.0, 0.0] },
+            mem: MemMetric { total: 100, used: 40, cached: 0, swap_used: 7 },
+            disks: vec![DiskMetric { mount: "/".into(), total: 10, used: 4, pct: 40 }],
+            net: vec![net("lo", 9, 9), net("eth0", 3, 4)],
+            docker_running: 0,
+            docker_total: 0,
+            top: vec![],
+        };
+        let s = build_sample(1234, &snap, &[]);
+        assert_eq!((s.ts, s.cpu_pct, s.load1), (1234, 42.0, 1.5));
+        assert_eq!((s.mem_used, s.mem_total, s.swap_used), (40, 100, 7));
+        assert_eq!((s.net_rx_bps, s.net_tx_bps), (3, 4));
+        assert_eq!(s.disks.len(), 1);
+        assert_eq!(s.disks[0].used, 4);
     }
 }

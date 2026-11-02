@@ -1,6 +1,5 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import { t } from "./i18n";
 import { createLogger } from "./logger";
 
@@ -33,7 +32,7 @@ export function SshKeyOfferModal() {
 
   let unlisten: UnlistenFn | null = null;
   onMount(async () => {
-    unlisten = await listen<OfferPayload>("ssh-key-offer", (e) => {
+    unlisten = await backend.on<OfferPayload>("ssh-key-offer", (e) => {
       setError(null);
       setSuccess(null);
       setPassword("");
@@ -54,7 +53,7 @@ export function SshKeyOfferModal() {
     setBusy(true);
     setError(null);
     try {
-      await invoke<string>("ssh_key_generate_and_install", {
+      await backend.call<string>("ssh_key_generate_and_install", {
         workspaceId: o.workspace_id,
         paneId: o.pane_id,
         sshUser: o.ssh_user,
@@ -76,7 +75,7 @@ export function SshKeyOfferModal() {
 
   const dismiss = async () => {
     try {
-      await invoke("ssh_key_offer_dismiss", { dontShowAgain: dontShow() });
+      await backend.call("ssh_key_offer_dismiss", { dontShowAgain: dontShow() });
     } catch (e) {
       log.warn("ssh_key_offer_dismiss failed", e);
     }
@@ -92,7 +91,7 @@ export function SshKeyOfferModal() {
     const o = offer();
     if (!o) return;
     try {
-      await invoke("workspace_split", {
+      await backend.call("workspace_split", {
         workspaceId: o.workspace_id,
         paneId: o.pane_id,
         direction: "horizontal",

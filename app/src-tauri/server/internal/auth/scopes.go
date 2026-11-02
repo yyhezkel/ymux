@@ -24,9 +24,21 @@ const (
 	ScopeFilesRead      Scope = "files:read"
 	ScopeFilesWrite     Scope = "files:write"
 	ScopeInsightsRead   Scope = "insights:read"
+
+	// ScopeShellAttach grants a real terminal on this machine — listing,
+	// creating, renaming and killing tmux sessions, and attaching a PTY to one
+	// (internal/term). It is DELIBERATELY NOT in AllScopes: ParseScopes fails
+	// open to AllScopes for "", "all" and anything malformed, so every scope in
+	// that list is reachable by a device that was never explicitly restricted.
+	// A leaked token must not become a shell over the internet, so this one is
+	// only ever held by a device whose grants name it explicitly. It is valid
+	// (grantable + storable), just never implied.
+	ScopeShellAttach Scope = "shell:attach"
 )
 
-// AllScopes is every known grant — also what an unrestricted device holds.
+// AllScopes is every grant a device holds when it has NOT been explicitly
+// restricted — i.e. the fail-open set. ScopeShellAttach is not a member; see
+// its doc comment.
 var AllScopes = []Scope{
 	ScopeWorkspaceRead, ScopeWorkspaceWrite,
 	ScopeSessionRead, ScopeSessionWrite,
@@ -35,9 +47,15 @@ var AllScopes = []Scope{
 	ScopeInsightsRead,
 }
 
-// ValidScope reports whether s is a known scope.
+// GrantableScopes is every scope an owner may grant: AllScopes plus the
+// opt-in-only ones. ValidScope reads this; ParseScopes' fail-open default
+// reads AllScopes. Keeping the two lists separate is what makes
+// "explicitly granted" different from "not restricted".
+var GrantableScopes = append(append([]Scope{}, AllScopes...), ScopeShellAttach)
+
+// ValidScope reports whether s is a grantable scope.
 func ValidScope(s string) bool {
-	for _, k := range AllScopes {
+	for _, k := range GrantableScopes {
 		if Scope(s) == k {
 			return true
 		}
@@ -75,20 +93,42 @@ func HasScope(stored string, want Scope) bool {
 }
 
 // NormalizeScopes validates + serializes a requested grant list to the stored
-// JSON form. Unknown scopes are dropped. An empty/all-equivalent result stores
-// "all". Returns the canonical stored string.
+// JSON form. Unknown scopes are dropped. An empty result stores "all".
+// Returns the canonical stored string.
+//
+// A list that covers exactly AllScopes also collapses to "all" — the two mean
+// the same thing. A list carrying an opt-in-only scope (shell:attach) never
+// collapses, because "all" does NOT imply it: it is always stored explicitly.
 func NormalizeScopes(req []string) string {
 	seen := map[string]bool{}
 	var keep []string
+	optIn := false
 	for _, s := range req {
-		if ValidScope(s) && !seen[s] {
-			seen[s] = true
-			keep = append(keep, s)
+		if !ValidScope(s) || seen[s] {
+			continue
+		}
+		seen[s] = true
+		keep = append(keep, s)
+		if !inAllScopes(s) {
+			optIn = true
 		}
 	}
-	if len(keep) == 0 || len(keep) == len(AllScopes) {
+	if len(keep) == 0 {
+		return "all"
+	}
+	if !optIn && len(keep) == len(AllScopes) {
 		return "all"
 	}
 	b, _ := json.Marshal(keep)
 	return string(b)
+}
+
+// inAllScopes reports whether s is part of the fail-open set.
+func inAllScopes(s string) bool {
+	for _, k := range AllScopes {
+		if Scope(s) == k {
+			return true
+		}
+	}
+	return false
 }

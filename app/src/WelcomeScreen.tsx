@@ -1,4 +1,6 @@
+import { Show } from "solid-js";
 import { t } from "./i18n";
+import { backend } from "./backend";
 
 // Design Pass 01 (#1): the empty-workspace welcome. Shown in the main area
 // when there are zero workspaces — replaces the old bare `<p>` + button.
@@ -21,24 +23,29 @@ export function WelcomeScreen(p: Props) {
         <p class="welcome-subtitle">{t("ws.welcome.subtitle")}</p>
 
         <div class="welcome-cards">
-          <button class="welcome-card" onClick={p.onCreate}>
-            <span class="welcome-card-icon">▮</span>
-            <span class="welcome-card-title">{t("ws.welcome.local.title")}</span>
-            <span class="welcome-card-desc">{t("ws.welcome.local.desc")}</span>
-          </button>
+          {/* The browser host (Phase 109) creates a workspace on the daemon's box here. */}
+          <Show when={backend.can("localPanes") || backend.kind === "web"}>
+            <button class="welcome-card" onClick={p.onCreate}>
+              <span class="welcome-card-icon">▮</span>
+              <span class="welcome-card-title">{t("ws.welcome.local.title")}</span>
+              <span class="welcome-card-desc">{t("ws.welcome.local.desc")}</span>
+            </button>
+          </Show>
 
-          <button class="welcome-card featured" onClick={p.onConnectSsh}>
-            <span class="welcome-card-icon">🌐</span>
-            <span class="welcome-card-title">{t("ws.welcome.ssh.title")}</span>
-            <span class="welcome-card-desc">{t("ws.welcome.ssh.desc")}</span>
-            <span class="welcome-card-badge">{t("ws.welcome.ssh.badge")}</span>
-          </button>
+          <Show when={backend.can("ssh")}>
+            <button class="welcome-card featured" onClick={p.onConnectSsh}>
+              <span class="welcome-card-icon">🌐</span>
+              <span class="welcome-card-title">{t("ws.welcome.ssh.title")}</span>
+              <span class="welcome-card-desc">{t("ws.welcome.ssh.desc")}</span>
+              <span class="welcome-card-badge">{t("ws.welcome.ssh.badge")}</span>
+            </button>
 
-          <button class="welcome-card" onClick={p.onProvision}>
-            <span class="welcome-card-icon">🚀</span>
-            <span class="welcome-card-title">{t("ws.welcome.provision.title")}</span>
-            <span class="welcome-card-desc">{t("ws.welcome.provision.desc")}</span>
-          </button>
+            <button class="welcome-card" onClick={p.onProvision}>
+              <span class="welcome-card-icon">🚀</span>
+              <span class="welcome-card-title">{t("ws.welcome.provision.title")}</span>
+              <span class="welcome-card-desc">{t("ws.welcome.provision.desc")}</span>
+            </button>
+          </Show>
         </div>
 
         <div class="welcome-hint">

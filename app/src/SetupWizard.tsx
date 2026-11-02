@@ -1,4 +1,5 @@
 import { createSignal, Show } from "solid-js";
+import { backend } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { createLogger } from "./logger";
@@ -184,7 +185,7 @@ export function SetupWizard(p: Props) {
             {/* Level 1: where should this workspace run? */}
             <div class="provisioning-mode">
               <p class="settings-hint">{t("setup.target.label")}</p>
-              {modeCard({
+              {backend.can("ssh") && modeCard({
                 active: target() === "server",
                 onPick: () => pickTarget("server"),
                 icon: () => <IconCloud size={14} />,
@@ -192,7 +193,7 @@ export function SetupWizard(p: Props) {
                 hint: t("setup.target.server.hint"),
                 radioGroup: "setup-target",
               })}
-              {modeCard({
+              {backend.can("localPanes") && modeCard({
                 active: target() === "local",
                 onPick: () => pickTarget("local"),
                 icon: () => <IconTerminal size={14} />,

@@ -6,7 +6,7 @@ import {
   onMount,
   Show,
 } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import type { Workspace } from "./types";
 import { t } from "./i18n";
 import type { Geometry } from "./floatingWindow";
@@ -296,7 +296,7 @@ export function createBrowserChrome(p: BrowserChromeProps): BrowserChromeApi {
     const id = shownWsId;
     if (!id) return;
     shownWsId = null;
-    void invoke("workspace_browser_hide", { workspaceId: id }).catch(() => {});
+    void backend.call("workspace_browser_hide", { workspaceId: id }).catch(() => {});
   };
 
   // Track the workspace by ID (object identity churns on every file()
@@ -402,7 +402,7 @@ export function createBrowserChrome(p: BrowserChromeProps): BrowserChromeApi {
     // → reposition only.
     const urlChanged = lastShownUrl !== null && lastShownUrl !== url;
     lastShownUrl = url;
-    void invoke("workspace_browser_show", {
+    void backend.call("workspace_browser_show", {
       workspaceId: id,
       url,
       x: s.x,
@@ -416,7 +416,7 @@ export function createBrowserChrome(p: BrowserChromeProps): BrowserChromeApi {
         // the single writer of `shownWsId` (Phase 85.B).
         shownWsId = id;
         if (urlChanged) {
-          return invoke("workspace_browser_navigate", { workspaceId: id, url });
+          return backend.call("workspace_browser_navigate", { workspaceId: id, url });
         }
       })
       .catch((err) => log.error("workspace_browser_show failed", err));
@@ -557,7 +557,7 @@ export function createBrowserChrome(p: BrowserChromeProps): BrowserChromeApi {
   const openDevtools = () => {
     const wsId = p.workspace?.id;
     if (!wsId) return;
-    invoke<void>("workspace_browser_open_devtools", { workspaceId: wsId }).catch(
+    backend.call<void>("workspace_browser_open_devtools", { workspaceId: wsId }).catch(
       (e: unknown) => {
         log.warn(`open devtools failed: ${String(e)}`);
         flashChromeError(t("browser.devtools.failed", { msg: String(e) }));

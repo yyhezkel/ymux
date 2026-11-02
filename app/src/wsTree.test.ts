@@ -17,6 +17,7 @@ const node = (id: string, parent: string | null, extra: Partial<TreeNode> = {}):
   id,
   parent_id: parent,
   is_project_root: false,
+  is_folder: false,
   sort_order: null,
   ...extra,
 });
@@ -38,6 +39,8 @@ test("a root and a pinned folder are headers; everything else is a screen", () =
   assert.equal(isHeader(node("srv", null)), true);
   assert.equal(isHeader(node("app", "srv", { is_project_root: true })), true);
   assert.equal(isHeader(node("wt", "app")), false);
+  // stored flag: a pinned non-git folder has no is_project_root yet must stay a header
+  assert.equal(isHeader(node("doc", "srv", { is_folder: true })), true);
   assert.equal(isHeader(node("row", "srv")), false);
 });
 

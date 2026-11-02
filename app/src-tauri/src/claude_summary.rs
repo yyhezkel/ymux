@@ -17,9 +17,9 @@
 //!
 //! Both paths run the actual `claude` CLI on the *remote* server
 //! (via a fresh exec channel) because that's where the transcripts
-//! live and the Claude binary is already authenticated. Local-only
-//! workspaces fall through to a Windows-side claude.exe lookup if
-//! present.
+//! live and the Claude binary is already authenticated. SSH-only:
+//! `pick_handle` matches `Session::Ssh`, so Local/WSL workspaces
+//! error with "no active SSH session".
 
 use russh::client::Handle as SshHandle;
 use russh::ChannelMsg;

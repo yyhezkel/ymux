@@ -25,6 +25,162 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
+- **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
+  access, in the same place the mobile pairing lives, on the same logic. Checked against
+  the code: **he is right, and more of it already exists than expected.**
+- **What is already there.** `POST /api/pairing/issue` (`chat_pairing.go`) **already
+  accepts a `scopes` array** in its body and stores whatever it is given; the desktop
+  simply never sends one, so every pairing to date landed as `"all"`. The daemon already
+  mints a single-use token (48 hex chars, 5-minute TTL, hashed at rest), exposes a public
+  `/api/pairing/redeem` (the one-shot IS the credential), lists devices with their scopes,
+  renames, revokes, and has owner-only `GET/PUT /api/v2/devices/{id}/scopes`. The desktop
+  Mobile tab already generates the QR and **polls for redemption so the QR auto-closes the
+  moment the device pairs**. None of that needs rebuilding.
+- **What is actually missing — and one item is not optional.** Since Phase 95, `"all"`
+  deliberately does NOT include `shell:attach`, so a browser paired through today's flow
+  would get 403 on every terminal route. **Sending scopes at issue time is therefore
+  required for the browser to work at all**, not a nicety. Beyond that: no desktop UI
+  exists for the scopes endpoints, and the QR is unusable when the browser is on a
+  different machine than ymux.
+- **Options:**
+  - **(A) Desktop-initiated, what exists.** Add a `scopes` parameter to
+    `mobile_pairing_generate_qr`, a checkbox row on the card, and a copy button; the user
+    carries the token to the browser. Nearly free. But the token is 48 characters: fine
+    to paste when ymux is on the same machine, unusable when it is not — which is the
+    case the browser version exists for.
+  - **(B) Browser-initiated, what Yossi described. RECOMMENDED.** The browser asks, ymux
+    approves. `POST /api/pairing/request` (public) returns a short human code; the page
+    shows it and long-polls; ymux shows an approval card carrying **the same code plus the
+    requesting IP and User-Agent**; Yossi matches the two and approves, with a separate
+    `shell:attach` checkbox defaulting OFF. This is the standard device-authorization
+    shape (`gh auth login`, Apple TV, Tailscale) and it works no matter which machine the
+    browser is on. It reuses the whole device/token/scope store and mirrors the
+    `PendingRequest` winner-takes-all pattern the hook gates already use.
+- **Security, non-negotiable for (B):** the request endpoint is unauthenticated by
+  nature, so it needs rate limiting and a cap on pending requests; **the code must be
+  displayed in both places and matched by the human**, or an attacker's request could be
+  approved by mistake for one of Yossi's own; the card must show IP and User-Agent; the
+  existing 5-minute TTL carries over; and `shell:attach` is its own explicit checkbox,
+  never folded into an "approve" button.
+- **Falls out of it:** the "Mobile" tab now covers browsers too and should be renamed
+  (Devices / מכשירים), and the device list should gain a scopes editor — which is also
+  how a shell grant gets revoked without unpairing the device.
+- **DECIDED (Yossi, 2026-09-24): option B**, browser-initiated. He also drew the
+  consequence himself and it is correct: the desktop has to be open and connected for a
+  first pairing. That is not only a cost — the approval is thereby bound to someone who
+  holds SSH access to the box, which is the strongest identity in this system.
+- **Correction to the mechanism, and it changes the UX.** "The server sends the request
+  to the ymux connected over SSH" is not how the two talk today. **The daemon never
+  dials the desktop.** Every desktop→daemon call is a `curl` the DESKTOP opens on an SSH
+  exec channel (`pairing.rs::daemon_curl`); the daemon's only tunnel-facing code is a
+  LISTENER (`chat_hookrpc.go`) that the CLI dials inbound. So the server cannot push. A
+  sub-choice follows, and it decides whether an approval can reach you when no panel is
+  open:
+  - **(B1) The desktop polls** `GET /api/pairing/requests` while the Devices tab is
+    open. Exactly the shape `mobile_pairing_list_devices` already has, and the Mobile tab
+    already runs a poll loop to auto-close its QR. Cheapest. Cost: the approval exists
+    only while you are looking at that tab — open the browser first and nothing tells
+    you, you have to go find the tab.
+  - **(B2) The daemon dials the desktop through the reverse tunnel** and pushes the
+    approval as a **blocking `feed.push`** — i.e. the browser request becomes an ordinary
+    ymux feed card with Allow/Deny, which already toasts, already works with every panel
+    closed, and is the same winner-takes-all machinery the agent hook gates use. The
+    address is already on the remote (`~/.ymux/run/last.env`, `YMUX_SOCKET_ADDR`) and the
+    daemon already implements the other half of that HMAC handshake. Cost: the daemon
+    gains an outbound client it does not have today. **Recommended** — it is the
+    difference between "an approval you must go looking for" and "an approval that finds
+    you", and it reuses a path that is already load-bearing.
+  Either way the tunnel only exists while the desktop holds an SSH session to that host,
+  so Yossi's constraint holds identically for both.
+- **Shape of the flow (common to B1 and B2), reusing the existing store:**
+  `PairedDevice.Status` is already `pending | active | revoked`. Add `requested`. The
+  browser calls a public `POST /api/pairing/request`, which mints the existing one-shot
+  token **plus a short display code**, and returns both; the desktop lists requests with
+  code + IP + User-Agent, and approving flips the row to `pending` with the chosen
+  scopes; the browser, polling, sees the flip and calls the **existing**
+  `/api/pairing/redeem` with the one-shot it already holds. No new credential mechanism
+  — the only additions are the status, a `code` column, and the request/list/approve/deny
+  endpoints. `redeemDevice` must refuse a row still in `requested`.
+- **Status:** option B locked; B1-vs-B2 open (recommendation B2). Lands in Phase D of
+  `docs/WEB-DESIGN.md`, which also still has **Q2 (web bundle delivery) open**. Phase B
+  depends on neither.
+
+### 2026-09-10 — ymux in the browser: the Go daemon becomes the brain
+- **Context:** Yossi asked what a "browser version" would mean — our server as an HTTPS
+  entry point, plus something parallel for local. Two readings were put to him:
+  "a terminal in the browser" (ttyd behind the existing `nginx-proxy`, an hour, no code
+  of ours) vs "ymux in the browser" (the full shell, panes, feed, hook gates, briefs).
+  **Decided: ymux in the browser** — the reason is full control of the presentation,
+  not being limited to the server's terminal. Design: `docs/WEB-DESIGN.md`.
+- **What it really is:** today the desktop Rust backend is the brain and the Go daemon
+  is a remote agent. A browser has no Rust, so in browser mode the daemon must absorb
+  (1) the host-relevant subset of the 184 Tauri commands and (2) the subset of the
+  `rpc_server.rs` dispatch catalog the remote CLI/hooks call back (`feed.push`,
+  `port.opened`, `set-status`, hook verbs). Without (2) there are no gates, feed or
+  traffic lights — it is the part that makes it ymux. Most of the plumbing exists:
+  nginx+LE, device tokens + scopes, the workspace events WS with `PendingRequest`
+  winner-takes-all (that IS the desktop's blocking `feed.push`), the hook listener, the
+  Files API, and `KindTerminal` already declared in `workspace/model.go` and never
+  implemented.
+- **Phases:** A daemon `terminal` kind + binary `/term` WS (tmux attach only) → B daemon
+  stores + hook bridge → C frontend `Backend` interface (`TauriBackend` first, ship the
+  desktop on it, then `WebBackend`) → D `ymux-web` add-on + pairing page → E PWA. E is
+  option **D** for the parked Android port (2026-08-23 fork-scan thread): a PWA on this
+  stack instead of a third platform.
+- **Security line (non-negotiable):** a leaked token with the wrong scope becomes a shell
+  over the internet. New scope `shell:attach`, explicitly NOT part of `AllScopes` /
+  the fail-open `"all"`; `exec` + `hygiene/kill` owner-only; redeem rate-limited; revoke
+  tears down live WS; Cloudflare Access / nginx allowlist recommended by the installer.
+- **Q1 truth model — DECIDED (Yossi, 2026-09-10): server-native workspaces, tmux
+  sessions are the shared reality** (via `session-meta.json`, the Phase-90 "session is a
+  workspace row" bridge — deleting a row kills the tmux session on the server, as it
+  does today). Mirroring the desktop's `workspaces.json` was rejected (two writers).
+- **Q5 session history — NEW (raised by Yossi with Q1): keep an ended session's
+  transcript reachable — open it to read, resume it if needed.** What the code does
+  today: the transcript is Claude's own `~/.claude/projects/<cwd>/<id>.jsonl` and
+  survives the tmux kill; what is lost is the *mapping* — `session_meta.rs::prune`
+  deletes every entry with no live `tmux ls` match on every write. The desktop's
+  resume picker (`pane_list_claude_sessions`) already scans the jsonl files, so half
+  the feature exists, unlinked from the row. **Recommendation: yes, cheap.** `prune`
+  marks `ended_at` instead of deleting (keep 90 days / N latest); an ended row stays
+  in the sidebar with **open** (transcript viewer — the daemon already parses this
+  format in `claudeusage.go`) and **resume** (`tmux new-session -s <name> -c <cwd>
+  claude --resume <id>`). Benefits the desktop too. Rule #1: the viewer renders the
+  transcript, nothing logs it. Lands in Phase B (`docs/WEB-DESIGN.md` §4.2).
+- **Q2 web bundle delivery — OPEN, expanded for Yossi.** Three options in
+  `docs/WEB-DESIGN.md` §7.1: (a) `//go:embed` — simplest to serve, but the daemon is
+  a committed 13 MB blob per arch, so every frontend fix rebakes the server and adds
+  ~26 MB of git history per PR, and the frontend's cadence is chained to the daemon's;
+  (b) **`ymux-web` add-on** — tarball bundled in `app.exe` like the CLI, uploaded over
+  the workspace SSH session to `~/.ymux/server/www/<ver>/`, sha256-gated and
+  idempotent like the CLI bootstrap, served by the daemon at `/`; offline-friendly,
+  version-aligned with the app, uses the add-on detect/update UI that exists; costs a
+  desktop for updates (the desktop is the admin — acceptable); (c) daemon
+  self-downloads from GitHub releases — headless, but adds an outbound network
+  dependency the daemon does not have and REQUIRES signature verification (a fetched
+  bundle served to the user's browser is code execution in their session).
+  **Recommendation: (b), with (c) as a later opt-in.**
+  **→ DECIDED 2026-10-05: (b).** See Decided, "Phase C plan".
+- **Q3 "local parallel" — DEFERRED (Yossi, 2026-09-10): revisit after the remote path
+  is proven end-to-end.** It means the Rust backend re-implementing the same HTTP/WS
+  API (two implementations, two languages — the macOS-branch lesson). When it comes
+  back, the candidate is the same CGO-free Go daemon running locally with the desktop
+  as one more client.
+- **Q4 desktop + browser on the same tmux session** — both see output (tmux), the hook
+  gate goes to whichever endpoint the session's `YMUX_SOCKET_ADDR` names.
+  **Accept for v1, documented.**
+- **Debt logged with it:** layout tree ops get a TS port for the web build while the
+  desktop keeps the Rust one — two implementations until the desktop moves to the TS ops.
+- **Status (2026-09-24):** **Phase A is implemented** as Phase 95 — `internal/term`
+  in the Go daemon: tmux list/create/rename/kill, a binary attach WebSocket over a
+  real PTY, session-meta labels, and the `shell:attach` scope. Server version
+  2.2.1 → 2.3.0 (and `INSIGHTS_VERSION` with it, which had drifted). Not verified
+  live — Rule #14, smoke list in FOLLOWUPS. One design change vs the doc: no
+  fan-out layer, because several clients on one tmux session is tmux's own
+  multi-client case. Q1 decided, Q3 deferred, Q5 recommended (Phase B); **Q2 still
+  awaiting Yossi's pick** — it does not block Phase B either.
+
 ### 2026-08-23 - macOS: the site's JS is dead in the in-app Browser (diagnostic build)
 - **Symptom.** On macOS the workspace Browser loads a page and renders HTML/CSS,
   but the site's own JavaScript never runs. Windows is fine, and
@@ -309,6 +465,267 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-10-07 — Phase F: the browser reaches the desktop's usability, in five PRs
+- **Decided (Yossi):** "the browser must be as usable as the desktop" — a parity pass
+  over the 134 desktop commands the browser backend did not handle. Order approved:
+  **F1** workspaces + project folders (tree, groups, order) → **F2** File Manager
+  (mkdir/rename/copy/zip, upload, drag into a pane) → **F3** panes (resume a claude
+  session, identity, smart bidi, Context Rail) → **F4** git (Diff pane, worktrees) →
+  **F5** Claude summaries / usage, tickets, skills, presets, log tail.
+- **Decided (Yossi):** "more workspaces" means more on the SAME server; a browser that
+  talks to several daemons is out of scope for F.
+- **By design, not ported:** the in-app Browser (links open a new tab), the local
+  machine (files, shells, setup wizard), SSH out / provisioning / keys, the updater,
+  font install, device-pairing admin, add-ons, local STT.
+- **Decided (Claude):** the daemon stores the tree fields opaque (`meta`) and the
+  browser owns lib.rs's semantics (`backend/web/tree.ts`) — the B5 rule for layouts,
+  applied to the tree; pre-F1 flat rows migrate to header + screen once.
+
+### 2026-10-06 — Phase E: the PWA gets real Web Push (FCM/autopush), not just in-tab notifications
+- **Decided (Yossi):** "E1+E2 together" — the installable PWA **and** background
+  notifications via Web Push, delivered even with the app closed. Accepted trade-off:
+  the daemon POSTs to the push service the browser picked (FCM on Chrome/Android), which
+  departs from internal/push's "no Firebase" rule. The payload is encrypted end to end
+  (RFC 8291); the service sees endpoint, size and timing only. The phone's own push WS
+  is unchanged.
+- **Decided (Claude):** stdlib crypto, no web-push dependency; notify on gate, Claude's
+  Notification hook (not idle_prompt) and stop, so the default `none` policy is not
+  silent; the service worker has no fetch handler / cache.
+
+### 2026-10-06 — Phase D: the web add-on ships the embedded frontend, updates on connect; shell:attach is a device checkbox
+- **Decided (Claude, verified in tauri 2.10.3 source):** the `ymux-web` add-on uploads
+  the frontend already embedded in the desktop binary (`AssetResolver::iter` for the list,
+  `get` for the decompressed bytes) — no tarball in `resources/`, no second build, the
+  browser always runs the desktop's own frontend.
+- **Decided (Yossi):** the bundle updates **automatically on connect** when a host has the
+  add-on and its version differs (like the CLI), not by hand from Add-ons.
+- **Decided (Yossi):** `shell:attach` is granted with a **checkbox in the device list**
+  (Web & devices), separate from approving the pairing card — the generic feed card keeps
+  Allow / Deny.
+- **Decided (Claude):** before D, hook routing was made to survive a daemon restart
+  (Phase 111) — every add-on update restarts the daemon.
+
+### 2026-10-05 — C5 (WebBackend) starts before the C1 + C3 desktop smoke
+- **Decided (Yossi):** "let's move on to the next stage before we do smoke tests" —
+  Phase 109 (C5) is built on top of the unmerged C1 + C3 branches instead of waiting
+  for their desktop release. Supersedes "WebBackend work starts only after it" in the
+  Phase C plan entry below. The C1 + C3 smoke still gates their merge to `main`.
+- **Decided (Claude):** a browser leaf's `pane_id` is also its tmux session's hook pane
+  id — the daemon (2.10.0) takes `pane_id` on create rather than the client rewriting
+  the leaf to a minted `term_<hex>`. Keeps the id stable across reconnects and reloads,
+  and the agent verbs (tree / split / send) keep addressing the leaf the UI drew.
+
+### 2026-10-05 — Phase C plan: C1–C3 ship in one desktop release; settings on the daemon; Q2 = (b)
+- **Context:** Phase B is merged; Phase C moves the frontend onto a `Backend` seam
+  (WEB-DESIGN §5). The plan is WEB-DESIGN §8.2: C1 seam + codemod, C2 `TermStream`,
+  C3 capabilities, C4 the daemon serves the bundle + a settings store, C5/C6 `WebBackend`.
+- **Decided (Yossi):** C1–C3 (all "desktop behaviour unchanged") ship together in **one
+  desktop release** with one Windows + Mac smoke; `WebBackend` work starts only after it.
+- **Decided (Yossi):** browser-mode **settings live on the daemon**, shared by every
+  browser — an opaque JSON document with a `version` guard (`GET/PUT /api/v2/settings`),
+  not per-browser localStorage. The daemon never parses the fields.
+- **Decided (Claude, flagged to Yossi), same day:** **C2 (`TermStream`) is dropped.** The
+  WebBackend answers the desktop's own PTY contract (`pty_write` / `pty_resize` calls,
+  `pty:data` / `pty:exit` events) over the attach WS, so App.tsx, `TerminalInstance` and
+  PopoutTerminal never change. The release before `WebBackend` is C1 + C3, and the PTY
+  hot path — the main desktop risk in the survey — is out of it.
+- **Decided (Yossi):** **Q2 = (b), the `ymux-web` add-on.** Phase C4 builds the serving
+  half in the daemon (`~/.ymux/server/www/current/` at `/`, diagnostic page at `/diag`);
+  the add-on upload is Phase D. Until then a box is loaded by hand from the CI artifact.
+### 2026-10-06 — workspace Browser webview: zero app commands
+- **Context:** FOLLOWUPS P2 (capabilities/default.json LATENT). Investigation found ymux has no app ACL manifest, so Tauri 2.10.3 never ACL-checks app commands; the `Local`-context capability only gated plugin commands. The tunneled third-party page could invoke any app command.
+- **Options:** A) label-based guard denying all app commands to `workspace-browser-*` / B) add an app ACL manifest (`permissions/`, build.rs) / C) leave as latent.
+- **Decision:** A. `ipc_guard::guarded` wraps `invoke_handler` outermost; no legitimate caller exists in that webview. B deferred: large surface, touches build.rs.
+- **Outcome / Commit:** branch feature/ymux-app-src-tauri-capabilities. Compiles untested until CI.
+### 2026-10-06 — Zellij picker rows get session-meta names (reader wired now, writer unverified)
+- **Context:** FOLLOWUPS P2 "A ZELLIJ SESSION HAS NO auto_name": `parse_zellij_sessions` hardcoded `auto_name: None`; nothing joined session-meta onto zellij rows.
+- **Options:** A) wire the reader now, track the writer separately / B) wait until the writer is verified on Windows-local zellij / C) rename zellij sessions to carry the title.
+- **Decision:** A. `list_zellij_sessions` reads `~/.ymux/session-meta.json` (fallback `~/.winmux/`) and `apply_session_meta` joins by session name (`ymux-<pane>`), same precedence as tmux; frontend already ranks label > auto_name > claude_title > name. C rejected: renaming sessions is out of scope and breaks attach-by-name.
+- **Outcome:** reader in lib.rs, vault `backend-core.md` updated. Compiles untested until CI. Open P3 in FOLLOWUPS: CLI writer for Windows-local zellij panes and prune-vs-`tmux ls` unverified.
+
+### 2026-10-06 — Claude-running flag persisted per pane (`claude_running`); stale-true accepted
+- **Context:** FOLLOWUPS P2 (reattach to a persistent session starts in the wrong bidi state until the first hook).
+- **Decision:** persist `LayoutNode::Pane.claude_running` in workspaces.json; a restoring connect seeds the TUI signal from it. Written only on transitions (connect, any Claude hook, `session-end`).
+- **Trade-off (stale-true):** Claude died while the app was closed → persisted true → shell Hebrew renders reversed after reattach. Corrected by a `session-end` hook or a fresh non-restoring connect. The title detector is gone (ticket -ts-4); do not re-add one.
+- **Limitation (O4):** when `claude_running` is never written because the ymux Claude hooks are not installed, nothing corrects it — hooks are not installed → no signal beyond the wizard's `mode=claude`.
+
+### 2026-10-06 — `bidi_reorder`: caret pinned right + half-reordered repaints are the cursed cursor — DEFERRED, documented as a known limit
+- **Context:** Under `rtl_mode="bidi_reorder"` the caret stays pinned to the right instead of tracking the text, and a partial repaint can leave a line half-reordered. Cause: `flushPending` runs `reorderRtlForDisplay` (`app/src/bidi.ts`) on each rAF chunk of the byte stream, while the TUI positions its cursor and repaints regions in columns of the UNtransformed text — two coordinate systems that diverge. `normaliseIncomingToLogical` has the same fragment limit (it sees runs between ANSI escapes, not whole lines).
+- **Precedent:** terminal-wg's BiDi proposal (https://terminal-wg.pages.freedesktop.org/bidi/) names this problem "the cursed cursor". Root cause first written up in `PROGRESS.txt`, 2026-08-19 entry (the DECISIONS entry it promised never landed; `bidi.ts` points at it — this closes that dangling pointer). NOT VERIFIED LIVE.
+- **Options:** A) schedule whole-line reassembly + cursor tracking now / B) defer, document as a known limit / C) workaround, e.g. hide the caret under `bidi_reorder` — rejected: hides one symptom, the repaint glitch remains.
+- **Decision:** B — DEFERRED. No profile defaults to `bidi_reorder` any more (see the `settings.rs` comments on the local/remote defaults), so the cost lands only on users who opt in. A real fix is its own piece of work, not an RTL bugfix rider.
+- **Requirements for a real fix:** whole-line reassembly before reordering (buffer to a full visual line, not an ANSI-escape run), and cursor tracking through the transform (map original columns to reordered columns for every cursor-position sequence).
+- **Revisit when:** a profile default returns to `bidi_reorder`; a user needs it; or xterm.js gains native BiDi.
+- **Outcome:** docs only, no source change. Known limits listed in `docs/RTL-TEST.md` § `bidi_reorder` — known limits. FOLLOWUPS entry annotated.
+
+### 2026-10-06 — Rename shims retired: emit flipped to YMUX, read arms + folder migrations kept
+- **Context:** FOLLOWUPS P1 scheduled the winmux shim removal one release after 0.5.0 (app now 0.5.1).
+- **Options:** A) drop write-side shims only, keep readers and migrations / B) drop everything incl. readers / C) keep waiting.
+- **Decision:** A. Handshake emits `YMUX-CHALLENGE` (Rust + Go together); `WINMUX_*` env dual-writes, CLI legacy adoption, legacy pipe listener, `X-Winmux-Truncated` and the `use_winmux_tmux_config` alias are gone. Readers (`WINMUX-RESPONSE`, env-file fallback, `default_pipe_name_legacy`) and the `%APPDATA%` / `~/.winmux` / `WINMUX_CONFIG_DIR` migrations stay: they cost nothing and a user can upgrade from any age.
+- **Outcome / Commit:** branch feature/ymux-crates-ymux-tunnel-src (fc83075..e213dc1). Compiles untested until CI; server blobs need a CI rebake + live smoke (FOLLOWUPS P1).
+
+### 2026-10-06 — Secret env rows (`EnvVar.secret`): values out of workspaces.json
+- **Context:** workspace env values lived in plaintext in `workspaces.json`, RPC replies and `last.env`.
+- **Options:** A) per-row `secret` flag, value in DPAPI-protected `secret-env.json` / B) whole-workspace vault / C) keep plaintext.
+- **Decision:** A. Secret values are blanked in `workspaces.json`, kept in `secret_env::SecretEnvStore`
+  (DPAPI on Windows, base64 blob per owner/key), delivered via `cmd.env` (local) or sshd `set_env` (SSH, before the
+  existing `set_env`), never typed, never in `last.env`. RPC `list/new/update-workspace` redact as a second layer.
+  Edit modal reads stored key names via `workspace_secret_env_keys`; empty value on a secret row = keep stored.
+- **Outcome / Commit:** branch feature/ymux-implament (93551ec..339f998). Compiles untested until CI.
+
+### 2026-10-05 — Phase 105: Context Rail
+- **Context:** inspired by github.com/tzafrir/human-in-the-loop (the agent hands the human
+  do / choose / answer tasks in a persistent pane; answers are typed back without blocking
+  the agent). Yossi wants to see, per Claude session, *what it is about and where it
+  stands* without reading the scrollback.
+- **Considered and rejected:** a HITL task layer (tasks from a brief's `ask`, an answer
+  outbox typed into the pane when the agent is idle, a secret heuristic, a manual
+  decisions log). Dropped mid-implementation at Yossi's call: the useful part is the
+  *context*, not another place to answer questions — the pane already is that place.
+- **Decided (Yossi):**
+  1. The "where we stand" log comes from the existing `[ymux-brief]` — no LLM, zero
+     tokens. No brief → a degraded line, never invented content.
+  2. Persist per Claude `session_id` to disk (`<config_dir>/context/sessions/`, 30-day
+     retention). **This reverses the 2026-09-01 BRIEF decision that briefs live in memory
+     only** — for the per-session log and the session's first prompt. The Queue's
+     per-pane `AppState.briefs` stays in memory.
+  3. Auto-injection back into the agent stays in scope: Phase 105.C (SessionStart
+     `additionalContext` on compact/resume/startup, capped, toggle in Settings).
+  4. The rail shows the current workspace in full, plus a one-line strip for the other
+     workspaces that need you.
+- **2026-10-05 follow-up: focused pane only, others strip removed.** Yossi: each window
+  shows only its own context. The rail now renders a single card, for the session of
+  the **focused pane** (`activePaneId`), plus a collapsed "earlier sessions in this
+  pane" toggle. The workspace-wide session list and the "N sessions waiting / stuck in
+  M other workspaces" strip are gone, together with their UI, i18n keys, model helper
+  (`othersSummary`) and tests. Empty states are a one-line hint. Injection (105.C) is
+  unchanged.
+- **2026-10-05 follow-up: card modeled on HITL task card.** Yossi found the rail still
+  long and unclear and approved a layout modeled on tzafrir/human-in-the-loop's task
+  card. It shows fixed labels with one short line each: 🎯 goal + *Done when*, *Now*
+  (light + age), *Next*, *Waiting on you* (ask · rec), the last 3 ✔ deltas with clock
+  time, and "▸ N more · ▸ original prompt". The raw first prompt is no longer shown on
+  top.
+  - Two optional, **sticky** brief keys were added: `goal` and `done`. The agent writes
+    them once and again only on change. The store keeps the last non-empty value.
+  - Fallbacks: with no goal, the card shows the first prompt line (80 chars). With no
+    done, that line is omitted.
+  - The compact/resume injection digest uses the same shape.
+  - **Go parity deferred:** `server/internal/agent/brief.go` does not parse `goal` /
+    `done` yet. It would need a daemon rebake plus a version bump (BACKLOG).
+- **2026-10-05 follow-up: the workspace intent editor is removed from the rail.** This fixes the double 🎯. The intent stays on the Briefing card (Ctrl+Alt+Q) and in startup injection.
+- **Numbering:** requested as Phase 102; that number went to WEB-DESIGN B4 (PR #57) first, 103 then went to B5 (PR #60) and 104 to B6 (PR #61), so this is 105 (no reuse). The branch names keep `103a` / `103c` so PRs #58 / #59 stay put.
+- **Outcome / Commit:** Phase 105.A (store + rail) on `claude/phase-103a-context-rail`;
+  105.C follows. Spec: `docs/CONTEXT.md`.
+- **105.C choices (made while implementing, no new user decision):**
+  - The transport is a new RPC method `context.inject`, not a reply field on
+    `feed.push`, because SessionStart must not touch the feed path at all.
+  - The CLI waits ~300 ms and fails open. `YMUX_CONTEXT_TIMEOUT_MS` raises the wait
+    for slow tunnels.
+  - `source=clear` injects nothing: the user just asked for a clean slate.
+  - On `startup`, closed sibling sessions are not listed.
+  - Hook spec bumped to 1.7.0. `manifest.json`'s `hooks.claude-code.version` is left
+    for the release cut (RELEASING.md § 4½), so the outdated-hooks banner does not
+    fire before a CLI that understands the hook ships.
+
+### 2026-10-05 — B6 details: retention 100 rows, resume reuses the name, transcript found by id
+- **Decided (Claude, flagged to Yossi):** §4.2 left "N" open — **100** ended rows (and 90
+  days, whichever is smaller). Resume **reuses the row's tmux name** when it is free, so
+  the row flips back to live; otherwise mints a new name. The transcript is found by
+  globbing `~/.claude/projects/*/<id>.jsonl`, so neither the API nor the history needs
+  the cwd to open one; the cwd is recorded anyway, for resume. An ended row with no
+  Claude session is still dropped immediately (nothing to open).
+- **Decided (Claude):** ci-windows now uploads the staged musl CLI as the
+  `ymux-cli-linux-x64` artifact. Without it a CLI change cannot be smoke-tested on a real
+  box without a local build; the committed `resources/ymux-linux-x64` still only moves
+  with a release.
+
+### 2026-10-05 — B5: browser workspaces in term's own store; send fenced; scrollback stays a stub
+- **Decided (Yossi):** `send` / `send-key` (and, by the same logic, the pane-title verbs)
+  reach only the caller or panes of its own workspace — the desktop has no such fence, but
+  on the daemon an agent in one project must not type into another. `pane.scrollback`
+  keeps the desktop's Rule #1 error stub, although `tmux capture-pane` could answer it.
+- **Decided (Claude, flagged to Yossi): workspaces live in `<data dir>/web-workspaces.json`
+  owned by `internal/term`, NOT in `internal/workspace`'s SQLite** as WEB-DESIGN §4 had
+  it. Why: the agent verbs that edit a layout (split, titles) run in term, and writing into
+  a sibling subsystem's store breaks the rule that subsystems import only `core`; and every
+  field added to the huma-described `Workspace` there changes the OpenAPI the phone SDK is
+  generated from. Consequence: two workspace notions on the daemon (the phone's chat
+  `ws_default` substrate, and the browser's). Revisit if Phase C wants them unified.
+- **Decided (Claude):** `split` creates the new tmux session on the daemon (a browser may
+  not be connected to do it, unlike the desktop's frontend), and its reply adds `pane_id`.
+
+### 2026-10-05 — B4: the daemon detects listening ports itself
+- **Context:** on the desktop, `port.opened` comes from a `ymux port-watch` the DESKTOP
+  starts per host. For a browser-created session nobody starts one, and browser v1 does
+  no port forwarding (WEB-DESIGN §10), so it is detection only either way.
+- **Options:** (a) the daemon reads `/proc/net/tcp{,6}` itself; (b) accept the RPC only;
+  (c) defer ports past Phase C.
+- **Decided (Yossi): (a).** `term/ports.go`, a port of `cli/src/port_watch.rs` with its
+  test vectors, announcing `port-detected` / `port-undetected` on the events socket. It is
+  the groundwork for a later "open in a tab" through the daemon.
+
+### 2026-10-05 — B3 policy: browser sessions default to `none`, `gate` is opt-in
+- **Context:** the 2026-10-04 split left `none` vs `gate` for B3 to settle. Until Phase C
+  there is no web UI that can approve anything (the diagnostic page has no feed), so a
+  default `gate` would block every `claude` in a browser-created session.
+- **Decided (Yossi):** a browser-created session's policy defaults to **`none`** —
+  observability only: the hook is folded into the traffic light / brief, the permission
+  request is answered `allow` immediately and makes **no card** (the desktop's Auto does
+  the same — a card per tool call would bury the 50-card feed), nothing blocks. Lifecycle
+  cards (stop, session-end, …) still appear.
+  **`gate` is opt-in per session**; when set, a permission request waits for a human
+  (browser / desktop / phone) with the desktop's timeout semantics (`wait_timeout_seconds`
+  default 120, clamped 1–600, timeout → deny). Revisit the default once Phase C ships a
+  feed UI in the browser.
+- **Decided for B3 (Yossi, same day):** (1) the live channel is ONE WebSocket,
+  `GET /api/v2/events`, behind the terminal gate (owner token or an explicit
+  `shell:attach`) — whoever can open the terminal sees its events; (2) the feed history
+  lives in the **browser, in IndexedDB** (Phase C); the daemon keeps only the pending
+  approvals plus the last 50 cards in memory, to hydrate a client that connects;
+  (3) card language is **per subscriber** (`?lang=he|en`), rendered in both languages
+  when the card is made, since the daemon has no settings store to read one from.
+
+### 2026-10-04 — WEB-DESIGN Phase B split into six PRs; policy and hook-port calls
+- **Context:** Yossi moved on to Phase B of "ymux in the browser". Two code surveys (Go
+  daemon + the Rust it replaces) found the design doc optimistic: `/api/v2/workspace/state`
+  and a shared events WebSocket **do not exist** (only per-session `…/subscribe`); the
+  hook "verbs" are `subkind` values of one `feed.push`, not methods; `setup-hooks` writes
+  no address (the CLI finds the listener through env / `~/.ymux/run/last.env`); and the
+  daemon's hook listener only authenticates its own chat sessions.
+- **Decided — split (Yossi):** one PR each, each with its own rebake —
+  **B1** pure Go ports (traffic light, brief parser, hook copy, send-key; Phase 99) →
+  **B2** hook listener for browser-created tmux sessions (token + pane-id scheme, env
+  injected per session with `tmux new-session -e`) → **B3** `feed.push` / `feed.decide` +
+  events + the two hydration routes → **B4** small verbs (`set-status`, `notify`,
+  `note-*`, `port.*`) → **B5** workspace state + layout verbs (`tree`, `split`, `send`,
+  `send-key`, titles) → **B6** session history (`ended_at` + `cwd` in session-meta — a CLI
+  change, mixed-version risk noted in the survey).
+- **Decided — policy (Yossi):** do **not** port `ymux-policy` to Go. A browser session's
+  PreToolUse goes through the daemon's per-session mode — `auto` / `block` / `gate` /
+  `none` (`none` is new; define it in B3 — most likely "no gate at all, hooks are
+  observability only").
+- **Decided — hook port (Yossi):** the listener's ephemeral port is acceptable, because
+  "if the server restarts the tmux will be gone anyway". **Caveat to verify in B2:** that
+  holds only when the tmux server the daemon starts lives in the daemon's cgroup
+  (systemd `KillMode=control-group`, the default). A tmux server started by the user's own
+  shell outlives a daemon restart, and its `claude` would then dial a dead port — B2 must
+  check which case the daemon's `term.Tmux.Create` produces and log the answer here.
+- **Checked in B2 (2026-10-04) — the caveat was worse than written; Yossi: leave it.**
+  The unit (`addons.rs` `insights_install`) is a `systemd --user` service with no
+  `KillMode`, so `control-group` applies. A tmux server the daemon starts (the first
+  browser create on a box with no tmux running) forks into that cgroup, and the daemon
+  and the desktop share ONE tmux server (no `-L`/`-S` anywhere). So a daemon restart
+  kills **every** session on the default socket, desktop-created ones included — not just
+  the browser's. Options put to Yossi: `KillMode=process` + a sticky port and derived
+  token; a separate `-L ymux-web` socket for browser sessions (breaks "one tmux
+  reality"); or leave it. **Decided: leave it, documented** (`docs/ymux-server/DEPLOYMENT.md`).
+  Consequence for B2: the hook registry is in memory and the listener port stays
+  ephemeral.
+- **Decided — B2 policy (Yossi):** until B3, a browser session's permission request is
+  answered `allow` with `policy:"none"`. B2 has no way to reach a human (no events WS
+  yet), and `gate` with nobody to ask would deny every tool call.
+
 ### 2026-09-15 — Phase 94: `force_rtl` stops painting `dir="rtl"` on rows that have no RTL text; a pure-ASCII block never inherits RTL
 - **Context:** Yossi: Claude Code's new split-screen changed-files view renders scrambled inside a ymux remote pane on Windows and fine on the Mac; then "גם כשאני על auto per line וגם כשאני על RTL מלא, זה נראה שבור". Investigation first went to ymux's own Diff pane (Phase 91.H, PR #48 — four real bugs, kept), which was the wrong screen. The Windows box's remote profile was `force_rtl`; the Mac's is not.
 - **Root cause (mechanical, reproduced in a vite harness):** xterm's DOM renderer — the renderer both row-dir modes need — injects `.xterm-rows span { display: inline-block }`. An atomic inline is a neutral (U+FFFC) to UAX #9, so under `dir="rtl"` a row made of Latin style runs is laid out with the runs in **reverse order**. A single-run shell row merely right-aligns (what `force_rtl` was liked for); a diff row with a dim line number, a green gutter, two columns and a bold header comes out with its fragments mirrored — Yossi's screenshot exactly. `force_rtl` painted every row rtl. `auto_per_line` got there through step 4 of `detectRowDirections`: a bordered block with **zero** RTL text inherited the direction of the row above it — the Hebrew prompt — so the same rows went rtl. Two modes, one DOM effect. `windowsPty: conpty` without a `buildNumber` is inert in xterm 6 (checked the built lib) and the raster font in the stale settings.json were both ruled out.
@@ -456,7 +873,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decided — no PTY-output scraping fallback, now or later in this shape.** `osc_notify.rs` works because OSC 9/99/777 is a documented, stable protocol. There is no documented stdout marker for Claude Code's turn state; detecting it means pattern-matching TUI chrome — spinner glyphs, the "esc to interrupt" line, permission-box borders — which is undocumented, locale-dependent (we ship he/ar/ru), theme-dependent, and changes across releases. The failure mode is precisely the one the feature exists to eliminate: the heuristic quietly stops matching after an upstream release, the light **sticks on green**, and nobody notices because there is no error. **A wrong light is worse than no light.** A hookless pane gets no light plus the existing outdated-hooks banner. If a fallback is ever wanted it should be *cooperative* (something Claude Code itself invokes), not scraped.
 - **Decided — yellow does not decay on a timer.** "Claude finished and you have not dealt with it" is a lasting fact, and glancing at a strip of tabs to see who is done IS the use case; a `HOOK_PULSE_WINDOW_MS`-style decay would destroy it. That 4s decay is right for a *pulse* ("something just happened") and wrong for a *state*. The decay that exists is semantic and free: `idle_prompt` fires once Claude has actually been waiting, promoting Done → NeedsInput. Yellow means "just finished", red means "finished and now waiting on you". Yellow also does **not** clear on focus — the pulse clears on focus because a pulse is an unseen event; the light is the agent's current state, and conflating them produces a light that goes dark while Claude is still sitting there waiting.
 - **Decided — `PermissionRequest` stays unregistered.** It overlaps entirely with `Notification/permission_prompt` and with our own PreToolUse gate, and it is a *blocking* hook — registering it puts a second synchronous round-trip on the tool-call critical path for zero new information.
-- **Known lie, stated deliberately:** a turn that dies on an API error shows **yellow "your turn"**, because `StopFailure` is not registered. Logged in FOLLOWUPS; it is the largest remaining inaccuracy in v1.
+- **Known lie, stated deliberately:** a turn that dies on an API error shows **yellow "your turn"**, because `StopFailure` is not registered. Logged in FOLLOWUPS; it is the largest remaining inaccuracy in v1. **Resolved 2026-10-06** (ticket ymux-hooks-claude-code-json): `StopFailure` is registered (hooks 1.8.0), a turn that dies on an API error now turns the light `failed` (square shape), state-only with no card or toast. Not verified live.
 - **Not decided / deferred:** bumping `manifest.json`'s `hooks.claude-code.version` to 1.5.0. It is required for anyone to be told to re-sync, but doing it in the feature commit banners every current 0.4.5 user before a CLI exists that can honour it. It belongs in the release checklist.
 
 ### 2026-08-23 — The vault: MD pages that explain the code, with a CI freshness gate

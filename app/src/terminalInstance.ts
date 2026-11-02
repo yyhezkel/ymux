@@ -8,28 +8,26 @@ import type {
 } from "@xterm/addon-clipboard";
 
 import { visualToLogical, visualToLogicalStream } from "./copyBidi";
-import { invoke } from "@tauri-apps/api/core";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { backend } from "./backend";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
 
-// Rule #9: user-visible logging. The rest of this file still uses raw
-// console.* — NOT pre-existing debt as once assumed: Phase 79 converted this
-// file (24 logger sites, 0 console.*) and merge bcaa330 threw the conversion
-// away. See FOLLOWUPS. The clipboard paths were converted back because an
-// invisible failure there is what hid the paste bug.
+// Rule #9: user-visible logging. Every site in this file goes through
+// termLog (no raw console.*): Phase 79 converted it, merge bcaa330 threw the
+// conversion away, and the clipboard paste bug hid behind an invisible
+// console.warn. logger.ts emit() still mirrors to devtools.
 const termLog = createLogger("TERM");
 import {
   detectDirection,
-  foldTuiOwnsBidi,
   rowDirections,
   strongCounts,
-  nextTuiOwnsBidi,
 } from "./textDirection";
 import type { RowDir, RowDirMode } from "./textDirection";
 import { transformMouseX, findRow } from "./mouseRtl";
+import { wheelSteps, type WheelDeltaMode } from "./wheelSteps";
 import type { RtlProfileKind } from "./types";
 import { t } from "./i18n";
+import { menuCopyText } from "./termMenuCopy";
 
 // Phase 62.B (item J): parse a `file://` URI (as emitted in Claude Code's
 // OSC 8 hyperlinks, e.g. `file:///home/runner/.env.prod`) into the bare
@@ -159,9 +157,9 @@ export interface RtlProfileSettings {
    *                     stops a TUI status bar from mirroring its own layout.
    *
    * 2026-08-19: this is deliberately keyed on the PANE CLASS and never on what
-   * is running inside the pane. The vote first shipped gated on `tuiOwnsBidi`,
-   * and since the OSC title propagates over SSH — that is how Claude Code is
-   * detected at all — it fired on remote panes too and broke them. Yossi's
+   * is running inside the pane. The vote first shipped gated on a Claude
+   * detector that also fired on remote panes (the OSC title propagated over
+   * SSH) and broke them. Yossi's
    * instruction after that: "תוודא שיש הפרדה מוחלטת בין המרוחק למקומי - ואז
    * השינויים שתרצה לעשות על המקומי לא יפגעו במרוחק". A per-profile field is that
    * separation; `remote_direction_policy_is_the_pre_2026_08_19_rule` in
@@ -280,7 +278,7 @@ export function setTerminalTheme(theme: ITheme): void {
       ti.term.options.minimumContrastRatio = 4.5;
       ti.term.refresh(0, ti.term.rows - 1);
     } catch (e) {
-      console.warn("setTerminalTheme: per-instance update failed", e);
+      termLog.warn("setTerminalTheme: per-instance update failed", e);
     }
   }
 }
@@ -299,7 +297,7 @@ export function setTerminalFont(family: string, sizePt: number): void {
       ti.logFontSwap("afterSet");
       requestAnimationFrame(() => ti.logFontSwap("settled"));
     } catch (e) {
-      console.warn("setTerminalFont: per-instance update failed", e);
+      termLog.warn("setTerminalFont: per-instance update failed", e);
     }
   }
 }
@@ -319,7 +317,7 @@ export function setTerminalFontSize(sizePt: number): void {
       ti.fitAndResize();
       ti.term.refresh(0, ti.term.rows - 1);
     } catch (e) {
-      console.warn("setTerminalFontSize: per-instance update failed", e);
+      termLog.warn("setTerminalFontSize: per-instance update failed", e);
     }
   }
 }
@@ -350,7 +348,7 @@ export function setRtlProfiles(next: Record<RtlProfileKind, RtlProfileSettings>)
 /** Route an out-of-band "Claude is in front" signal to one pane. Used by
  *  App.tsx for the connect wizard and for session-start/end hooks; a pane that
  *  is not open yet simply has nothing to tell. */
-export function setPaneTuiSignal(paneId: string, on: boolean | null): void {
+export function setPaneTuiSignal(paneId: string, on: boolean): void {
   for (const ti of g_terminals) {
     if (ti.paneId === paneId) ti.setTuiSignal(on);
   }
@@ -412,7 +410,7 @@ function swapArrowSeq(data: string): string {
  * `navigator.clipboard.readText()` is not usable here: WebView2 permits
  * clipboard WRITE but gates READ behind a permission the host never grants,
  * so it rejects. That is why terminal Copy worked and Paste did nothing —
- * and why it was invisible: the only handler was a `console.warn`.
+ * and why it was invisible: the only handler was a browser-console warning.
  *
  * Try the web API first anyway (it is synchronous-ish and works if a future
  * runtime does allow it), then fall back to the host-side command.
@@ -424,7 +422,7 @@ export async function readClipboardText(): Promise<string> {
   } catch {
     // Expected in WebView2 — fall through rather than log noise per paste.
   }
-  return await invoke<string>("clipboard_read_text");
+  return await backend.call<string>("clipboard_read_text");
 }
 
 /** Paste arbitrary text into the active terminal. xterm.js will wrap
@@ -449,7 +447,7 @@ export function pasteIntoActiveTerminal(text: string): void {
     // the pane. Re-assert focus on the pasted-into terminal.
     target?.term.focus();
   } catch (e) {
-    console.warn("paste failed", e);
+    termLog.warn("paste failed", e);
   }
 }
 
@@ -490,7 +488,14 @@ function onTermMenuKey(e: KeyboardEvent): void {
 }
 function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): void {
   dismissTerminalMenu();
-  const sel = ti.term.getSelection();
+  const xsel = ti.term.getSelection();
+  const sel = menuCopyText(
+    xsel,
+    ti.term.modes.mouseTrackingMode !== "none",
+    ti.getLastOsc52(),
+  );
+  const copySrc = xsel ? "xterm" : sel ? "osc52" : "none";
+  termLog.info(`[ctx-menu] open pane=${ti.paneId} copy=${copySrc}`);
   const menu = document.createElement("div");
   menu.className = "term-ctx-menu";
   const addItem = (label: string, enabled: boolean, action: () => void) => {
@@ -515,7 +520,7 @@ function showTerminalContextMenu(ti: TerminalInstance, x: number, y: number): vo
         // the terminal so the caret stays at the paste site.
         ti.term.focus();
       })
-      // Rule #9: this used to be console.warn, so the one failure that
+      // Rule #9: this used to be a browser-console warning, so the one failure that
       // mattered — clipboard read being denied — left no trace anywhere a
       // user or a maintainer would look.
       .catch((err) => termLog.warn("terminal paste failed", err));
@@ -612,30 +617,18 @@ export class TerminalInstance {
   // events over an RTL row, dispatches a synthetic MouseEvent with clientX
   // mirrored around the row midpoint. See mouseRtl.ts for the rationale.
   private rtlMouseTeardown: (() => void) | null = null;
-  // 2026-07-15 (Claude visual-order RTL): true while a TUI that does its
-  // own bidi reordering (Claude Code) holds this pane's foreground. While
-  // set, the per-row dir pass renders everything LTR and arrow-mirroring /
-  // the bidi_reorder write pipeline stand down — the TUI's output is
-  // already in visual order and any second bidi pass corrupts it. Driven
-  // by terminal-title changes; see nextTuiOwnsBidi in textDirection.ts.
-  private tuiOwnsBidi = false;
   /** Last direction vector reported by `logDirections`, so the per-frame pass
    *  only speaks when its answer actually changed. */
   private lastDirSignature: string | null = null;
-  /** Last `title-seen` report, as `match:len-bucket` — see onTitleChanged. */
-  private lastTitleReport: string | null = null;
   private lastDirLogMs = 0;
   private dirObserverRetries = 0;
 
-  /** The EFFECT of tuiOwnsBidi, as opposed to the detected state. Detection
-   *  and its log line always run — they are what made the 2026-08-18
-   *  diagnosis possible in minutes — but the LTR forcing is gated, because
-   *  current Claude emits logical-order Hebrew and forcing LTR corrupts it.
-   *  See settings.rs `tui_owns_bidi`. */
-  /** Out-of-band "Claude is in front", from the connect wizard or a Claude
-   *  hook. `null` = nobody told us, fall back to the title. See
-   *  `foldTuiOwnsBidi` for why this outranks the title. */
-  private tuiExplicit: boolean | null = null;
+  /** 2026-10-06: Claude Code holds this pane's foreground — the ONLY detector
+   *  (the OSC-title one never fired: zellij/tmux swallow titles). Driven by
+   *  the connect wizard and the Claude session hooks via `setPaneTuiSignal`,
+   *  so it works over SSH too. Detection is separate from its EFFECT, which is
+   *  gated by the profile's `tui_owns_bidi` (see `bidiOwnedByTui`). */
+  private claudeActive = false;
 
   /** Phase 91.D: is this pane on a multiplexer session (tmux/zellij)? Set by
    *  App.tsx from `pane_persistence_list` — the backend's answer, never a
@@ -643,6 +636,14 @@ export class TerminalInstance {
    *  65.O's proxy fired in a PLAIN shell and walked bash history, which is
    *  exactly the failure this flag exists to prevent. */
   private tmuxScroll = false;
+  /** Sub-notch wheel remainder between events (Phase 98, see wheelSteps.ts). */
+  private wheelCarry = 0;
+  // Last raw OSC 52 write; read by the right-click Copy fallback. Never logged.
+  private lastOsc52 = "";
+
+  getLastOsc52(): string {
+    return this.lastOsc52;
+  }
 
   setTmuxScroll(on: boolean): void {
     if (this.tmuxScroll === on) return;
@@ -650,16 +651,13 @@ export class TerminalInstance {
     if (on) termLog.info(`wheel proxy armed pane=${this.paneId}`);
   }
 
-  /** Called by App.tsx: `true` on connect-with-Claude and on a session-start
-   *  hook for this pane, `null` when Claude ends or the pane connects to
-   *  something else. */
-  setTuiSignal(on: boolean | null): void {
-    if (this.tuiExplicit === on) return;
-    this.tuiExplicit = on;
-    termLog.info(
-      `tui-signal pane=${this.paneId} ` +
-        `explicit=${on === null ? "-" : on ? 1 : 0} title=${this.tuiOwnsBidi ? 1 : 0}`,
-    );
+  /** Called by App.tsx: `true` on connect-with-Claude and on a Claude hook
+   *  for this pane, `false` when Claude ends or the pane connects to
+   *  something else. Transitions only; metadata only (Rule #1). */
+  setTuiSignal(on: boolean): void {
+    if (this.claudeActive === on) return;
+    this.claudeActive = on;
+    termLog.info(`tui-owns-bidi ${on ? "on" : "off"} pane=${this.paneId}`);
     this.applyRowDirections(true);
   }
 
@@ -677,7 +675,7 @@ export class TerminalInstance {
    * `normaliseIncomingToLogical`.
    */
   private get bidiOwnedByTui(): boolean {
-    return foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi) && this.rtl.tuiOwnsBidi;
+    return this.claudeActive && this.rtl.tuiOwnsBidi;
   }
 
   /**
@@ -727,7 +725,7 @@ export class TerminalInstance {
    * Two independent ways a buffer ends up visual:
    *
    *  1. The SOURCE wrote visual order — Claude Code on Windows does. Note this
-   *     reads `foldTuiOwnsBidi` directly and does NOT `&&` in
+   *     reads `claudeActive` directly and does NOT `&&` in
    *     `this.rtl.tuiOwnsBidi` the way `bidiOwnedByTui` does. That setting is a
    *     RENDERING preference; whether Claude is in front is a fact about the
    *     source. Turning off a render checkbox must not silently put reversed
@@ -743,7 +741,7 @@ export class TerminalInstance {
     // so testing `sourceIsVisual` alone would now be wrong in exactly the
     // situation the normalisation exists for.
     if (this.normaliseIncomingToLogical) return false;
-    const sourceIsVisual = foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi);
+    const sourceIsVisual = this.claudeActive;
     const weReordered =
       this.rtlModeRendered === "bidi_reorder" && !this.bidiOwnedByTui;
     return sourceIsVisual || weReordered;
@@ -765,12 +763,12 @@ export class TerminalInstance {
     try {
       await navigator.clipboard.writeText(out);
       // Rule #1: lengths and a route label, never the content itself.
-      console.debug(
+      termLog.debug(
         `[copy] ${via} ${out.length} chars${flip ? " (visual->logical)" : ""}`,
       );
       return true;
     } catch (e) {
-      console.warn(`clipboard write failed (${via})`, e);
+      termLog.warn(`clipboard write failed (${via})`, e);
       return false;
     }
   }
@@ -830,7 +828,7 @@ export class TerminalInstance {
     this.term = new Terminal({
       fontFamily:
         g_fontFamily ??
-        '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace',
+        '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", "YMUX Mono", monospace',
       fontSize: g_fontSizePx ?? 14,
       lineHeight: 1.15,
       cursorBlink: true,
@@ -868,7 +866,7 @@ export class TerminalInstance {
             return;
           }
           if (/^https?:\/\//i.test(uri)) {
-            void openUrl(uri).catch((e) => console.warn("openUrl failed", e));
+            void backend.host.openUrl(uri).catch((e) => termLog.warn("openUrl failed", e));
           }
         },
         hover: (_event: MouseEvent, uri: string) => {
@@ -917,6 +915,7 @@ export class TerminalInstance {
         _sel: ClipboardSelectionType,
         text: string,
       ): Promise<void> => {
+        this.lastOsc52 = text;
         await this.copyToClipboard(text, "osc52");
       },
     };
@@ -938,7 +937,7 @@ export class TerminalInstance {
           const path = m[1];
           if (!this.fileLinkMatchLogged) {
             this.fileLinkMatchLogged = true;
-            void invoke("diag_log", {
+            void backend.call("diag_log", {
               level: "info",
               msg: `[file] link provider matched in pane ${this.paneId}`,
             }).catch(() => {});
@@ -1014,11 +1013,15 @@ export class TerminalInstance {
     //   Ctrl+Shift+C   → copy (global shortcut table)
     //   Ctrl+Shift+V   → paste (global shortcut table)
     //   right-click    → Copy / Paste / Select-all menu
-    this.container.addEventListener("contextmenu", (e) => {
+    //                    (Copy falls back to the last OSC 52 write when the
+    //                    app owns the mouse, e.g. zellij mouse_mode; capture
+    //                    phase so xterm never forwards the click to the app)
+    const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault();
       e.stopPropagation();
       showTerminalContextMenu(this, e.clientX, e.clientY);
-    });
+    };
+    this.container.addEventListener("contextmenu", onContextMenu, { capture: true });
 
     // Phase 91.D: the wheel proxy, back — but only for MULTIPLEXER panes.
     // tmux's mouse is off since Phase 91.B (left-clicks were landing on
@@ -1045,11 +1048,16 @@ export class TerminalInstance {
       if (this.term.buffer.active.type !== "alternate") return true;
       if (this.term.modes.mouseTrackingMode !== "none") return true;
       ev.preventDefault();
-      // deltaMode 1 = lines (Firefox); 0 = pixels, where one notch is ~100px
-      // on Windows and a trackpad streams many small events — 3 lines per
-      // event is the rate xterm.js itself uses for a notch.
-      const n = ev.deltaMode === 1 ? Math.min(Math.abs(ev.deltaY), 10) : 3;
-      this.term.input((ev.deltaY < 0 ? "\x1b[1;2A" : "\x1b[1;2B").repeat(n), true);
+      // Phase 98: ONE key per notch — the conf scrolls 3 lines per key, as
+      // one tmux operation. 91.D sent 3 keys per event, and tmux's paste
+      // detection skipped the bindings of all but the first (the rest were
+      // dropped in copy-mode, or typed into the program once `-e` had left
+      // it). A touchpad's small deltas accumulate in `wheelCarry`.
+      const { steps, carry } = wheelSteps(this.wheelCarry, ev.deltaY, ev.deltaMode as WheelDeltaMode);
+      this.wheelCarry = carry;
+      if (steps !== 0) {
+        this.term.input((steps < 0 ? "\x1b[1;2A" : "\x1b[1;2B").repeat(Math.abs(steps)), true);
+      }
       return false;
     });
 
@@ -1081,7 +1089,7 @@ export class TerminalInstance {
         // (the "terminal goes blank after resizing post-conversation"
         // bug).
         addon.onContextLoss(() => {
-          console.warn("WebGL context lost — falling back to DOM renderer");
+          termLog.warn("WebGL context lost — falling back to DOM renderer");
           try {
             addon.dispose();
           } catch {}
@@ -1095,7 +1103,7 @@ export class TerminalInstance {
         this.term.loadAddon(addon);
         this.webglAddon = addon;
       } catch (e) {
-        console.warn("WebGL addon unavailable", e);
+        termLog.warn("WebGL addon unavailable", e);
       }
     }
   }
@@ -1200,11 +1208,6 @@ export class TerminalInstance {
 
     this.ensureDirObserver();
     this.installRtlMouseCapture();
-
-    // Claude visual-order RTL: watch OSC 0/2 title reports to learn when a
-    // self-bidi TUI takes/releases the pane. Listener lifetime is tied to
-    // the Terminal — term.dispose() in dispose() drops it.
-    this.term.onTitleChange((title) => this.onTitleChanged(title));
 
     // Font-init fix: a fresh pane rendered "compressed" until the user
     // swapped the terminal font and back (notably with Courier). Root
@@ -1376,42 +1379,6 @@ export class TerminalInstance {
     this.dirObserver = obs;
   }
 
-  /** Claude visual-order RTL: fold a title report into the per-pane
-   *  "TUI owns bidi" state. On a transition, force a full direction
-   *  re-pass so rows already on screen flip immediately (Claude's banner
-   *  prints before the title-driven state lands, and shell scrollback is
-   *  still visible when Claude exits). */
-  private onTitleChanged(title: string): void {
-    // 2026-08-19: report EVERY title, not only the ones that change the state.
-    // Nothing else could answer "does zellij forward a title at all, and does
-    // it ever contain 'claude'" — the absence of transitions in the log was
-    // equally consistent with "no titles" and "titles that never matched".
-    //
-    // Rule #1: a title can be Claude's auto topic name, i.e. derived from
-    // conversation content. Whether it matched and how long it was are
-    // metadata; the text itself is never logged and a length cannot
-    // reconstruct it.
-    //
-    // 2026-09-23: …but only when the report would SAY something new. Claude
-    // Code animates a spinner in its title, so "every title" was several log
-    // lines — and, before the logger batched, several IPC calls — per second
-    // per pane, for as long as Claude worked. Whether it matched is the
-    // signal; the exact length is not, so it is bucketed.
-    const match = /claude/i.test(title) ? 1 : 0;
-    const report = `${match}:${title.length === 0 ? 0 : title.length < 16 ? 1 : 2}`;
-    if (report !== this.lastTitleReport) {
-      this.lastTitleReport = report;
-      termLog.info(`title-seen pane=${this.paneId} match=${match} len=${title.length}`);
-    }
-    const next = nextTuiOwnsBidi(this.tuiOwnsBidi, title);
-    if (next === this.tuiOwnsBidi) return;
-    this.tuiOwnsBidi = next;
-    // Metadata only (Rule #1): titles can derive from conversation content
-    // (Claude's auto topic titles) — never log the title itself.
-    termLog.info(`tui-owns-bidi ${next ? "on" : "off"} pane=${this.paneId}`);
-    this.applyRowDirections(true);
-  }
-
   /** Coalesce a burst of row mutations into one direction pass per frame. */
   private scheduleRowDirections(): void {
     if (this.dirRafId != null) return;
@@ -1460,10 +1427,9 @@ export class TerminalInstance {
     // RTL — render rows plain LTR so we don't bidi it a second time.
     //
     // 2026-08-19: which direction rule applies comes from the PANE'S PROFILE,
-    // never from what is running inside the pane. This briefly read
-    // `this.tuiOwnsBidi` instead — and because the OSC title propagates over
-    // SSH, that fired on remote panes and broke a path that was working. See
-    // the note on `directionPolicy` above.
+    // never from what is running inside the pane. This briefly read the
+    // Claude detector instead, which fired on remote panes and broke a path
+    // that was working. See the note on `directionPolicy` above.
     // 2026-08-20: `normaliseIncomingToLogical` panes take the NORMAL path. The
     // buffer they hold is logical, because flushPending converted it on the way
     // in — so they need exactly what a remote pane needs: a real per-row `dir`
@@ -1474,10 +1440,10 @@ export class TerminalInstance {
       auto,
       suppress,
       dominance: this.rtl.directionPolicy === "tui_dominance",
-      // Phase 94: the DETECTED "Claude holds this pane" state (hook or
-      // title), not the profile switch — `force_rtl` uses it to leave a
+      // Phase 94: the DETECTED "Claude holds this pane" state (hook),
+      // not the profile switch — `force_rtl` uses it to leave a
       // TUI's Latin rows exactly where the TUI drew them.
-      tui: foldTuiOwnsBidi(this.tuiExplicit, this.tuiOwnsBidi),
+      tui: this.claudeActive,
     });
 
     // 2026-08-19: `dir` alone cannot do what bidiOwnedByTui promises.
@@ -1572,17 +1538,13 @@ export class TerminalInstance {
       return "-";
     };
     // `tui=` is the EFFECTIVE answer — what actually gated this pass — not the
-    // title-derived flag. Reporting the raw flag was actively misleading: the
-    // 2026-08-19 log showed `tui=0` moments after `tui-signal explicit=1`,
-    // which reads as "the signal did nothing" when in fact the signal had won
-    // and a different gate (the per-profile setting) was the one saying no.
-    // The three inputs are broken out so the next diagnosis is one line, not
-    // an inference.
+    // raw hook flag. Reporting the raw flag was misleading: a 2026-08-19 log
+    // showed `tui=0` right after the signal fired, when the per-profile
+    // setting was the gate saying no. `setting=` breaks that input out.
     termLog.info(
       `rtl-dirs pane=${this.paneId} profile=${this.profile} ` +
         `policy=${this.rtl.directionPolicy} tui=${this.bidiOwnedByTui ? 1 : 0} ` +
-        `(explicit=${this.tuiExplicit === null ? "-" : this.tuiExplicit ? 1 : 0} ` +
-        `title=${this.tuiOwnsBidi ? 1 : 0} setting=${this.rtl.tuiOwnsBidi ? 1 : 0}) ` +
+        `(setting=${this.rtl.tuiOwnsBidi ? 1 : 0}) ` +
         `rows=${dirs.length} rtl=${rtlRows} ltr=${dirs.length - rtlRows} end=${endRows} ` +
         `firstRtl=${sample("rtl")} firstLtr=${sample("ltr")}`,
     );
@@ -1608,8 +1570,8 @@ export class TerminalInstance {
         out = swapArrowSeq(data);
       }
       if (this.sessionId)
-        invoke("pty_write", { sessionId: this.sessionId, data: out }).catch(
-          (err) => console.error("pty_write failed", err)
+        backend.call("pty_write", { sessionId: this.sessionId, data: out }).catch(
+          (err) => termLog.error("pty_write failed", err)
         );
     });
     // Phase 25.C: force a pty_resize on attach so tmux gets the
@@ -1630,7 +1592,7 @@ export class TerminalInstance {
     try {
       this.term.write(MOUSE_DISABLE_SEQ);
     } catch (e) {
-      console.warn("resetMouseModes failed", e);
+      termLog.warn("resetMouseModes failed", e);
     }
   }
 
@@ -1641,7 +1603,7 @@ export class TerminalInstance {
     try {
       this.term.write(MOUSE_DISABLE_SEQ + "\x1b[0m");
     } catch (e) {
-      console.warn("resetTerminal failed", e);
+      termLog.warn("resetTerminal failed", e);
     }
   }
 
@@ -1701,7 +1663,7 @@ export class TerminalInstance {
     // tmux painting at the stale width. Forcing the resize
     // guarantees tmux is told the final dimensions.
     if (this.sessionId && (changed || force)) {
-      invoke("pty_resize", {
+      backend.call("pty_resize", {
         sessionId: this.sessionId,
         cols: this.term.cols,
         rows: this.term.rows,
@@ -1746,7 +1708,7 @@ export class TerminalInstance {
   logFontSwap(label: string): void {
     const cs = this.cs();
     const fam = String(this.term.options.fontFamily ?? "").slice(0, 40);
-    void invoke("diag_log", {
+    void backend.call("diag_log", {
       level: "info",
       msg: `[font-swap] ${label} pane=${this.paneId} charSvc=${cs?.width}x${cs?.height} size=${this.term.options.fontSize} fam=${JSON.stringify(fam)}`,
     }).catch(() => {});
@@ -1799,7 +1761,7 @@ export class TerminalInstance {
         if (!g_terminals.has(this)) return;
         this.applyFontOnce(real, px);
         const cs = this.cs();
-        void invoke("diag_log", {
+        void backend.call("diag_log", {
           level: "info",
           msg: `[font-fix] pane=${this.paneId} afterSwap charSvc=${cs?.width}x${cs?.height} size=${this.term.options.fontSize}`,
         }).catch(() => {});
@@ -1909,7 +1871,7 @@ export class TerminalInstance {
     // them) - not a linkHandler bug.
     if (!this.oscHyperlinkLogged && merged.includes("]8;")) {
       this.oscHyperlinkLogged = true;
-      void invoke("diag_log", {
+      void backend.call("diag_log", {
         level: "info",
         msg: `OSC8 hyperlink sequence detected in pane ${this.paneId}`,
       }).catch(() => {});

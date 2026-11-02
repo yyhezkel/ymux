@@ -10,7 +10,7 @@ import {
   IconRefresh,
   IconClose,
 } from "./icons";
-import { invoke } from "@tauri-apps/api/core";
+import { backend } from "./backend";
 import { t, currentLanguage } from "./i18n";
 import { formatResetLocal } from "./claudeUsageFmt";
 import { MobilePairing } from "./MobilePairing";
@@ -121,7 +121,7 @@ export function InsightsWindow(p: Props) {
     setUsageLoading(true);
     setUsageErr(null);
     try {
-      const u = await invoke<ClaudeUsage>("claude_usage_fetch", {
+      const u = await backend.call<ClaudeUsage>("claude_usage_fetch", {
         workspaceId: p.workspaceId,
         force,
       });
@@ -158,7 +158,7 @@ export function InsightsWindow(p: Props) {
     setLogLoading(true);
     setLogErr(null);
     try {
-      const r = await invoke<string>("insights_fetch", {
+      const r = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: "/logs?tail=400",
       });
@@ -199,14 +199,14 @@ export function InsightsWindow(p: Props) {
     setLoading(true);
     setErr(null);
     try {
-      const cur = await invoke<string>("insights_fetch", {
+      const cur = await backend.call<string>("insights_fetch", {
         workspaceId: p.workspaceId,
         path: "/current",
       });
       if (!cur.trim()) throw new Error(t("insights.unreachable"));
       setSnap(JSON.parse(cur) as Snapshot);
       try {
-        const d = await invoke<string>("insights_fetch", {
+        const d = await backend.call<string>("insights_fetch", {
           workspaceId: p.workspaceId,
           path: "/docker",
         });
@@ -256,7 +256,7 @@ export function InsightsWindow(p: Props) {
   const dockerAction = async (id: string, action: string) => {
     if (!p.workspaceId) return;
     try {
-      await invoke("insights_docker_action", {
+      await backend.call("insights_docker_action", {
         workspaceId: p.workspaceId,
         containerId: id,
         action,
@@ -294,7 +294,7 @@ export function InsightsWindow(p: Props) {
     <div class="ins-tabs" classList={{ compact: tabsNarrow.narrow() }} ref={tabsNarrow.ref}>
       {tab("metrics", <IconActivity />, t("insights.tab.metrics"))}
       {tab("analytics", <IconHistory />, t("insights.tab.analytics"))}
-      {tab("mobile", <IconSmartphone />, t("insights.tab.mobile"))}
+      {backend.can("mobilePairingAdmin") && tab("mobile", <IconSmartphone />, t("insights.tab.mobile"))}
       {tab("logs", <IconFile />, t("insights.tab.logs"))}
       {tab("health", <IconSparkles />, t("insights.tab.health"))}
       {tab("claude", <IconBot />, t("claudeUsage.tab"))}
@@ -424,8 +424,12 @@ export function InsightsWindow(p: Props) {
           <Show when={err()}>
             <div class="wizard-test-result err" style="margin:10px">
               <div class="wizard-test-line">✗ {err()}</div>
-              <div class="wizard-test-meta">{t("insights.install_hint")}</div>
-              <Show when={p.onInstall}>
+              {/* Phase 110: the install hint/button is the desktop's add-on flow; a
+                  browser cannot install anything, and its errors already say why. */}
+              <Show when={backend.can("addons")}>
+                <div class="wizard-test-meta">{t("insights.install_hint")}</div>
+              </Show>
+              <Show when={p.onInstall && backend.can("addons")}>
                 <button
                   class="primary"
                   style="margin-top:8px"

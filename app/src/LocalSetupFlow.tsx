@@ -1,6 +1,5 @@
 import { createSignal, For, Show, onMount, onCleanup, createMemo } from "solid-js";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { backend, type UnlistenFn } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { IconClose, IconCheck, IconCircle } from "./icons";
@@ -88,11 +87,9 @@ export function LocalSetupFlow(p: Props) {
   // result (missing → checked).
   const [checkedTools, setCheckedTools] = createSignal<Set<string>>(new Set());
   const [installLocalHooks, setInstallLocalHooks] = createSignal(true);
-  // The WSL persistent-environment group (tmux-backed panes).
-  const [wslUsername, setWslUsername] = createSignal("");
   // The persistence group. Windows gets persistence from the zellij tool
   // row instead, so this is the macOS tmux chain only.
-  const [wslGroup, setWslGroup] = createSignal(true);
+  const [persistenceGroup, setPersistenceGroup] = createSignal(true);
   // 2026-08-19: the wizard finishes by creating a native local workspace
   // (it used to create a WSL one). Zellij gives it the persistence that was
   // the only reason to put a local pane inside a distro; on macOS that is
@@ -114,10 +111,10 @@ export function LocalSetupFlow(p: Props) {
     // listeners only need to be live before local_setup_start (a user
     // click), not before the read-only inspect.
     void runInspect();
-    unlisten = await listen<StepProgress>("local-setup:progress", (e) => {
+    unlisten = await backend.on<StepProgress>("local-setup:progress", (e) => {
       setStepStates((prev) => ({ ...prev, [e.payload.step_index]: e.payload }));
     });
-    unlistenComplete = await listen<LocalSetupResult>("local-setup:complete", (e) => {
+    unlistenComplete = await backend.on<LocalSetupResult>("local-setup:complete", (e) => {
       setResult(e.payload);
       setStep("done");
     });
@@ -131,14 +128,14 @@ export function LocalSetupFlow(p: Props) {
     setInspecting(true);
     setInspectErr(null);
     try {
-      const r = await invoke<LocalSetupInspect>("local_setup_inspect", {
+      const r = await backend.call<LocalSetupInspect>("local_setup_inspect", {
         distro: null,
       });
       setInspect(r);
       // Read-only; a failure here must not block the wizard, it only
       // costs us the up-front UAC warning.
       try {
-        setPreflight(await invoke<WslPreflight>("local_setup_preflight"));
+        setPreflight(await backend.call<WslPreflight>("local_setup_preflight"));
       } catch {
         setPreflight(null);
       }
@@ -156,12 +153,7 @@ export function LocalSetupFlow(p: Props) {
       // mac: tmux comes from Homebrew, so without brew AND without tmux
       // the chain is guaranteed to fail — start it unchecked (and the
       // group checkbox is disabled below) instead of failing mid-run.
-      if (mac && !r.winget.present && !r.mac?.tmux.present) setWslGroup(false);
-      if (!wslUsername().trim() && r.wsl.default_distro) {
-        // Existing distro → an existing user likely exists too; the
-        // backend only creates one when OOBE never ran.
-        setWslUsername("");
-      }
+      if (mac && !r.winget.present && !r.mac?.tmux.present) setPersistenceGroup(false);
     } catch (e) {
       setInspectErr(String(e));
     } finally {
@@ -185,7 +177,7 @@ export function LocalSetupFlow(p: Props) {
       if (checkedTools().has(row.step)) steps.push(row.step);
     }
     if (installLocalHooks()) steps.push("InstallLocalHooks");
-    if (wslGroup() && r && mac) {
+    if (persistenceGroup() && r && mac) {
       for (const s of MAC_CHAIN) {
         if (s === "InstallTmuxLocal" && r.mac?.tmux.present) continue;
         if (s === "DeployTmuxConfLocal" && r.mac?.tmux_conf_ok) continue;
@@ -198,7 +190,7 @@ export function LocalSetupFlow(p: Props) {
   // mac: a machine that already has tmux + conf leaves the step list empty,
   // yet the checked group still asks for the workspace — let that run go
   // through (the backend then only creates the workspace).
-  const canStart = () => buildSteps().length > 0 || (mac && wslGroup());
+  const canStart = () => buildSteps().length > 0 || (mac && persistenceGroup());
 
   const startRun = async () => {
     const steps = buildSteps();
@@ -218,11 +210,10 @@ export function LocalSetupFlow(p: Props) {
     setResult(null);
     setStep("execute");
     try {
-      const handle = await invoke<RunHandle>("local_setup_start", {
+      const handle = await backend.call<RunHandle>("local_setup_start", {
         input: {
           steps,
           distro: mac ? null : (inspect()?.wsl.default_distro ?? null),
-          wsl_username: mac ? null : (wslUsername().trim() || null),
           workspace_name: workspaceName().trim() || null,
           create_workspace: true,
           workspace_cwd: workspaceCwd().trim() || null,
@@ -351,7 +342,7 @@ export function LocalSetupFlow(p: Props) {
               </div>
 
               {/* 2026-08-19: the wizard finishes by creating a workspace to
-                  land in. This block replaces the WSL group's name/cwd
+                  land in. This block replaces the old persistence-group name/cwd
                   inputs — same job, native local target. */}
               <h4 class="provisioning-h4">{t("localSetup.workspace.title")}</h4>
               <label class="provisioning-step-row">
@@ -381,9 +372,9 @@ export function LocalSetupFlow(p: Props) {
                 <label class="provisioning-step-row">
                   <input
                     type="checkbox"
-                    checked={wslGroup()}
+                    checked={persistenceGroup()}
                     disabled={!r().winget.present && !r().mac?.tmux.present}
-                    onChange={() => setWslGroup(!wslGroup())}
+                    onChange={() => setPersistenceGroup(!persistenceGroup())}
                   />
                   <span>
                     {t("localSetup.mac.tmux.group")}
@@ -502,7 +493,7 @@ export function LocalSetupFlow(p: Props) {
                                 class="danger"
                                 onClick={() => {
                                   setRestartErr(null);
-                                  invoke("restart_windows").catch((e) =>
+                                  backend.call("restart_windows").catch((e) =>
                                     setRestartErr(String(e))
                                   );
                                 }}

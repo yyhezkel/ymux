@@ -64,7 +64,7 @@ const LATIN_G = /[A-Za-z]/g;
  * long path with a short Hebrew note. Yossi's report was immediate and
  * covered both panes -- "עכשוו זה מיושר לשמאל - וגם במרוחקים זה מיושר לשמאל" --
  * and the SSH side had been working. So the vote is gated: it applies only
- * while a full-screen TUI owns the pane (`nextTuiOwnsBidi` below, which is
+ * while a full-screen TUI owns the pane (the Claude hook signal, which is
  * how we already know Claude Code is in front). A shell line is text, and
  * text keeps the pre-2026-08-19 rule: any Hebrew takes the row.
  *
@@ -372,8 +372,8 @@ export type RowDir = "ltr" | "rtl" | "ltr-end";
  * `dir="rtl"` a multi-run Latin row is laid out with its runs in REVERSE
  * order (the diff's columns, gutters and line numbers mirrored). So:
  *
- *   - `o.tui` (Claude Code holds the pane — the OSC-title / hook signal that
- *     `foldTuiOwnsBidi` already folds): a Latin row is plain `ltr`, painted
+ *   - `o.tui` (Claude Code holds the pane — the Claude hook signal, session-start
+ *     to session-end): a Latin row is plain `ltr`, painted
  *     exactly where the TUI put it, so a two-column layout keeps both halves.
  *   - otherwise (a shell): `ltr-end` — Latin in reading order, packed against
  *     the right edge, which is what the unconditional-RTL shell looked like
@@ -399,56 +399,3 @@ export function rowDirections(
   return detectRowDirections(texts, o.dominance);
 }
 
-// -- TUI-owned BiDi (Claude Code visual-order output) -------------------------
-//
-// Claude Code (>= 2.1.74, verified live on 2.1.210) writes RTL text to the
-// PTY pre-reordered into VISUAL order — it assumes a terminal with no bidi
-// support (Windows Terminal). Rendering such rows with dir="rtl" applies the
-// browser's bidi algorithm ON TOP of Claude's reorder: Hebrew letters
-// double-reverse back to looking correct, but neutrals (?, ., brackets)
-// resolve against the RTL paragraph and land at the wrong end — a trailing
-// "?" typed into Claude's input box shows up at the line START. There is no
-// claude-side opt-out (WT_SESSION / TERM_PROGRAM=WezTerm/mintty all still
-// reorder; upstream closed the Apple-Terminal double-reorder as not-planned).
-//
-// Fix: while a self-bidi TUI holds a pane's foreground, render every row LTR
-// (exactly what Windows Terminal shows). Detection is terminal-title based:
-//   - Claude sets the title to "claude" on startup (process.title="claude")
-//     and variants like "claude · resume"; mid-session auto topic titles /
-//     "/rename" can be ANY text, so unrelated titles must NOT clear the state.
-//   - On clean exit Claude resets the title to "" (process.title="") — that
-//     is the off signal. Shells set path-like titles, never empty ones.
-// The machine is deliberately conservative: ON only on a title containing
-// "claude", OFF only on an empty title, hold otherwise.
-/**
- * Fold the two sources of "a self-reordering TUI is in front of this pane".
- *
- * 2026-08-19. The title-only machine below turned out never to turn ON in
- * practice: inside zellij the title reaching ymux is zellij's own, and Claude's
- * never matched. Yossi's debug.log has `tui=0` on every direction pass, on
- * every pane, both profiles.
- *
- * So a second source was added that does not travel in-band at all:
- *   - the connect wizard, when ymux itself launches Claude (mode="claude"), and
- *   - the Claude hooks, which already carry YMUX_PANE_ID and fire
- *     session-start / session-end (cli/src/main.rs, rpc_server.rs).
- * Both survive any multiplexer, and the hooks work over SSH too.
- *
- * Precedence is explicit-wins: an out-of-band signal KNOWS, while the title is
- * an inference. `null` means "nobody told us", and only then does the title
- * decide. session-end clears back to null rather than asserting false, so a
- * later manually-typed `claude` can still be picked up by the title if the
- * title ever starts arriving.
- */
-export function foldTuiOwnsBidi(
-  explicit: boolean | null,
-  fromTitle: boolean,
-): boolean {
-  return explicit ?? fromTitle;
-}
-
-export function nextTuiOwnsBidi(prev: boolean, title: string): boolean {
-  if (/claude/i.test(title)) return true;
-  if (title.trim() === "") return false;
-  return prev;
-}

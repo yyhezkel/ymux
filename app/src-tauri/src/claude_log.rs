@@ -67,6 +67,18 @@ pub(crate) struct ClaudeLogEntry {
     pub timestamp: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub usage: Option<ClaudeLogUsage>,
+}
+
+/// Token counts from `message.usage` of an assistant/user line. Key
+/// names mirror `claude_usage_local.rs`; missing keys count as 0.
+#[derive(Clone, Serialize, Debug, Default, PartialEq, Eq)]
+pub(crate) struct ClaudeLogUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cache_read_input_tokens: u64,
+    pub cache_creation_input_tokens: u64,
 }
 
 // ─── storage paths ─────────────────────────────────────────────────────────
@@ -478,6 +490,10 @@ fn entry_from_json(v: &serde_json::Value, line_no: usize) -> Option<ClaudeLogEnt
         ),
         _ => return None, // unknown type — skip silently
     };
+    let usage = match ty.as_str() {
+        "user" | "assistant" => usage_from_json(v),
+        _ => None,
+    };
     Some(ClaudeLogEntry {
         line_no,
         entry_type: ty,
@@ -485,6 +501,22 @@ fn entry_from_json(v: &serde_json::Value, line_no: usize) -> Option<ClaudeLogEnt
         tool_name,
         timestamp,
         session_id,
+        usage,
+    })
+}
+
+/// `message.usage` as counts; None when absent or not an object.
+fn usage_from_json(v: &serde_json::Value) -> Option<ClaudeLogUsage> {
+    let u = v.get("message")?.get("usage")?;
+    if !u.is_object() {
+        return None;
+    }
+    let num = |k: &str| u.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+    Some(ClaudeLogUsage {
+        input_tokens: num("input_tokens"),
+        output_tokens: num("output_tokens"),
+        cache_read_input_tokens: num("cache_read_input_tokens"),
+        cache_creation_input_tokens: num("cache_creation_input_tokens"),
     })
 }
 
@@ -597,4 +629,65 @@ fn truncate(s: &str, max_chars: usize) -> String {
     let mut out: String = s.chars().take(max_chars).collect();
     out.push('…');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    // pins full extraction; breaking it drops token counts from entries
+    #[test]
+    fn assistant_usage_extracted() {
+        let v = json!({"type":"assistant","message":{"content":"hi","usage":{
+            "input_tokens":3,"output_tokens":5,
+            "cache_read_input_tokens":7,"cache_creation_input_tokens":11}}});
+        let e = entry_from_json(&v, 1).unwrap();
+        assert_eq!(
+            e.usage,
+            Some(ClaudeLogUsage {
+                input_tokens: 3,
+                output_tokens: 5,
+                cache_read_input_tokens: 7,
+                cache_creation_input_tokens: 11
+            })
+        );
+    }
+
+    // pins omit-when-absent; breaking it adds a null usage key to the wire JSON
+    #[test]
+    fn absent_usage_is_none_and_omitted() {
+        let v = json!({"type":"user","message":{"content":"hi"}});
+        let e = entry_from_json(&v, 1).unwrap();
+        assert!(e.usage.is_none());
+        let s = serde_json::to_string(&e).unwrap();
+        assert!(!s.contains("usage"));
+    }
+
+    // pins missing sub-keys → 0 and empty object → Some(zeros)
+    #[test]
+    fn missing_subkeys_default_zero() {
+        let v = json!({"type":"assistant","message":{"usage":{"output_tokens":9}}});
+        let u = entry_from_json(&v, 1).unwrap().usage.unwrap();
+        assert_eq!(u.output_tokens, 9);
+        assert_eq!(u.input_tokens + u.cache_read_input_tokens + u.cache_creation_input_tokens, 0);
+        let v = json!({"type":"assistant","message":{"usage":{}}});
+        assert_eq!(entry_from_json(&v, 1).unwrap().usage, Some(ClaudeLogUsage::default()));
+    }
+
+    // pins non-object usage → None; breaking it would misread malformed lines
+    #[test]
+    fn non_object_usage_is_none() {
+        for bad in [json!("x"), json!(5), json!([1]), json!(null)] {
+            let v = json!({"type":"assistant","message":{"usage":bad}});
+            assert!(entry_from_json(&v, 1).unwrap().usage.is_none());
+        }
+    }
+
+    // pins type gating; breaking it attributes usage to system/summary lines
+    #[test]
+    fn non_message_types_ignore_usage() {
+        let v = json!({"type":"system","content":"s","message":{"usage":{"input_tokens":1}}});
+        assert!(entry_from_json(&v, 1).unwrap().usage.is_none());
+    }
 }

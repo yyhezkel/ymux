@@ -30,6 +30,9 @@ const diff = run("git", ["status", "--porcelain", "--", ...paths]).trim();
 if (diff) {
   console.error("\n✗ SDK drift detected — generated output differs from committed. Run `npm run gen` and commit:\n");
   console.error(run("git", ["diff", "--stat", "--", ...paths]));
+  // The diff itself, capped: without it the only way to see WHAT drifted is a
+  // local Go toolchain, which Rule #17 keeps off dev boxes.
+  console.error(run("git", ["diff", "--", ...paths]).split("\n").slice(0, 200).join("\n"));
   process.exit(1);
 }
 console.log("\n✓ SDKs are in sync with the server contract.");

@@ -190,9 +190,38 @@ pass. If a change genuinely does not affect the explanation (a typo fix, a renam
 page never named), put `[vault-skip]` in the PR title; it is logged as a `::notice::` on
 the run.
 
+### Citing a line
+
+Cite a line as `[symbol@path/to/file.rs:123](relative/link/to/file.rs)`: the symbol the
+line is about, `@`, the path suffix and line, then a link that resolves from the page.
+`vault-check` fails if `symbol` is not a whole word within 3 lines of that line, and
+prints the corrected cite (`symbol@file:<n>`) — copy it in. A bare `file:line` is
+rejected, because with no symbol there is nothing to check; this runs even under
+`[vault-skip]`.
+
 Adding coverage is just adding a path to a `covers:` list — the script needs no changes.
-A file may be covered by exactly one page; test files are deliberately left uncovered.
+A file may be covered by exactly one page. Every tracked code file (`.rs`/`.ts`/`.tsx`/`.go`/`.mjs`)
+must be covered or listed in a page's `unowned:` frontmatter (block list, globs allowed, a `#`
+reason on each entry) — an unclaimed file fails the gate. Tests and generated output go in `unowned:`.
 Keep a page around 200 lines: if it needs more, the area wants splitting.
+
+## Running two builds side by side (YMUX_CONFIG_DIR)
+
+A stable build and a dev build share `%APPDATA%\ymux` (`~/Library/Application Support/ymux`
+on macOS) unless told otherwise. Newer builds cope: every save is a three-way merge
+(`workspaces_merge.rs`) behind a schema gate, and the second instance logs a `[CONFIG_LOCK]`
+WARN naming the holding pid. An **already-shipped older build** (any `winmux-*.exe`) has none
+of that and rewrites `workspaces.json` without the fields it does not know, so isolate it:
+
+```
+set YMUX_CONFIG_DIR=C:\temp\ymux-dev      (cmd)
+$env:YMUX_CONFIG_DIR = "C:\temp\ymux-dev"  (PowerShell)
+```
+
+Set it before launching the second build; it then gets its own workspaces, settings and
+`debug.log`. The lock never blocks startup, and a crash leaves no lock to clean (the OS frees
+it; the leftover `ymux.owner.json` is replaced and logged as `stale`). If `debug.log` shows
+`pre-rename build running`, that is the case this section is for.
 
 ## Logging conventions
 

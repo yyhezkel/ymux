@@ -24,6 +24,12 @@ export interface CommandStrings {
 // (`~/.ymux/server`, see cmd/ymux-server/main.go defBase); transcripts are
 // Claude Code's own directory.
 const METRICS_DB = "~/.ymux/server/metrics.db";
+// local workspace: same schema, written by insights_store.rs
+const METRICS_DB_LOCAL = "insights-local.db";
+const METRICS_DB_LOCAL_NOTE = `# Run from the folder holding the DB:
+#   Windows: %APPDATA%\\ymux\\insights-local.db
+#   macOS:   ~/Library/Application Support/ymux/insights-local.db
+`;
 const TRANSCRIPTS = "~/.claude/projects";
 
 const METRICS_SCHEMA = `samples(ts, cpu_pct, load1, mem_used, mem_total, swap_used, net_rx_bps, net_tx_bps)
@@ -32,28 +38,21 @@ docker_samples(ts, cid, name, cpu_pct, mem_used, state)
 -- ts is unix seconds, one row per 5s tick, swept to a 7-day window.`;
 
 function metricsBlock(local: boolean): string {
-  if (local) {
-    return [
-      "This is a LOCAL workspace, and local Insights keeps no history — it samples",
-      "on demand and stores nothing, so there is no metrics database to query.",
-      "The Metrics tab's live snapshot is all there is on this machine.",
-      "Remote workspaces do have one, at " + METRICS_DB + ".",
-    ].join("\n");
-  }
-  return `# Schema
+  const db = local ? METRICS_DB_LOCAL : METRICS_DB;
+  return `${local ? METRICS_DB_LOCAL_NOTE : ""}# Schema
 ${METRICS_SCHEMA}
 
 # Busiest 20 minutes of the last day
-sqlite3 ${METRICS_DB} "SELECT datetime(ts,'unixepoch','localtime') AS t, ROUND(cpu_pct,1) AS cpu, ROUND(mem_used*100.0/NULLIF(mem_total,0),1) AS mem_pct, load1 FROM samples WHERE ts > strftime('%s','now','-1 day') ORDER BY cpu_pct DESC LIMIT 20;"
+sqlite3 ${db} "SELECT datetime(ts,'unixepoch','localtime') AS t, ROUND(cpu_pct,1) AS cpu, ROUND(mem_used*100.0/NULLIF(mem_total,0),1) AS mem_pct, load1 FROM samples WHERE ts > strftime('%s','now','-1 day') ORDER BY cpu_pct DESC LIMIT 20;"
 
 # Hourly averages, so a spike is visible against its own baseline
-sqlite3 ${METRICS_DB} "SELECT datetime(ts/3600*3600,'unixepoch','localtime') AS hour, COUNT(*) AS n, ROUND(AVG(cpu_pct),1) AS cpu_avg, ROUND(MAX(cpu_pct),1) AS cpu_max, ROUND(AVG(load1),2) AS load_avg FROM samples WHERE ts > strftime('%s','now','-2 days') GROUP BY hour ORDER BY hour;"
+sqlite3 ${db} "SELECT datetime(ts/3600*3600,'unixepoch','localtime') AS hour, COUNT(*) AS n, ROUND(AVG(cpu_pct),1) AS cpu_avg, ROUND(MAX(cpu_pct),1) AS cpu_max, ROUND(AVG(load1),2) AS load_avg FROM samples WHERE ts > strftime('%s','now','-2 days') GROUP BY hour ORDER BY hour;"
 
 # Which mount is growing, and by how much
-sqlite3 ${METRICS_DB} "SELECT mount, ROUND(MIN(used)/1073741824.0,2) AS gb_first, ROUND(MAX(used)/1073741824.0,2) AS gb_last, ROUND((MAX(used)-MIN(used))/1073741824.0,2) AS gb_growth FROM disk_samples WHERE ts > strftime('%s','now','-7 days') GROUP BY mount ORDER BY gb_growth DESC;"
+sqlite3 ${db} "SELECT mount, ROUND(MIN(used)/1073741824.0,2) AS gb_first, ROUND(MAX(used)/1073741824.0,2) AS gb_last, ROUND((MAX(used)-MIN(used))/1073741824.0,2) AS gb_growth FROM disk_samples WHERE ts > strftime('%s','now','-7 days') GROUP BY mount ORDER BY gb_growth DESC;"
 
 # Containers that kept dying: uptime as a share of their samples
-sqlite3 ${METRICS_DB} "SELECT name, COUNT(*) AS n, ROUND(100.0*SUM(state='running')/COUNT(*),1) AS uptime_pct, ROUND(AVG(cpu_pct),1) AS cpu_avg FROM docker_samples WHERE ts > strftime('%s','now','-1 day') GROUP BY name ORDER BY uptime_pct ASC;"`;
+sqlite3 ${db} "SELECT name, COUNT(*) AS n, ROUND(100.0*SUM(state='running')/COUNT(*),1) AS uptime_pct, ROUND(AVG(cpu_pct),1) AS cpu_avg FROM docker_samples WHERE ts > strftime('%s','now','-1 day') GROUP BY name ORDER BY uptime_pct ASC;"`;
 }
 
 function claudeBlock(local: boolean): string {
