@@ -16,7 +16,7 @@ func TestParseUsage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.SessionPct != 33 || u.SessionReset != "Jul 8, 4:10am (Europe/Berlin)" || u.WeekPct != 11 ||
+	if u.SessionPct == nil || *u.SessionPct != 33 || u.SessionReset == nil || *u.SessionReset != "Jul 8, 4:10am (Europe/Berlin)" || u.WeekPct != 11 ||
 		len(u.Models) != 1 || u.Models[0].Name != "Fable" || u.Models[0].Pct != 16 ||
 		len(u.Contributing24h) != 3 || len(u.Contributing7d) != 2 || u.FetchedUnix != 1_700_000_000 {
 		t.Fatalf("%+v", u)
@@ -26,6 +26,24 @@ func TestParseUsage(t *testing.T) {
 	}
 	if _, err := parseUsage(`{"result":"hello world"}`, 0); err == nil {
 		t.Error("no session line parsed")
+	}
+}
+
+// Real Ultra output (2026-11): no "Current session" line (claude_usage.rs parses_usage_without_session_window).
+const usageNoSession = `{"type":"result","subtype":"success","is_error":false,"result":"You are currently using your subscription to power your Claude Code usage\n\nCurrent week (all models): 70% used · resets Nov 3, 9pm (Europe/Berlin)\nCurrent week (Fable): 0% used · resets Nov 3, 9pm (Europe/Berlin)\n\nWhat's contributing to your usage?\nApproximate · sessions on this machine only · shares overlap\n\nLast 24h · 6481 requests · 12 sessions\n  88%  Give \"general-purpose\" subagents a cheaper model\n  Top subagents: workflow-subagent 49%, general-purpose 16%\n\nLast 7d · 25883 requests · 26 sessions\n  94%  Give simple subagents a cheaper model","total_cost_usd":0}`
+
+func TestParseUsageWithoutSessionWindow(t *testing.T) {
+	u, err := parseUsage(usageNoSession, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.SessionPct != nil || u.SessionReset != nil || u.WeekPct != 70 || u.WeekReset != "Nov 3, 9pm (Europe/Berlin)" ||
+		len(u.Models) != 1 || u.Models[0].Name != "Fable" || len(u.Contributing24h) != 3 || len(u.Contributing7d) != 2 {
+		t.Fatalf("%+v", u)
+	}
+	b, _ := json.Marshal(u)
+	if !strings.Contains(string(b), `"session_pct":null`) {
+		t.Fatalf("session_pct must serialize as null: %s", b)
 	}
 }
 
