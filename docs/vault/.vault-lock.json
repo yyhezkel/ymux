@@ -12,11 +12,11 @@
     "app/src-tauri/src/config_lock.rs": "3785df0a43aa1ddb150b0d0b864fbd25fb1b75c817b7a63c6cabbb0b78ded206",
     "app/src-tauri/src/ipc_guard.rs": "4925c6413a7cac989c898deba7f6a9d96ed4d0f3f674329f467472d106ca66e7",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "5400b4f5ef9dc65b3d7f9192e2f615c9198fe0c1c5f5a3b3053772c2db54ad7c",
+    "app/src-tauri/src/lib.rs": "5be3eee4ea08a27ddf243c58e37b61e7701d147a8e289f8d70793da4298be7af",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "0573706746a75de5f2f4eb531d7c69e22481af48b70178d935e21810be8863bd",
-    "app/src-tauri/src/sessions_overview.rs": "989a76ff5546534972e166ccb123c4772107747acf00acece6abc483ac69670c"
+    "app/src-tauri/src/sessions_overview.rs": "367098e6f78b206f6c1e120337e03080083e9de9cd1a108505d198b1912be19c"
   },
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
@@ -34,7 +34,7 @@
     "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
   },
   "backend-remote": {
-    "app/src-tauri/src/addons.rs": "85a4eb9f5e52e22cb9580825405d6e8fb10f257a8b30a01356de9ebf574dfdd5",
+    "app/src-tauri/src/addons.rs": "855856f4c3ec724e1f4faab11e3b4288f9a8b006947afa6ef34fa91451ccd1da",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "e9eb2e82df82efd3ce793177a3c80a502ce261d14c551355b85b91fb4dd79664",
     "app/src-tauri/src/provisioning.rs": "e728eb9da0f6a9109ec965b9672aab9fe5f61040de7b8aebb2db1d9e62c95bdf",
@@ -190,7 +190,7 @@
     "app/src/NotificationCenter.tsx": "0b8cb9662fd617661df96f283041904330817f5ce5fd820dcaeb1c4b5e09b922",
     "app/src/PortsWindow.tsx": "52971e77ee3bc3bc2f49954dc12f568268982d6981143971dc5cccc5ffc976e5",
     "app/src/QueuePanel.tsx": "eab834fabf4712299c13ffd4df5a221b3cf920f6e70b6e3b029257ecd6e694a4",
-    "app/src/SessionsOverviewWindow.tsx": "e145e63515fdb1690005e561107590543bdfbe111e71ce635a9e725d76fee9a3",
+    "app/src/SessionsOverviewWindow.tsx": "2ae2579e544577fe908f0b90d863fa79a439c7fe627a0c74407185db7a318736",
     "app/src/TicketModal.tsx": "d9e64796c8032db5ce893f0dd2dfe96b8c387509bae58c428b9fa650a457d120",
     "app/src/TicketsPanel.tsx": "62cf05ef85f2d04e60a6ff8a044065cbaef84bc669fa5901276ee4254c8eb376",
     "app/src/TransferBar.tsx": "19997105e7db2d1f11ed0e04ed235a7f088458cf19685a66fbb80d75c7b78f13",

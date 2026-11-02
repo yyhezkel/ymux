@@ -486,13 +486,16 @@ pub(crate) async fn sessions_overview_summarize(
 /// have a `dev` — so the connection is checked too.
 fn pane_holding_session(state: &AppState, workspace_id: &str, conn: Option<&Connection>, name: &str) -> Option<String> {
     let host_is_local = !matches!(conn, Some(Connection::Ssh { .. }));
+    // The dialog runs on a header; the pane holding the session is on a
+    // screen of the same machine (see `same_machine_workspace_ids`).
+    let machine_ids = crate::same_machine_workspace_ids(state, workspace_id);
     let session_id = {
         let sessions = state.core.sessions.lock().ok()?;
         sessions
             .iter()
             .find(|(_, s)| match s {
                 Session::Ssh(ss) => {
-                    ss.workspace_id == workspace_id && ss.tmux_session.as_deref() == Some(name)
+                    machine_ids.contains(&ss.workspace_id) && ss.tmux_session.as_deref() == Some(name)
                 }
                 Session::Local(ls) => host_is_local && ls.tmux_session.as_deref() == Some(name),
             })
