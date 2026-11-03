@@ -38,6 +38,38 @@ test("wcwidth: isolates are 0, V6 spot checks unchanged", () => {
   assert.equal(isolateAwareV6.wcwidth(0x20000), 2);
   assert.equal(isolateAwareV6.wcwidth(0xe0001), 0);
   assert.equal(isolateAwareV6.wcwidth(0x1f600), 1);
+  assert.equal(isolateAwareV6.wcwidth(0x0591), 0); // Hebrew accent, combining
+  assert.equal(isolateAwareV6.wcwidth(0x1100), 2); // Hangul Jamo, wide
+  assert.equal(isolateAwareV6.wcwidth(0x206a), 0); // first code point past the override range
+  assert.equal(isolateAwareV6.wcwidth(0xac00), 2); // Hangul syllable, wide
+});
+
+// Mirror of xterm UnicodeService.getStringCellWidth over the provider's charProperties.
+const getStringCellWidth = (s: string): number => {
+  let result = 0;
+  let precedingInfo = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) as number;
+    const info = isolateAwareV6.charProperties(cp, precedingInfo);
+    const w = (info >> 1) & 3;
+    if (info & 1) result -= (precedingInfo >> 1) & 3;
+    result += w;
+    precedingInfo = info;
+  }
+  return result;
+};
+
+test("fold: FSI/PDI add no cells to a mixed Hebrew/Latin line", () => {
+  // Core fix: isolates must not shift columns; a regression re-introduces the 1-cell-per-isolate drift.
+  assert.equal(
+    getStringCellWidth("שלום ⁨ABC⁩ 6:00 PM"),
+    getStringCellWidth("שלום ABC 6:00 PM"),
+  );
+});
+
+test("fold: leading combining mark is not joined", () => {
+  // Failure path: nothing to join onto, so the mark keeps its own (zero) width and A is 1.
+  assert.equal(getStringCellWidth("̀A"), 1);
 });
 
 test("charProperties: isolate joins preceding cell, keeps its width", () => {
