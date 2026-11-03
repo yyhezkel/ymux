@@ -23,7 +23,9 @@ import (
 // opScopes maps a secured operation to the scope a paired device must hold to
 // call it. Operations absent here need only a valid token. The shared/admin
 // token bypasses scope checks; devices default to "all" (backwards compat), so
-// this only bites once an owner narrows a device's grants.
+// this only bites once an owner narrows a device's grants. Files read ops need
+// files:read, files write ops files:write; logs ops reuse insights:read, like
+// /api/v2/logs/daemon (no dedicated logs scope exists).
 var opScopes = map[string]auth.Scope{
 	"workspace-list":           auth.ScopeWorkspaceRead,
 	"workspace-create-session": auth.ScopeSessionWrite,
@@ -33,6 +35,19 @@ var opScopes = map[string]auth.Scope{
 	"term-create":              auth.ScopeShellAttach,
 	"term-rename":              auth.ScopeShellAttach,
 	"term-kill":                auth.ScopeShellAttach,
+	"files-list":               auth.ScopeFilesRead,
+	"files-read":               auth.ScopeFilesRead,
+	"files-download":           auth.ScopeFilesRead,
+	"files-upload":             auth.ScopeFilesWrite,
+	"files-delete":             auth.ScopeFilesWrite,
+	"files-mkdir":              auth.ScopeFilesWrite,
+	"files-rename":             auth.ScopeFilesWrite,
+	"files-copy":               auth.ScopeFilesWrite,
+	"files-archive":            auth.ScopeFilesWrite,
+	"files-unzip":              auth.ScopeFilesWrite,
+	"logs-list":                auth.ScopeInsightsRead,
+	"logs-read":                auth.ScopeInsightsRead,
+	"logs-stream":              auth.ScopeInsightsRead,
 }
 
 // newHumaAPI builds the shared huma API on the given mux: security scheme,

@@ -170,6 +170,33 @@ var cardSubkinds = map[string]bool{
 	"post-tool-use": true, "subagent-stop": true, "pre-compact": true,
 }
 
+// gateText is the pre-tool-use card text. Two holes remained after Phase 110:
+// an empty CLI title (addCard sets "(no title)") and a payload with no
+// tool_name both left raw hook JSON or a bare placeholder on the card, and a
+// CLI-derived title can still carry the raw-JSON summary. A fallback title is
+// humanized (or, with no tool_name, a generic line); a derived title is kept
+// and only a summary that is raw JSON is replaced. payload may be nil.
+func gateText(title, summary string, payload map[string]any, lang string) (string, string) {
+	cmd := ""
+	if in, ok := payload["tool_input"].(map[string]any); ok {
+		cmd, _ = in["command"].(string)
+	}
+	cmd = agent.ClipChars(cmd, 100)
+	if title == "(no title)" || strings.HasPrefix(title, "agent: ") {
+		if name, _ := payload["tool_name"].(string); name != "" {
+			return agent.Humanize("pre-tool-use", payload, "", lang)
+		}
+		if lang == "he" {
+			return "Claude רוצה להשתמש בכלי", cmd
+		}
+		return "Claude wants to use a tool", cmd
+	}
+	if strings.HasPrefix(strings.TrimSpace(summary), "{") {
+		return title, cmd
+	}
+	return title, summary
+}
+
 // cardText is the desktop's card-text rule for one language. title/summary
 // are what the CLI sent; brief is the stop's parsed brief, nil otherwise.
 func cardText(subkind, title, summary string, payload map[string]any, brief *agent.Brief, lang string) (string, string) {
@@ -178,8 +205,8 @@ func cardText(subkind, title, summary string, payload map[string]any, brief *age
 	// back to "agent: pre-tool-use" with the raw hook JSON as the summary.
 	// Seen live in the browser. Only that fallback is humanized — a title the
 	// CLI did derive is still the approval prompt, untouched.
-	if subkind == "pre-tool-use" && strings.HasPrefix(title, "agent: ") {
-		return agent.Humanize(subkind, payload, "", lang)
+	if subkind == "pre-tool-use" {
+		return gateText(title, summary, payload, lang)
 	}
 	if !cardSubkinds[subkind] {
 		return title, summary

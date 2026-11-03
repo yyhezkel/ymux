@@ -294,11 +294,12 @@ fn finish(
 }
 
 /// Token field rule shared with Go's `tokenCount`: absent or null is 0, a JSON
-/// non-negative integer is itself, anything else (1.5, -1, "7", true) is Err.
+/// integer in 0..=i64::MAX is itself, anything else (1.5, -1, "7", true, > i64::MAX)
+/// is Err.
 fn token_u64(obj: &serde_json::Value, key: &str) -> Result<u64, ()> {
     match obj.get(key) {
         None | Some(serde_json::Value::Null) => Ok(0),
-        Some(n) => n.as_u64().ok_or(()),
+        Some(n) => n.as_u64().filter(|v| *v <= i64::MAX as u64).ok_or(()),
     }
 }
 
@@ -767,6 +768,8 @@ mod tests {
             r#"{"cache_creation":{"ephemeral_5m_input_tokens":1.5}}"#,
             r#"{"cache_creation":{"ephemeral_1h_input_tokens":-1}}"#,
             r#"{"input_tokens":1e3}"#,
+            r#"{"input_tokens":9223372036854775808}"#,
+            r#"{"cache_creation":{"ephemeral_1h_input_tokens":18446744073709551615}}"#,
             r#"{"cache_creation":"x"}"#,
             r#""x""#,
         ];
@@ -788,6 +791,16 @@ mod tests {
         );
         let rep = scan(&tmp, now - 3600, now).expect("scan");
         assert_eq!((rep.parse_errors, rep.totals.calls, rep.totals.out_tokens), (0, 2, 4));
+        let _ = std::fs::remove_dir_all(&tmp);
+        // i64::MAX is the inclusive cap, same as Go's ParseUint bitSize 63.
+        let tmp = std::env::temp_dir().join(format!("ymux-cu-uint-max-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        write_transcript(&tmp, "p", "s1", &[mk(r#"{"output_tokens":9223372036854775807}"#)]);
+        let rep = scan(&tmp, now - 3600, now).expect("scan");
+        assert_eq!(
+            (rep.parse_errors, rep.totals.calls, rep.totals.out_tokens),
+            (0, 1, 9223372036854775807)
+        );
         let _ = std::fs::remove_dir_all(&tmp);
     }
 

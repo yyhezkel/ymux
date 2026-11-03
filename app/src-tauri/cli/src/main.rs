@@ -1560,7 +1560,10 @@ where
 fn derive_hook_title(subcommand: &str, payload: &Value) -> String {
     match subcommand {
         "tool-permission" | "pre-tool-use" => {
-            if let Some(cmd) = payload.get("command").and_then(|v| v.as_str()) {
+            // Claude Code sends `tool_name`, not `tool`
+            if let Some(name) = payload.get("tool_name").and_then(|v| v.as_str()) {
+                format!("Allow `{}` ?", name)
+            } else if let Some(cmd) = payload.get("command").and_then(|v| v.as_str()) {
                 format!("Run `{}` ?", cmd)
             } else if let Some(tool) = payload.get("tool").and_then(|v| v.as_str()) {
                 format!("Allow `{}` ?", tool)
@@ -1584,7 +1587,7 @@ fn derive_hook_title(subcommand: &str, payload: &Value) -> String {
     }
 }
 
-fn derive_hook_summary(_subcommand: &str, payload: &Value) -> String {
+fn derive_hook_summary(subcommand: &str, payload: &Value) -> String {
     if let Some(s) = payload.get("summary").and_then(|v| v.as_str()) {
         return s.to_string();
     }
@@ -1596,6 +1599,16 @@ fn derive_hook_summary(_subcommand: &str, payload: &Value) -> String {
     }
     if let Some(reason) = payload.get("reason").and_then(|v| v.as_str()) {
         return reason.to_string();
+    }
+    if subcommand == "pre-tool-use" && payload.get("tool_name").is_some_and(|v| v.is_string()) {
+        // tool_input field worth showing; never dump the whole input
+        let input = payload.get("tool_input");
+        let picked = ["command", "file_path", "path", "pattern", "url"]
+            .iter()
+            .find_map(|k| input.and_then(|i| i.get(*k)).and_then(|v| v.as_str()));
+        return picked
+            .map(|v| truncate_at_char_boundary(v, 100).to_string())
+            .unwrap_or_default();
     }
     let s = serde_json::to_string(payload).unwrap_or_default();
     if s.len() > 280 {
@@ -3018,6 +3031,60 @@ async fn real_main() -> ExitCode {
             eprintln!("error: {}", e);
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod hook_card_tests {
+    use super::*;
+    use serde_json::json;
+
+    // pins: Claude Code's tool_name reaches the card title
+    #[test]
+    fn pre_tool_use_title_uses_tool_name() {
+        let t = derive_hook_title("pre-tool-use", &json!({"tool_name": "Bash"}));
+        assert!(t.contains("Bash") && !t.contains("agent:"));
+    }
+
+    // pins: summary is the command, not a JSON dump
+    #[test]
+    fn pre_tool_use_summary_is_command() {
+        let p = json!({"tool_name": "Bash", "tool_input": {"command": "ls -la"}});
+        let s = derive_hook_summary("pre-tool-use", &p);
+        assert_eq!(s, "ls -la");
+        assert!(!s.contains("tool_name"));
+    }
+
+    // pins: clip lands on a char boundary for multi-byte input
+    #[test]
+    fn pre_tool_use_summary_clips_hebrew() {
+        let cmd = "שלום".repeat(40);
+        let p = json!({"tool_name": "Bash", "tool_input": {"command": cmd}});
+        let s = derive_hook_summary("pre-tool-use", &p);
+        assert!(s.len() <= 100 && !s.is_empty());
+    }
+
+    // pins: tool_input without a known key gives empty summary, no dump
+    #[test]
+    fn pre_tool_use_summary_empty_without_known_key() {
+        let p = json!({"tool_name": "X", "tool_input": {"foo": "bar"}});
+        assert_eq!(derive_hook_summary("pre-tool-use", &p), "");
+    }
+
+    // pins: legacy fallback for payloads lacking tool_name
+    #[test]
+    fn pre_tool_use_without_tool_name_keeps_fallback() {
+        let p = json!({"x": 1});
+        assert_eq!(derive_hook_title("pre-tool-use", &p), "agent: pre-tool-use");
+        assert_eq!(derive_hook_summary("pre-tool-use", &p), "{\"x\":1}");
+    }
+
+    // pins: other subcommands unchanged even when tool_name is present
+    #[test]
+    fn other_subcommands_unchanged() {
+        let p = json!({"tool_name": "Bash"});
+        assert_eq!(derive_hook_title("session-start", &p), "Claude session started");
+        assert_eq!(derive_hook_summary("session-start", &p), "{\"tool_name\":\"Bash\"}");
     }
 }
 

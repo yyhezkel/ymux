@@ -40,11 +40,16 @@ move together — that is the point of not copying them.
   `settings.claude.auto_summarize_on_stop` is on. `rpc_server`'s dispatcher calls
   `summarize_session_for_pane` in the background. **Failures are logged, never fatal.**
 
-## `claude_usage.rs` (423) — real subscription quota
+## `claude_usage.rs` (441) — real subscription quota
 
 `claude -p "/usage" --output-format json` returns the user's actual Pro/Max quota —
 session %, weekly %, per-model %, reset times, and a "what's contributing" breakdown —
 inside the envelope's `result` string.
+
+**The session (5-hour) window is optional.** Plans without one (Ultra, since 2026-11)
+print no `Current session:` line, so `session_pct`/`session_reset` are `Option` (`null`
+in TS) and the UI drops that metric. The parse fails only when there is neither a
+session line nor a `Current week (all models):` line.
 
 The call is **free** (`total_cost_usd: 0`, `num_turns: 0`) but costs **~8 seconds** of
 real round-trip. So: cached per workspace for **5 minutes**, fetched on demand or on a
@@ -90,7 +95,7 @@ mtime-pruned files still count in `skipped_files`. `scan` returns
 | D1 | no file cap; `scanned_files` == every file in window |
 | D2 | an oversized line costs nothing but itself — later lines still count (Go reads with `bufio.Reader`, no Scanner limit) |
 | D3 | invalid UTF-8 line → one `parse_errors`, scan continues |
-| D4 | token fields are non-negative integers; null/absent → 0; float, negative, string, bool → `parse_errors`, no call |
+| D4 | token fields are integers in 0..=i64::MAX (Go `tokenCount` bound too); null/absent → 0; float, negative, > i64::MAX, string, bool → `parse_errors`, no call |
 | D5 | assistant line with no/null `usage` → skipped, not an error |
 | D6 | missing or non-string timestamp → `parse_errors` |
 | D7 | walk follows symlinks (dirs and files); only regular files named `*.jsonl` count |

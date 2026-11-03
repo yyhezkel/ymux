@@ -390,3 +390,42 @@ func TestGateCardFallbackTitleIsHumanized(t *testing.T) {
 		t.Errorf("derived title changed: %q / %q", title, summary)
 	}
 }
+
+func TestGateCardNoTitleIsHumanized(t *testing.T) {
+	// addCard sets "(no title)" for an empty CLI title; with a tool_name the
+	// card must be the humanized line, not the placeholder.
+	payload := map[string]any{"tool_name": "Bash", "tool_input": map[string]any{"command": "ls"}}
+	title, summary := cardText("pre-tool-use", "(no title)", `{"cwd":"/x"}`, payload, nil, "en")
+	if title != "Claude wants to run: Bash" || summary != "ls" {
+		t.Errorf("got %q / %q", title, summary)
+	}
+}
+
+func TestGateCardWithoutToolNameIsReadable(t *testing.T) {
+	// No tool_name (or bad JSON → nil payload): generic line in both languages,
+	// never raw JSON; breaking it brings back the "(no title)" card.
+	for _, p := range []map[string]any{nil, {"tool_input": map[string]any{"command": "ls"}}} {
+		title, summary := cardText("pre-tool-use", "(no title)", `{"a":1}`, p, nil, "en")
+		if title != "Claude wants to use a tool" || strings.HasPrefix(summary, "{") {
+			t.Errorf("en got %q / %q", title, summary)
+		}
+	}
+	title, _ := cardText("pre-tool-use", "agent: pre-tool-use", `{"a":1}`, nil, nil, "he")
+	if title != "Claude רוצה להשתמש בכלי" {
+		t.Errorf("he got %q", title)
+	}
+}
+
+func TestGateCardJSONSummaryIsReplaced(t *testing.T) {
+	// A CLI-derived title keeps; its raw-JSON summary becomes the command,
+	// or empty, never a string starting with "{".
+	payload := map[string]any{"tool_input": map[string]any{"command": "date"}}
+	title, summary := cardText("pre-tool-use", "Allow `x` ?", ` {"cwd":"/x"}`, payload, nil, "en")
+	if title != "Allow `x` ?" || summary != "date" {
+		t.Errorf("got %q / %q", title, summary)
+	}
+	_, summary = cardText("pre-tool-use", "Allow `x` ?", `{"cwd":"/x"}`, nil, nil, "en")
+	if summary != "" {
+		t.Errorf("nil payload summary %q", summary)
+	}
+}

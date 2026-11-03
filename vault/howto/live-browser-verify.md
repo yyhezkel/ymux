@@ -1,0 +1,13 @@
+# Live browser verification of the web surfaces (no local build, Rule #17)
+- daemon: committed blob `app/src-tauri/resources/ymux-server-linux-x64` (2.19.0 at 6070488f) on a side port → see [run-committed-server-blob.md](run-committed-server-blob.md); live `~/.ymux/bin/ymux-server` on this box = 2.9.0, pre-Phase-110 (no claude `cmd`, no gate humanize) → never verify Phase 110+ against it
+- web bundle: served from `<data dir>/www/current` (`app/src-tauri/server/internal/term/webapp.go:45`); source = ci-windows `ymux-web` artifact (`.github/workflows/ci-windows.yml:192`, path `app/dist`) → `~/.local/bin/gh run download <run> -n ymux-web -D <dir>/www/current`
+- `gh` + `claude` live in `~/.local/bin` (not on a non-login PATH); start the daemon with that dir on PATH — it resolves bare `claude` to an absolute path at create
+- files root: `--files-root` default `$HOME` (`app/src-tauri/server/cmd/ymux-server/main.go:87`)
+- browser refusal for a path outside the root: `outside the folder this browser can reach (<root>)` (`app/src/backend/web/files.ts:58`), thrown client-side in `rel()`
+- gate card text: `Claude wants to run: <tool>` / Hebrew `Claude רוצה להריץ: <tool>` by settings lang (`app/src-tauri/server/internal/agent/humanize.go:76`); fresh data dir = English
+- Monitor views: `metrics | analytics | mobile | logs | health | claude` (`app/src/InsightsWindow.tsx:73`); NO docker / hygiene tab — docker = container list inside metrics (`InsightsWindow.tsx:522`), hygiene = `HygienePanel` inside health (`InsightsWindow.tsx:325`)
+- claude mode argv: browser sends `["claude", ...splitArgs(claudeArgs)]` (`app/src/backend/web.ts:576`) → tmux `new-session -- <argv>`
+- hook routing: per-session `YMUX_SOCKET_ADDR` → the creating daemon's listener, port in `<data dir>/hook-port` → a side daemon gets its own gate cards (`docs/vault/server-go.md` § Hook routing survives a restart)
+- headless browser: host `/usr/bin/google-chrome` (152) + CDP; node v20 needs `--experimental-websocket` for a stdlib WebSocket. lean-chronoscope MCP Chrome runs in a container and cannot reach host ports (dev-pipeline `skills/infra.md` § Browser MCP recipe)
+- host tmux = 3.0a (side daemon shares the default tmux server with the live daemon → kill only sessions you created)
+- downloads: CDP `Browser.setDownloadBehavior {behavior: allow, downloadPath}` before clicking Download
