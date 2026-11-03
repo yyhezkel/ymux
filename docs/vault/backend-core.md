@@ -240,7 +240,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9361](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9417](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -305,7 +305,7 @@ a verb — zellij.dev documents a different version.
 join; bad JSON or an unknown name is a no-op, so the row keeps its raw name. Writer key
 contract: the CLI keys rows by `$ZELLIJ_SESSION_NAME`, which equals the name listed here (a
 titled pane is `session_name_for_pane`, e.g. `My_Title`, not `ymux-<pane>`); pinned by
-`titled_pane_zellij_key_joins_its_meta_row`.
+`titled_pane_zellij_key_joins_its_meta_row` (in `zellij_tests`, which must import it via `use super::{…}` — main was red on 2026-11 for exactly that).
 
 tmux is the SSH-side equivalent: `TMUX_LIST_FORMAT` + the `<<<YMUX_META>>>` marker frame
 the listing output so `parse_tmux_sessions` can read it back unambiguously.
@@ -417,7 +417,13 @@ cwd). It is a snapshot that can go stale and it feeds **no** verdict — `owned`
 674 lines. The sidebar's right-click **Active sessions…** dialog: every multiplexer
 session on the workspace's machine, grouped by directory, with a one-line agent summary
 and a status (`idle | working | waiting_input | error | unknown`) per row, and three row
-actions. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
+actions. **Handles resolve by machine (2026-09-24):** the dialog is header-only, and a
+header never holds a pane, so every exact `workspace_id` lookup found nothing and the
+dialog said "no sessions" on a live server. `same_machine_workspace_ids` (same SSH
+user@host:port) + `ssh_handle_for_machine` (own session first, else a sibling's) now back
+`list_workspace_tmux_sessions`, `workspace_sessions_reachable`, `tmux_rename_session`
+(handle and the map migration), `addons::pick_handle` (summaries, kill) and
+`pane_holding_session`. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
 list command. The module owns what the picker never needed:
 
 - **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
