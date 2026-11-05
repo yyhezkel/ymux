@@ -107,13 +107,19 @@ numeric family where 9 means *last*, and a `ParsedShortcut` holds exactly one ke
 Bare `Escape` is a contextual *dismissal* — it acts only when a fullscreen panel or a
 maximized pane exists and otherwise falls through so the escape sequence reaches the
 PTY; making it rebindable would let a user strand themselves in a maximized pane. Both
-run before the table so no rebind can shadow them. STT push-to-talk runs after it,
-because it is stored in `settings.stt` rather than `settings.shortcuts`. All three are
-listed read-only in Settings → Shortcuts so they are at least visible. Every
-push-to-talk outcome now lands in the unified log: success as `log.info` with backend +
-char count only (never the transcript — Rule #1; chars=0 catches the "pressed PTT,
-nothing happened" case), and every recorder rejection as `log.error` before the 5-second
-toast, so a missed toast is no longer a lost error.
+run before the table so no rebind can shadow them. STT push-to-talk is stored in
+`settings.stt` rather than `settings.shortcuts`, and it too runs **before** the table:
+it used to run after, so when Phase 87 moved `focus_zoom` onto `Ctrl+Shift+Z` a PTT
+already bound there went silently dead — no recording, no log line. An enabled PTT now
+wins the clash (an explicit choice beats a default that moved under it); a disabled one
+falls through to the table. All three are listed read-only in Settings → Shortcuts so
+they are at least visible. `warnShortcutConflicts` runs `conflictingAccels` (PTT
+included) on load and on every `settings:changed` and logs each duplicate as
+`log.warn`, so a clash is visible in the log and not only in red in Settings. Every
+push-to-talk step lands in the unified log: `stt start` / `stt stop requested` at debug,
+success as `log.info` with backend + char count only (never the transcript — Rule #1;
+chars=0 catches the "pressed PTT, nothing happened" case), and every recorder rejection
+as `log.error` before the 5-second toast, so a missed toast is no longer a lost error.
 
 **The workspace header keeps five buttons, not eight.** Browser, Files, the
 BRIEF Queue (badge = panes needing you across ALL workspaces — beta feedback:
