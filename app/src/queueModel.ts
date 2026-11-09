@@ -107,12 +107,105 @@ export function inQueue(r: QueueRow): boolean {
   return r.light !== null || r.brief !== null;
 }
 
+/** One active-sessions row's verdict, and only ever one. `queue` = a pane on
+ *  this session has a current Queue state, shown for free. `screen` = the row
+ *  needs the on-demand LLM read of the screen, which stays local to the
+ *  overview and never feeds the Queue: an unexpiring guess must not light the
+ *  sidebar or the badge. `summaryTickable`: the status is free, but no real
+ *  summary text exists (a degraded brief, or nothing to show). */
+export type OverviewVerdict =
+  | { source: "queue"; status: QueueStatus; happening: Happening | null; summaryTickable: boolean }
+  | { source: "screen" };
+
+/** Event-based freshness, no age cap: a brief is current until a newer prompt
+ *  starts a turn. During a live turn the hook state is the verdict, so the
+ *  brief's age is irrelevant. */
+function countsInOverview(r: QueueRow): boolean {
+  if (!r.connected || !inQueue(r)) return false;
+  if (r.state === "running" || r.state === "needs-input" || r.state === "failed" || r.waitingOnPermission) {
+    return true;
+  }
+  const prompt = r.brief?.prompt_ms ?? null;
+  if (prompt === null) return true;
+  const updated = r.brief?.brief?.updated_ms;
+  return updated !== undefined && prompt <= updated;
+}
+
+/** `paneIds` is the session's stamped panes; absent on the web backend, which
+ *  sends the row to the LLM. Several panes can mount one session: the most
+ *  urgent wins, then the most recent situation. */
+export function overviewVerdict(
+  paneIds: readonly string[] | undefined,
+  rows: readonly QueueRow[],
+): OverviewVerdict {
+  if (!paneIds || paneIds.length === 0) return { source: "screen" };
+  const ids = new Set(paneIds);
+  let top: QueueRow | null = null;
+  for (const r of rows) {
+    if (!ids.has(r.paneId) || !countsInOverview(r)) continue;
+    if (top === null || moreUrgent(r, top)) top = r;
+  }
+  if (top === null) return { source: "screen" };
+  const happening = whatsHappening(top);
+  return {
+    source: "queue",
+    status: queueStatus(top),
+    happening,
+    summaryTickable: happening === null || top.brief?.brief?.degraded === true,
+  };
+}
+
+function moreUrgent(a: QueueRow, b: QueueRow): boolean {
+  const ba = QUEUE_BUCKET[queueStatus(a)];
+  const bb = QUEUE_BUCKET[queueStatus(b)];
+  return ba !== bb ? ba < bb : (rowSinceMs(a) ?? 0) > (rowSinceMs(b) ?? 0);
+}
+
 export interface QueueGroup {
   wsId: string;
   wsName: string;
   rows: QueueRow[];
   /** rows in buckets 0/1 — the group's "needs you" count. */
   attention: number;
+}
+
+/** The Queue's one ordering rule: bucket first (who needs you), then oldest.
+ *  A row with no timestamp sorts last in its bucket. */
+export function compareQueueRows(a: QueueRow, b: QueueRow): number {
+  const bucket = QUEUE_BUCKET[queueStatus(a)] - QUEUE_BUCKET[queueStatus(b)];
+  if (bucket !== 0) return bucket;
+  return (rowSinceMs(a) ?? Number.MAX_SAFE_INTEGER) - (rowSinceMs(b) ?? Number.MAX_SAFE_INTEGER);
+}
+
+/** One row of the jump palette. `status` is null for a plain shell: it has
+ *  no agent signal, so any status word would be invented. */
+export interface JumpRow {
+  wsId: string;
+  wsName: string;
+  paneId: string;
+  title: string;
+  cwd: string | null;
+  status: QueueStatus | null;
+}
+
+/** The jump palette's rows: agent panes in Queue order, across all
+ *  workspaces (no grouping, so a blocked pane always outranks a working
+ *  pane of another workspace), then connected plain shells in layout order.
+ *  A pane with neither signal is not a session and is left out. Pure. */
+export function buildJumpRows(
+  rows: readonly QueueRow[],
+  cwdOf: (wsId: string) => string | null,
+): JumpRow[] {
+  const agents = rows.filter(inQueue).sort(compareQueueRows);
+  const shells = rows.filter((r) => !inQueue(r) && r.connected);
+  return [...agents, ...shells].map((r) => ({
+    wsId: r.wsId,
+    wsName: r.wsName,
+    paneId: r.paneId,
+    title: r.title,
+    cwd: cwdOf(r.wsId),
+    status: inQueue(r) ? queueStatus(r) : null,
+  }));
 }
 
 /** Group by workspace (the reference table's shape: "CRM — 5"), rows
@@ -130,22 +223,8 @@ export function groupQueueRows(rows: QueueRow[]): QueueGroup[] {
     g.rows.push(r);
     if (QUEUE_BUCKET[queueStatus(r)] <= 1) g.attention += 1;
   }
-  const rowKey = (r: QueueRow): [number, number] => [
-    QUEUE_BUCKET[queueStatus(r)],
-    rowSinceMs(r) ?? Number.MAX_SAFE_INTEGER,
-  ];
   const groups = [...byWs.values()];
-  for (const g of groups) {
-    g.rows.sort((a, b) => {
-      const [ba, sa] = rowKey(a);
-      const [bb, sb] = rowKey(b);
-      return ba !== bb ? ba - bb : sa - sb;
-    });
-  }
-  groups.sort((a, b) => {
-    const [ba, sa] = rowKey(a.rows[0]);
-    const [bb, sb] = rowKey(b.rows[0]);
-    return ba !== bb ? ba - bb : sa - sb;
-  });
+  for (const g of groups) g.rows.sort(compareQueueRows);
+  groups.sort((a, b) => compareQueueRows(a.rows[0], b.rows[0]));
   return groups;
 }

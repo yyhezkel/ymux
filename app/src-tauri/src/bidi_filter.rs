@@ -1,6 +1,7 @@
 //! Phase 52 (BiDi 33B): opt-in PTY-stream filter that wraps Latin runs in
 //! Unicode bidi isolates (FSI U+2068 / PDI U+2069) when they appear near
-//! Hebrew/Arabic text. Default OFF — toggled per pane.
+//! Hebrew/Arabic text. Default OFF — set per RTL profile; the frontend
+//! resolves the profile and passes the value to `pane_connect`.
 //!
 //! Goals:
 //!   - When ls/Claude Code output mixes Hebrew + Latin (`דוח-DEV.txt`,
@@ -56,6 +57,9 @@ enum BidiFilterState {
     Normal,
     /// Saw `\x1b`. Next byte decides which sub-state we land in.
     Esc,
+    /// Inside an escape with intermediates (`\x1b(B`, `\x1b#8`): bytes
+    /// 0x20–0x2F continue it, a byte in 0x30–0x7E ends it.
+    EscIntermediate,
     /// Inside a CSI sequence (`\x1b[…`). Terminator is any byte in
     /// 0x40–0x7E.
     Csi,
@@ -108,6 +112,9 @@ impl BidiFilter {
             match self.state {
                 BidiFilterState::Normal => self.on_byte_normal(b, &mut text_accum, &mut out),
                 BidiFilterState::Esc => self.on_byte_esc(b, &mut out),
+                BidiFilterState::EscIntermediate => {
+                    self.on_byte_esc_intermediate(b, &mut text_accum, &mut out)
+                }
                 BidiFilterState::Csi => self.on_byte_csi(b, &mut out),
                 BidiFilterState::Osc => self.on_byte_osc(b, &mut out),
                 BidiFilterState::OscEsc => self.on_byte_osc_esc(b, &mut out),
@@ -130,12 +137,14 @@ impl BidiFilter {
         } else if b < 0x20 {
             // Control bytes (CR, LF, BS, TAB, BEL, …) flush the
             // pending text and pass through. Crucially this means the
-            // RTL-distance counter resets per logical line via LF.
+            // RTL-distance counter resets per logical line via LF and CR.
             self.flush_text(accum, out);
             out.push(b);
-            if b == b'\n' {
-                // New line — reset RTL context. Otherwise a Hebrew
-                // word on line N would keep wrapping Latin on line N+5.
+            if b == b'\n' || b == b'\r' {
+                // New line or column 0 — reset RTL context. Otherwise a
+                // Hebrew word on line N would keep wrapping Latin on line
+                // N+5, and an FSI could land at column 0, where xterm
+                // cannot join it to a preceding cell.
                 self.chars_since_rtl = RTL_CONTEXT_WINDOW;
             }
         } else {
@@ -149,6 +158,8 @@ impl BidiFilter {
             b'[' => self.state = BidiFilterState::Csi,
             b']' => self.state = BidiFilterState::Osc,
             b'P' => self.state = BidiFilterState::Dcs,
+            // Intermediates (charset selection `ESC ( B` and friends).
+            0x20..=0x2F => self.state = BidiFilterState::EscIntermediate,
             // Single-byte escapes (ESC c, ESC E, ESC D, ESC M, ESC 7,
             // ESC 8, etc.) — bytes 0x30..=0x7E close the sequence here.
             0x30..=0x7E => {
@@ -165,10 +176,36 @@ impl BidiFilter {
         }
     }
 
+    fn on_byte_esc_intermediate(&mut self, b: u8, accum: &mut Vec<u8>, out: &mut Vec<u8>) {
+        match b {
+            0x20..=0x2F if self.escape_buf.len() < ESCAPE_BUF_MAX => self.escape_buf.push(b),
+            0x30..=0x7E => {
+                self.escape_buf.push(b);
+                out.extend_from_slice(&self.escape_buf);
+                self.escape_buf.clear();
+                self.state = BidiFilterState::Normal;
+            }
+            _ => {
+                // Malformed: emit what we held, then treat this byte as
+                // normal input, so a control byte or a UTF-8 lead byte
+                // keeps its meaning.
+                out.extend_from_slice(&self.escape_buf);
+                self.escape_buf.clear();
+                self.state = BidiFilterState::Normal;
+                self.on_byte_normal(b, accum, out);
+            }
+        }
+    }
+
     fn on_byte_csi(&mut self, b: u8, out: &mut Vec<u8>) {
         self.escape_buf.push(b);
         if (0x40..=0x7E).contains(&b) {
             // CSI terminator. The escape is complete.
+            if matches!(b, b'H' | b'f' | b'G') {
+                // CUP, HVP, CHA: the text that follows is not on the
+                // Hebrew run's row or column, and may be at column 0.
+                self.chars_since_rtl = RTL_CONTEXT_WINDOW;
+            }
             out.extend_from_slice(&self.escape_buf);
             self.escape_buf.clear();
             self.state = BidiFilterState::Normal;
@@ -331,8 +368,9 @@ fn is_rtl(c: char) -> bool {
 
 // ─── per-pane filter map ─────────────────────────────────────────────
 
-/// Shared state stored on CoreState. Keyed by pane_id; the entry's
-/// `enabled` field gets flipped by `pane_set_smart_bidi`. The PTY read
+/// Shared state stored on CoreState. Keyed by pane_id; `pane_connect`
+/// sets the entry's `enabled` field from the value the frontend resolved
+/// from the pane's RTL profile. The PTY read
 /// loop calls `apply_to_pane` before handing bytes to xterm.js.
 pub type BidiFilterMap = Arc<Mutex<HashMap<String, BidiFilter>>>;
 
@@ -478,6 +516,69 @@ mod tests {
         let s = "\x1bPq#0;2;100;100;100#1~~@@vv\x1b\\";
         let out = run(&mut f, s);
         assert_eq!(out, s, "DCS payload modified");
+    }
+
+    #[test]
+    fn escape_intermediate_final_byte_is_not_text() {
+        let mut f = BidiFilter::new(true);
+        // Before the fix `B` became text and joined the wrapped run.
+        let out = run(&mut f, "שלום \x1b(BDEV");
+        assert_eq!(out, "שלום \x1b(B\u{2068}DEV\u{2069}");
+    }
+
+    #[test]
+    fn escape_intermediate_split_across_chunks() {
+        let mut f = BidiFilter::new(true);
+        let a = run(&mut f, "שלום \x1b(");
+        let b = run(&mut f, "BDEV");
+        assert_eq!(format!("{a}{b}"), "שלום \x1b(B\u{2068}DEV\u{2069}");
+    }
+
+    #[test]
+    fn other_escape_intermediates_pass_through() {
+        for s in ["שלום \x1b#8", "שלום \x1b F", "שלום \x1b$(B"] {
+            let mut f = BidiFilter::new(true);
+            assert_eq!(run(&mut f, s), s);
+        }
+    }
+
+    #[test]
+    fn malformed_escape_intermediate_keeps_the_next_byte() {
+        let mut f = BidiFilter::new(true);
+        // LF still resets the context, so DEV stays bare.
+        assert_eq!(run(&mut f, "שלום \x1b(\nDEV"), "שלום \x1b(\nDEV");
+        let mut f = BidiFilter::new(true);
+        // A UTF-8 lead byte is not cut from its continuation byte.
+        assert_eq!(run(&mut f, "\x1b(ש"), "\x1b(ש");
+    }
+
+    #[test]
+    fn carriage_return_resets_rtl_context() {
+        let mut f = BidiFilter::new(true);
+        assert_eq!(run(&mut f, "שלום\rDEV"), "שלום\rDEV");
+    }
+
+    #[test]
+    fn cursor_positioning_csi_resets_rtl_context() {
+        for s in ["שלום \x1b[1;1HDEV", "שלום \x1b[1;1fDEV", "שלום \x1b[1GDEV"] {
+            let mut f = BidiFilter::new(true);
+            assert_eq!(run(&mut f, s), s);
+        }
+    }
+
+    #[test]
+    fn cursor_positioning_csi_split_across_chunks_resets() {
+        let mut f = BidiFilter::new(true);
+        let a = run(&mut f, "שלום \x1b[1;");
+        let b = run(&mut f, "1HDEV");
+        assert_eq!(format!("{a}{b}"), "שלום \x1b[1;1HDEV");
+    }
+
+    #[test]
+    fn other_csi_keeps_rtl_context() {
+        let mut f = BidiFilter::new(true);
+        let out = run(&mut f, "שלום \x1b[2CDEV");
+        assert!(out.contains("\u{2068}DEV\u{2069}"), "CUF must not reset: {out:?}");
     }
 
     #[test]

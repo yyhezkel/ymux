@@ -21,9 +21,13 @@ local-machine half of the Insights panel.
 Takes a Claude Code JSONL transcript from
 `~/.claude/projects/<proj>/<session>.jsonl`, pipes the last N exchanges through
 `claude -p "<prompt>"` **on the same machine that holds those transcripts**, and saves
-the result as a ymux Note tagged `summary`.
+the result as a ymux Note tagged `summary`. Remote calls go through `ymux_core::ssh_exec`
+and anything but a clean exit is `Err`, so a timed-out or failed `claude -p` is never
+saved as a note.
 
-SSH-only: `pick_handle` matches `Session::Ssh` only, so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
+SSH-only: `ssh_handle_for_machine` finds SSH sessions only (its own, else a sibling's on the same server), so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
+
+The pipeline exports `YMUX_HEADLESS=1`, so the CLI hooks do nothing for this run. Without it the run borrows a pane through `last.env`, and the `[ymux-brief]` instruction ends up in the saved summary.
 
 Two entry points:
 
@@ -106,7 +110,8 @@ Walk order is deliberately not unified.
 
 ## `claude_log.rs` (693) — alive on purpose, unused on purpose
 
-Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
+(`ssh_exec_capture` ignores the exit on purpose: `find` exits non-zero on any unreadable
+directory.) Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
 competing 'talk to claude' UIs felt fragmented"). Yossi asked to keep the backend for a
 future unified view, so the three commands stay registered in `invoke_handler!` with
 **no frontend caller**. The `#![allow(dead_code)]` at the top is what silences the
@@ -211,7 +216,8 @@ the session id and the cwd. It never reads message content, and it logs only cou
 
 ## `claude_log.rs` (600) — alive on purpose, unused on purpose
 
-Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
+(`ssh_exec_capture` ignores the exit on purpose: `find` exits non-zero on any unreadable
+directory.) Backend for the ClaudeLog pane, which Phase 24.D removed from the frontend ("three
 competing 'talk to claude' UIs felt fragmented"). Yossi asked to keep the backend for a
 future unified view, so the three commands stay registered in `invoke_handler!` with
 **no frontend caller**. The `#![allow(dead_code)]` at the top is what silences the

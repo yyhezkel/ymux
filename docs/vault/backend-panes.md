@@ -43,7 +43,7 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,744)** — dual-column file manager: lists, transfers, mutations on
+**`file_manager.rs` (1,688)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
 both sides. Local ops use `std::fs`; zip 9's `ZipFile::name` returns a `Result`, so a bad
 entry name stops the local unzip with an error. Remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
@@ -53,7 +53,7 @@ caching would mean chasing teardown semantics when the terminal pane disconnects
 **`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
 to the main window via `Window::add_child` (this is what pins `tauri = "=2.11.6"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
-creates or reveals it. All browser webviews share the **process-default WebView2
+creates, reveals or repositions it; there is no separate resize command. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
 workspace and WebView2 does not support multiple environments in one process — that
 surfaced as `0x8007139F`. Creation is serialized by `AppState.browser_create_lock` for
@@ -182,7 +182,7 @@ other arm returns a clean error.
 
 ## Git
 
-**`worktrees.rs` (715)** — enumerate and create git worktrees for a workspace flagged
+**`worktrees.rs` (733)** — enumerate and create git worktrees for a workspace flagged
 `is_project_root` whose cwd is a repo, plus the pin flow's validation step,
 **`project_folder_probe`**: `Err` only when the directory does not exist on the host
 (`dir_exists_over` — `tokio::fs` locally, `test -d` over WSL/SSH; parsing git's fatal
@@ -197,7 +197,7 @@ dispatches on that workspace's connection:
 |---|---|
 | `Local` / none | `tokio::process::Command`, arg array |
 | `Wsl` | `local_setup::wsl_exec` (an `sh -ls` script) |
-| `Ssh` | an exec channel on a **live** handle to that host |
+| `Ssh` | `ymux_core::ssh_exec::exec` on a **live** handle to that host; a signal or a missing status is `Err`, never code 0 |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
 from any session to the same host. The dispatch is `run_git_over` on top of
@@ -217,9 +217,10 @@ can land on the same directory from either side of the rename. `reconcile(ours, 
 theirs)` is a **pure function with unit tests**, which is the point: an idle app never
 saves, so the interesting path cannot be reached by launching one and waiting. Beyond the
 `reconcile` seam, `two_instance_save_tests` in `lib.rs` drive `write_workspaces_text` with two
-merge bases over one tempdir (two instances' edits both survive; an older build's rewrite does
-not strip `parent_id`; a newer on-disk schema refuses the write byte-identically). A second
-instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
+merge bases over one tempdir (two instances' edits both survive, also across a second save; our
+delete sticks after a merge; an older build's rewrite does not strip `parent_id`; a newer on-disk
+schema refuses the write byte-identically). `reconcile` always writes our schema version. A second
+instance is stopped at boot by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content
 
@@ -285,7 +286,7 @@ that is the everyday Windows case, and the rest of the family still comes out. A
 and written down: a user's own hand-installed copy of the same family, in the same
 per-user directory, also matches.
 
-**`tray.rs` (91)** — tray icon, quick menu, taskbar badge. **Best-effort**: a failed
+**`tray.rs` (104)** — tray icon, quick menu, taskbar badge, and `focus_main` for the `app.focus` RPC. **Best-effort**: a failed
 build logs and carries on. `TRAY_ACTIVE` gates close-to-tray so a failed tray can never
 trap the user with a hidden window and no way back.
 

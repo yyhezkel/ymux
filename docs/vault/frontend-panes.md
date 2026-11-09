@@ -7,7 +7,6 @@ covers:
   - app/src/BrowserPane.tsx
   - app/src/browserDevMode.ts
   - app/scripts/devmode-snapshot-check.mjs
-  - app/src/FileManagerWindow.tsx
   - app/src/FileManagerPane.tsx
   - app/src/FileEditor.tsx
   - app/src/fmPaths.ts
@@ -158,15 +157,13 @@ and paint an error), and "paste to local" / "upload the selected local file" are
 rendered; download stays. Names render inside `<bdi>` (direction isolated, cell alignment kept — `dir="auto"` on the span pushed LTR names to the far edge) and the path input is
 `dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
 as `bun.`, on the desktop too.
-**`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
-imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 
 **`fmPaths.ts` (112)** remembers the last directory each column showed, per workspace, in
 localStorage — so re-opening lands where the user left off instead of snapping to
 `$HOME`. localStorage for the same reason as `sessionRestore.ts`: per-machine state that
 changes on every navigation click, where loss costs one click.
 
-**`FileEditor.tsx` (552)** — a modal with a monospace `<textarea>`, Save / Cancel /
+**`FileEditor.tsx` (547)** — a modal with a monospace `<textarea>`, Save / Cancel /
 Reload, and an unsaved-changes guard. **Syntax highlighting is deliberately out of
 scope**: this is "view the file, fix a typo, save", not a code editor.
 
@@ -175,7 +172,7 @@ in the File Manager opens it here instead of the OS app. **Security:** `html: fa
 makes markdown-it drop raw HTML at parse time, and DOMPurify scrubs the rendered output
 as a second layer.
 
-**`TransferBar.tsx` (149)** + **`transferStore.ts` (207)** — in-flight SFTP transfers.
+**`TransferBar.tsx` (149)** + **`transferStore.ts` (196)** — in-flight SFTP transfers.
 A module signal rather than prop-threading, because transfers start from several places
 (the File Manager, terminal drag-drop, OSC 8 link downloads) and one listener at the App
 root feeds them all into a single list.
@@ -265,9 +262,11 @@ output). Row click = `handleSetActive` + `focusPane`; a drawer closes itself on
 jump. Rides the shared PanelSurface lifecycle like Tickets. The row itself is
 `QueueRowView` from `QueueRow.tsx` (Phase 105, with `STATUS_EMOJI` and `relAge`),
 shared with the Briefing card and the Context Rail — see `frontend-shell.md`.
-`BRIEF_SNIPPET` (the empty state's copy-paste CLAUDE.md block) carries the sticky
-`goal:` / `done:` keys and the "≤ 80 chars, imperative, goal/done once, repeat only
-on change" rule since the Phase 105 follow-up; keep it in sync with `docs/BRIEF.md`.
+`BRIEF_SNIPPET` (the empty state's copy-paste CLAUDE.md block) is the raw text of
+`app/src/brief-protocol.txt`, the same file SessionStart injects (`context_store.rs`).
+It carries the sticky `goal:` / `done:` keys and the "≤ 80 chars, imperative,
+goal/done once, repeat only on change" rule since the Phase 105 follow-up; keep the
+file in sync with `docs/BRIEF.md`.
 
 **`ClaudeUsageIndicator.tsx` (182)** + **`claudeUsageFmt.ts` (120)** — the always-visible
 subscription-usage chip. With room it shows session · week · top model (session only when
@@ -308,6 +307,19 @@ session on a screen of its own, a child workspace row in the tree; nothing here 
 disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the button
 re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to
 `log.*` (Rule #1).
+
+**One verdict per row (BRIEF).** `overviewVerdict(s.pane_ids, paneRows)` in `queueModel.ts`
+decides. A row with a current pane shows `queueStatus` + `whatsHappening` on open, free, with
+the checkbox disabled. Every other row keeps the LLM pill, labelled *read from screen*. A
+pane is current when it is connected, in the Queue, and no prompt is newer than its brief,
+unless a live hook (running, needs-input, failed, permission card) already gives the status;
+there is no age cap. Several panes on one session: the most urgent wins (`QUEUE_BUCKET`),
+then the most recent. A degraded brief, or a status with no text, keeps the free status but
+the row stays tickable for an LLM summary. Tick state filters through `summarizable`, so a
+row that gains a brief after it was ticked drops out of the count. The LLM verdict lives only
+in this window's signal and never reaches the Queue, the sidebar or the badge. Missing
+`pane_ids` (the Go daemon's list does not send them, and `claudetools.go` is unchanged) means
+the LLM path, so the browser behaves as before.
 
 **`DiffPane.tsx`** — on mount it subscribes to `diff-pane-updated` **before** calling
 `diff_pane_start` (the first emit is hash-gated and never repeats, so a late listener would
