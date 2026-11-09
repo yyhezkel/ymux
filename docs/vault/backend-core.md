@@ -240,7 +240,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9417](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9313](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
