@@ -30,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use portable_pty::{ChildKiller, MasterPty};
 use russh::client;
 use russh::Channel;
-use russh_keys::HashAlg;
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use serde::{Deserialize, Serialize};
 use ymux_types::{Connection, LayoutNode, PaneKind};
 
@@ -586,14 +586,33 @@ impl SshClient {
     }
 }
 
-#[async_trait::async_trait]
 impl client::Handler for SshClient {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh_keys::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // We never advertise a certificate host-key algorithm
+        // (`Preferred::host_key_certificates` stays empty), so a certificate
+        // here is a protocol anomaly. known_hosts.json holds plain keys only.
+        let PublicKeyOrCertificate::PublicKey { key: server_public_key, .. } = server_public_key
+        else {
+            log_warn("SSH", &format!("host key for {}: certificate refused", self.target));
+            return Ok(false);
+        };
+        // ssh-key 0.6 refused these at decode. 0.7 leaves the choice to us, and
+        // we keep the old floor.
+        if let Some(rsa) = server_public_key.key_data().rsa() {
+            if rsa.key_size() < 2048 {
+                log_warn("SSH", &format!(
+                    "host key for {}: RSA {} bits refused (minimum 2048)",
+                    self.target,
+                    rsa.key_size()
+                ));
+                return Ok(false);
+            }
+        }
         let fp = server_public_key.fingerprint(HashAlg::Sha256).to_string();
         let key_type = server_public_key.algorithm().as_str().to_string();
         let mut known = load_known_hosts();
@@ -668,6 +687,7 @@ impl client::Handler for SshClient {
         _connected_port: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         // The originator is the remote-side peer that dialled the forwarded
@@ -675,10 +695,19 @@ impl client::Handler for SshClient {
         // which left every handshake failure in the tunnel unattributable.
         let peer = format!("{originator_address}:{originator_port}");
         match (self.tunnel_token.clone(), self.bridge_spawner.clone()) {
-            (Some(token), Some(spawn)) => spawn(channel, token, peer),
-            _ => tracing::warn!(
-                "forwarded-tcpip channel from {peer} arrived but no tunnel_token/bridge_spawner set; dropping"
-            ),
+            (Some(token), Some(spawn)) => {
+                // Accept first. russh registers the channel only when this
+                // reply is processed, and the bridge writes its challenge at
+                // once. russh sends open replies ahead of channel data.
+                reply.accept().await;
+                spawn(channel, token, peer);
+            }
+            _ => {
+                tracing::warn!(
+                    "forwarded-tcpip channel from {peer} arrived but no tunnel_token/bridge_spawner set; refusing"
+                );
+                reply.reject(russh::ChannelOpenFailure::AdministrativelyProhibited).await;
+            }
         }
         Ok(())
     }

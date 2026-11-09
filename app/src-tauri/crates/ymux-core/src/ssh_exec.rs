@@ -331,13 +331,13 @@ pub async fn open_sftp(handle: &Handle<SshClient>) -> Result<SftpSession, String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use russh::CryptoVec;
+    use bytes::Bytes;
 
     fn data(s: &str) -> Option<ChannelMsg> {
-        Some(ChannelMsg::Data { data: CryptoVec::from_slice(s.as_bytes()) })
+        Some(ChannelMsg::Data { data: Bytes::copy_from_slice(s.as_bytes()) })
     }
     fn ext(s: &str) -> Option<ChannelMsg> {
-        Some(ChannelMsg::ExtendedData { data: CryptoVec::from_slice(s.as_bytes()), ext: 1 })
+        Some(ChannelMsg::ExtendedData { data: Bytes::copy_from_slice(s.as_bytes()), ext: 1 })
     }
     fn status(c: u32) -> Option<ChannelMsg> {
         Some(ChannelMsg::ExitStatus { exit_status: c })
@@ -509,8 +509,8 @@ mod tests {
     #[test]
     fn utf8_split_across_chunks_survives() {
         let bytes = "é".as_bytes();
-        let first = Some(ChannelMsg::Data { data: CryptoVec::from_slice(&bytes[..1]) });
-        let second = Some(ChannelMsg::Data { data: CryptoVec::from_slice(&bytes[1..]) });
+        let first = Some(ChannelMsg::Data { data: Bytes::copy_from_slice(&bytes[..1]) });
+        let second = Some(ChannelMsg::Data { data: Bytes::copy_from_slice(&bytes[1..]) });
         let o = run(StderrMode::Merge, vec![first, second]).0.finish(false);
         assert_eq!(o.stdout, "é");
     }

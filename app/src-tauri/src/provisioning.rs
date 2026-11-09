@@ -1228,13 +1228,14 @@ async fn open_ssh(
     // decode_secret_key path we adopted in lib.rs's recent fix.
     if let Some(p) = key_path {
         let text = std::fs::read_to_string(p).map_err(|e| format!("read {p}: {e}"))?;
-        let key = russh_keys::decode_secret_key(&text, key_passphrase.as_deref())
+        let key = russh::keys::decode_secret_key(&text, key_passphrase.as_deref())
             .map_err(|e| format!("decode key {p}: {e}"))?;
         let pkwh = crate::pkwh_pub(key)?;
         if handle
             .authenticate_publickey(user, pkwh)
             .await
             .map_err(|e| e.to_string())?
+            .success()
         {
             return Ok(handle);
         }
@@ -1244,6 +1245,7 @@ async fn open_ssh(
             .authenticate_password(user, pw)
             .await
             .map_err(|e| e.to_string())?
+            .success()
         {
             return Ok(handle);
         }
