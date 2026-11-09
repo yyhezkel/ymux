@@ -505,7 +505,8 @@ past installs), `fontInstall`, and `fontUninstall`.
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
   Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
   `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  `open_diff` Ctrl+Shift+G in the panes group, the jump palette added `jump_palette`
+  Ctrl+Shift+O in the general group), `DEPRECATED_SHORTCUT_IDS` (`find`:
   kept in the schema and defaults so old `settings.json` loads, but filtered out of
   `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
   entry or conflict check), parses
