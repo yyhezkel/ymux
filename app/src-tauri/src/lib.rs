@@ -46,6 +46,7 @@ mod tickets;
 mod tray;
 mod tunnel_registry;
 mod updater;
+mod worktree_recipe;
 mod worktrees;
 mod workspaces_merge;
 // Phase 51.C: `mod tunnel` moved to its own crate ymux-tunnel.
@@ -13095,6 +13096,8 @@ pub fn run() {
             worktrees::project_folder_probe,
             worktrees::workspace_list_worktrees,
             worktrees::workspace_create_project_worktree,
+            worktree_recipe::worktree_recipe_preview,
+            worktree_recipe::worktree_recipe_run,
             workspace_split,
             workspace_close_pane,
             workspace_set_split_ratio,

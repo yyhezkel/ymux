@@ -302,7 +302,7 @@ async fn ssh_exec_capture(
 ) -> Result<(i32, String), String> {
     let outcome = ymux_core::ssh_exec::exec(handle, cmd, ExecOpts::timeout_secs(timeout_secs)).await?;
     if outcome.timed_out {
-        return Err("git timed out on the remote host".to_string());
+        return Err("command timed out on the remote host".to_string());
     }
     let code = outcome.require_code()?;
     Ok((code, outcome.stdout))

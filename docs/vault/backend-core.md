@@ -515,6 +515,9 @@ list command. The module owns what the picker never needed:
   sibling so it renders first) and an active header hands over. `unique_workspace_id`
   exists because `new_workspace_id` is nanoseconds only and Windows ticks in 100 ns —
   root + screen minted back to back collided. Tests: `header_screen_tests`.
+- **`worktree_recipe::worktree_recipe_preview` / `_run`** are registered beside
+  `worktrees::workspace_create_project_worktree`; the code and its trust model are in
+  backend-panes.
 - **Open is `workspace_open_session` in lib.rs (Phase 90.B)** — the third child-creating
   command beside `workspace_pin_project_folder` / `workspace_open_worktree`. Since Phase 91.C
   the construction lives in **`push_session_row`** (a CLONE of the root's connection,
