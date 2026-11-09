@@ -88,7 +88,7 @@ put logic there.
   file we failed to understand destroys the user's workspaces.
 - **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
   runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
-  keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
+  keeps a value in `workspaces`; the store is saved (per-pid tmp + rename) to `<config>/secret-env.json` when it
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.
@@ -102,7 +102,7 @@ put logic there.
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
   in workspace settings)`; WSL panes get a status, no delivery. The `Connection::Wsl` arm first runs `local_setup::wsl_pane_problem` (missing wsl.exe / no distro / wanted distro absent) → `log_warn`, status text, `Err` before `spawn_wsl_pty`; a probe error fails open. `build_tmux_attach_script`
-  takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
+  takes `secret_keys` (names only) and appends them to tmux `update-environment` (a local pane adds `YMUX_PIPE_PATH` to that list, and `spawn_local_pty` exports it, only with a config-dir override); the SSH pane passes the names of its `secret_env` rows (WSL passes none).
   `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
   status `environment variable refused by sshd: K` + `log_warn`, connect continues.
@@ -114,8 +114,11 @@ put logic there.
   The entry is removed, and an Unknown `pane:agent-run` emitted (seq+1), by
   `clear_pane_agent_run` on `workspace_close_pane` and workspace-delete teardown
   (`teardown_workspace_runtime`); no emit when the pane had no entry.
+  `session_id` holds the Claude session the pane runs (set by `user-prompt-submit` and
+  `stop`, persisted), and `session_end_is_ours` compares a SessionEnd against it.
   `NEEDS_INPUT_NOTIFICATIONS` and `RESUMED_NOTIFICATIONS` list the
-  `notification_type` values that mean "blocked on the user" and "unblocked". A `stop`
+  `notification_type` values that mean "blocked on the user" and "unblocked"
+  (`tool_running` is ours, not Claude Code's: the CLI sends it in `auto` mode). A `stop`
   arriving after a notification still wins, an unmapped notification changes nothing,
   and a long turn does not keep resetting its own clock — all of that is pinned by unit
   tests in the same file (and ported, with the same test names, to the daemon's
@@ -166,14 +169,20 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1078](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1147](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:989](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:1047](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
-   holds the file text as this process last read or wrote it. `save_to_disk` re-reads
+   holds the file text as this process last read it, or the `ours` text of its last save.
+   It must never hold the merged result: with the merged text as the base, the next save
+   finds disk == base, takes the fast path, and drops the other writer's rows with no log
+   line. So after one merge, every later save takes the merge path. `LAST_LANDED_HASH` sets
+   only the log level: a save that finds our own earlier merge on disk logs at debug, not WARN.
+   A merge always writes our schema version, so an older number cannot stay on disk.
+   `save_to_disk` re-reads
    the file and hands `(ours, base, theirs)` to `workspaces_merge::reconcile`. Reason:
    a stable build and a dev build share `%APPDATA%` unless someone sets
    `YMUX_CONFIG_DIR` (or the pre-rename `WINMUX_CONFIG_DIR`), and a plain dump is last-write-wins across the whole document —
@@ -197,23 +206,33 @@ parameters so a test can run two "instances" (two bases) over one tempdir.
    reads the field and will write v1 back over a v2 file. Step 2 is what covers that
    case; the gate adds the log line that was missing when it cost hours in 2026-08.
 4. Write `workspaces.<pid>.tmp`, `write_all`, **`sync_all`**, then `rename`. Rule #7.
-5. `remember_file_text` updates the merge base.
+5. `write_workspaces_text` stores `ours` as the merge base. `remember_file_text` sets it on load.
 6. Log line records `N workspaces: R root / N-R nested / P repo` — the tree *shape*,
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
-7. **Config-dir lock (diagnostics only).** `setup()` calls `config_lock::hold_for_process(dir)`
-   ([hold_for_process@config_lock.rs:114](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
-   file lock (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the
-   process lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
+7. **Config-dir gate.** The top of `run()` calls `config_lock::gate_for_process(dir)`, after
+   the panic hook and BEFORE the WebView2 block: with persistence off, that block deletes the
+   profile folder, and a second instance must not reach it. The gate takes an OS file lock
+   (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the process
+   lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
    `<dir>/ymux.owner.json` (tmp + rename) because Windows locks block other handles from reading
-   the locked file. A second instance logs `[CONFIG_LOCK]` WARN naming the holder pid and the
-   `YMUX_CONFIG_DIR` remedy and **carries on** — it never refuses to start; the merge in step 2
-   is what keeps concurrent saves safe. A free lock with a leftover owner file (crash/kill; the
-   OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }` carries the
-   dead holder's record and logs a WARN with its pid + version. `started_at` is an RFC 3339 string. Any lock failure is fail-open
-   (`Unavailable`, WARN). A background thread also scans processes for a pre-rename image name
-   (case-insensitive `winmux`) and WARNs per hit with pid + image name — the older build that
-   the schema gate cannot stop. Logs carry pid/version/exe file name only, no full paths.
+   the locked file. On `HeldBy` the launch calls the `app.focus` RPC on the holder and exits 0.
+   The call runs on a worker thread with a 4 s limit, because a Windows pipe `File` has no read
+   timeout and a hung holder would block forever; it retries the connect, because the holder
+   binds its RPC endpoint only at the end of `setup()`. If `app.focus` fails, the launch tries
+   the lock once more (the holder can exit during the wait, which also covers a tray quit and
+   relaunch). If the lock is still held, it shows a native dialog with the holder's pid and
+   version (`MessageBoxW` / `osascript`, because the Tauri dialog plugin needs an AppHandle that
+   does not exist yet) and exits 1. The updater does not reach the gate: the NSIS path runs an
+   interactive installer and the old app exits 800 ms after it starts it, and the macOS relaunch
+   script waits for the old pid to die before `open`. A free lock with a leftover owner file
+   (crash/kill; the OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }`
+   carries the dead holder's record and logs a WARN with its pid + version. `started_at` is an
+   RFC 3339 string. Any lock failure is fail-open (`Unavailable`, WARN). The lock binds only
+   builds that take it, so the merge in step 2 is still what protects against an older build.
+   A background thread also scans processes for a pre-rename image name (case-insensitive
+   `winmux`) and WARNs per hit with pid + image name — the older build that the schema gate
+   cannot stop. Logs carry pid/version/exe file name only, no full paths.
 
 `load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
 connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
@@ -240,7 +259,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9313](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9393](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -263,7 +282,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([emit_data@lib.rs:2647](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2715](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
@@ -561,8 +580,8 @@ list command. The module owns what the picker never needed:
   windows render live PTY output, so an inspector on them is a Rule #1 leak. The opt-outs
   in `run()` and in `popout_pane` are the only thing standing between the feature and
   that. Do not "clean them up".
-- `WEBVIEW2_USER_DATA_FOLDER` is set at the very top of `run()`, before any webview
-  exists, to **one app-wide** profile dir. Per-workspace profiles reintroduce
+- `WEBVIEW2_USER_DATA_FOLDER` is set near the top of `run()`, after the config-dir gate and
+  before any webview exists, to **one app-wide** profile dir. Per-workspace profiles reintroduce
   `0x8007139F` — WebView2 allows one environment per process. Windows-only by
   construction; WKWebView and WebKitGTK ignore the variable.
 - `AGENT_RUN_MIN_TURN_MS = 2000` mirrors a gate in

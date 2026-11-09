@@ -186,7 +186,8 @@ pub async fn run(state: AppState, app: AppHandle) {
 #[cfg(not(windows))]
 fn spawn_unix_listener(name: String, state: AppState, app: AppHandle) -> Result<(), String> {
     // Stale socket file from a previous crash blocks bind — remove it.
-    // A second live instance is prevented upstream (single-instance app).
+    // config_lock::gate_for_process stops a second live instance on this dir
+    // before the server starts. A build older than the gate can still unlink.
     let _ = std::fs::remove_file(&name);
     let listener = tokio::net::UnixListener::bind(&name).map_err(|e| {
         crate::log_warn("RPC", &format!("rpc_server: bind {name} failed: {e}"));
@@ -644,6 +645,15 @@ async fn dispatch(
         // can fall back to its static policy fast when the desktop is
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
+        // A second launch on this config dir asks us to come forward, then
+        // exits (config_lock::gate_for_process).
+        "app.focus" => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || crate::tray::focus_main(&app))
+                .await
+                .map_err(|e| format!("app.focus: {e}"))??;
+            Ok(json!({ "ok": true }))
+        }
         "list-workspaces" => {
             let mut file = state.workspaces.lock().unwrap().clone();
             // AI-NOTE: second layer — persist() already blanks secret values,
@@ -1402,6 +1412,37 @@ async fn dispatch(
                 pane_id.as_deref(),
                 params.get("tmux_session").and_then(|v| v.as_str()),
             );
+            let hook_session = params
+                .get("payload")
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(pane) = resolved_pane.as_deref() {
+                // A SessionEnd from a `claude -p` that borrowed this pane
+                // must touch nothing: no light, no brief, no context record,
+                // no feed card. See `session_end_is_ours`.
+                if subkind == "session-end" {
+                    let current = state
+                        .agent_runs
+                        .lock()
+                        .ok()
+                        .and_then(|runs| runs.get(pane).and_then(|e| e.session_id.clone()));
+                    if !crate::session_end_is_ours(current.as_deref(), hook_session) {
+                        crate::log_debug(
+                            "RPC",
+                            &format!("feed.push: foreign session-end ignored pane={pane} req_id={req_id}"),
+                        );
+                        return Ok(json!({ "request_id": req_id, "decision": "passive" }));
+                    }
+                }
+                if let (true, Some(id), Ok(mut runs)) = (
+                    matches!(subkind.as_str(), "user-prompt-submit" | "stop"),
+                    hook_session,
+                    state.agent_runs.lock(),
+                ) {
+                    runs.entry(pane.to_string()).or_default().session_id = Some(id.to_string());
+                }
+            }
             // Notification type, read here so the state machine below and
             // the early return share one source. The CLI sends nothing but
             // the type in this payload — see the sanitised dispatch there.

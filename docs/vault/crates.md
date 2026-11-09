@@ -46,7 +46,8 @@ The only crate `app` cannot function without. Four files:
 - Pure layout walkers — `collect_panes`, `collect_panes_with_kind`,
   `first_terminal_connection`, `backfill_terminal_connections`.
 - **Known-hosts / TOFU** — `KnownHost`, `KnownHostsFile`, `load_known_hosts`,
-  `save_known_hosts`, `HostCheckOutcome`.
+  `save_known_hosts` (per-pid tmp name + rename, so two processes cannot rename each
+  other's partial file), `HostCheckOutcome`.
 - `SshClient` — the russh `client::Handler` type used in every `Handle<SshClient>`
   signature, plus the `BridgeSpawner` callback the forwarded-tcpip handoff uses.
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,
@@ -54,7 +55,11 @@ The only crate `app` cannot function without. Four files:
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
 - **`pipe_name()` / `pipe_names()`** — the RPC endpoint paths,
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
-  *list* because macOS caps `sun_path` at 104 bytes.
+  *list* because macOS caps `sun_path` at 104 bytes. A config-dir override
+  (`YMUX_CONFIG_DIR` / `WINMUX_CONFIG_DIR`) adds `-<8 hex>` (FNV-1a of the dir) to the
+  primary name; without one the name does not change. **`pipe_path_for_panes()`** returns
+  the value `spawn_local_pty` exports as `YMUX_PIPE_PATH`, only with an override: the CLI
+  cannot derive the suffix. On Unix it is the first candidate shorter than `sun_path`.
 
 **`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.

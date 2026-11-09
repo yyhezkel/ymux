@@ -27,7 +27,9 @@ there is no auth layer here, and the transport is what provides isolation.
 | Concurrency | **pool of 8 listeners** | one listener per path |
 
 `pipe_name()` / `pipe_names()` live in `ymux-core` (shared with `ymux-tunnel`, which
-must resolve the same path from the other side).
+must resolve the same path from the other side). With `YMUX_CONFIG_DIR` set, the name gets
+a per-dir suffix and local panes get `YMUX_PIPE_PATH`, so a dev build keeps its own hooks.
+On macOS tmux panes, the name joins `update-environment` so a running server passes it on.
 
 - **Windows needs a pool** because a named-pipe listener serves one client; a single
   listener means every concurrent connect gets ERROR_PIPE_BUSY. Each of the 8 slots
@@ -53,6 +55,9 @@ must resolve the same path from the other side).
 `dispatch()` ([dispatch@rpc_server.rs:635](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
+- **App** — `app.focus`: a second launch on this config dir asks this instance to show its
+  main window (`tray::focus_main`, on a blocking thread; the reply waits for the event loop,
+  so a hung UI times out in the caller).
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
   `update-workspace`, `delete-workspace`, `reset-layout`
   — `list-workspaces`, `new-workspace` and `update-workspace` replies run `secret_env::redact` (secret env rows `value: ""`), a second layer over `persist()`; `tree` / `ui.tree` emit no env
@@ -111,6 +116,13 @@ and `notification` are the two subkinds that carry no turn timing, so they fold 
 on their own path; the rest also move the timer and emit further down. If you add a hook
 subkind that should affect the traffic light, it goes through `apply_hook`, not through a
 second state machine here.
+
+**A foreign `session-end` is dropped before anything else runs.** `claude -p` outside a
+pane (the usage ticker) inherits no pane id, so the CLI borrows the one in `last.env`.
+`feed.push` compares the payload's `session_id` with the pane's recorded session
+(`session_end_is_ours` in `lib.rs`). On a mismatch it returns `passive` and changes
+nothing: no light, no brief, no context record, no feed card. `user-prompt-submit` and
+`stop` record the session. An end with no `session_id` is accepted.
 
 `stop-failure` (Claude Code `StopFailure`, a turn that died on an API error) is a
 state-only signal like `notification`: its pane arm clears `turn_started_at` WITHOUT

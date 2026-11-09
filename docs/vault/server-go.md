@@ -224,7 +224,9 @@ falls back to `last.env` (the desktop) exactly as before.
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
   prompt; `stop` → `RecordTurn` + `BriefFromStop`; `stop-failure` → `StateFailed` (timer cleared, NO `RecordTurn`, state-only: early passive return like `notification`); `session-end` → run reset (seq+1) +
-  `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
+  `session_ended`. A `session-end` naming another Claude session (`agent.SessionEndIsOurs`,
+  the same rule as `session_end_is_ours` in `lib.rs`) returns `passive` and changes nothing.
+  Notification type `tool_running` never sends a web notification. A hook whose `pane_id` or `tmux_session` is not the matched session's
   is denied. A permission request follows the session's **policy** (Phase 101, below).
   `ping` answers; any other method is a JSON-RPC error.
 - `Snapshot()` is the test-facing form of the state; the events socket's `hello` is the
