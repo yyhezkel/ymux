@@ -17,7 +17,40 @@ updates:
     # default -- so a bump onto it silently switches branches. Every call site
     # passes `toolchain: 1.95.0` explicitly (equal to rust-toolchain.toml) to survive that, but check the
     # proposed SHA is still on `stable` rather than trusting the diff.
-    #
-    # npm and cargo are deliberately NOT enabled here yet: turning them on
-    # would open a wave of PRs against dependency trees nobody has reviewed.
-    # Tracked in BACKLOG.md.
+
+  # npm and cargo are lockfile-only on purpose. A manifest edit moves a file
+  # the vault covers, and a bot branch cannot re-stamp .vault-lock.json, so
+  # any such PR would be red. Lockfile-only also freezes the `=` and `~` pins.
+  # The tauri ignores cover the `^2` siblings: they move by hand, together
+  # (CLAUDE.md, Pinned deps).
+  - package-ecosystem: npm
+    directory: "/app"
+    schedule:
+      interval: monthly
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "@tauri-apps/*"
+    groups:
+      npm:
+        applies-to: version-updates
+        patterns: ["*"]
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+
+  - package-ecosystem: cargo
+    directory: "/app/src-tauri"
+    schedule:
+      interval: monthly
+    versioning-strategy: lockfile-only
+    open-pull-requests-limit: 2
+    ignore:
+      - dependency-name: "tauri*"
+    groups:
+      cargo:
+        applies-to: version-updates
+        patterns: ["*"]
+      cargo-security:
+        applies-to: security-updates
+        patterns: ["*"]

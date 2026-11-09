@@ -37,7 +37,7 @@ When starting a new session, scan the **Open** section. Don't let threads die si
 
 ## Pinned deps
 
-- `tauri = "=2.10.3"` with `features = ["unstable"]` (app/src-tauri/Cargo.toml). The unstable feature gates `Window::add_child`, which Phase 53 uses to mount per-workspace browser webviews inside the main window. Bumping tauri requires verifying `Window::add_child`'s signature hasn't changed and the multi-webview shape still compiles. Push the bump and let CI type-check it (Rule #17 — no local `cargo check`), then smoke-test the workspace Browser window (sidebar 🌐 → open / hide via a modal / navigate / close).
+- `tauri = "=2.11.6"` with `features = ["unstable"]` (app/src-tauri/Cargo.toml). The unstable feature gates `Window::add_child`, which Phase 53 uses to mount per-workspace browser webviews inside the main window. Bumping tauri requires verifying `Window::add_child`'s signature hasn't changed and the multi-webview shape still compiles. The `=` holds only the `tauri` crate: run `cargo update -p <crate> --precise <ver>` on `tauri-runtime`, `tauri-runtime-wry`, `tauri-macros`, `tauri-codegen`, `tauri-utils` and `tauri-build` to the versions that tauri release names, or cargo takes the next minor with a newer wry. Keep `@tauri-apps/api` and `@tauri-apps/cli` on the same minor as the crate. Push the bump and let CI type-check it (Rule #17 — no local `cargo check`), then smoke-test the workspace Browser window (sidebar 🌐 → open / hide via a modal / navigate / close).
 
 ## Off-limits paths
 

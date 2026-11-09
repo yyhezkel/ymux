@@ -1436,7 +1436,10 @@ pub(crate) async fn file_manager_unzip_local(
                 .map_err(|e| format!("zip entry {i}: {e}"))?;
             // Defense-in-depth against zip-slip: refuse any entry whose
             // normalized path tries to escape the destination dir.
-            let raw_name = entry.name().to_string();
+            let raw_name = entry
+                .name()
+                .map_err(|e| format!("zip entry {i} name: {e}"))?
+                .to_string();
             let safe = match entry.enclosed_name() {
                 Some(p) => p.to_path_buf(),
                 None => {
