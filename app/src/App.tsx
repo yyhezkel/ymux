@@ -88,10 +88,11 @@ import {
   type UpdateInfo,
   type HooksOutdatedInfo,
 } from "./settings";
-import { applyI18nSettings, t } from "./i18n";
+import { applyI18nSettings, t, tEn } from "./i18n";
 import { isMac, isWindows } from "./platform";
 import {
   buildShortcutTable,
+  formatAccel,
   keyEq,
   matches,
   parseShortcut,
@@ -146,6 +147,24 @@ const log = createLogger("APP");
 const PALETTE_CAPS: Partial<Record<string, Capability>> = {
   "ssh.provision": "ssh",
   "pane.openDiff": "diffPane",
+};
+
+// Palette command -> the binding that hints it. pane.focus.next/prev have no
+// entry on purpose: tab_next/tab_prev fire only in tabs mode, so the hint
+// would be false in split mode.
+const PALETTE_SHORTCUTS: Partial<Record<string, ShortcutActionId>> = {
+  "workspace.new": "new_workspace",
+  "queue.open": "toggle_queue",
+  "contextRail.toggle": "toggle_context_rail",
+  "briefing.show": "show_briefing",
+  "pane.split.right": "split_horizontal",
+  "pane.split.down": "split_vertical",
+  "pane.close": "close_pane",
+  "pane.maximize": "toggle_maximize",
+  "pane.openDiff": "open_diff",
+  "pane.distributeEvenly": "distribute_evenly",
+  "pane.reset": "reset_terminal",
+  "settings.open": "toggle_settings",
 };
 
 type PaneStatus = { msg: string; err: boolean };
@@ -1188,46 +1207,51 @@ function App() {
     const pid = activePaneId();
     const hasWs = !!ws;
     const hasPane = !!pid;
+    const labels = (key: string) => ({ label: t(key), labelEn: tEn(key) });
+    const accels = shortcutTable();
     return [
-      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => openNewWorkspace() },
-      { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
-      { id: "contextRail.toggle", label: t("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
-      { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
-      { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
-      { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
-      { id: "workspace.delete", label: t("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
-      { id: "pane.split.right", label: t("cmd.pane.split.right"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "horizontal"); } },
-      { id: "pane.split.down", label: t("cmd.pane.split.down"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "vertical"); } },
-      { id: "pane.close", label: t("cmd.pane.close"), enabled: () => hasPane, handler: () => { if (pid) void closePane(pid); } },
-      { id: "pane.focus.next", label: t("cmd.pane.focus.next"), enabled: () => hasPane, handler: () => focusAdjacentPane(1) },
-      { id: "pane.focus.prev", label: t("cmd.pane.focus.prev"), enabled: () => hasPane, handler: () => focusAdjacentPane(-1) },
+      { id: "workspace.new", ...labels("cmd.workspace.new"), handler: () => openNewWorkspace() },
+      { id: "queue.open", ...labels("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "contextRail.toggle", ...labels("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
+      { id: "briefing.show", ...labels("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
+      { id: "workspace.rename", ...labels("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
+      { id: "workspace.disconnect", ...labels("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
+      { id: "workspace.delete", ...labels("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
+      { id: "pane.split.right", ...labels("cmd.pane.split.right"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "horizontal"); } },
+      { id: "pane.split.down", ...labels("cmd.pane.split.down"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "vertical"); } },
+      { id: "pane.close", ...labels("cmd.pane.close"), enabled: () => hasPane, handler: () => { if (pid) void closePane(pid); } },
+      { id: "pane.focus.next", ...labels("cmd.pane.focus.next"), enabled: () => hasPane, handler: () => focusAdjacentPane(1) },
+      { id: "pane.focus.prev", ...labels("cmd.pane.focus.prev"), enabled: () => hasPane, handler: () => focusAdjacentPane(-1) },
       // Phase 55-A: maximize toggle (Ctrl+Enter / double-click pane content).
-      { id: "pane.maximize", label: t("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
+      { id: "pane.maximize", ...labels("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
       // Phase 84.A: split ⇄ tabs for the active workspace.
-      { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
+      { id: "pane.viewMode.toggle", ...labels("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
       // Phase 91.F: open (or focus) the git-diff pane.
-      { id: "pane.openDiff", label: t("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
+      { id: "pane.openDiff", ...labels("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
       // Phase 55-B: distribute splits evenly (Ctrl+Alt+=).
-      { id: "pane.distributeEvenly", label: t("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
-      { id: "pane.rename", label: t("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
-      { id: "ssh.connect", label: t("cmd.ssh.connect"), enabled: () => hasPane, handler: () => { if (pid) void connectPane(pid); } },
-      { id: "ssh.disconnect", label: t("cmd.ssh.disconnect"), enabled: () => hasPane, handler: () => { if (pid) void disconnectPane(pid); } },
-      { id: "pane.reset", label: t("cmd.reset_terminal"), enabled: () => hasPane, handler: () => { if (pid) terms.get(pid)?.resetTerminal(); } },
-      { id: "ssh.provision", label: t("cmd.ssh.provision"), handler: () => setShowSetup({ target: "server" }) },
-      { id: "insights.monitor", label: t("cmd.insights.monitor"), enabled: () => hasWs, handler: () => void openPanelConnected("monitor") },
-      { id: "settings.open", label: t("cmd.settings.open"), handler: () => setShowSettings(true) },
-      { id: "settings.language", label: t("cmd.settings.language"), handler: () => setShowSettings(true) },
-      { id: "settings.theme", label: t("cmd.settings.theme"), handler: () => setShowSettings(true) },
-      { id: "view.zoom.in", label: t("cmd.view.zoom.in"), handler: () => applyZoom(zoomFactor() + 0.1) },
-      { id: "view.zoom.out", label: t("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
-      { id: "view.zoom.reset", label: t("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
-      { id: "fm.open", label: t("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
+      { id: "pane.distributeEvenly", ...labels("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
+      { id: "pane.rename", ...labels("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
+      { id: "ssh.connect", ...labels("cmd.ssh.connect"), enabled: () => hasPane, handler: () => { if (pid) void connectPane(pid); } },
+      { id: "ssh.disconnect", ...labels("cmd.ssh.disconnect"), enabled: () => hasPane, handler: () => { if (pid) void disconnectPane(pid); } },
+      { id: "pane.reset", ...labels("cmd.reset_terminal"), enabled: () => hasPane, handler: () => { if (pid) terms.get(pid)?.resetTerminal(); } },
+      { id: "ssh.provision", ...labels("cmd.ssh.provision"), handler: () => setShowSetup({ target: "server" }) },
+      { id: "insights.monitor", ...labels("cmd.insights.monitor"), enabled: () => hasWs, handler: () => void openPanelConnected("monitor") },
+      { id: "settings.open", ...labels("cmd.settings.open"), handler: () => setShowSettings(true) },
+      { id: "settings.language", ...labels("cmd.settings.language"), handler: () => setShowSettings(true) },
+      { id: "settings.theme", ...labels("cmd.settings.theme"), handler: () => setShowSettings(true) },
+      { id: "view.zoom.in", ...labels("cmd.view.zoom.in"), handler: () => applyZoom(zoomFactor() + 0.1) },
+      { id: "view.zoom.out", ...labels("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
+      { id: "view.zoom.reset", ...labels("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
+      { id: "fm.open", ...labels("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
         if (ws && pid) void backend.call("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
       } },
     ].filter((c) => {
       // Phase 107: a command the host cannot serve is not offered at all.
       const cap = PALETTE_CAPS[c.id];
       return !cap || backend.can(cap);
+    }).map((c) => {
+      const action = PALETTE_SHORTCUTS[c.id];
+      return { ...c, shortcut: action ? formatAccel(accels[action]) : null };
     });
   };
 

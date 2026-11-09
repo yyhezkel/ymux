@@ -28,6 +28,7 @@ covers:
   - app/src/paneDrag.ts
   - app/src/panels.ts
   - app/src/CommandPalette.tsx
+  - app/src/paletteMatch.ts
   - app/src/WelcomeScreen.tsx
   - app/src/useNarrow.ts
   - app/src/icons.tsx
@@ -588,10 +589,19 @@ four layers.
 
 ## Smaller pieces
 
-- **`CommandPalette.tsx` (125)** — Ctrl+Shift+P. The command list comes from `App.tsx`,
+- **`CommandPalette.tsx` (131)** — Ctrl+Shift+P. The command list comes from `App.tsx`,
   so each command calls **the same handler the existing UI uses**. It is a second entry
   point, never a reimplementation. A command with a predicate returning false is hidden
-  (e.g. pane commands with no active pane).
+  (e.g. pane commands with no active pane). Search is `matchesQuery` in
+  **`paletteMatch.ts`** (pure, zero-import, unit-tested, because `npm test` cannot load
+  JSX or the i18n JSON): every whitespace token must be a case-insensitive substring of
+  the localized label, the English label (`tEn`) or the command id. Word order and a
+  label's colon do not matter. No fuzzy scoring. Each row shows the current accelerator:
+  `App.tsx` maps command id to action in `PALETTE_SHORTCUTS` and reads `shortcutTable()`,
+  so a rebind shows at once. An unparseable binding shows no hint. `pane.focus.next/prev`
+  have no entry, because `tab_next/tab_prev` fire only in tabs mode. **Do not put an
+  accelerator in a `cmd.*` label**: shortcuts are rebindable and the text goes stale. The
+  hint is `<kbd dir="ltr">`, so its key order stays correct in RTL.
 - **`WelcomeScreen.tsx` (54)** — the zero-workspaces state. Pure presentational; every
   action reuses an existing flow.
 - **`TechText.tsx` (82)** — wraps technical tokens in `<code><bdi>…</bdi></code>` inside
