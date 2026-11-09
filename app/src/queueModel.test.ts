@@ -16,6 +16,7 @@ import {
   compareQueueRows,
   inQueue,
   rowSinceMs,
+  overviewVerdict,
   type QueueRow,
 } from "./queueModel.ts";
 import type { PaneBrief } from "./bindings/PaneBrief.ts";
@@ -240,4 +241,103 @@ test("buildJumpRows does not reorder its input", () => {
 test("rowSinceMs prefers the live turn start while working", () => {
   const r = withBrief({ updated_ms: NOW - 90_000 }, { state: "running", startedAt: NOW - 3_000 });
   assert.equal(rowSinceMs(r), NOW - 3_000);
+});
+
+// ---- overviewVerdict -------------------------------------------------------
+const withPrompt = (promptMs: number, r: QueueRow): QueueRow => ({
+  ...r,
+  brief: { ...r.brief!, last_prompt: "fix it", prompt_ms: promptMs },
+});
+
+test("overview: missing or empty pane_ids fall back to the screen read", () => {
+  assert.deepEqual(overviewVerdict(undefined, [withBrief({})]), { source: "screen" });
+  assert.deepEqual(overviewVerdict([], [withBrief({})]), { source: "screen" });
+});
+
+test("overview: a pane id with no matching row is a screen read", () => {
+  assert.deepEqual(overviewVerdict(["other"], [withBrief({})]), { source: "screen" });
+});
+
+test("overview: a current brief gives the queue status and the delta, not tickable", () => {
+  const v = overviewVerdict(["p1"], [withBrief({ status: "stuck", delta: "broke" })]);
+  assert.equal(v.source, "queue");
+  if (v.source !== "queue") return;
+  assert.equal(v.status, "stuck");
+  assert.equal(v.happening?.text, "broke");
+  assert.equal(v.summaryTickable, false);
+});
+
+test("overview: a disconnected pane does not count", () => {
+  const r = withBrief({ delta: "x" }, { connected: false });
+  assert.deepEqual(overviewVerdict(["p1"], [r]), { source: "screen" });
+});
+
+test("overview: a pane not in the queue does not count", () => {
+  assert.deepEqual(overviewVerdict(["p1"], [row({ light: null, brief: null })]), { source: "screen" });
+});
+
+test("overview: a prompt newer than the brief voids it, unless a live hook says otherwise", () => {
+  const base = withBrief({ delta: "x", updated_ms: NOW - 60_000 });
+  const stale = withPrompt(NOW - 1_000, base);
+  assert.deepEqual(overviewVerdict(["p1"], [stale]), { source: "screen" });
+  for (const over of [
+    { state: "running" as const },
+    { state: "needs-input" as const },
+    { state: "failed" as const },
+    { waitingOnPermission: true },
+  ]) {
+    assert.equal(overviewVerdict(["p1"], [{ ...stale, ...over }]).source, "queue");
+  }
+});
+
+test("overview: a prompt not newer than the brief keeps it", () => {
+  const base = withBrief({ delta: "x", updated_ms: NOW - 1_000 });
+  assert.equal(overviewVerdict(["p1"], [withPrompt(NOW - 1_000, base)]).source, "queue");
+});
+
+test("overview: a brief has no age cap", () => {
+  const r = withBrief({ delta: "x", updated_ms: 1_000 });
+  assert.equal(overviewVerdict(["p1"], [r]).source, "queue");
+});
+
+test("overview: a degraded brief keeps the status and leaves the summary tickable", () => {
+  const v = overviewVerdict(["p1"], [withBrief({ degraded: true, delta: "first line" })]);
+  assert.equal(v.source, "queue");
+  if (v.source !== "queue") return;
+  assert.equal(v.status, "done");
+  assert.equal(v.summaryTickable, true);
+});
+
+test("overview: a status with no text to show leaves the summary tickable", () => {
+  const v = overviewVerdict(["p1"], [row({ state: "done", brief: null })]);
+  assert.equal(v.source, "queue");
+  if (v.source !== "queue") return;
+  assert.equal(v.happening, null);
+  assert.equal(v.summaryTickable, true);
+});
+
+test("overview: the most urgent pane on a session wins", () => {
+  const calm = withBrief({ status: "done", delta: "calm" }, { paneId: "a" });
+  const stuck = withBrief({ status: "stuck", delta: "help" }, { paneId: "b" });
+  const running = withBrief({ delta: "old" }, { paneId: "c", state: "running" });
+  for (const order of [[calm, stuck, running], [running, stuck, calm]]) {
+    const v = overviewVerdict(["a", "b", "c"], order);
+    assert.equal(v.source === "queue" && v.status, "stuck");
+  }
+});
+
+test("overview: a tie goes to the most recent situation", () => {
+  const older = withBrief({ delta: "old" }, { paneId: "a", stateSince: NOW - 90_000 });
+  const newer = withBrief({ delta: "new" }, { paneId: "b", stateSince: NOW - 1_000 });
+  for (const order of [[older, newer], [newer, older]]) {
+    const v = overviewVerdict(["a", "b"], order);
+    assert.equal(v.source === "queue" && v.happening?.text, "new");
+  }
+});
+
+test("overview: only the panes on the session are read", () => {
+  const mine = withBrief({ status: "done", delta: "mine" }, { paneId: "a" });
+  const other = withBrief({ status: "stuck", delta: "other" }, { paneId: "b" });
+  const v = overviewVerdict(["a"], [mine, other]);
+  assert.equal(v.source === "queue" && v.happening?.text, "mine");
 });

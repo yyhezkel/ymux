@@ -172,9 +172,9 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1147](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1082](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:1047](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:1051](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
@@ -262,7 +262,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9408](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9413](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -289,7 +289,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([emit_data@lib.rs:2715](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2719](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
@@ -449,7 +449,7 @@ dialog said "no sessions" on a live server. `same_machine_workspace_ids` (same S
 user@host:port) + `ssh_handle_for_machine` (own session first, else a sibling's) now back
 `list_workspace_tmux_sessions`, `workspace_sessions_reachable`, `tmux_rename_session`
 (handle and the map migration), `addons::pick_handle` (summaries, kill) and
-`pane_holding_session`. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
+`panes_holding_session`. The **list** is `pane_list_tmux_sessions` with `project_path: None` — no new
 list command. The module owns what the picker never needed:
 
 - **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
@@ -471,6 +471,15 @@ list command. The module owns what the picker never needed:
   never an `Err`, because the list is still worth showing. **Rule #1:** a capture is PTY
   content and the answer is derived from it; the log line carries counts, byte totals, the
   envelope's `subtype` / `is_error` and a duration, nothing else.
+- **`stamp_pane_ids`** (called at the end of `pane_list_tmux_sessions`) fills
+  `TmuxSessionInfo.pane_ids` from `panes_holding_session`, which returns every pane on that
+  host holding the name. The frontend turns those ids into a free Queue verdict
+  (`frontend-panes.md`). A pane in `AppState.hook_unsure_panes` is left out, so its row goes
+  to the LLM instead: `note_hook_attribution` runs on every hook and flags the pane when the
+  hook's `pane_id` was stale (so `find_pane_by_tmux_session` matched by NAME on any host) and
+  the desktop holds sessions to more than one machine. A hook carries no host identity, so
+  that brief may be another machine's. The next direct hook clears the flag;
+  `clear_pane_agent_run` drops it with the pane. The name fallback itself is unchanged.
 - **`sessions_kill_by_name(workspace_id, name)`** — a session one of our panes holds goes
   through `kill_pane_session_inner` (PTY + maps torn down the tested way); anything else goes
   straight to `kill_target` and releases the ownership claim on `killed | already_gone`.

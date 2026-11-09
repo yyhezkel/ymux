@@ -5558,6 +5558,7 @@ function App() {
         open={!!sessionsWin()}
         workspaceId={sessionsWin()?.id}
         workspaceName={sessionsWin()?.name}
+        paneRows={allPaneAgentRows()}
         isZellij={
           isWindows() &&
           (() => {

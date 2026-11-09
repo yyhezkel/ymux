@@ -1443,6 +1443,11 @@ async fn dispatch(
                     runs.entry(pane.to_string()).or_default().session_id = Some(id.to_string());
                 }
             }
+            crate::sessions_overview::note_hook_attribution(
+                state,
+                pane_id.as_deref(),
+                resolved_pane.as_deref(),
+            );
             // Notification type, read here so the state machine below and
             // the early return share one source. The CLI sends nothing but
             // the type in this payload — see the sanitised dispatch there.

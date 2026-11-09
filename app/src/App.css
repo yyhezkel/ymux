@@ -7367,6 +7367,7 @@ body.ymux-dragging .pane-conn {
 .sessions-status.waiting_input { background: rgba(224, 175, 104, 0.18); color: var(--w-warn, #e0af68); border-color: transparent; }
 .sessions-status.error { background: rgba(247, 118, 142, 0.16); color: var(--w-danger, #f7768e); border-color: transparent; }
 .sessions-status.unknown { color: var(--w-text-faint); border-style: dashed; }
+.sessions-source { display: block; font-size: var(--w-fs-xs); color: var(--w-text-faint); white-space: nowrap; }
 .sessions-actions { margin-inline-start: 0; flex-wrap: nowrap; }
 /* Outline, not filled: the row's Open must not outshout the table. The
    explicit transparent background is what keeps `button.primary`'s accent
