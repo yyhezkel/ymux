@@ -154,11 +154,12 @@ Rules:
   boundary.
 - Nothing to say → empty → the hook prints nothing.
 
-The budget is **~300 ms** and the hook **fails open**: a missing app, a slow
+The budget is **1000 ms** and the hook **fails open**: a missing app, a slow
 tunnel or an error (including the Go daemon, which does not know the method)
-means no context, never a stalled session start. Set
-`YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote whose tunnel round trip is
-slower than that.
+means no context, never a stalled session start. The call costs 3 tunnel round
+trips. Set `YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote that needs another
+budget. `hook-debug.log` records each attempt at Info as
+`session-start outcome=injected|empty|timed_out|error` with the phase timings.
 
 **Off switch:** Settings → General → Briefing → *Inject context into sessions*
 (`settings.brief.inject_context`, on by default).

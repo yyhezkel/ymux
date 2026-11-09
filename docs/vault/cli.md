@@ -80,13 +80,24 @@ agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 **`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
 new job, and still never a feed card. The `session-start` branch (after the env gate)
 sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
-`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+`tokio::time::timeout` of `context_timeout_ms()` (1000 ms, `YMUX_CONTEXT_TIMEOUT_MS`
 clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
-nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
-stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":
-"SessionStart","additionalContext":…}}` line, so the text cannot break the JSON. The log
-line carries the source and the byte count, never the text. `manifest.json` is bumped at
+nothing and exits 0. The call costs 3 tunnel round trips, so the first default of 300 ms
+was below the real cost on a 125–175 ms link. A non-empty answer goes through
+`session_start_output`, the only stdout write in that branch — one serde-built
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":…}}` line, so
+the text cannot break the JSON. One Info line records `outcome=injected|empty|timed_out|error`,
+the source, the byte count, the budget and the RPC timing, never the text; the error text
+stays at Debug because a malformed reply is quoted in it. `manifest.json` is bumped at
 release time, not with the spec.
+
+**Hook timing in the log.** `rpc_via` records `connect_ms`, `handshake_ms` and `reply_ms`
+in process-global atomics, so the phases that finished are still readable after
+`session-start` drops the future at its budget. `rpc_timing_log()` appends them to the ACK
+line, the `session-start` line and every passive line (which now logs after the RPC, not
+before). A phase that did not finish stays 0. Over a tunnel, `connect` is only the local
+dial, so the channel open shows in `handshake`. For a blocking `pre-tool-use`, `reply`
+includes the wait for the human. Durations only (Rule #1).
 
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
@@ -107,9 +118,11 @@ fallback. So a hook change reaches existing installs without a CLI rebuild.
 
 ## `port_watch.rs` — the LISTEN watcher
 
-Runs on the remote. Every **1s** it reads `/proc/net/tcp` + `/proc/net/tcp6`; if the raw
-bytes are identical to the previous tick it does nothing, otherwise it extracts LISTEN
-sockets and diffs against the previous set. A new port sends `port.opened`, a vanished
+Runs on the remote. Every **3s** it reads `/proc/net/tcp` + `/proc/net/tcp6`, extracts
+LISTEN sockets and diffs against the previous set. There is no raw-bytes skip any more:
+the timer columns of established sockets change between reads, so a byte compare matched
+on 0 of 59 measured ticks (2026-11-09), and the read costs more than the parse. A new
+port sends `port.opened`, a vanished
 one `port.closed`. **Both are detection-only on the desktop** — `rpc_server.rs` records
 the port in `detected_ports` and emits `port-detected`; the SSH local-forward is opened
 only when the user clicks (`forward_port_start`).
