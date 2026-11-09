@@ -76,15 +76,15 @@ line — i.e. the Phase 91.B lock: mouse off, no status bar, prefix table = `[` 
 ### `RtlProfiles` — the one schema here with a real invariant
 
 `TerminalSettings.rtl` is a `RtlProfiles { local, remote }`, each an `RtlProfile`
-carrying `rtl_mode`, `auto_direction`, `mirror_arrows_rtl`, `tui_owns_bidi` and
-`direction_policy`. The split is not cosmetic and not a local-vs-remote *geography*
+carrying `rtl_mode`, `auto_direction`, `mirror_arrows_rtl`, `tui_owns_bidi`,
+`direction_policy` and `smart_bidi`. The split is not cosmetic and not a local-vs-remote *geography*
 test: it is keyed on `ConnCaps.posixExec`, so **WSL counts as remote**. It exists
 because the two classes were measured to need OPPOSITE modes — a Windows ConPTY
 pane hands over Hebrew already in VISUAL order, while SSH to Linux delivers
 LOGICAL order — so one global setting could only ever satisfy one of them. Yossi's
 report was "ההגדרה הזו עובדת או למקומי או למרוחק".
 
-Three things here are load-bearing:
+Four things here are load-bearing:
 
 - **`rtl: Option<RtlProfiles>` is an `Option` on purpose.** Absent is the migration
   signal that `migrate_rtl_profiles` reads to lift the four deprecated flat fields
@@ -95,6 +95,9 @@ Three things here are load-bearing:
   first shipped keyed on whether Claude held the pane, and because the OSC title
   propagates over SSH it fired on remote panes and broke a working path. The test
   `remote_direction_policy_is_the_pre_2026_08_19_rule` pins the separation.
+- **`smart_bidi` defaults to off when absent**, so an old settings file loads and no
+  pane starts filtering on upgrade. Rust never reads it: the frontend resolves it and
+  passes it to `pane_connect`.
 - **`rtl_mode` is a `String`, not an enum** (the `sidebar_mode` pattern), so adding
   a mode costs nothing here and an unknown value from an older or newer
   settings.json degrades in the frontend rather than failing the whole

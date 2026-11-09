@@ -183,3 +183,13 @@ export function visualToLogicalStream(chunk: string): string {
   if (last < chunk.length) out.push(unreorderTextSegment(chunk.slice(last)));
   return out.join("");
 }
+
+/**
+ * Remove bidi isolates (U+2066-U+2069) from text on its way to the clipboard.
+ * The smart-bidi filter inserts them into the stream and xterm stores them in
+ * the cell text, so a selection of `main.rs` would otherwise paste with an
+ * invisible trailing PDI.
+ */
+export function stripIsolates(text: string): string {
+  return text.replace(/[\u2066-\u2069]/g, "");
+}

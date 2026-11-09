@@ -81,8 +81,8 @@ put logic there.
   looking at, `None` = the workspace's own cwd. `diff_cwd` is view state, so it did **not**
   bump `WORKSPACES_SCHEMA_VERSION` (a bump makes an older build refuse to save).
   `claude_running: Option<bool>` follows the same pattern; `pane_set_claude_running`
-  (clone of `pane_set_smart_bidi` minus the bidi-filter call) writes it via `persist()` and
-  emits `workspaces:changed`.
+  writes it via `persist()` and emits `workspaces:changed`. `smart_bidi: Option<bool>` is
+  retired: it stays on the leaf so old files keep their shape, and nothing reads it.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
@@ -240,9 +240,9 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9417](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9345](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
-`mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
+`mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`, `smart_bidi`,
 `tmux_session_name`, plus the credential arguments.
 
 - Connection resolution prefers **the pane's own** `connection`, falling back to the

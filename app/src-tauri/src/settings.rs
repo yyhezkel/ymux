@@ -413,6 +413,11 @@ pub(crate) struct RtlProfile {
     /// cannot silently move a pane onto the newer rule.
     #[serde(default = "default_direction_policy")]
     pub direction_policy: String,
+    /// Wrap Latin runs near Hebrew/Arabic in bidi isolates. Opt-in, off when
+    /// absent, so an existing settings.json loads unchanged. Rust does not
+    /// read this: the frontend resolves it and passes it to `pane_connect`.
+    #[serde(default)]
+    pub smart_bidi: bool,
 }
 
 /// See `RtlProfile::direction_policy`. The pre-2026-08-19 rule is the default
@@ -429,6 +434,7 @@ impl Default for RtlProfile {
             mirror_arrows_rtl: true,
             tui_owns_bidi: false,
             direction_policy: default_direction_policy(),
+            smart_bidi: false,
         }
     }
 }
@@ -658,6 +664,8 @@ pub(crate) fn migrate_rtl_profiles(t: &mut TerminalSettings) -> bool {
         // lands on the pre-2026-08-19 rule, which is what it was already
         // running.
         direction_policy: default_direction_policy(),
+        // Also postdates the split: a migrating install stays off.
+        smart_bidi: d.smart_bidi,
     };
     t.rtl = Some(RtlProfiles {
         local: carry(defaults.local),
@@ -3010,6 +3018,18 @@ mod tests {
         let p: RtlProfile = serde_json::from_str(r#"{"rtl_mode":"auto_per_line"}"#)
             .expect("partial RtlProfile deserializes");
         assert_eq!(p.direction_policy, "any_rtl");
+    }
+
+    #[test]
+    fn smart_bidi_is_off_by_default_and_when_absent() {
+        // An existing settings.json has no `smart_bidi`: it must still load,
+        // and no pane may start filtering because of an upgrade.
+        let p: RtlProfile = serde_json::from_str(r#"{"rtl_mode":"auto_per_line"}"#)
+            .expect("partial RtlProfile deserializes");
+        assert!(!p.smart_bidi);
+        let d = RtlProfiles::default();
+        assert!(!d.local.smart_bidi);
+        assert!(!d.remote.smart_bidi);
     }
 
     #[test]
