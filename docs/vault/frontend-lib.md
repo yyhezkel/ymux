@@ -427,7 +427,7 @@ on "did the transform move the point", not on the row being rtl.
 
 ## Typed mirrors
 
-**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (621)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,

@@ -526,7 +526,7 @@ list command. The module owns what the picker never needed:
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
 - **Every invoke is guarded, then counted** — `invoke_handler(ipc_guard::guarded(ipc_meter::metered(generate_handler![…])))`.
-  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser).
+  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser). The handler list has no Browser resize entry: `workspace_browser_show` repositions the webview.
   `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
   `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
   `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and

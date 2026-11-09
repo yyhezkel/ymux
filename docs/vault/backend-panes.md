@@ -49,10 +49,10 @@ already-authenticated SSH session and open **a fresh SFTP channel per call**. Se
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.
 
-**`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
+**`workspace_browser.rs` (1,226)** — **at most one child Webview per workspace**, attached
 to the main window via `Window::add_child` (this is what pins `tauri = "=2.10.3"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
-creates or reveals it. All browser webviews share the **process-default WebView2
+creates, reveals or repositions it; there is no separate resize command. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
 workspace and WebView2 does not support multiple environments in one process — that
 surfaced as `0x8007139F`. Creation is serialized by `AppState.browser_create_lock` for

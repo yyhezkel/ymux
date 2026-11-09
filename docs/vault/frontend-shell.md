@@ -278,7 +278,7 @@ the holding pane's restore hint (`rememberPaneSession`) — the backend migrates
 maps, but the hint is frontend-owned and would otherwise name a session that no longer
 exists on the next boot.
 
-## `LayoutView.tsx` (372) + `Divider.tsx` (72)
+## `LayoutView.tsx` (386) + `Divider.tsx` (72)
 
 Recursively renders `LayoutNode`: a `split` becomes two children plus a `Divider`, a
 `pane` becomes a `PaneView` (or `DiffPane` / `HelpPane` by `PaneKind`). `Divider` drives

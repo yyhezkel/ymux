@@ -13186,7 +13186,6 @@ pub fn run() {
             workspace_browser::workspace_browser_eval,
             workspace_browser::workspace_browser_open_devtools,
             workspace_browser::workspace_browser_close,
-            workspace_browser::workspace_browser_resize,
             workspace_browser::browser_popout_open,
             tickets::tickets_list,
             tickets::tickets_resolve_project,

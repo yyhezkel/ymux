@@ -7,7 +7,6 @@ covers:
   - app/src/BrowserPane.tsx
   - app/src/browserDevMode.ts
   - app/scripts/devmode-snapshot-check.mjs
-  - app/src/FileManagerWindow.tsx
   - app/src/FileManagerPane.tsx
   - app/src/FileEditor.tsx
   - app/src/fmPaths.ts
@@ -158,8 +157,6 @@ and paint an error), and "paste to local" / "upload the selected local file" are
 rendered; download stays. Names render inside `<bdi>` (direction isolated, cell alignment kept — `dir="auto"` on the span pushed LTR names to the far edge) and the path input is
 `dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
 as `bun.`, on the desktop too.
-**`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
-imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 
 **`fmPaths.ts` (112)** remembers the last directory each column showed, per workspace, in
 localStorage — so re-opening lands where the user left off instead of snapping to
