@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use russh::client::Handle;
-use russh::ChannelMsg;
+use ymux_core::ssh_exec::{exec, ExecOpts, StderrMode};
 use serde::Deserialize;
 
 use ymux_core::{log_debug, log_error, log_info, log_warn, shell_quote, SshClient};
@@ -25,10 +25,6 @@ const REMOTE_DIR: &str = ".ymux/bin";
 const REMOTE_BASE_DIR: &str = ".ymux";
 const TMUX_CONF_REMOTE: &str = "tmux.conf";
 const TMUX_CONF_MANIFEST_KEY: &str = "tmux-conf";
-/// Per-request SFTP deadline. russh-sftp's own default is 10s, which is the
-/// budget for ONE 255KiB chunk — far too tight on a busy or distant host,
-/// where a single late ack killed an otherwise healthy multi-megabyte upload.
-const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Deserialize, Debug)]
 pub struct ManifestEntry {
@@ -93,41 +89,18 @@ fn cmd_summary(cmd: &str) -> String {
     }
 }
 
+/// Stdout and exit code of `cmd`. Stderr dropped, as it always was here.
+/// A signal or a missing status is `Err`, so a dead channel cannot pass as
+/// exit 0. The output never goes in the log (Rule #1).
 async fn ssh_exec(
-    handle: &mut Handle<SshClient>,
+    handle: &Handle<SshClient>,
     cmd: &str,
 ) -> Result<(String, i32), String> {
     log_debug("BOOT", &format!("bootstrap: exec '{}'", cmd_summary(cmd)));
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open exec channel: {e}"))?;
-    chan.exec(true, cmd).await.map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => stdout.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
-                stderr.extend_from_slice(&data[..])
-            }
-            Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
-    }
-    let _ = chan.close().await;
-    let stdout_str = String::from_utf8_lossy(&stdout).to_string();
-    let stderr_str = String::from_utf8_lossy(&stderr).to_string();
-    log_debug("BOOT", &format!(
-        "bootstrap: exec '{}' exit={} stdout={:?} stderr={:?}",
-        cmd_summary(cmd),
-        exit_code,
-        stdout_str.trim(),
-        stderr_str.trim()
-    ));
-    Ok((stdout_str, exit_code))
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::default() };
+    let outcome = exec(handle, cmd, opts).await?;
+    let code = outcome.require_code()?;
+    Ok((outcome.stdout, code))
 }
 
 fn detect_triple(uname_output: &str) -> Option<&'static str> {
@@ -175,32 +148,10 @@ async fn upload_via_sftp(
         tmp_path,
         bytes.len()
     ));
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: sftp channel_open failed: {e}"));
-            format!("open sftp channel: {e}")
-        })?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: sftp request_subsystem failed: {e}"));
-            format!("request sftp: {e}")
-        })?;
-    let stream = chan.into_stream();
-    let sftp = russh_sftp::client::SftpSession::new(stream)
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: SftpSession::new failed: {e}"));
-            format!("sftp init: {e}")
-        })?;
-    // russh-sftp defaults to a 10s deadline PER REQUEST, and each request is
-    // one 255KiB chunk written strictly serially (write → await ack → write).
-    // On a loaded or distant host 10s is far too tight: a 2.4MB payload is ~10
-    // sequential round trips, and one slow ack aborted the whole upload. The
-    // leftover we found on the server was 522,240 bytes — exactly two chunks.
-    sftp.set_timeout(SFTP_REQUEST_TIMEOUT_SECS).await;
+    let sftp = ymux_core::ssh_exec::open_sftp(handle).await.map_err(|e| {
+        log_error("BOOT", &format!("bootstrap: sftp open failed: {e}"));
+        e
+    })?;
     log_debug("BOOT", "bootstrap: sftp session ready");
 
     let upload = async {

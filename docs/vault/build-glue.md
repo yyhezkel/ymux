@@ -75,7 +75,7 @@ third-party actions in the workflows are pinned by commit SHA rather than tag, w
 dependabot watching them.
 
 Notable deps: `@xterm/xterm` 6 with the fit/webgl/clipboard addons, `bidi-js`,
-`dompurify`, `markdown-it`, `@tauri-apps/api` ~2.10.
+`dompurify`, `markdown-it`, `@tauri-apps/api` ~2.11.
 
 ## `app/scripts/build-linux-cli.ps1`
 
@@ -128,13 +128,26 @@ means the CLI source moved since the last rebake, not that CI's rustc differs.
 
 ## `app/src-tauri/Cargo.toml` and `build.rs`
 
-`tauri = "=2.10.3"` with `features = ["unstable", "tray-icon", "image-png", "devtools"]`,
+`tauri = "=2.11.6"` with `features = ["unstable", "tray-icon", "image-png", "devtools"]`,
 **pinned**. The unstable feature gates `Window::add_child`, which the per-workspace
 browser webviews depend on. Bumping tauri means verifying `add_child`'s signature and the
-multi-webview shape still compile — push the bump and let CI type-check it (Rule #17),
+multi-webview shape still compile, and running `cargo update --precise` on `tauri-runtime`,
+`tauri-runtime-wry`, `tauri-macros`, `tauri-codegen`, `tauri-utils` and `tauri-build`
+(the pin does not hold them; plain resolution takes the next minor, with a newer wry) — push the bump and let CI type-check it (Rule #17),
 then smoke-test the workspace Browser.
 
+`russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }`
+appears in five manifests (the app, `ymux-core`, `ymux-ssh`, `ymux-bootstrap`,
+`ymux-tunnel`) and the feature list must match. The upstream default backend is
+`aws-lc-rs`, a cmake/NASM native build, and one crate left on defaults brings it back
+through feature unification. `russh-keys` no longer exists (merged into `russh::keys`).
+`russh-sftp` has no runtime dependency on `russh` and stays on 2.1.1: from 2.4 `write_all`
+returns before the ack, and the upload sites discard `flush`/`shutdown` errors.
+
 `mainBinaryName` is top-level in Tauri 2 and set only in `tauri.macos.conf.json` (`"ymux"`, so the macOS executable is `Contents/MacOS/ymux`, not the cargo package name `app`); `tauri.conf.json` must stay without it or Windows `app.exe` (hardcoded in `build-windows.yml`) breaks.
+
+`zip` is `9.5`: every version before 9.0.5 is under the parser-differential advisory
+GHSA-m665-v7pm-7grj, which applies to `file_manager_unzip_local` and `fonts.rs`.
 
 `windows-sys` carries `Win32_Security_Cryptography` for `CryptProtectData` /
 `CryptUnprotectData` in `secret_env.rs` (secret env rows; see `backend-core.md`).

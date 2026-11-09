@@ -156,6 +156,10 @@ export interface TmuxSessionInfo {
    *  `owned || in_cwd`. "This folder" is exactly the complement of this field,
    *  so the badge cannot show up there and needs no scope conditional. */
   foreign?: ForeignScope;
+  /** BRIEF: panes mounted on this session on this host. Absent when there
+   *  is none, when a hook's host is unsure, and always on the web backend:
+   *  every one of those means the row falls back to the LLM. */
+  pane_ids?: string[];
   /** Phase 90: the cwd recorded in `session-owners.json` when ymux claimed
    *  this session, whichever workspace did. A grouping key for the
    *  active-sessions overview (zellij rows have no live `cwd`); a claim-time
@@ -362,7 +366,7 @@ export function describeConnection(c: Connection): string {
 //
 // The connection discriminator lives on the ts-rs-generated `Connection`
 // binding (`{ type: "local" | "ssh" }`). Before this refactor, ~10 sites
-// across App.tsx, Sidebar.tsx, FileManagerWindow.tsx and PaneView.tsx
+// across App.tsx, Sidebar.tsx and PaneView.tsx
 // repeated `c?.type === "ssh"` inline, with subtle semantic drift
 // (workspace-only vs. layout-walk vs. pane-with-fallback). These
 // predicates collapse the pattern to three sharp questions:

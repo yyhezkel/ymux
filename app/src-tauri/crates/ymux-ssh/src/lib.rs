@@ -18,14 +18,14 @@
 //!   try_authenticate               — full 4-step auth ladder
 //!
 //! No AppState, no tauri. Depends on `ymux-core` for `SshClient` +
-//! `dlog`, plus `russh` / `russh-keys` / `tokio` (time + macros).
+//! `dlog`, plus `russh` / `tokio` (time + macros).
 
 use std::path::Path;
 use std::sync::Arc;
 
 use russh::client;
-use russh_keys::key::PrivateKeyWithHashAlg;
-use russh_keys::{HashAlg, PrivateKey};
+use russh::keys::agent::AgentIdentity;
+use russh::keys::{HashAlg, PrivateKey, PrivateKeyWithHashAlg};
 
 use ymux_core::{log_debug, log_error, log_warn, SshClient};
 
@@ -67,7 +67,27 @@ pub fn pkwh(key: PrivateKey) -> Result<PrivateKeyWithHashAlg, String> {
     } else {
         None
     };
-    PrivateKeyWithHashAlg::new(key, hash_alg).map_err(|e| e.to_string())
+    Ok(PrivateKeyWithHashAlg::new(key, hash_alg))
+}
+
+/// Try one agent identity. RSA signs with SHA-512, the same as `pkwh`.
+/// A certificate identity is skipped: ymux has no certificate auth.
+pub async fn auth_with_agent_identity<H, S>(
+    handle: &mut client::Handle<H>,
+    user: &str,
+    id: AgentIdentity,
+    agent: &mut S,
+) -> Result<bool, S::Error>
+where
+    H: client::Handler,
+    S: russh::Signer,
+{
+    let AgentIdentity::PublicKey { key, .. } = id else {
+        return Ok(false);
+    };
+    let hash_alg = key.algorithm().is_rsa().then_some(HashAlg::Sha512);
+    let result = handle.authenticate_publickey_with(user, key, hash_alg, agent).await?;
+    Ok(result.success())
 }
 
 /// Try ssh-agent auth via OpenSSH-for-Windows agent and Pageant in turn.
@@ -78,7 +98,7 @@ pub fn pkwh(key: PrivateKey) -> Result<PrivateKeyWithHashAlg, String> {
 /// Both backends speak the OpenSSH agent protocol over a Windows named
 /// pipe — they only differ in pipe name (`openssh-ssh-agent` vs
 /// `pageant`). We hit them through
-/// `russh_keys::agent::client::AgentClient::connect_named_pipe`, which
+/// `russh::keys::agent::client::AgentClient::connect_named_pipe`, which
 /// returns `Result` cleanly. We deliberately do NOT use
 /// `connect_pageant()`, because the `pageant-0.0.1` crate it uses
 /// internally has an `unwrap()` at `pageant_impl.rs:64` that panics on
@@ -98,7 +118,7 @@ pub async fn try_agent_auth(
         // Hard 2-second cap on the connect — if Pageant's pipe is alive but
         // its server is wedged, `connect_named_pipe` can block indefinitely.
         let connect_fut =
-            russh_keys::agent::client::AgentClient::connect_named_pipe(pipe_path);
+            russh::keys::agent::client::AgentClient::connect_named_pipe(pipe_path);
         let mut agent = match tokio::time::timeout(
             std::time::Duration::from_secs(2),
             connect_fut,
@@ -147,7 +167,7 @@ pub async fn try_agent_auth(
         any_agent_seen = true;
         for id in identities {
             log_debug("SSH", &format!("ssh.auth: agent {label} attempting authenticate_publickey_with"));
-            match handle.authenticate_publickey_with(user, id, &mut agent).await {
+            match auth_with_agent_identity(handle, user, id, &mut agent).await {
                 Ok(true) => {
                     log_debug("SSH", &format!("ssh.auth: agent {label} authenticated OK"));
                     return Some(true);
@@ -175,7 +195,7 @@ pub async fn try_agent_auth(
             break 'unix_agent;
         }
         log_debug("SSH", &format!("ssh.auth: agent probe {label}"));
-        let connect_fut = russh_keys::agent::client::AgentClient::connect_env();
+        let connect_fut = russh::keys::agent::client::AgentClient::connect_env();
         let mut agent = match tokio::time::timeout(
             std::time::Duration::from_secs(2),
             connect_fut,
@@ -224,7 +244,7 @@ pub async fn try_agent_auth(
         any_agent_seen = true;
         for id in identities {
             log_debug("SSH", &format!("ssh.auth: agent {label} attempting authenticate_publickey_with"));
-            match handle.authenticate_publickey_with(user, id, &mut agent).await {
+            match auth_with_agent_identity(handle, user, id, &mut agent).await {
                 Ok(true) => {
                     log_debug("SSH", &format!("ssh.auth: agent {label} authenticated OK"));
                     return Some(true);
@@ -317,7 +337,7 @@ pub async fn try_authenticate(
             key_text.len(),
             key_text.lines().next().unwrap_or("")
         ));
-        match russh_keys::decode_secret_key(&key_text, key_passphrase) {
+        match russh::keys::decode_secret_key(&key_text, key_passphrase) {
             Ok(key) => {
                 log_debug("SSH", &format!(
                     "ssh.auth: key {p} decoded — attempting authenticate_publickey"
@@ -326,7 +346,8 @@ pub async fn try_authenticate(
                 let r = handle
                     .authenticate_publickey(user, pkwh)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())?
+                    .success();
                 log_debug("SSH", &format!("ssh.auth: step 2 publickey result = {r}"));
                 if r {
                     return Ok(Some(AuthMethod::Key));
@@ -368,12 +389,13 @@ pub async fn try_authenticate(
                 continue;
             }
         };
-        if let Ok(key) = russh_keys::decode_secret_key(&text, None) {
+        if let Ok(key) = russh::keys::decode_secret_key(&text, None) {
             if let Ok(pkwh) = pkwh(key) {
                 let r = handle
                     .authenticate_publickey(user, pkwh)
                     .await
-                    .map_err(|e| e.to_string())?;
+                    .map_err(|e| e.to_string())?
+                    .success();
                 log_debug("SSH", &format!("ssh.auth: step 3 {p} result = {r}"));
                 if r {
                     return Ok(Some(AuthMethod::Key));
@@ -388,7 +410,8 @@ pub async fn try_authenticate(
         let r = handle
             .authenticate_password(user, pw)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?
+            .success();
         log_debug("SSH", &format!("ssh.auth: step 4 password result = {r}"));
         if r {
             return Ok(Some(AuthMethod::Password));

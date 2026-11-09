@@ -10,9 +10,8 @@ import { paneDragStore, installPaneDragEscape } from "./paneDrag";
 import { DiffPane } from "./DiffPane";
 import type { DiffSendResult, DiffSendTarget } from "./diffNotes";
 // Phase 53 (rebased): FileManagerPane no longer imported here — the
-// Files surface moved to the workspace-level floating FileManagerWindow
-// (sidebar 🗂). FileManagerPane itself stays in the repo; it's now
-// consumed by FileManagerWindow.tsx, not by the pane layout.
+// Files surface moved to a workspace-level panel (sidebar 🗂) that
+// App.tsx mounts, not the pane layout.
 import { HelpPane } from "./HelpPane";
 import { t } from "./i18n";
 // Phase 24.D: ClaudeChatPane (Phase 22) + ClaudeLogPane (Phase 24.B)
@@ -202,8 +201,7 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
   // Phase 53 (rebased): the workspaceIsSsh local that fed the
   // FileManager Match arm is gone alongside the arm itself. The
   // prop stays on the Props interface so existing call sites in
-  // App.tsx keep compiling; FileManagerWindow derives its own
-  // SSH-ness from the workspace.connection field.
+  // App.tsx keep compiling.
   return (
     <Switch
       fallback={

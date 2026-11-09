@@ -31,21 +31,26 @@ The whole design turns on `Utf8Error::error_len()`:
 `from_utf8_lossy` per chunk is the shortcut this module exists to *not* take — it turns
 every split Hebrew letter into U+FFFD. That was the mojibake bug fixed in `1bcb584`.
 
-## `bidi_filter.rs` (502) — opt-in RTL isolate wrapping
+## `bidi_filter.rs` (653) — opt-in RTL isolate wrapping
 
 Wraps Latin runs in Unicode bidi isolates (FSI `U+2068` / PDI `U+2069`) when they appear
 near Hebrew/Arabic, so `דוח-DEV.txt` renders in its logical position. **Default off**,
-toggled per pane (`pane_set_smart_bidi`); state lives in `AppState.bidi_filters`, seeded by
-`pane_connect` from the persisted `smart_bidi` before any spawn, else lazily created
-(off) on the first chunk per pane. `apply_to_pane` takes and returns `String`: `emit_data`
+set per RTL profile (`terminal.rtl.*.smart_bidi`). Rust does not read that setting: the
+frontend resolves it and passes `smart_bidi` to `pane_connect`, which sets
+`AppState.bidi_filters` before any spawn. Otherwise an entry is lazily created (off) on the
+first chunk per pane. A change applies at the next connect; a saved per-leaf `smart_bidi`
+is ignored, so no pane stays stuck on. `apply_to_pane` takes and returns `String`: `emit_data`
 feeds it the text `pty_decode` already reassembled, so a Hebrew char split across SSH reads is
 never cut into U+FFFD (a disabled pane returns the text as-is, no copy).
 
 The non-goals are the specification:
 
 - ANSI/CSI/OSC/DCS escapes pass through **verbatim** — a `U+2068` inside `\x1b[31m`
-  breaks color.
+  breaks color. That includes escapes with intermediates (`0x20-0x2F`): the `B` of
+  `ESC ( B` is the final byte, not text.
 - Cursor positioning (`\x1b[H`, `\x1b[<n>;<m>H`) preserved — bidi marks shift columns.
+  LF, CR and CSI `H` / `f` / `G` also reset the RTL context, so an FSI does not land at
+  column 0, where xterm cannot join it to a preceding cell.
 - Box-drawing (U+2500–257F, U+2580–259F) preserved, and a segment where box-drawing
   dominates is skipped whole — Claude Code's Ink TUI draws its borders with these.
 
