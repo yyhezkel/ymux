@@ -17,6 +17,8 @@
 // See http.rs — GET-only, jittered exponential backoff on transport errors.
 pub mod http;
 mod log_writer;
+// The one drain loop for one-shot SSH exec. See ssh_exec.rs.
+pub mod ssh_exec;
 pub use log_writer::flush_log;
 
 use std::collections::HashMap;
@@ -28,7 +30,7 @@ use std::sync::{Arc, Mutex};
 use portable_pty::{ChildKiller, MasterPty};
 use russh::client;
 use russh::Channel;
-use russh_keys::HashAlg;
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use serde::{Deserialize, Serialize};
 use ymux_types::{Connection, LayoutNode, PaneKind};
 
@@ -515,7 +517,8 @@ pub fn load_known_hosts() -> KnownHostsFile {
 
 pub fn save_known_hosts(file: &KnownHostsFile) -> Result<(), String> {
     let path = known_hosts_path()?;
-    let tmp = path.with_extension("json.tmp");
+    // Per-pid name: two processes must not rename each other's partial file.
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).map_err(|e| format!("write tmp: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
@@ -584,14 +587,33 @@ impl SshClient {
     }
 }
 
-#[async_trait::async_trait]
 impl client::Handler for SshClient {
     type Error = russh::Error;
 
     async fn check_server_key(
         &mut self,
-        server_public_key: &russh_keys::PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
+        // We never advertise a certificate host-key algorithm
+        // (`Preferred::host_key_certificates` stays empty), so a certificate
+        // here is a protocol anomaly. known_hosts.json holds plain keys only.
+        let PublicKeyOrCertificate::PublicKey { key: server_public_key, .. } = server_public_key
+        else {
+            log_warn("SSH", &format!("host key for {}: certificate refused", self.target));
+            return Ok(false);
+        };
+        // ssh-key 0.6 refused these at decode. 0.7 leaves the choice to us, and
+        // we keep the old floor.
+        if let Some(rsa) = server_public_key.key_data().rsa() {
+            if rsa.key_size() < 2048 {
+                log_warn("SSH", &format!(
+                    "host key for {}: RSA {} bits refused (minimum 2048)",
+                    self.target,
+                    rsa.key_size()
+                ));
+                return Ok(false);
+            }
+        }
         let fp = server_public_key.fingerprint(HashAlg::Sha256).to_string();
         let key_type = server_public_key.algorithm().as_str().to_string();
         let mut known = load_known_hosts();
@@ -666,6 +688,7 @@ impl client::Handler for SshClient {
         _connected_port: u32,
         originator_address: &str,
         originator_port: u32,
+        reply: russh::client::ChannelOpenHandle,
         _session: &mut russh::client::Session,
     ) -> Result<(), Self::Error> {
         // The originator is the remote-side peer that dialled the forwarded
@@ -673,10 +696,19 @@ impl client::Handler for SshClient {
         // which left every handshake failure in the tunnel unattributable.
         let peer = format!("{originator_address}:{originator_port}");
         match (self.tunnel_token.clone(), self.bridge_spawner.clone()) {
-            (Some(token), Some(spawn)) => spawn(channel, token, peer),
-            _ => tracing::warn!(
-                "forwarded-tcpip channel from {peer} arrived but no tunnel_token/bridge_spawner set; dropping"
-            ),
+            (Some(token), Some(spawn)) => {
+                // Accept first. russh registers the channel only when this
+                // reply is processed, and the bridge writes its challenge at
+                // once. russh sends open replies ahead of channel data.
+                reply.accept().await;
+                spawn(channel, token, peer);
+            }
+            _ => {
+                tracing::warn!(
+                    "forwarded-tcpip channel from {peer} arrived but no tunnel_token/bridge_spawner set; refusing"
+                );
+                reply.reject(russh::ChannelOpenFailure::AdministrativelyProhibited).await;
+            }
         }
         Ok(())
     }
@@ -779,18 +811,62 @@ pub type PaneSessionMap = Arc<Mutex<HashMap<String, String>>>;
 
 // ─── pipe_name ───────────────────────────────────────────────────────
 
+/// The same override `config_dir` honours; empty counts as unset.
+fn config_dir_override() -> Option<String> {
+    std::env::var("YMUX_CONFIG_DIR")
+        .or_else(|_| std::env::var("WINMUX_CONFIG_DIR"))
+        .ok()
+        .filter(|d| !d.is_empty())
+}
+
+/// `-xxxxxxxx` from the config dir. FNV-1a, not `DefaultHasher`: two builds
+/// from different toolchains must compute the same name for the same dir.
+/// Eight hex digits keep the socket path inside the `sun_path` cap.
+fn pipe_suffix_for(dir: &str) -> String {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in dir.bytes() {
+        h ^= u64::from(b);
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("-{:08x}", (h ^ (h >> 32)) as u32)
+}
+
+/// Empty without an override, so the default endpoint name never changes.
+fn pipe_suffix() -> String {
+    config_dir_override()
+        .map(|d| pipe_suffix_for(&d))
+        .unwrap_or_default()
+}
+
+/// Value for `YMUX_PIPE_PATH` in local panes, or `None` without an override.
+/// The CLI cannot derive the suffixed name by itself and would otherwise
+/// reach the default instance. An explicit path stops the CLI's candidate
+/// walk, so on Unix this is the first candidate that can bind.
+pub fn pipe_path_for_panes() -> Option<String> {
+    config_dir_override()?;
+    #[cfg(windows)]
+    {
+        Some(pipe_name())
+    }
+    #[cfg(not(windows))]
+    {
+        const SUN_PATH_MAX: usize = 104;
+        pipe_names().into_iter().find(|p| p.len() < SUN_PATH_MAX)
+    }
+}
+
 /// Phase 51.C: the per-user Windows Named Pipe path that the RPC
 /// server binds to and the remote tunnel bridges into. Lives in
 /// ymux-core so both ymux-tunnel (bridge_to_pipe) and the future
 /// ymux-rpc (server bind) can reach it without depending on each
-/// other.
+/// other. A config-dir override adds a suffix: a dev build keeps its own hooks.
 #[cfg(windows)]
 pub fn pipe_name() -> String {
     let user = std::env::var("USERNAME")
         .ok()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| whoami::username());
-    format!(r"\\.\pipe\ymux-{}", user)
+    format!(r"\\.\pipe\ymux-{}{}", user, pipe_suffix())
 }
 
 /// Unix equivalent: a per-user Unix domain socket. `temp_dir()` honors
@@ -801,7 +877,7 @@ pub fn pipe_name() -> String {
 pub fn pipe_name() -> String {
     let user = whoami::username();
     std::env::temp_dir()
-        .join(format!("ymux-{user}.sock"))
+        .join(format!("ymux-{user}{}.sock", pipe_suffix()))
         .to_string_lossy()
         .into_owned()
 }
@@ -1192,6 +1268,16 @@ mod tests {
     }
 
     // ── pipe_name ──────────────────────────────────────────────────
+
+    // Pins: stable, dir-specific, short; breaking it splits one dir across two names.
+    #[test]
+    fn pipe_suffix_depends_only_on_the_dir() {
+        let a = pipe_suffix_for(r"C:\temp\ymux-dev");
+        assert_eq!(a, pipe_suffix_for(r"C:\temp\ymux-dev"));
+        assert_ne!(a, pipe_suffix_for(r"C:\temp\ymux-other"));
+        assert_eq!(a.len(), 9, "{a}");
+        assert!(a.starts_with('-'), "{a}");
+    }
 
     #[cfg(windows)]
     #[test]

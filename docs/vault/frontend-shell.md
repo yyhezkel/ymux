@@ -63,7 +63,11 @@ window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy
 Every one of those `localStorage` writes (font-size seed, pane id, profile) is individually
 try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from running.
 
-## `App.tsx` (5,808) — one component, ~50 signals
+## `App.tsx` (5,916) — one component, ~50 signals
+
+`triggerHooksUpdate` runs `"$HOME/.ymux/bin/ymux" setup-hooks` through
+`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry). A
+failure rejects into the catch, so the toast cannot claim success.
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),

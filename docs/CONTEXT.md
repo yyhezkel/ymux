@@ -25,7 +25,9 @@ LogEntry       { ts_ms, kind: turn | closed, status,
 - **The log.** Every `Stop` appends one `turn` line built from the parsed
   `[ymux-brief]`. With no brief, the degraded brief is used (status `done`, delta =
   first line of the message, `degraded: true`). `SessionEnd` appends a `closed`
-  line, with Claude Code's `reason` enum as its delta. **Nothing calls an LLM.**
+  line, with Claude Code's `reason` enum as its delta. A `SessionEnd` that names
+  a session other than the pane's own is dropped first (`claude -p` outside a
+  pane borrows the pane in `last.env`). **Nothing calls an LLM.**
   The log costs zero tokens.
 - **Goal / Done when.** Come from the brief's sticky `goal:` / `done:` keys
   (`docs/BRIEF.md`). The *last non-empty* value wins, so the many briefs that
@@ -155,7 +157,7 @@ Rules:
 - Nothing to say → empty → the hook prints nothing.
 
 The budget is **1000 ms** and the hook **fails open**: a missing app, a slow
-tunnel or an error (including the Go daemon, which does not know the method)
+tunnel or an error
 means no context, never a stalled session start. The call costs 3 tunnel round
 trips. Set `YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote that needs another
 budget. `hook-debug.log` records each attempt at Info as
@@ -163,6 +165,14 @@ budget. `hook-debug.log` records each attempt at Info as
 
 **Off switch:** Settings → General → Briefing → *Inject context into sessions*
 (`settings.brief.inject_context`, on by default).
+
+**The Go daemon answers it too** (`server/internal/term/inject.go`, daemon
+2.20.0), for sessions the browser created. The text is the same:
+`server/internal/agent/testdata/injection.json` is read by the tests on both
+sides. The daemon reads the off switch from its own settings document
+(`web-settings.json`). Its context store is also its own, so a session the
+desktop created has no record on the daemon and gets nothing when it is
+resumed in the browser.
 
 **Privacy:** the injected text is the user's own prompt and the agent's own
 briefs, returned to that same agent or to an agent working in the same

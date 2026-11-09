@@ -65,6 +65,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use russh::client;
 use russh::ChannelMsg;
+use ymux_core::ssh_exec::{ExecOpts, StderrMode};
 // Phase 51.H: russh-keys imports removed (now used only inside ymux-ssh).
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -310,7 +311,28 @@ const NEEDS_INPUT_NOTIFICATIONS: &[&str] = &[
 ];
 
 /// Notification types that mean the human answered and work resumed.
-const RESUMED_NOTIFICATIONS: &[&str] = &["elicitation_complete", "elicitation_response"];
+/// `tool_running` is not a Claude Code value: the CLI sends it in `auto`
+/// mode, where `pre-tool-use` no longer reaches the desktop.
+const RESUMED_NOTIFICATIONS: &[&str] = &[
+    "elicitation_complete",
+    "elicitation_response",
+    "tool_running",
+];
+
+/// Does a SessionEnd belong to the session this pane is running?
+///
+/// `claude -p` runs outside any pane (the usage ticker, for one), and the
+/// CLI then borrows the pane in `last.env`, so its SessionEnd lands on a pane
+/// running a different session. Only `user-prompt-submit` and `stop` record a
+/// pane's session, and a `/usage` run fires neither, so an unknown current
+/// session means the end is not ours. An end with no id cannot be judged and
+/// is accepted, which is what an older CLI sends.
+pub(crate) fn session_end_is_ours(current: Option<&str>, ended: Option<&str>) -> bool {
+    match ended.filter(|s| !s.is_empty()) {
+        None => true,
+        Some(id) => current == Some(id),
+    }
+}
 
 #[derive(Default, Clone)]
 pub(crate) struct AgentRunState {
@@ -325,6 +347,9 @@ pub(crate) struct AgentRunState {
     // carries a plain JSON number, and the frontend compares the two.
     // Four billion hooks on a single pane is not a scenario.
     pub(crate) seq: u32,
+    /// The Claude session this pane is running, from the latest
+    /// `user-prompt-submit` or `stop`. See `session_end_is_ours`.
+    pub(crate) session_id: Option<String>,
 }
 
 impl AgentRunState {
@@ -549,6 +574,28 @@ mod agent_run_tests {
         r.apply_hook("notification", Some("elicitation_dialog"));
         assert!(r.apply_hook("notification", Some("elicitation_response")));
         assert_eq!(r.state, PaneAgentState::Running);
+    }
+
+    #[test]
+    fn a_tool_starting_after_a_permission_prompt_resumes_running() {
+        // In `auto` mode nothing else takes the pane out of NeedsInput
+        // until the turn's Stop.
+        let mut r = AgentRunState::default();
+        r.apply_hook("notification", Some("permission_prompt"));
+        assert!(r.apply_hook("notification", Some("tool_running")));
+        assert_eq!(r.state, PaneAgentState::Running);
+    }
+
+    #[test]
+    fn a_session_end_counts_only_for_the_panes_own_session() {
+        use super::session_end_is_ours as ours;
+        assert!(ours(Some("a"), Some("a")));
+        // `claude -p` borrowing this pane through last.env.
+        assert!(!ours(Some("a"), Some("b")));
+        assert!(!ours(None, Some("b")));
+        // An older CLI sends no id: it cannot be judged, so it stands.
+        assert!(ours(Some("a"), None));
+        assert!(ours(None, Some("")));
     }
 
     #[test]
@@ -974,6 +1021,17 @@ pub(crate) fn hex_utf8(s: &str) -> String {
 /// our own delta on top of theirs instead of flattening their work.
 static LAST_KNOWN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Hash of the text this process last wrote. It sets a log level only: a
+/// save that finds our own earlier merge on disk logs at debug level.
+static LAST_LANDED_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
 pub(crate) fn remember_file_text(text: &str) {
     if let Ok(mut g) = LAST_KNOWN.lock() {
         *g = Some(text.to_string());
@@ -1044,10 +1102,17 @@ fn write_workspaces_text(
     }
 
     let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
+    // After one merge the base is `ours`, so disk != base on every later
+    // save. Only a file we did not write ourselves deserves a WARN.
+    let repeat = text_hash(&on_disk) == LAST_LANDED_HASH.load(std::sync::atomic::Ordering::Relaxed);
     for n in &notes {
-        log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        if repeat {
+            log_debug("WORKSPACE", &format!("save_to_disk: {n}"));
+        } else {
+            log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        }
     }
-    if !notes.is_empty() {
+    if !notes.is_empty() && !repeat {
         log_info(
             "WORKSPACE",
             &format!(
@@ -1070,9 +1135,13 @@ fn write_workspaces_text(
     }
 
     std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    // The base is `ours`, not the merged `text`. With `text` as the base the
+    // next save sees disk == base, takes the fast path in `reconcile`, and
+    // writes our in-memory state over the other writer's rows.
     if let Ok(mut g) = last_known.lock() {
-        *g = Some(text.clone());
+        *g = Some(ours.to_string());
     }
+    LAST_LANDED_HASH.store(text_hash(&text), std::sync::atomic::Ordering::Relaxed);
     Ok(text)
 }
 
@@ -3131,6 +3200,12 @@ fn spawn_local_pty(
     // ymux-cli hook silently env-gated (main.rs `YMUX_PANE_ID unset`) and
     // the Ticker never fired outside manual injection.
     cmd.env("YMUX_PANE_ID", &pane_id);
+    // Only with a config-dir override: the CLI cannot derive the suffixed
+    // endpoint, and without this a dev build's hooks reach the release.
+    let pipe_path = ymux_core::pipe_path_for_panes();
+    if let Some(p) = &pipe_path {
+        cmd.env("YMUX_PIPE_PATH", p);
+    }
     // 2026-08-19: point zellij at ymux's own config; 2026-08-20: and at its
     // config DIRECTORY, which is how the single-pane layout gets found.
     //
@@ -3307,7 +3382,13 @@ fn spawn_local_pty(
             let sessions_clone = state.core.sessions.clone();
             let id_clone = id.clone();
             let pane_for_exec = pane_id.clone();
-            let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            let mut secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            // A running tmux server keeps its own env, so the name must join
+            // `update-environment` to reach this session. The pipe path is
+            // not a secret; this list is only "names tmux copies on attach".
+            if pipe_path.is_some() {
+                secret_keys.push("YMUX_PIPE_PATH".to_string());
+            }
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 crate::log_info("PTY", &format!(
@@ -4140,7 +4221,8 @@ async fn ssh_key_generate_and_install(
     let ok = handle
         .authenticate_password(&ssh_user, &password)
         .await
-        .map_err(|e| format!("authenticate: {e}"))?;
+        .map_err(|e| format!("authenticate: {e}"))?
+        .success();
     if !ok {
         return Err("authentication failed (password rejected)".into());
     }
@@ -4148,42 +4230,7 @@ async fn ssh_key_generate_and_install(
     // 3) Append the public key to ~/.ssh/authorized_keys. No sudo —
     //    writes only to the user's own home, so this works even for
     //    a non-root user with no sudo at all.
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
 
     // 4) Update the workspace's stored Connection — switch from
     //    password to key. The next pane_connect will use the key path
@@ -4332,48 +4379,14 @@ async fn provision_existing_install_key(
     let ok = handle
         .authenticate_password(&ssh_user, &password)
         .await
-        .map_err(|e| format!("authenticate: {e}"))?;
+        .map_err(|e| format!("authenticate: {e}"))?
+        .success();
     if !ok {
         return Err("authentication failed (password rejected)".into());
     }
 
     // 3) Append pubkey to ~/.ssh/authorized_keys. Idempotent (grep -qxF).
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
     // Drop the password-authenticated handle.
     drop(handle);
 
@@ -4432,27 +4445,35 @@ async fn provision_existing_install_key(
     Ok(workspace_id)
 }
 
-/// Run `echo $HOME` over a fresh exec channel. Returns (stdout, exit_code).
-async fn remote_get_home(
-    handle: &mut client::Handle<SshClient>,
-) -> Result<(String, i32), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, "echo $HOME").await.map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    let mut code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
+/// Append a public key to the login user's `authorized_keys`. Idempotent
+/// (`grep -qxF`). A failure must stop the caller: it goes on to persist key
+/// auth on the strength of this call.
+async fn install_authorized_key(
+    handle: &client::Handle<SshClient>,
+    pub_line: &str,
+) -> Result<(), String> {
+    let key = shell_quote(pub_line);
+    let install_cmd = format!(
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
+         (grep -qxF {key} ~/.ssh/authorized_keys || echo {key} >> ~/.ssh/authorized_keys)",
+    );
+    let outcome = ymux_core::ssh_exec::exec(handle, &install_cmd, ExecOpts::timeout_secs(30)).await?;
+    match outcome.require_code()? {
+        0 => Ok(()),
+        code => Err(format!("install pubkey failed (exit {code}): {}", outcome.stdout)),
     }
-    let _ = chan.close().await;
-    Ok((String::from_utf8_lossy(&out).to_string(), code))
+}
+
+/// Read `$HOME` on the remote. stderr dropped so rc-file noise cannot end up
+/// in the path.
+async fn remote_get_home(handle: &client::Handle<SshClient>) -> Result<String, String> {
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(15) };
+    let outcome = ymux_core::ssh_exec::exec(handle, "echo $HOME", opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("reading $HOME failed (exit {code})")),
+    }
 }
 
 /// Phase 41: result of the connect→host-key→authenticate handshake,
@@ -4906,9 +4927,34 @@ async fn spawn_ssh(
         let mut last_data_at = std::time::Instant::now();
         // Phase 38: stable ids for the disconnect log line.
         let ch_id = channel.id();
+        // Writes get their own task because russh's per-channel receiver is
+        // bounded (Config::channel_buffer_size). A write parked on the
+        // server's window must not stop this loop from reading: with the
+        // receiver full, the session task blocks delivering data and never
+        // reads the WINDOW_ADJUST the write is waiting for, which hangs every
+        // channel on the connection.
+        let (mut reader, writer) = channel.split();
+        let mut writer_task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Some(SshCmd::Data(d)) => {
+                        if writer.data(&d[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(SshCmd::Resize(c, r)) => {
+                        let _ = writer.window_change(c, r, 0, 0).await;
+                    }
+                    Some(SshCmd::Kill) | None => {
+                        let _ = writer.close().await;
+                        break;
+                    }
+                }
+            }
+        });
         loop {
             tokio::select! {
-                msg = channel.wait() => {
+                msg = reader.wait() => {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
                             last_data_at = std::time::Instant::now();
@@ -4980,22 +5026,10 @@ async fn spawn_ssh(
                         _ => {}
                     }
                 }
-                cmd = rx.recv() => {
-                    match cmd {
-                        Some(SshCmd::Data(d)) => {
-                            if channel.data(&d[..]).await.is_err() { break; }
-                        }
-                        Some(SshCmd::Resize(c, r)) => {
-                            let _ = channel.window_change(c, r, 0, 0).await;
-                        }
-                        Some(SshCmd::Kill) | None => {
-                            let _ = channel.close().await;
-                            break;
-                        }
-                    }
-                }
+                _ = &mut writer_task => break,
             }
         }
+        writer_task.abort();
         let _ = handle_for_task
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await;
@@ -5487,7 +5521,7 @@ async fn setup_workspace_reverse_tunnel(
     // conclude ymux is not in this session and stop gating altogether.
     let socket_addr = format!("127.0.0.1:{remote_port}");
     match remote_get_home(handle).await {
-        Ok((home_out, _)) => {
+        Ok(home_out) => {
             let home = home_out.trim();
             if home.is_empty() {
                 log_warn("TUNNEL", "tunnel: skip env-file write - $HOME came back empty");
@@ -5702,21 +5736,14 @@ async fn spawn_port_watcher(
     // AFTER the live-dedup above: the pattern matches this workspace's own
     // live watcher too.
     if is_safe_workspace_id(workspace_id) {
-        if let Ok(mut kchan) = handle.channel_open_session().await {
-            let kill = format!(
-                "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
-            );
-            if kchan.exec(true, kill.as_str()).await.is_ok() {
-                loop {
-                    match kchan.wait().await {
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
+        let kill = format!(
+            "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
+        );
+        // Result ignored: this is cleanup, and a failure here must not stop
+        // the fresh watcher from launching. Bounded so a hung remote cannot.
+        let _ = ymux_core::ssh_exec::exec(handle, &kill, ExecOpts::timeout_secs(10)).await;
     }
-    // The watcher IS the remote CLI (`ymux port-watch`), talking the RPC
+    // The watcher IS the remote CLI
     // protocol this desktop compiled against. Launching a binary we know is
     // the wrong build produces failures far from their cause — the repeating
     // reverse-tunnel handshake rejections in Yossi's log are what that looks
@@ -5817,21 +5844,6 @@ fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &s
     ));
 }
 
-fn find_ssh_handle_for_workspace(
-    state: &AppState,
-    workspace_id: &str,
-) -> Option<Arc<client::Handle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for s in sessions.values() {
-        if let Session::Ssh(ssh) = s {
-            if ssh.workspace_id == workspace_id {
-                return Some(Arc::clone(&ssh.handle));
-            }
-        }
-    }
-    None
-}
-
 /// Phase 36 (#2.2) → 36.A: open an auto-forward for a remote listening
 /// port. We bind `127.0.0.1:0` and let the kernel hand us a free
 /// ephemeral port — the user reaches the server at whatever local port
@@ -5852,7 +5864,7 @@ pub(crate) async fn open_auto_forward(
             return Ok(e.local_port);
         }
     }
-    let handle = find_ssh_handle_for_workspace(state, workspace_id)
+    let handle = ssh_handle_for_machine(state, workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
 
     // Bind port 0 → kernel picks a free ephemeral port (Windows ~49152+).
@@ -6003,7 +6015,7 @@ pub(crate) fn close_workspace_forwards(forwards: &ForwardMap, workspace_id: &str
 // Phase 23.B: does the layout contain a non-terminal pane that depends on
 // a live workspace-level SSH handle? FileManager and Browser panes pull
 // the SSH handle out of `state.core.sessions` at runtime via
-// `pick_ssh_handle_for_workspace`; if we tear down the last terminal pane's
+// `ssh_handle_for_machine`; if we tear down the last terminal pane's
 // SSH session, those panes go dark with no in-UI way to reconnect.
 // ClaudeChat is local, doesn't count.
 #[allow(deprecated)]
@@ -8757,7 +8769,7 @@ fn workspace_close_pane(
     // SSH-consuming non-terminal panes AFTER the close. If yes, we
     // must keep the SSH handle alive even though the terminal pane
     // is gone — the file-manager / browser uses
-    // `pick_ssh_handle_for_workspace` which scans the live sessions
+    // `ssh_handle_for_machine` which scans the live sessions
     // for one matching the workspace_id. Killing the SSH session
     // here would leave those panes dead with no UI to reconnect.
     let keep_ssh_alive: bool;
@@ -8806,7 +8818,7 @@ fn workspace_close_pane(
                     "workspace_close_pane: keeping SSH session {sid} alive — workspace {workspace_id} still has FileManager/Browser pane(s)"
                 );
                 // Leave the session in state.core.sessions; it has no pane
-                // binding now but `pick_ssh_handle_for_workspace`
+                // binding now but `ssh_handle_for_machine`
                 // will still find it via its workspace_id.
             } else if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
                 // Closing a pane is not killing its session. `kill_session_inner`
@@ -9201,37 +9213,16 @@ async fn tmux_rename_session_via_handle(
         shell_quote(&format!("={old_name}")),
         shell_quote(new_name),
     );
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut exit_code: Option<u32> = None;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                ChannelMsg::Eof | ChannelMsg::Close => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    let stderr_text = String::from_utf8_lossy(&stdout).trim().to_string();
-    match exit_code {
-        Some(0) => Ok(()),
-        Some(code) => Err(if stderr_text.is_empty() {
+    let outcome = ymux_core::ssh_exec::exec(handle, &cmd, ExecOpts::timeout_secs(5)).await?;
+    let output = outcome.stdout.trim().to_string();
+    match outcome.exit {
+        ymux_core::ssh_exec::ExitState::Code(0) => Ok(()),
+        ymux_core::ssh_exec::ExitState::Code(code) => Err(if output.is_empty() {
             format!("tmux exit {code}")
         } else {
-            stderr_text
+            output
         }),
-        None => Err("tmux rename-session did not return an exit status".into()),
+        _ => Err("tmux rename-session did not return an exit status".into()),
     }
 }
 
@@ -10532,31 +10523,19 @@ async fn list_tmux_sessions_via_handle(
     handle: &client::Handle<SshClient>,
 ) -> Result<Vec<TmuxSessionInfo>, String> {
     let script = tmux_list_script();
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, script.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(6), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(6) };
+    let outcome = ymux_core::ssh_exec::exec(handle, &script, opts).await?;
+    // The script ends in `true`, so anything but 0 means it did not finish:
+    // `Err`, because the attach guard reads a short list as "session gone".
+    match outcome.require_code()? {
+        0 => {}
+        code => return Err(format!("tmux list failed (exit {code})")),
+    }
     // Pure list (with Phase 81 meta joined by parse_tmux_sessions). Visibility
     // filtering is a picker concern applied by the caller that owns `state`
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
-    Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+    Ok(parse_tmux_sessions(&outcome.stdout))
 }
 
 /// Pure verdict of the attach-only guard: is `target` a live session?
@@ -10767,13 +10746,7 @@ async fn pane_probe_tmux_sessions(
 ) -> Result<Option<Vec<TmuxSessionInfo>>, String> {
     // A pane that's already connected (or a sibling on the same workspace)
     // gives us a handle for free — no second handshake.
-    let live = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.iter().find_map(|(_sid, sess)| match sess {
-            Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-            _ => None,
-        })
-    };
+    let live = ssh_handle_for_machine(&state, &workspace_id);
     if let Some(h) = live {
         return list_tmux_sessions_via_handle(&h).await.map(Some);
     }
@@ -11554,15 +11527,7 @@ async fn pane_list_claude_sessions(
         .filter(|p| !p.is_empty());
     // Locate any live SSH handle for this workspace. The shell command runs
     // on the remote where Claude Code is actually installed.
-    let handle_opt = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions
-            .iter()
-            .find_map(|(_sid, sess)| match sess {
-                Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-                _ => None,
-            })
-    };
+    let handle_opt = ssh_handle_for_machine(&state, &workspace_id);
 
     // Claude Code stores sessions under ~/.claude/projects/<encoded-cwd>/,
     // where <encoded-cwd> is the absolute working directory with every
@@ -11595,28 +11560,11 @@ async fn pane_list_claude_sessions(
     );
 
     let raw = if let Some(handle) = handle_opt {
-        // Run via SSH exec.
-        let mut ch = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("channel_open: {e}"))?;
-        ch.exec(true, script.as_bytes())
-            .await
-            .map_err(|e| format!("exec: {e}"))?;
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-            while let Some(msg) = ch.wait().await {
-                match msg {
-                    russh::ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                    russh::ChannelMsg::ExtendedData { .. } => {}
-                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
-                    _ => {}
-                }
-            }
-        })
-        .await;
-        let _ = ch.close().await;
-        String::from_utf8_lossy(&out).to_string()
+        // Run via SSH exec. Exit and timeout ignored on purpose, `Unknown`
+        // included: `find` exits non-zero on any unreadable directory, and a
+        // partial listing is still a useful listing.
+        let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) };
+        ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout
     } else {
         // No SSH session live → run locally on Windows. Translate to a small
         // walk of %USERPROFILE%\.claude\projects\*\*.jsonl. We don't try to
@@ -12113,43 +12061,26 @@ pub(crate) async fn kill_target(target: KillTarget) -> KillSessionOutcome {
             // in this function, this one genuinely goes through a remote
             // shell, so Rule #3's argv rule has nothing to apply to.
             let cmd = format!("tmux kill-session -t {} 2>&1", shell_quote(&name));
-            let mut status: Option<u32> = None;
-            let mut output = String::new();
-            let mut transport_err: Option<String> = None;
-            match handle.channel_open_session().await {
-                Ok(mut ch) => {
-                    if let Err(e) = ch.exec(true, cmd.as_bytes()).await {
-                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
-                        transport_err = Some(e.to_string());
+            // 800 ms covers the drain only; `exec` bounds the channel setup
+            // itself. No status means "attempted" below, never "killed".
+            let opts = ExecOpts {
+                timeout: Some(std::time::Duration::from_millis(800)),
+                ..ExecOpts::default()
+            };
+            let (status, output, transport_err) =
+                match ymux_core::ssh_exec::exec(&handle, &cmd, opts).await {
+                    Ok(o) => {
+                        let code = match o.exit {
+                            ymux_core::ssh_exec::ExitState::Code(c) => Some(c),
+                            _ => None,
+                        };
+                        (code, o.stdout, None)
                     }
-                    // Drain the channel briefly so the server completes the
-                    // exec — and keep what it said, which is the whole point.
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(800),
-                        async {
-                            while let Some(msg) = ch.wait().await {
-                                match msg {
-                                    ChannelMsg::Data { ref data } => {
-                                        output.push_str(&String::from_utf8_lossy(data));
-                                    }
-                                    ChannelMsg::ExitStatus { exit_status } => {
-                                        status = Some(exit_status);
-                                        break;
-                                    }
-                                    ChannelMsg::Eof | ChannelMsg::Close => break,
-                                    _ => {}
-                                }
-                            }
-                        },
-                    )
-                    .await;
-                    let _ = ch.close().await;
-                }
-                Err(e) => {
-                    log_warn("SSH", &format!("pane_kill_session: channel_open failed: {e}"));
-                    transport_err = Some(e.to_string());
-                }
-            }
+                    Err(e) => {
+                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
+                        (None, String::new(), Some(e))
+                    }
+                };
             let output = output.trim().to_string();
             match (transport_err, status) {
                 // Could not reach the host at all. Not a failed kill — an
@@ -12786,6 +12717,13 @@ pub fn run() {
         eprintln!("PANIC at {location}: {msg}");
     }));
 
+    // One live app per config dir. This must stay above the WebView2 block:
+    // with persistence off, that block deletes the live profile of whichever
+    // instance already runs on this dir. Does not return on a held lock.
+    if let Ok(dir) = config_dir() {
+        config_lock::gate_for_process(&dir);
+    }
+
     // Unshipped-fivefer (#3): browser session persistence. Point WebView2 at a
     // single stable profile folder under our config dir so cookies/logins in
     // workspace browsers survive restarts. One app-wide folder (shared by the
@@ -12835,11 +12773,6 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
-            // Advisory lock + owner record so a second build on this dir
-            // names the first in the log. Never blocks boot.
-            if let Some(dir) = &cfg_dir {
-                config_lock::hold_for_process(dir);
-            }
             // Phase 112: read the embedded frontend once — the ymux-web
             // add-on uploads exactly this set to servers.
             web_addon::init(app.handle());
@@ -16497,6 +16430,73 @@ mod two_instance_save_tests {
     }
 
     #[test]
+    fn a_second_save_keeps_another_writers_workspace() {
+        // Pins the base after a merge. With the merged text as the base, the
+        // second A save takes the fast path and X disappears with no log line.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let t0 = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        std::fs::write(&path, &t0).expect("seed");
+        let (a, b) = (Mutex::new(Some(t0.clone())), Mutex::new(Some(t0)));
+
+        let b_ours = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "x", "name": "x", "future_field": 1 },
+        ]));
+        write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let a1 = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "a1", "name": "a1" }]));
+        write_workspaces_text(&path, &a1, &a).expect("A first save");
+        let a2 = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "a1", "name": "a1" },
+            { "id": "a2", "name": "a2" },
+        ]));
+        let landed = write_workspaces_text(&path, &a2, &a).expect("A second save");
+
+        let got = ids(&landed);
+        for want in ["shared", "x", "a1", "a2"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+        let after: Value = serde_json::from_str(&landed).expect("json");
+        let x = after["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .find(|w| w["id"] == "x")
+            .expect("x row");
+        assert_eq!(x["future_field"], 1, "a field only B knows was stripped");
+    }
+
+    #[test]
+    fn a_delete_after_a_merge_still_sticks() {
+        // Pins the other half of the base rule: our own delete must survive
+        // the merge path that every save takes after the first merge.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let both = json!([{ "id": "keep", "name": "keep" }, { "id": "gone", "name": "gone" }]);
+        let t0 = doc(v, both.clone());
+        std::fs::write(&path, &t0).expect("seed");
+        let a = Mutex::new(Some(t0));
+
+        let with_x = doc(v, json!([
+            { "id": "keep", "name": "keep" },
+            { "id": "gone", "name": "gone" },
+            { "id": "x", "name": "x" },
+        ]));
+        std::fs::write(&path, with_x).expect("other writer");
+        write_workspaces_text(&path, &doc(v, both), &a).expect("merge save");
+
+        let landed = write_workspaces_text(&path, &doc(v, json!([{ "id": "keep", "name": "keep" }])), &a)
+            .expect("delete save");
+        let got = ids(&landed);
+        assert!(!got.iter().any(|g| g == "gone"), "delete undone: {got:?}");
+        assert!(got.iter().any(|g| g == "x"), "x lost: {got:?}");
+    }
+
+    #[test]
     fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
         // The original P1: an older build rewrote the file without
         // `parent_id`; our next save must put the nesting back.
@@ -16612,7 +16612,7 @@ mod secret_env_persist_tests {
     fn clean(p: &std::path::Path) {
         let _ = std::fs::remove_dir_all(p);
         let _ = std::fs::remove_file(p);
-        let _ = std::fs::remove_file(p.with_extension("json.tmp"));
+        let _ = std::fs::remove_file(p.with_extension(format!("json.{}.tmp", std::process::id())));
     }
 
     // Pins: reconcile moves the secret value into the store, plain rows stay.
@@ -16737,5 +16737,29 @@ mod lock_or_recover_tests {
         }
         assert!(f(&poisoned()).is_err());
         assert_eq!(f(&Mutex::new(vec![9u8])), Ok(1));
+    }
+}
+
+// The fixture is shared with server/internal/agent/golden_test.go. It has no
+// state_since: Rust stamps the wall clock in apply_hook, Go takes it as a
+// parameter, so the two are not comparable.
+#[cfg(test)]
+mod agent_run_golden_tests {
+    use super::AgentRunState;
+
+    #[test]
+    fn golden_transitions_match_the_go_port() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/state.json")).expect("fixture");
+        for c in &cases {
+            let name = c["name"].as_str().expect("name");
+            let mut r = AgentRunState::default();
+            for s in c["steps"].as_array().expect("steps") {
+                let changed = r.apply_hook(s["subkind"].as_str().expect("subkind"), s["notification_type"].as_str());
+                assert_eq!(changed, s["changed"].as_bool().expect("changed"), "{name}");
+                assert_eq!(serde_json::to_value(r.state).expect("state"), s["state"], "{name}");
+                assert_eq!(u64::from(r.seq), s["seq"].as_u64().expect("seq"), "{name}");
+            }
+        }
     }
 }
