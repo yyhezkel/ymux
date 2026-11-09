@@ -2359,6 +2359,12 @@ async fn real_main() -> ExitCode {
             load_fallback_env_file();
             let mut buf = String::new();
             let _ = std::io::stdin().read_to_string(&mut buf);
+            // ymux's own one-shot `claude -p` calls set this. Such a run has
+            // no pane, but `last.env` would lend it one, and its output must
+            // stay free of the `[ymux-brief]` block.
+            if std::env::var_os("YMUX_HEADLESS").is_some() {
+                return ExitCode::SUCCESS;
+            }
             let payload: Value = if buf.trim().is_empty() {
                 json!({})
             } else {

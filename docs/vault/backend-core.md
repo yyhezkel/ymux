@@ -454,7 +454,9 @@ list command. The module owns what the picker never needed:
 
 - **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
   each named session (240 chars per line) and run **one** `claude -p … --output-format json`
-  over all of them, **on the machine that holds the sessions**. Over SSH the capture loop and
+  over all of them, **on the machine that holds the sessions**. The call sets
+  `YMUX_HEADLESS=1` so the CLI hooks do nothing: a `[ymux-brief]` block after the array
+  would make `extract_json_array` fail and every row read `unknown`. Over SSH the capture loop and
   the model call are a single remote pipeline (`build_ssh_summary_script`: `tmux capture-pane
   -p -t "=$s:" -S -40 | cut … | bash -lc '<claude> -p …'`), so screen bytes never cross to
   the desktop. macOS captures through `local_tmux_output` and Windows through

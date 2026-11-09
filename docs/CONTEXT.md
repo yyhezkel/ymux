@@ -145,7 +145,10 @@ It never creates a feed card and never fires a toast.
 |---|---|
 | `compact`, `resume` | The card's shape: `Goal: …`, `Done when: …`, `Now: [status] task`, `Next: …`, then `Recent progress (oldest → newest):` and the last 5 ✔ deltas (`- …`, `- session closed`), and last `Original request: <first prompt ≤ 400 chars>`. A missing field is omitted |
 | `startup` | `Workspace goal: <intent>`, then `Other agent sessions in this workspace:` with one `- task — status` line per other OPEN session, most recent first, at most 8 |
-| `clear`, anything else | nothing |
+| `clear`, anything else | no context |
+
+All sources also get the fixed brief instructions, after the context and
+outside the cap. See `docs/BRIEF.md` § How an agent learns the format.
 
 Rules:
 
@@ -154,7 +157,7 @@ Rules:
 - The total is capped at **1536 bytes**. When the text doesn't fit, the oldest
   log/sibling lines are dropped first, then the result is hard-clipped on a char
   boundary.
-- Nothing to say → empty → the hook prints nothing.
+- Nothing to say and `inject_protocol` off → empty → the hook prints nothing.
 
 The budget is **1000 ms** and the hook **fails open**: a missing app, a slow
 tunnel or an error

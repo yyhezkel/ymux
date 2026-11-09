@@ -33,6 +33,10 @@ channel, `tmux set-environment -g`, and `~/.ymux/run/last.env` — and **none of
 reaches an already-running process**, which is the whole reason sticky ports exist (see
 `backend-sessions.md` § tunnel_registry).
 
+`claude-hook` exits 0 right after it reads stdin when `YMUX_HEADLESS` is set. ymux sets it on its own
+one-shot `claude -p` calls, which have no pane of their own. A plain `claude` started by hand on the same
+host does not set it, so `last.env` still lends that run a pane.
+
 ## Verb families
 
 Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this is the map:
