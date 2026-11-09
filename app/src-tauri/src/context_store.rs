@@ -961,6 +961,21 @@ mod tests {
         assert!(out.len() <= INJECT_MAX_BYTES);
     }
 
+    // The fixture is shared with server/internal/term/inject_test.go.
+    #[test]
+    fn golden_injection_matches_the_go_port() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/injection.json")).expect("fixture");
+        for c in &cases {
+            let name = c["name"].as_str().expect("name");
+            let this: Option<SessionContext> = serde_json::from_value(c["this"].clone()).expect("this");
+            let siblings: Vec<SessionContext> = serde_json::from_value(c["siblings"].clone()).expect("siblings");
+            let got = build_injection(c["source"].as_str().expect("source"), this.as_ref(), c["intent"].as_str(), &siblings);
+            assert_eq!(got, c["want"].as_str().expect("want"), "{name}");
+            assert!(got.len() <= INJECT_MAX_BYTES, "{name}");
+        }
+    }
+
     #[test]
     fn protocol_is_the_whole_answer_when_the_context_is_empty() {
         for source in ["startup", "resume", "clear", "compact"] {

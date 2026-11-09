@@ -186,7 +186,8 @@ pub async fn run(state: AppState, app: AppHandle) {
 #[cfg(not(windows))]
 fn spawn_unix_listener(name: String, state: AppState, app: AppHandle) -> Result<(), String> {
     // Stale socket file from a previous crash blocks bind — remove it.
-    // A second live instance is prevented upstream (single-instance app).
+    // config_lock::gate_for_process stops a second live instance on this dir
+    // before the server starts. A build older than the gate can still unlink.
     let _ = std::fs::remove_file(&name);
     let listener = tokio::net::UnixListener::bind(&name).map_err(|e| {
         crate::log_warn("RPC", &format!("rpc_server: bind {name} failed: {e}"));
@@ -644,6 +645,15 @@ async fn dispatch(
         // can fall back to its static policy fast when the desktop is
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
+        // A second launch on this config dir asks us to come forward, then
+        // exits (config_lock::gate_for_process).
+        "app.focus" => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || crate::tray::focus_main(&app))
+                .await
+                .map_err(|e| format!("app.focus: {e}"))??;
+            Ok(json!({ "ok": true }))
+        }
         "list-workspaces" => {
             let mut file = state.workspaces.lock().unwrap().clone();
             // AI-NOTE: second layer — persist() already blanks secret values,
@@ -2231,17 +2241,7 @@ async fn dispatch(
             // — but to keep changes small, we duplicate the workspace SSH
             // lookup here. NOTE: pane_list_claude_sessions(_impl)? helper
             // could be factored later.
-            let handle_opt = {
-                let sessions = state.core.sessions.lock().unwrap();
-                sessions
-                    .iter()
-                    .find_map(|(_sid, sess)| match sess {
-                        crate::Session::Ssh(s) if s.workspace_id == workspace_id => {
-                            Some(s.handle.clone())
-                        }
-                        _ => None,
-                    })
-            };
+            let handle_opt = crate::ssh_handle_for_machine(state, &workspace_id);
             let lim = limit.unwrap_or(30).min(200);
             let script = format!(
                 "find \"$HOME/.claude/projects\" -maxdepth 4 -name '*.jsonl' \
@@ -2254,28 +2254,14 @@ async fn dispatch(
                 lim
             );
             if let Some(handle) = handle_opt {
-                let mut ch = handle
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| format!("channel_open: {e}"))?;
-                ch.exec(true, script.as_bytes())
-                    .await
-                    .map_err(|e| format!("exec: {e}"))?;
-                let mut out_bytes = Vec::new();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-                    while let Some(msg) = ch.wait().await {
-                        match msg {
-                            russh::ChannelMsg::Data { ref data } => out_bytes.extend_from_slice(data),
-                            russh::ChannelMsg::Eof
-                            | russh::ChannelMsg::Close
-                            | russh::ChannelMsg::ExitStatus { .. } => break,
-                            _ => {}
-                        }
-                    }
-                })
-                .await;
-                let _ = ch.close().await;
-                let raw = String::from_utf8_lossy(&out_bytes).to_string();
+                // Exit and timeout ignored on purpose, `Unknown` included:
+                // `find` exits non-zero on any unreadable directory, and a
+                // partial listing is still a useful listing.
+                let opts = ymux_core::ssh_exec::ExecOpts {
+                    stderr: ymux_core::ssh_exec::StderrMode::Drop,
+                    ..ymux_core::ssh_exec::ExecOpts::timeout_secs(8)
+                };
+                let raw = ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout;
                 let mut out = serde_json::Map::new();
                 let mut arr: Vec<Value> = Vec::new();
                 for line in raw.lines() {
@@ -2885,6 +2871,63 @@ mod tests {
                 .await
                 .unwrap_or_else(|e| panic!("client {i} read failed: {e}"));
             assert_eq!(&buf, b"OK\n", "client {i} got wrong reply");
+        }
+    }
+}
+
+// The fixtures are shared with server/internal/agent/golden_test.go, so a
+// drift between these functions and their Go ports fails here or there.
+#[cfg(test)]
+mod golden_tests {
+    use super::{humanize_notification, translate_key};
+    use serde_json::Value;
+
+    fn fixture(text: &str) -> Vec<Value> {
+        serde_json::from_str(text).expect("fixture")
+    }
+
+    #[test]
+    fn humanize_matches_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/humanize.json")) {
+            let (subkind, lang) = (c["subkind"].as_str().expect("subkind"), c["lang"].as_str().expect("lang"));
+            let got = humanize_notification(subkind, &c["payload"], c["ws_name"].as_str().unwrap_or(""), lang);
+            let want = (
+                c["title"].as_str().expect("title").to_string(),
+                c["body"].as_str().expect("body").to_string(),
+            );
+            assert_eq!(got, want, "{subkind}/{lang}");
+        }
+    }
+
+    #[test]
+    fn keys_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/keys.json")) {
+            let name = c["name"].as_str().expect("name");
+            let want: Vec<u8> = c["bytes"]
+                .as_array()
+                .expect("bytes")
+                .iter()
+                .map(|b| u8::try_from(b.as_u64().expect("byte")).expect("u8"))
+                .collect();
+            assert_eq!(translate_key(name), want, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn block_rules_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/policy.json")) {
+            let name = c["name"].as_str().expect("name");
+            let custom: Vec<String> = c["custom_block"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_str().expect("pattern").to_string()).collect())
+                .unwrap_or_default();
+            let v = ymux_policy::evaluate_with(
+                c["tool"].as_str().expect("tool"),
+                c["command"].as_str(),
+                &custom,
+                &[],
+            );
+            assert_eq!(v.decision == ymux_policy::Decision::Block, c["blocked"].as_bool().expect("blocked"), "{name}");
         }
     }
 }
