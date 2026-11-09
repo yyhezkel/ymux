@@ -26,7 +26,9 @@ there is no auth layer here, and the transport is what provides isolation.
 | Concurrency | **pool of 8 listeners** | one listener per path |
 
 `pipe_name()` / `pipe_names()` live in `ymux-core` (shared with `ymux-tunnel`, which
-must resolve the same path from the other side).
+must resolve the same path from the other side). With `YMUX_CONFIG_DIR` set, the name gets
+a per-dir suffix and local panes get `YMUX_PIPE_PATH`, so a dev build keeps its own hooks.
+On macOS tmux panes, the name joins `update-environment` so a running server passes it on.
 
 - **Windows needs a pool** because a named-pipe listener serves one client; a single
   listener means every concurrent connect gets ERROR_PIPE_BUSY. Each of the 8 slots

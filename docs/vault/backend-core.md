@@ -102,7 +102,7 @@ put logic there.
   secret rows resolved by `env_owner` and passed to `spawn_local_pty(.., secret_env)` →
   `cmd.env` (never typed). Unresolved names → pane status `secret env not set: K (re-enter
   in workspace settings)`; WSL panes get a status, no delivery. The `Connection::Wsl` arm first runs `local_setup::wsl_pane_problem` (missing wsl.exe / no distro / wanted distro absent) → `log_warn`, status text, `Err` before `spawn_wsl_pty`; a probe error fails open. `build_tmux_attach_script`
-  takes `secret_keys` (names only) and appends them to tmux `update-environment`; the SSH pane passes the names of its `secret_env` rows (WSL passes none).
+  takes `secret_keys` (names only) and appends them to tmux `update-environment` (a local pane adds `YMUX_PIPE_PATH` to that list, and `spawn_local_pty` exports it, only with a config-dir override); the SSH pane passes the names of its `secret_env` rows (WSL passes none).
   `spawn_ssh(.., secret_env)` calls `secret_env::deliver_ssh` right after
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
   status `environment variable refused by sshd: K` + `log_warn`, connect continues.
@@ -256,7 +256,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9439](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9451](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.

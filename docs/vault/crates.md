@@ -54,7 +54,11 @@ The only crate `app` cannot function without. Three files:
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
 - **`pipe_name()` / `pipe_names()`** — the RPC endpoint paths,
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
-  *list* because macOS caps `sun_path` at 104 bytes.
+  *list* because macOS caps `sun_path` at 104 bytes. A config-dir override
+  (`YMUX_CONFIG_DIR` / `WINMUX_CONFIG_DIR`) adds `-<8 hex>` (FNV-1a of the dir) to the
+  primary name; without one the name does not change. **`pipe_path_for_panes()`** returns
+  the value `spawn_local_pty` exports as `YMUX_PIPE_PATH`, only with an override: the CLI
+  cannot derive the suffix. On Unix it is the first candidate shorter than `sun_path`.
 
 **`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.

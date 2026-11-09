@@ -221,8 +221,8 @@ set YMUX_CONFIG_DIR=C:\temp\ymux-dev      (cmd)
 $env:YMUX_CONFIG_DIR = "C:\temp\ymux-dev"  (PowerShell)
 ```
 
-Set it before launching the second build; it then gets its own workspaces, settings and
-`debug.log`. A crash leaves no lock to clean (the OS frees
+Set it before launching the second build; it then gets its own workspaces, settings,
+`debug.log`, and RPC pipe or socket, so hooks in its panes reach that build. A crash leaves no lock to clean (the OS frees
 it; the leftover `ymux.owner.json` is replaced and logged as `stale`). If `debug.log` shows
 `pre-rename build running`, that is the case this section is for.
 

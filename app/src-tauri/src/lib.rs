@@ -3153,6 +3153,12 @@ fn spawn_local_pty(
     // ymux-cli hook silently env-gated (main.rs `YMUX_PANE_ID unset`) and
     // the Ticker never fired outside manual injection.
     cmd.env("YMUX_PANE_ID", &pane_id);
+    // Only with a config-dir override: the CLI cannot derive the suffixed
+    // endpoint, and without this a dev build's hooks reach the release.
+    let pipe_path = ymux_core::pipe_path_for_panes();
+    if let Some(p) = &pipe_path {
+        cmd.env("YMUX_PIPE_PATH", p);
+    }
     // 2026-08-19: point zellij at ymux's own config; 2026-08-20: and at its
     // config DIRECTORY, which is how the single-pane layout gets found.
     //
@@ -3329,7 +3335,13 @@ fn spawn_local_pty(
             let sessions_clone = state.core.sessions.clone();
             let id_clone = id.clone();
             let pane_for_exec = pane_id.clone();
-            let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            let mut secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            // A running tmux server keeps its own env, so the name must join
+            // `update-environment` to reach this session. The pipe path is
+            // not a secret; this list is only "names tmux copies on attach".
+            if pipe_path.is_some() {
+                secret_keys.push("YMUX_PIPE_PATH".to_string());
+            }
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 crate::log_info("PTY", &format!(
