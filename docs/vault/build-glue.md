@@ -134,6 +134,14 @@ browser webviews depend on. Bumping tauri means verifying `add_child`'s signatur
 multi-webview shape still compile — push the bump and let CI type-check it (Rule #17),
 then smoke-test the workspace Browser.
 
+`russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }`
+appears in five manifests (the app, `ymux-core`, `ymux-ssh`, `ymux-bootstrap`,
+`ymux-tunnel`) and the feature list must match. The upstream default backend is
+`aws-lc-rs`, a cmake/NASM native build, and one crate left on defaults brings it back
+through feature unification. `russh-keys` no longer exists (merged into `russh::keys`).
+`russh-sftp` has no runtime dependency on `russh` and stays on 2.1.1: from 2.4 `write_all`
+returns before the ack, and the upload sites discard `flush`/`shutdown` errors.
+
 `mainBinaryName` is top-level in Tauri 2 and set only in `tauri.macos.conf.json` (`"ymux"`, so the macOS executable is `Contents/MacOS/ymux`, not the cargo package name `app`); `tauri.conf.json` must stay without it or Windows `app.exe` (hardcoded in `build-windows.yml`) breaks.
 
 `windows-sys` carries `Win32_Security_Cryptography` for `CryptProtectData` /

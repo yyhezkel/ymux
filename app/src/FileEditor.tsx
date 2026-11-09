@@ -2,6 +2,7 @@ import { createSignal, Show, onMount, onCleanup } from "solid-js";
 import { backend } from "./backend";
 import { t } from "./i18n";
 import { keyEq } from "./shortcuts";
+import { fmtBytes } from "./insightsFmt";
 import { TechText } from "./TechText";
 import { IconSearch, IconClose, IconArrowUp, IconArrowDown, IconWarning } from "./icons";
 
@@ -343,12 +344,6 @@ export function FileEditor(p: Props) {
   });
   onCleanup(() => window.removeEventListener("keydown", keydown));
 
-  const fmtSize = (n: number) => {
-    if (n < 1024) return `${n} B`;
-    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-    return `${(n / 1024 / 1024).toFixed(1)} MB`;
-  };
-
   return (
     <Show when={p.open}>
       <div class="modal-backdrop" onClick={tryClose}>
@@ -504,7 +499,7 @@ export function FileEditor(p: Props) {
           <Show when={!loading() && largeWarn()}>
             <div class="editor-status warn">
               {t("editor.large_file_warning", {
-                size: meta() ? fmtSize(meta()!.size) : "?",
+                size: meta() ? fmtBytes(meta()!.size) : "?",
               })}
             </div>
           </Show>
@@ -525,7 +520,7 @@ export function FileEditor(p: Props) {
             />
             <div class="editor-meta">
               {meta()?.encoding ?? "—"} ·{" "}
-              {meta() ? fmtSize(meta()!.size) : "0 B"}
+              {meta() ? fmtBytes(meta()!.size) : "0 B"}
               <Show when={dirty()}>
                 <span class="editor-dirty"> · {t("editor.dirty")}</span>
               </Show>

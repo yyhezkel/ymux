@@ -169,6 +169,45 @@ export interface QueueGroup {
   attention: number;
 }
 
+/** The Queue's one ordering rule: bucket first (who needs you), then oldest.
+ *  A row with no timestamp sorts last in its bucket. */
+export function compareQueueRows(a: QueueRow, b: QueueRow): number {
+  const bucket = QUEUE_BUCKET[queueStatus(a)] - QUEUE_BUCKET[queueStatus(b)];
+  if (bucket !== 0) return bucket;
+  return (rowSinceMs(a) ?? Number.MAX_SAFE_INTEGER) - (rowSinceMs(b) ?? Number.MAX_SAFE_INTEGER);
+}
+
+/** One row of the jump palette. `status` is null for a plain shell: it has
+ *  no agent signal, so any status word would be invented. */
+export interface JumpRow {
+  wsId: string;
+  wsName: string;
+  paneId: string;
+  title: string;
+  cwd: string | null;
+  status: QueueStatus | null;
+}
+
+/** The jump palette's rows: agent panes in Queue order, across all
+ *  workspaces (no grouping, so a blocked pane always outranks a working
+ *  pane of another workspace), then connected plain shells in layout order.
+ *  A pane with neither signal is not a session and is left out. Pure. */
+export function buildJumpRows(
+  rows: readonly QueueRow[],
+  cwdOf: (wsId: string) => string | null,
+): JumpRow[] {
+  const agents = rows.filter(inQueue).sort(compareQueueRows);
+  const shells = rows.filter((r) => !inQueue(r) && r.connected);
+  return [...agents, ...shells].map((r) => ({
+    wsId: r.wsId,
+    wsName: r.wsName,
+    paneId: r.paneId,
+    title: r.title,
+    cwd: cwdOf(r.wsId),
+    status: inQueue(r) ? queueStatus(r) : null,
+  }));
+}
+
 /** Group by workspace (the reference table's shape: "CRM — 5"), rows
  *  sorted bucket-then-oldest inside each group, groups sorted by their
  *  most urgent row then by that row's age. Pure. */
@@ -184,22 +223,8 @@ export function groupQueueRows(rows: QueueRow[]): QueueGroup[] {
     g.rows.push(r);
     if (QUEUE_BUCKET[queueStatus(r)] <= 1) g.attention += 1;
   }
-  const rowKey = (r: QueueRow): [number, number] => [
-    QUEUE_BUCKET[queueStatus(r)],
-    rowSinceMs(r) ?? Number.MAX_SAFE_INTEGER,
-  ];
   const groups = [...byWs.values()];
-  for (const g of groups) {
-    g.rows.sort((a, b) => {
-      const [ba, sa] = rowKey(a);
-      const [bb, sb] = rowKey(b);
-      return ba !== bb ? ba - bb : sa - sb;
-    });
-  }
-  groups.sort((a, b) => {
-    const [ba, sa] = rowKey(a.rows[0]);
-    const [bb, sb] = rowKey(b.rows[0]);
-    return ba !== bb ? ba - bb : sa - sb;
-  });
+  for (const g of groups) g.rows.sort(compareQueueRows);
+  groups.sort((a, b) => compareQueueRows(a.rows[0], b.rows[0]));
   return groups;
 }

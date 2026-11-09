@@ -14,6 +14,7 @@ import {
   SHORTCUT_ACTION_IDS,
   SHORTCUT_GROUPS,
   buildShortcutTable,
+  formatAccel,
   canonicalAccel,
   conflictingAccels,
   formatEvent,
@@ -271,6 +272,13 @@ test("select_all rebind: the new chord matches, the old default does not", () =>
   const t = buildShortcutTable({ ...DEFAULT_SHORTCUTS, select_all: "Ctrl+Alt+A" });
   assert.ok(matches(ev({ ctrlKey: true, altKey: true, key: "a", code: "KeyA" }), t.select_all));
   assert.ok(!matches(ev({ ctrlKey: true, shiftKey: true, key: "A", code: "KeyA" }), t.select_all));
+});
+
+test("formatAccel shows a rebound value, and null for an unparseable one", () => {
+  // The palette hints read this. A stale value is the bug they replaced.
+  const t = buildShortcutTable({ ...DEFAULT_SHORTCUTS, close_pane: "alt+shift+x", copy: "Ctrl" });
+  assert.equal(formatAccel(t.close_pane), "Alt+Shift+X");
+  assert.equal(formatAccel(t.copy), null);
 });
 
 test("a live binding on the deprecated find chord is not a conflict", () => {

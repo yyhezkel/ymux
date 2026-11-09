@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { backend } from "./backend";
+import { fmtBytes } from "./insightsFmt";
 
 // Phase 81.B: global store for in-flight SFTP transfers.
 //
@@ -167,18 +168,7 @@ export async function initTransferListener(): Promise<void> {
 
 // ─── formatting helpers (shared by the bar and any future tray) ──────────
 
-/** "12.4 MB" — matches the File Manager's existing size column style. */
-export function fmtBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let u = 0;
-  while (v >= 1024 && u < units.length - 1) {
-    v /= 1024;
-    u++;
-  }
-  return `${v < 10 ? v.toFixed(1) : Math.round(v)} ${units[u]}`;
-}
+export { fmtBytes };
 
 /** "3.2 MB/s". Zero means "not measured yet". */
 export function fmtSpeed(bps: number): string {

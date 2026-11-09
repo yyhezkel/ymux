@@ -7,9 +7,11 @@ package term
 // feed.push (app/src-tauri/src/rpc_server.rs): fold the hook into the pane's
 // traffic light and brief (internal/agent, the Phase-99 port), tell the
 // events subscribers (Phase 101), make the card the desktop would make, and
-// answer. A permission request follows the session's policy (DECISIONS
-// 2026-10-05): `none` — the default — answers allow at once and makes no card,
-// as the desktop's Auto does; `gate` makes a blocking card and waits for a
+// answer. A Bash pre-tool-use that matches a Block rule (agent.BlockedBy) is
+// denied first, under every policy, as the desktop's Block is. Otherwise a
+// permission request follows the session's policy (DECISIONS 2026-10-05):
+// `none` — the default — answers allow at once and makes no card, as the
+// desktop's Auto does; `gate` makes a blocking card and waits for a
 // feed.decide, up to wait_timeout_seconds.
 //
 // Rule #1: a hook payload carries the user's prompt, Claude's reply and tool
@@ -57,6 +59,11 @@ type hookPayload struct {
 	Cwd       string `json:"cwd"`
 	Reason    string `json:"reason"`
 	LastAssistantMessage *string `json:"last_assistant_message"`
+	// What the Block rules read. A value of the wrong type is left empty.
+	ToolName  string `json:"tool_name"`
+	ToolInput struct {
+		Command string `json:"command"`
+	} `json:"tool_input"`
 }
 
 var errUnknownMethod = &core.RPCError{Code: -32000, Message: "unknown method"}
@@ -68,6 +75,8 @@ func (t termHookTarget) DispatchHook(method string, raw json.RawMessage) (any, *
 		return map[string]any{"ok": true}, nil
 	case "feed.push":
 		return t.feedPush(raw), nil
+	case "context.inject":
+		return t.contextInject(raw), nil
 	}
 	if res, err, ok := t.verb(method, raw); ok { // B4 (verbs.go)
 		return res, err
@@ -179,6 +188,13 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 		return passive
 	}
 	blocking := p.Kind == "permission_request"
+	if blocking && p.Subkind == "pre-tool-use" {
+		// Before the session's policy: a Block rule denies under `gate` too.
+		// settings.go keeps the built-ins in force whatever the document holds.
+		if pat := agent.BlockedBy(pl.ToolName, pl.ToolInput.Command, r.settings.rules().customBlock); pat != "" {
+			return r.denyByPolicy(p.RequestID, pl.ToolName, pat, pane, session)
+		}
+	}
 	if blocking && policy != policyGate {
 		return map[string]any{"request_id": p.RequestID, "decision": "allow", "policy": policyNone}
 	}
@@ -189,6 +205,19 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	}
 	decision := r.await(item.RequestID, ch, waitTimeout(p.WaitTimeoutSeconds))
 	return map[string]any{"request_id": item.RequestID, "decision": decision, "policy": policyGate}
+}
+
+// denyByPolicy answers a Block rule's deny and leaves the desktop's audit card
+// (push_policy_audit): passive, so nobody has to act on it. Rule #1: the log
+// line carries no command and no pattern.
+func (r *HookRegistry) denyByPolicy(reqID, tool, pattern, pane, session string) map[string]any {
+	item, _ := r.addCard(feedPushParams{
+		RequestID: reqID, Kind: "passive", Subkind: "policy-block",
+		Title: "⛔ Blocked: " + tool, Summary: "blocked: command contains `" + pattern + "`",
+		Payload: json.RawMessage(`{}`),
+	}, pane, session, nil, false)
+	logger.Info("tool call denied by a block rule", "pane", pane, "tool", tool)
+	return map[string]any{"request_id": item.RequestID, "decision": "deny", "policy": "block"}
 }
 
 // addCard builds the desktop's card for a hook, stores it and announces it.

@@ -1,10 +1,9 @@
 //! Phase 36 (#2.2): listening-port watcher.
 //!
 //! Runs on the remote Linux box (this binary cross-compiles to
-//! `ymux-linux-x64`). Every 1s it reads `/proc/net/tcp` +
-//! `/proc/net/tcp6`; when either file changed since the last tick it
-//! extracts sockets in the LISTEN state and diffs the set against the
-//! previous tick. New ports send a `port.opened` RPC notification to the
+//! `ymux-linux-x64`). Every 3s it reads `/proc/net/tcp` +
+//! `/proc/net/tcp6`, extracts sockets in the LISTEN state and diffs the
+//! set against the previous tick. New ports send a `port.opened` RPC notification to the
 //! desktop, vanished ports `port.closed`. On the desktop `port.opened` is
 //! **detection only**: `rpc_server.rs` records the port and emits a
 //! `port-detected` event for the UI; the forward itself is opened by the
@@ -159,25 +158,13 @@ fn parse_exclude_env() -> HashSet<u16> {
     set
 }
 
-/// Raw `/proc/net/tcp{,6}` bodies from one tick. Kept verbatim so the next
-/// tick can skip parsing when nothing moved (the common case, 1/s forever).
-#[derive(Default, PartialEq, Eq)]
-struct RawSnapshot {
-    v4: String,
-    v6: String,
-}
-
-fn read_raw() -> RawSnapshot {
-    RawSnapshot {
-        v4: std::fs::read_to_string("/proc/net/tcp").unwrap_or_default(),
-        v6: std::fs::read_to_string("/proc/net/tcp6").unwrap_or_default(),
-    }
-}
-
-fn parse_snapshot(raw: &RawSnapshot, exclude: &HashSet<u16>) -> HashSet<ListenPort> {
+/// The forwardable LISTEN sockets now. A `/proc` file that cannot be read
+/// counts as empty.
+fn read_listening(exclude: &HashSet<u16>) -> HashSet<ListenPort> {
     let mut set = HashSet::new();
-    for (content, is_v6) in [(&raw.v4, false), (&raw.v6, true)] {
-        for lp in parse_proc_net_tcp(content, is_v6) {
+    for (path, is_v6) in [("/proc/net/tcp", false), ("/proc/net/tcp6", true)] {
+        let content = std::fs::read_to_string(path).unwrap_or_default();
+        for lp in parse_proc_net_tcp(&content, is_v6) {
             if should_forward(lp.port, exclude) {
                 set.insert(lp);
             }
@@ -239,40 +226,34 @@ pub async fn run(workspace_id: &str) -> ! {
     });
 
     let exclude = parse_exclude_env();
-    let mut prev_raw = RawSnapshot::default();
     let mut prev: HashSet<ListenPort> = HashSet::new();
     let mut connect_failures: u32 = 0;
     loop {
-        let raw = read_raw();
-        // Byte-identical /proc files → nothing to parse or diff. The first
-        // tick always differs from the empty default, so everything already
+        // The first tick diffs against the empty set, so everything already
         // listening at connect time is reported.
-        if raw != prev_raw {
-            let cur = parse_snapshot(&raw, &exclude);
-            let events: Vec<(&str, &ListenPort)> = cur
-                .difference(&prev)
-                .map(|lp| ("port.opened", lp))
-                .chain(prev.difference(&cur).map(|lp| ("port.closed", lp)))
-                .collect();
-            if !events.is_empty() {
-                let mut reached = true;
-                for (method, lp) in &events {
-                    reached &= notify(method, workspace_id, lp).await;
-                }
-                if reached {
-                    connect_failures = 0;
-                } else {
-                    connect_failures += 1;
-                    if connect_failures >= MAX_CONNECT_FAILURES {
-                        crate::hook_log(crate::HookLevel::Info, "port-watch exit: tunnel gone");
-                        std::process::exit(0);
-                    }
+        let cur = read_listening(&exclude);
+        let events: Vec<(&str, &ListenPort)> = cur
+            .difference(&prev)
+            .map(|lp| ("port.opened", lp))
+            .chain(prev.difference(&cur).map(|lp| ("port.closed", lp)))
+            .collect();
+        if !events.is_empty() {
+            let mut reached = true;
+            for (method, lp) in &events {
+                reached &= notify(method, workspace_id, lp).await;
+            }
+            if reached {
+                connect_failures = 0;
+            } else {
+                connect_failures += 1;
+                if connect_failures >= MAX_CONNECT_FAILURES {
+                    crate::hook_log(crate::HookLevel::Info, "port-watch exit: tunnel gone");
+                    std::process::exit(0);
                 }
             }
-            prev = cur;
-            prev_raw = raw;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        prev = cur;
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 }
 
@@ -339,17 +320,5 @@ mod tests {
         assert!(!should_forward(22, &ex)); // ssh
         assert!(!should_forward(9000, &ex)); // excluded
         assert!(should_forward(3000, &ex)); // ok
-    }
-
-    #[test]
-    fn identical_raw_snapshot_skips_reparse() {
-        // Phase 86: the loop parses only when the raw bodies changed.
-        let a = RawSnapshot { v4: "x".into(), v6: "y".into() };
-        let b = RawSnapshot { v4: "x".into(), v6: "y".into() };
-        let c = RawSnapshot { v4: "x".into(), v6: "z".into() };
-        assert!(a == b);
-        assert!(a != c);
-        // The first tick always differs from the empty default.
-        assert!(a != RawSnapshot::default());
     }
 }

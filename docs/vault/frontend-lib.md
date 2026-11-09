@@ -427,7 +427,7 @@ on "did the transform move the point", not on the row being rtl.
 
 ## Typed mirrors
 
-**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (621)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -453,7 +453,8 @@ is optional here: the Rust side omits an empty list, and the web backend never s
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
-(`BriefSettings` gained `inject_context`, default true, in Phase 105.C). Also
+(`BriefSettings` gained `inject_context`, default true, in Phase 105.C, and
+`inject_protocol`, default true, later). Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.
@@ -480,9 +481,10 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
   `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
   hand-off of the origin pane's RTL profile to its popout window.
-- **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
+- **`i18n/index.ts` (91)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
-  `dir` react together. A missing key returns the key itself.
+  `dir` react together. A missing key returns the key itself. `tEn(key)` returns the
+  English text whatever the active language; the command palette searches it.
 - **`platform.ts` (50)** — host OS resolved **once** from Rust (`host_platform`,
   `std::env::consts::OS`). Exists because two Windows-only assumptions were baked in as
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
@@ -497,12 +499,15 @@ past installs), `fontInstall`, and `fontUninstall`.
   purpose**: per-machine, high-churn session state, the same class as window rects and
   sidebar width. Losing it costs one click, never data, and it keeps Rule #7's
   atomic-write surface small.
-- **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
+- **`shortcuts.ts` (414)** — the accelerator registry, not just a parser. `formatAccel`
+  is the display form of a parsed binding (`canonicalAccel` and the palette hints use
+  it). It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
   Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
   `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  `open_diff` Ctrl+Shift+G in the panes group, the jump palette added `jump_palette`
+  Ctrl+Shift+O in the general group), `DEPRECATED_SHORTCUT_IDS` (`find`:
   kept in the schema and defaults so old `settings.json` loads, but filtered out of
   `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
   entry or conflict check), parses
@@ -555,9 +560,12 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   token.** Everything here is the API-*equivalent* cost — right for "where is my quota
   going, in money terms", wrong for "what will my card be charged". **The UI must never
   label it a bill.**
-- **`insightsFmt.ts` (34)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
+- **`insightsFmt.ts` (33)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
   `InsightsWindow.tsx` so the Analytics tab can use them without importing its own parent
-  (that import would be a cycle).
+  (that import would be a cycle). `fmtBytes` is the app's one spaced byte formatter: zero
+  is `0 B`, so `fmtBps` shows `0 B/s`. `transferStore.ts` re-exports it, and `FileEditor.tsx`
+  and `SettingsModal.tsx` import it. `FileManagerPane.tsx` keeps its own compact `fmtSize`
+  (`1.5K`) for the size column.
 - **`insightsReport.ts` (428)** — the wire types for `/analytics` and `/claude-usage`,
   plus the one thing you can do with them outside the panel: flatten the screen into a
   plain-text report to paste into Claude, an email, or an incident ticket. Column

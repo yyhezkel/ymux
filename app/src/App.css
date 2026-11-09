@@ -5107,13 +5107,56 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
   cursor: pointer;
   font-size: 13px;
   color: var(--w-text, #e6edf3);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.command-palette-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.command-palette-label {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.command-palette-status {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.command-palette-hint {
+  flex: none;
+  font-family: var(--w-font-mono);
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
 .command-palette-item.selected {
   background: var(--w-accent, #3b82f6);
   color: #fff;
+}
+.command-palette-item.selected .command-palette-hint,
+.command-palette-item.selected .command-palette-status,
+.command-palette-item.selected .command-palette-detail {
+  color: inherit;
 }
 .command-palette-empty {
   padding: 14px 16px;
