@@ -218,7 +218,7 @@ saves, so the interesting path cannot be reached by launching one and waiting. B
 merge bases over one tempdir (two instances' edits both survive, also across a second save; our
 delete sticks after a merge; an older build's rewrite does not strip `parent_id`; a newer on-disk
 schema refuses the write byte-identically). `reconcile` always writes our schema version. A second
-instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
+instance is stopped at boot by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content
 
@@ -284,7 +284,7 @@ that is the everyday Windows case, and the rest of the family still comes out. A
 and written down: a user's own hand-installed copy of the same family, in the same
 per-user directory, also matches.
 
-**`tray.rs` (91)** — tray icon, quick menu, taskbar badge. **Best-effort**: a failed
+**`tray.rs` (104)** — tray icon, quick menu, taskbar badge, and `focus_main` for the `app.focus` RPC. **Best-effort**: a failed
 build logs and carries on. `TRAY_ACTIVE` gates close-to-tray so a failed tray can never
 trap the user with a hidden window and no way back.
 

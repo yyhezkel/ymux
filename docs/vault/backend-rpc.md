@@ -52,6 +52,9 @@ must resolve the same path from the other side).
 `dispatch()` ([dispatch@rpc_server.rs:635](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
+- **App** — `app.focus`: a second launch on this config dir asks this instance to show its
+  main window (`tray::focus_main`, on a blocking thread; the reply waits for the event loop,
+  so a hung UI times out in the caller).
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
   `update-workspace`, `delete-workspace`, `reset-layout`
   — `list-workspaces`, `new-workspace` and `update-workspace` replies run `secret_env::redact` (secret env rows `value: ""`), a second layer over `persist()`; `tree` / `ui.tree` emit no env

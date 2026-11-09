@@ -12808,6 +12808,13 @@ pub fn run() {
         eprintln!("PANIC at {location}: {msg}");
     }));
 
+    // One live app per config dir. This must stay above the WebView2 block:
+    // with persistence off, that block deletes the live profile of whichever
+    // instance already runs on this dir. Does not return on a held lock.
+    if let Ok(dir) = config_dir() {
+        config_lock::gate_for_process(&dir);
+    }
+
     // Unshipped-fivefer (#3): browser session persistence. Point WebView2 at a
     // single stable profile folder under our config dir so cookies/logins in
     // workspace browsers survive restarts. One app-wide folder (shared by the
@@ -12857,11 +12864,6 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
-            // Advisory lock + owner record so a second build on this dir
-            // names the first in the log. Never blocks boot.
-            if let Some(dir) = &cfg_dir {
-                config_lock::hold_for_process(dir);
-            }
             // Phase 112: read the embedded frontend once — the ymux-web
             // add-on uploads exactly this set to servers.
             web_addon::init(app.handle());

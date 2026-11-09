@@ -9,10 +9,10 @@
   },
   "backend-core": {
     "app/src-tauri/src/agent_runs_store.rs": "dae5c992e653e55ee97a555176d317c18f687405790c55352fd3efce6d7b9c47",
-    "app/src-tauri/src/config_lock.rs": "3785df0a43aa1ddb150b0d0b864fbd25fb1b75c817b7a63c6cabbb0b78ded206",
+    "app/src-tauri/src/config_lock.rs": "03436b4143023749d7fc217f11a67bf95ff810b02c1e3e236309703290853f0d",
     "app/src-tauri/src/ipc_guard.rs": "4925c6413a7cac989c898deba7f6a9d96ed4d0f3f674329f467472d106ca66e7",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "12e809f27c6484ab97286d1836be62bbdbdbab58da1d7b8db4a198546da6b4ad",
+    "app/src-tauri/src/lib.rs": "974ecad73c12e73fdc8986646ecb06f7a316d5ce978eacb531e051b647d067d9",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "c34ba7b50a9598a16e91765932f4ef2c1249c6dca9a2d5667a5b2233660b8b4e",
@@ -28,7 +28,7 @@
     "app/src-tauri/src/skills.rs": "6eba5ee8f7f63fff53c07ce6710fd1b50b0b436bb2f87bf7675e975df8934c62",
     "app/src-tauri/src/stt.rs": "35956e8f38309ab501f3b0ca2d0f28407b0fea2b29a365e4d035262108072a39",
     "app/src-tauri/src/tickets.rs": "50b09167474299a1102dfa653d12f4723980bd471944f27d6d8811c623a4caa5",
-    "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
+    "app/src-tauri/src/tray.rs": "c211407897fb44839de94b1337468a556a67be32839c79e59a617c84a5e97dc5",
     "app/src-tauri/src/workspace_browser.rs": "82ff2d318122610f910964442fdc2d787b4feeae3216a3303b6573bdc06b4602",
     "app/src-tauri/src/workspaces_merge.rs": "44fa99afb85402fb9cacdf5557393fe5c09adc9e367dad295187130c94574c39",
     "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
@@ -46,7 +46,7 @@
     "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
     "app/src-tauri/src/brief.rs": "21511a48dbcdaf269a6750722e7ac9185006dcd06641a15fa8f079af3c660ba4",
     "app/src-tauri/src/context_store.rs": "4c2370357fe898683e731e5e7ecffbae206f6f790e0df2e2d403990c7b4bc575",
-    "app/src-tauri/src/rpc_server.rs": "7c541790bb2f84a4cbd6cf0f3f5c1298c5f82f67434982a910bbc282475384ef"
+    "app/src-tauri/src/rpc_server.rs": "6be863dc5e2f6290febe13ac9f6a82af466696232f6595f2f9636a8a77e05cc1"
   },
   "backend-sessions": {
     "app/src-tauri/src/bidi_filter.rs": "0164d9501462eb1c2d3b758ad72cfaebcc3fd07f7b389a0662c7c5752346a6ee",

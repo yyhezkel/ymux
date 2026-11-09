@@ -207,19 +207,29 @@ parameters so a test can run two "instances" (two bases) over one tempdir.
 6. Log line records `N workspaces: R root / N-R nested / P repo` — the tree *shape*,
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
-7. **Config-dir lock (diagnostics only).** `setup()` calls `config_lock::hold_for_process(dir)`
-   ([hold_for_process@config_lock.rs:114](../../app/src-tauri/src/config_lock.rs)) once the dir is known. It takes an OS
-   file lock (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the
-   process lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
+7. **Config-dir gate.** The top of `run()` calls `config_lock::gate_for_process(dir)`, after
+   the panic hook and BEFORE the WebView2 block: with persistence off, that block deletes the
+   profile folder, and a second instance must not reach it. The gate takes an OS file lock
+   (`File::try_lock`) on `<dir>/ymux.lock` and keeps the handle in a static for the process
+   lifetime; the holder's `{pid, started_at, exe file name, version}` goes to a SEPARATE
    `<dir>/ymux.owner.json` (tmp + rename) because Windows locks block other handles from reading
-   the locked file. A second instance logs `[CONFIG_LOCK]` WARN naming the holder pid and the
-   `YMUX_CONFIG_DIR` remedy and **carries on** — it never refuses to start; the merge in step 2
-   is what keeps concurrent saves safe. A free lock with a leftover owner file (crash/kill; the
-   OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }` carries the
-   dead holder's record and logs a WARN with its pid + version. `started_at` is an RFC 3339 string. Any lock failure is fail-open
-   (`Unavailable`, WARN). A background thread also scans processes for a pre-rename image name
-   (case-insensitive `winmux`) and WARNs per hit with pid + image name — the older build that
-   the schema gate cannot stop. Logs carry pid/version/exe file name only, no full paths.
+   the locked file. On `HeldBy` the launch calls the `app.focus` RPC on the holder and exits 0.
+   The call runs on a worker thread with a 4 s limit, because a Windows pipe `File` has no read
+   timeout and a hung holder would block forever; it retries the connect, because the holder
+   binds its RPC endpoint only at the end of `setup()`. If `app.focus` fails, the launch tries
+   the lock once more (the holder can exit during the wait, which also covers a tray quit and
+   relaunch). If the lock is still held, it shows a native dialog with the holder's pid and
+   version (`MessageBoxW` / `osascript`, because the Tauri dialog plugin needs an AppHandle that
+   does not exist yet) and exits 1. The updater does not reach the gate: the NSIS path runs an
+   interactive installer and the old app exits 800 ms after it starts it, and the macOS relaunch
+   script waits for the old pid to die before `open`. A free lock with a leftover owner file
+   (crash/kill; the OS drops the lock) is a replace, not an error: `Acquired { stale: Some(old) }`
+   carries the dead holder's record and logs a WARN with its pid + version. `started_at` is an
+   RFC 3339 string. Any lock failure is fail-open (`Unavailable`, WARN). The lock binds only
+   builds that take it, so the merge in step 2 is still what protects against an older build.
+   A background thread also scans processes for a pre-rename image name (case-insensitive
+   `winmux`) and WARNs per hit with pid + image name — the older build that the schema gate
+   cannot stop. Logs carry pid/version/exe file name only, no full paths.
 
 `load_from_disk` repairs on the way in and each repair is logged, in this order: WSL→Local
 connection rewrite (`migrate_wsl_workspaces`), `migrate_legacy_project_folders`,
@@ -556,8 +566,8 @@ list command. The module owns what the picker never needed:
   windows render live PTY output, so an inspector on them is a Rule #1 leak. The opt-outs
   in `run()` and in `popout_pane` are the only thing standing between the feature and
   that. Do not "clean them up".
-- `WEBVIEW2_USER_DATA_FOLDER` is set at the very top of `run()`, before any webview
-  exists, to **one app-wide** profile dir. Per-workspace profiles reintroduce
+- `WEBVIEW2_USER_DATA_FOLDER` is set near the top of `run()`, after the config-dir gate and
+  before any webview exists, to **one app-wide** profile dir. Per-workspace profiles reintroduce
   `0x8007139F` — WebView2 allows one environment per process. Windows-only by
   construction; WKWebView and WebKitGTK ignore the variable.
 - `AGENT_RUN_MIN_TURN_MS = 2000` mirrors a gate in
