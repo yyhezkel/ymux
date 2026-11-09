@@ -8007,3 +8007,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Cause: hooks were removed from settings.json on 2026-10-26 because PreToolUse gated and denied commands in `auto` mode, which was not in the CLI's short-circuit list. SessionStart/UserPromptSubmit/Stop/SessionEnd went with them, so the Context Rail and injection stopped. Separately, context.inject takes 310-400 ms on a real tunnel, over the 300 ms budget.
   Fix: cli/src/main.rs prints nothing in `auto` mode; default budget 1000 ms. Docs: CONTEXT, CLI, PROTOCOLS, vault cli.md.
   Result: compiles-untested until CI; needs a new CLI on the server to take effect.
+
+[2026-11-09] Foreign session-end dropped; `auto` mode keeps the pane light honest (same branch).
+  Cause: `claude -p "/usage"` outside a pane has no YMUX_PANE_ID, the CLI borrows the pane in last.env, and its SessionEnd cleared that pane's light, brief and context. Reproduced live on the server (one run, one session-end on the last.env pane). On 2026-10-26, 38 of 39 fully logged session-end events had no other hook for their session id.
+  Fix: AgentRunState.session_id (set by user-prompt-submit and stop, persisted); feed.push returns passive for a session-end naming another session; Go port in agent/state.go + term/hookdispatch.go. CLI in `auto` mode spawns a detached `notification` push of type tool_running, so the light leaves NeedsInput; the daemon sends no web notification for it.
+  Result: compiles-untested until CI. Go changed, so the two server blobs need the rebake from the PR's ci-windows artifact. SessionEnd is NOT registered on the server until the desktop with this guard ships.

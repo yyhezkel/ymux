@@ -1254,6 +1254,28 @@ fn context_timeout_ms() -> u64 {
         .unwrap_or(1000)
 }
 
+/// Tell the desktop a tool is starting, without making Claude Code wait: a
+/// detached copy of this binary runs the `notification` branch. In `auto`
+/// mode this is what takes a pane out of NeedsInput after an approval.
+/// stdout and stderr are null so the hook's own pipes close when we exit.
+fn report_tool_running() {
+    use std::io::Write as _;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let child = std::process::Command::new(exe)
+        .args(["claude-hook", "notification"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(br#"{"notification_type":"tool_running"}"#);
+        }
+    }
+}
+
 /// Phase 105.C: the one stdout line a SessionStart hook prints — Claude
 /// Code's documented `hookSpecificOutput.additionalContext` shape — or
 /// `None` for blank context (print nothing at all). serde does the
@@ -2406,6 +2428,7 @@ async fn real_main() -> ExitCode {
                     hook_dlog(&format!(
                         "defer tool={tool_name_log} mode=auto session={session_id_log}"
                     ));
+                    report_tool_running();
                     return ExitCode::SUCCESS;
                 }
                 if matches!(
@@ -2531,6 +2554,7 @@ async fn real_main() -> ExitCode {
                     "elicitation_url_dialog",
                     "elicitation_complete",
                     "elicitation_response",
+                    "tool_running",
                 ];
                 if !RELEVANT.contains(&ntype) {
                     // auth_success, or a type Claude Code added after this

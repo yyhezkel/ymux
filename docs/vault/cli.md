@@ -60,7 +60,9 @@ file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else
 
 **`pre-tool-use` and `permission_mode` (main.rs).** The CLI reads the mode before it
 dials the desktop. `auto` prints nothing and exits 0, so Claude Code's own classifier
-decides and the ymux policy does not run. `acceptEdits`, `bypassPermissions` and `skip`
+decides and the ymux policy does not run. It also spawns a detached copy of the CLI
+(`report_tool_running`) that pushes notification type `tool_running`, so the pane light
+leaves NeedsInput without Claude Code waiting. `acceptEdits`, `bypassPermissions` and `skip`
 print an explicit `allow`. Every other mode goes to the desktop policy engine.
 
 ## `hooks.rs` (730) — `ymux setup-hooks`

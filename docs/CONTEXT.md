@@ -25,7 +25,9 @@ LogEntry       { ts_ms, kind: turn | closed, status,
 - **The log.** Every `Stop` appends one `turn` line built from the parsed
   `[ymux-brief]`. With no brief, the degraded brief is used (status `done`, delta =
   first line of the message, `degraded: true`). `SessionEnd` appends a `closed`
-  line, with Claude Code's `reason` enum as its delta. **Nothing calls an LLM.**
+  line, with Claude Code's `reason` enum as its delta. A `SessionEnd` that names
+  a session other than the pane's own is dropped first (`claude -p` outside a
+  pane borrows the pane in `last.env`). **Nothing calls an LLM.**
   The log costs zero tokens.
 - **Goal / Done when.** Come from the brief's sticky `goal:` / `done:` keys
   (`docs/BRIEF.md`). The *last non-empty* value wins, so the many briefs that
