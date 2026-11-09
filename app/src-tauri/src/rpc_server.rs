@@ -186,7 +186,8 @@ pub async fn run(state: AppState, app: AppHandle) {
 #[cfg(not(windows))]
 fn spawn_unix_listener(name: String, state: AppState, app: AppHandle) -> Result<(), String> {
     // Stale socket file from a previous crash blocks bind — remove it.
-    // A second live instance is prevented upstream (single-instance app).
+    // config_lock::gate_for_process stops a second live instance on this dir
+    // before the server starts. A build older than the gate can still unlink.
     let _ = std::fs::remove_file(&name);
     let listener = tokio::net::UnixListener::bind(&name).map_err(|e| {
         crate::log_warn("RPC", &format!("rpc_server: bind {name} failed: {e}"));
@@ -644,6 +645,15 @@ async fn dispatch(
         // can fall back to its static policy fast when the desktop is
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
+        // A second launch on this config dir asks us to come forward, then
+        // exits (config_lock::gate_for_process).
+        "app.focus" => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || crate::tray::focus_main(&app))
+                .await
+                .map_err(|e| format!("app.focus: {e}"))??;
+            Ok(json!({ "ok": true }))
+        }
         "list-workspaces" => {
             let mut file = state.workspaces.lock().unwrap().clone();
             // AI-NOTE: second layer — persist() already blanks secret values,

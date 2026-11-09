@@ -1020,6 +1020,17 @@ pub(crate) fn hex_utf8(s: &str) -> String {
 /// our own delta on top of theirs instead of flattening their work.
 static LAST_KNOWN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Hash of the text this process last wrote. It sets a log level only: a
+/// save that finds our own earlier merge on disk logs at debug level.
+static LAST_LANDED_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
 pub(crate) fn remember_file_text(text: &str) {
     if let Ok(mut g) = LAST_KNOWN.lock() {
         *g = Some(text.to_string());
@@ -1090,10 +1101,17 @@ fn write_workspaces_text(
     }
 
     let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
+    // After one merge the base is `ours`, so disk != base on every later
+    // save. Only a file we did not write ourselves deserves a WARN.
+    let repeat = text_hash(&on_disk) == LAST_LANDED_HASH.load(std::sync::atomic::Ordering::Relaxed);
     for n in &notes {
-        log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        if repeat {
+            log_debug("WORKSPACE", &format!("save_to_disk: {n}"));
+        } else {
+            log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        }
     }
-    if !notes.is_empty() {
+    if !notes.is_empty() && !repeat {
         log_info(
             "WORKSPACE",
             &format!(
@@ -1116,9 +1134,13 @@ fn write_workspaces_text(
     }
 
     std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    // The base is `ours`, not the merged `text`. With `text` as the base the
+    // next save sees disk == base, takes the fast path in `reconcile`, and
+    // writes our in-memory state over the other writer's rows.
     if let Ok(mut g) = last_known.lock() {
-        *g = Some(text.clone());
+        *g = Some(ours.to_string());
     }
+    LAST_LANDED_HASH.store(text_hash(&text), std::sync::atomic::Ordering::Relaxed);
     Ok(text)
 }
 
@@ -3177,6 +3199,12 @@ fn spawn_local_pty(
     // ymux-cli hook silently env-gated (main.rs `YMUX_PANE_ID unset`) and
     // the Ticker never fired outside manual injection.
     cmd.env("YMUX_PANE_ID", &pane_id);
+    // Only with a config-dir override: the CLI cannot derive the suffixed
+    // endpoint, and without this a dev build's hooks reach the release.
+    let pipe_path = ymux_core::pipe_path_for_panes();
+    if let Some(p) = &pipe_path {
+        cmd.env("YMUX_PIPE_PATH", p);
+    }
     // 2026-08-19: point zellij at ymux's own config; 2026-08-20: and at its
     // config DIRECTORY, which is how the single-pane layout gets found.
     //
@@ -3353,7 +3381,13 @@ fn spawn_local_pty(
             let sessions_clone = state.core.sessions.clone();
             let id_clone = id.clone();
             let pane_for_exec = pane_id.clone();
-            let secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            let mut secret_keys: Vec<String> = secret_env.iter().map(|(k, _)| k.clone()).collect();
+            // A running tmux server keeps its own env, so the name must join
+            // `update-environment` to reach this session. The pipe path is
+            // not a secret; this list is only "names tmux copies on attach".
+            if pipe_path.is_some() {
+                secret_keys.push("YMUX_PIPE_PATH".to_string());
+            }
             tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(900)).await;
                 crate::log_info("PTY", &format!(
@@ -12832,6 +12866,13 @@ pub fn run() {
         eprintln!("PANIC at {location}: {msg}");
     }));
 
+    // One live app per config dir. This must stay above the WebView2 block:
+    // with persistence off, that block deletes the live profile of whichever
+    // instance already runs on this dir. Does not return on a held lock.
+    if let Ok(dir) = config_dir() {
+        config_lock::gate_for_process(&dir);
+    }
+
     // Unshipped-fivefer (#3): browser session persistence. Point WebView2 at a
     // single stable profile folder under our config dir so cookies/logins in
     // workspace browsers survive restarts. One app-wide folder (shared by the
@@ -12881,11 +12922,6 @@ pub fn run() {
                 std::env::var("YMUX_CONFIG_DIR").ok()
             ));
             tracing::info!("ymux config_dir: {:?}", cfg_dir);
-            // Advisory lock + owner record so a second build on this dir
-            // names the first in the log. Never blocks boot.
-            if let Some(dir) = &cfg_dir {
-                config_lock::hold_for_process(dir);
-            }
             // Phase 112: read the embedded frontend once — the ymux-web
             // add-on uploads exactly this set to servers.
             web_addon::init(app.handle());
@@ -16543,6 +16579,73 @@ mod two_instance_save_tests {
     }
 
     #[test]
+    fn a_second_save_keeps_another_writers_workspace() {
+        // Pins the base after a merge. With the merged text as the base, the
+        // second A save takes the fast path and X disappears with no log line.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let t0 = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        std::fs::write(&path, &t0).expect("seed");
+        let (a, b) = (Mutex::new(Some(t0.clone())), Mutex::new(Some(t0)));
+
+        let b_ours = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "x", "name": "x", "future_field": 1 },
+        ]));
+        write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let a1 = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "a1", "name": "a1" }]));
+        write_workspaces_text(&path, &a1, &a).expect("A first save");
+        let a2 = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "a1", "name": "a1" },
+            { "id": "a2", "name": "a2" },
+        ]));
+        let landed = write_workspaces_text(&path, &a2, &a).expect("A second save");
+
+        let got = ids(&landed);
+        for want in ["shared", "x", "a1", "a2"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+        let after: Value = serde_json::from_str(&landed).expect("json");
+        let x = after["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .find(|w| w["id"] == "x")
+            .expect("x row");
+        assert_eq!(x["future_field"], 1, "a field only B knows was stripped");
+    }
+
+    #[test]
+    fn a_delete_after_a_merge_still_sticks() {
+        // Pins the other half of the base rule: our own delete must survive
+        // the merge path that every save takes after the first merge.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let both = json!([{ "id": "keep", "name": "keep" }, { "id": "gone", "name": "gone" }]);
+        let t0 = doc(v, both.clone());
+        std::fs::write(&path, &t0).expect("seed");
+        let a = Mutex::new(Some(t0));
+
+        let with_x = doc(v, json!([
+            { "id": "keep", "name": "keep" },
+            { "id": "gone", "name": "gone" },
+            { "id": "x", "name": "x" },
+        ]));
+        std::fs::write(&path, with_x).expect("other writer");
+        write_workspaces_text(&path, &doc(v, both), &a).expect("merge save");
+
+        let landed = write_workspaces_text(&path, &doc(v, json!([{ "id": "keep", "name": "keep" }])), &a)
+            .expect("delete save");
+        let got = ids(&landed);
+        assert!(!got.iter().any(|g| g == "gone"), "delete undone: {got:?}");
+        assert!(got.iter().any(|g| g == "x"), "x lost: {got:?}");
+    }
+
+    #[test]
     fn an_older_build_rewriting_the_file_does_not_strip_parent_id() {
         // The original P1: an older build rewrote the file without
         // `parent_id`; our next save must put the nesting back.
@@ -16658,7 +16761,7 @@ mod secret_env_persist_tests {
     fn clean(p: &std::path::Path) {
         let _ = std::fs::remove_dir_all(p);
         let _ = std::fs::remove_file(p);
-        let _ = std::fs::remove_file(p.with_extension("json.tmp"));
+        let _ = std::fs::remove_file(p.with_extension(format!("json.{}.tmp", std::process::id())));
     }
 
     // Pins: reconcile moves the secret value into the store, plain rows stay.
