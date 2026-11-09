@@ -167,7 +167,7 @@ func TestBriefEntryJSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"brief":{"task":null,"status":"done","ask":null,"rec":null,"next":null,"delta":null,"degraded":true,"updated_ms":5},"last_prompt":null,"prompt_ms":null,"session_ended":false,"seq":3}`
+	want := `{"brief":{"task":null,"status":"done","ask":null,"rec":null,"next":null,"delta":null,"goal":null,"done":null,"degraded":true,"updated_ms":5},"last_prompt":null,"prompt_ms":null,"session_ended":false,"seq":3}`
 	if string(raw) != want {
 		t.Errorf("json =\n%s\nwant\n%s", raw, want)
 	}

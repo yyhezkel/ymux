@@ -15,7 +15,9 @@ import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
 import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
 import { RAIL_COLLAPSED_W } from "./contextModel";
-import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
+import { buildJumpRows, inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
+import { STATUS_EMOJI } from "./QueueRow";
+import { shortenCwd } from "./cwdShort";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
@@ -89,10 +91,11 @@ import {
   type UpdateInfo,
   type HooksOutdatedInfo,
 } from "./settings";
-import { applyI18nSettings, t } from "./i18n";
+import { applyI18nSettings, t, tEn } from "./i18n";
 import { isMac, isWindows } from "./platform";
 import {
   buildShortcutTable,
+  formatAccel,
   keyEq,
   matches,
   parseShortcut,
@@ -148,6 +151,25 @@ const log = createLogger("APP");
 const PALETTE_CAPS: Partial<Record<string, Capability>> = {
   "ssh.provision": "ssh",
   "pane.openDiff": "diffPane",
+};
+
+// Palette command -> the binding that hints it. pane.focus.next/prev have no
+// entry on purpose: tab_next/tab_prev fire only in tabs mode, so the hint
+// would be false in split mode.
+const PALETTE_SHORTCUTS: Partial<Record<string, ShortcutActionId>> = {
+  "workspace.new": "new_workspace",
+  "queue.open": "toggle_queue",
+  "jump.open": "jump_palette",
+  "contextRail.toggle": "toggle_context_rail",
+  "briefing.show": "show_briefing",
+  "pane.split.right": "split_horizontal",
+  "pane.split.down": "split_vertical",
+  "pane.close": "close_pane",
+  "pane.maximize": "toggle_maximize",
+  "pane.openDiff": "open_diff",
+  "pane.distributeEvenly": "distribute_evenly",
+  "pane.reset": "reset_terminal",
+  "settings.open": "toggle_settings",
 };
 
 type PaneStatus = { msg: string; err: boolean };
@@ -457,6 +479,7 @@ function App() {
     createSignal<ProjectFolderModalMode | null>(null);
   // Phase 35 (#1.3): command palette (Ctrl+Shift+P).
   const [showPalette, setShowPalette] = createSignal(false);
+  const [showJump, setShowJump] = createSignal(false);
   // Phase 36 (#2.2): live auto port-forwards (all workspaces).
   const [portForwards, setPortForwards] = createSignal<ForwardRow[]>([]);
   // Phase 46: ports the remote watcher has reported but the user
@@ -657,7 +680,7 @@ function App() {
   // current rect once `anyModalOpen()` flips back to false.
   const anyModalOpen = () =>
     showSetup() !== false || editingWorkspace() !== null || showNotes() ||
-    showSettings() || showPalette() || showPortsWindow() || installingUpdate() ||
+    showSettings() || showPalette() || showJump() || showPortsWindow() || installingUpdate() ||
     // Dev-Mode ticket modal — same reason as the rest: the native
     // Browser Webview paints above HTML and must be hidden for it.
     pendingCapture() !== null || projectFolderModal() !== null ||
@@ -800,19 +823,14 @@ function App() {
     if (!b) return;
     setHooksUpdating(true);
     try {
-      // Pipe the setup-hooks command through the active SSH pane via
-      // the existing tunnel by reusing the connect-with-cmd path. We
-      // can't shell out from Rust without an SSH handle; the user's
-      // own pane runs the CLI under their PATH (which AddYmuxToPath
-      // sets up). The command writes settings.json, then a fresh
-      // restart of Claude picks up the new hooks.
+      // Runs over an exec channel on the workspace's live SSH session. The
+      // full path: a non-login exec does not load the PATH entry bootstrap
+      // adds to the rc file. The command writes settings.json, then a fresh
+      // restart of Claude picks up the new hooks. A failure rejects and
+      // reaches the catch below, so the toast cannot claim success.
       await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
-        cmd: "ymux setup-hooks --agent claude --force --source github",
-      }).catch(async () => {
-        // Older builds without ssh_exec_in_workspace — fall back to a
-        // pane.send: ask the user to run the command themselves.
-        log.warn("ssh_exec_in_workspace not available; user must run manually");
+        cmd: '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
       });
       flashSummaryToast("ok", t("hooks_update.toast_done", { version: b.latest }));
       setHooksBanner(null);
@@ -1190,46 +1208,52 @@ function App() {
     const pid = activePaneId();
     const hasWs = !!ws;
     const hasPane = !!pid;
+    const labels = (key: string) => ({ label: t(key), labelEn: tEn(key) });
+    const accels = shortcutTable();
     return [
-      { id: "workspace.new", label: t("cmd.workspace.new"), handler: () => openNewWorkspace() },
-      { id: "queue.open", label: t("cmd.queue.open"), handler: () => openPanel("queue") },
-      { id: "contextRail.toggle", label: t("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
-      { id: "briefing.show", label: t("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
-      { id: "workspace.rename", label: t("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
-      { id: "workspace.disconnect", label: t("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
-      { id: "workspace.delete", label: t("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
-      { id: "pane.split.right", label: t("cmd.pane.split.right"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "horizontal"); } },
-      { id: "pane.split.down", label: t("cmd.pane.split.down"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "vertical"); } },
-      { id: "pane.close", label: t("cmd.pane.close"), enabled: () => hasPane, handler: () => { if (pid) void closePane(pid); } },
-      { id: "pane.focus.next", label: t("cmd.pane.focus.next"), enabled: () => hasPane, handler: () => focusAdjacentPane(1) },
-      { id: "pane.focus.prev", label: t("cmd.pane.focus.prev"), enabled: () => hasPane, handler: () => focusAdjacentPane(-1) },
+      { id: "workspace.new", ...labels("cmd.workspace.new"), handler: () => openNewWorkspace() },
+      { id: "queue.open", ...labels("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "jump.open", ...labels("cmd.jump.open"), handler: () => setShowJump(true) },
+      { id: "contextRail.toggle", ...labels("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
+      { id: "briefing.show", ...labels("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
+      { id: "workspace.rename", ...labels("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
+      { id: "workspace.disconnect", ...labels("cmd.workspace.disconnect"), enabled: () => hasWs, handler: () => { if (ws) void handleDisconnectWorkspace(ws.id); } },
+      { id: "workspace.delete", ...labels("cmd.workspace.delete"), enabled: () => hasWs, handler: () => { if (ws) void handleDelete(ws.id); } },
+      { id: "pane.split.right", ...labels("cmd.pane.split.right"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "horizontal"); } },
+      { id: "pane.split.down", ...labels("cmd.pane.split.down"), enabled: () => hasPane, handler: () => { if (pid) void splitPane(pid, "vertical"); } },
+      { id: "pane.close", ...labels("cmd.pane.close"), enabled: () => hasPane, handler: () => { if (pid) void closePane(pid); } },
+      { id: "pane.focus.next", ...labels("cmd.pane.focus.next"), enabled: () => hasPane, handler: () => focusAdjacentPane(1) },
+      { id: "pane.focus.prev", ...labels("cmd.pane.focus.prev"), enabled: () => hasPane, handler: () => focusAdjacentPane(-1) },
       // Phase 55-A: maximize toggle (Ctrl+Enter / double-click pane content).
-      { id: "pane.maximize", label: t("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
+      { id: "pane.maximize", ...labels("cmd.pane.maximize"), enabled: () => hasPane, handler: () => toggleMaximize() },
       // Phase 84.A: split ⇄ tabs for the active workspace.
-      { id: "pane.viewMode.toggle", label: t("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
+      { id: "pane.viewMode.toggle", ...labels("cmd.pane.viewMode.toggle"), enabled: () => !!activeWs(), handler: () => void setTabsMode(!tabsMode()) },
       // Phase 91.F: open (or focus) the git-diff pane.
-      { id: "pane.openDiff", label: t("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
+      { id: "pane.openDiff", ...labels("cmd.pane.openDiff"), enabled: () => hasPane, handler: () => openDiffPane() },
       // Phase 55-B: distribute splits evenly (Ctrl+Alt+=).
-      { id: "pane.distributeEvenly", label: t("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
-      { id: "pane.rename", label: t("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
-      { id: "ssh.connect", label: t("cmd.ssh.connect"), enabled: () => hasPane, handler: () => { if (pid) void connectPane(pid); } },
-      { id: "ssh.disconnect", label: t("cmd.ssh.disconnect"), enabled: () => hasPane, handler: () => { if (pid) void disconnectPane(pid); } },
-      { id: "pane.reset", label: t("cmd.reset_terminal"), enabled: () => hasPane, handler: () => { if (pid) terms.get(pid)?.resetTerminal(); } },
-      { id: "ssh.provision", label: t("cmd.ssh.provision"), handler: () => setShowSetup({ target: "server" }) },
-      { id: "insights.monitor", label: t("cmd.insights.monitor"), enabled: () => hasWs, handler: () => void openPanelConnected("monitor") },
-      { id: "settings.open", label: t("cmd.settings.open"), handler: () => setShowSettings(true) },
-      { id: "settings.language", label: t("cmd.settings.language"), handler: () => setShowSettings(true) },
-      { id: "settings.theme", label: t("cmd.settings.theme"), handler: () => setShowSettings(true) },
-      { id: "view.zoom.in", label: t("cmd.view.zoom.in"), handler: () => applyZoom(zoomFactor() + 0.1) },
-      { id: "view.zoom.out", label: t("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
-      { id: "view.zoom.reset", label: t("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
-      { id: "fm.open", label: t("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
+      { id: "pane.distributeEvenly", ...labels("cmd.pane.distributeEvenly"), enabled: () => hasPane, handler: () => void distributeEvenly() },
+      { id: "pane.rename", ...labels("cmd.pane.rename"), enabled: () => hasPane, handler: () => { if (pid) window.dispatchEvent(new CustomEvent("ymux:pane-rename", { detail: pid })); } },
+      { id: "ssh.connect", ...labels("cmd.ssh.connect"), enabled: () => hasPane, handler: () => { if (pid) void connectPane(pid); } },
+      { id: "ssh.disconnect", ...labels("cmd.ssh.disconnect"), enabled: () => hasPane, handler: () => { if (pid) void disconnectPane(pid); } },
+      { id: "pane.reset", ...labels("cmd.reset_terminal"), enabled: () => hasPane, handler: () => { if (pid) terms.get(pid)?.resetTerminal(); } },
+      { id: "ssh.provision", ...labels("cmd.ssh.provision"), handler: () => setShowSetup({ target: "server" }) },
+      { id: "insights.monitor", ...labels("cmd.insights.monitor"), enabled: () => hasWs, handler: () => void openPanelConnected("monitor") },
+      { id: "settings.open", ...labels("cmd.settings.open"), handler: () => setShowSettings(true) },
+      { id: "settings.language", ...labels("cmd.settings.language"), handler: () => setShowSettings(true) },
+      { id: "settings.theme", ...labels("cmd.settings.theme"), handler: () => setShowSettings(true) },
+      { id: "view.zoom.in", ...labels("cmd.view.zoom.in"), handler: () => applyZoom(zoomFactor() + 0.1) },
+      { id: "view.zoom.out", ...labels("cmd.view.zoom.out"), handler: () => applyZoom(zoomFactor() - 0.1) },
+      { id: "view.zoom.reset", ...labels("cmd.view.zoom.reset"), handler: () => applyZoom(1) },
+      { id: "fm.open", ...labels("cmd.fm.open"), enabled: () => hasPane && hasWs, handler: () => {
         if (ws && pid) void backend.call("workspace_split", { workspaceId: ws.id, paneId: pid, direction: "horizontal", paneKind: "filemanager", browserUrl: null, helpTopic: null });
       } },
     ].filter((c) => {
       // Phase 107: a command the host cannot serve is not offered at all.
       const cap = PALETTE_CAPS[c.id];
       return !cap || backend.can(cap);
+    }).map((c) => {
+      const action = PALETTE_SHORTCUTS[c.id];
+      return { ...c, shortcut: action ? formatAccel(accels[action]) : null };
     });
   };
 
@@ -1369,6 +1393,36 @@ function App() {
     allPaneAgentRows().filter(
       (r) => inQueue(r) && QUEUE_BUCKET[queueStatus(r)] <= 1,
     ).length;
+  // The one "go to this pane" path: the Queue and the jump palette both call
+  // it. The target is re-checked because a jump row is a snapshot and its
+  // pane can close while the palette is open.
+  const jumpToPane = async (wsId: string, paneId: string): Promise<void> => {
+    const ws = file().workspaces.find((w) => w.id === wsId);
+    if (!ws?.layout || !collectPanes(ws.layout).includes(paneId)) {
+      log.info(`jump ws=${wsId} pane=${paneId}: target is gone`);
+      return;
+    }
+    if ((await handleSetActive(wsId)) === wsId) focusPane(paneId);
+  };
+  // A snapshot taken when the palette opens (untrack): live re-sorting would
+  // move rows under the selection, so Enter could land on another pane.
+  const jumpCommands = createMemo((): Command[] => {
+    if (!showJump()) return [];
+    return untrack(() => {
+      const cards = workspaceCardInfo();
+      return buildJumpRows(allPaneAgentRows(), (id) => cards[id]?.cwd ?? null).map((row) => ({
+        id: row.paneId,
+        label: row.title,
+        detail: row.wsName,
+        path: row.cwd ? shortenCwd(row.cwd, null) : undefined,
+        status: row.status
+          ? { icon: STATUS_EMOJI[row.status], text: t(`queue.status.${row.status}`) }
+          : undefined,
+        search: [row.wsName, row.title, row.cwd ?? ""],
+        handler: () => void jumpToPane(row.wsId, row.paneId),
+      }));
+    });
+  });
   const paneAgentStateSince = (): Record<string, number | null> => {
     const runs = agentRuns();
     const out: Record<string, number | null> = {};
@@ -3657,7 +3711,13 @@ function App() {
 
     // ── app chrome ──
     // Phase 35 (#1.3): the command palette.
-    { id: "command_palette", run: (e) => { e.preventDefault(); setShowPalette((v) => !v); } },
+    { id: "command_palette", run: (e) => { e.preventDefault(); setShowJump(false); setShowPalette((v) => !v); } },
+    // The jump palette. Default Ctrl+Shift+O, not Orca's J: Ctrl+J is a
+    // newline (LF) that shells and vim need, this table has no terminal
+    // exemption for it, and blockDevtoolsKeys swallows Ctrl+Shift+J in
+    // release builds. xterm also sends ESC+C0 for Ctrl+Alt+letter, and
+    // M-C-j switches readline to vi mode, so Ctrl+Alt+J is out too.
+    { id: "jump_palette", run: (e) => { e.preventDefault(); setShowPalette(false); setShowJump((v) => !v); } },
     // Phase 65.W: the GLOBAL sidebar toggle — works everywhere, including
     // when an xterm pane or the FileManager has focus.
     { id: "toggle_sidebar", run: (e) => { e.preventDefault(); cycleSidebarMode(); } },
@@ -5448,10 +5508,7 @@ function App() {
         nowMs={agentClockMs()}
         onJump={(wsId, paneId) => {
           if (surfaceOf("queue") === "drawer") closePanel("queue");
-          void (async () => {
-            await handleSetActive(wsId);
-            focusPane(paneId);
-          })();
+          void jumpToPane(wsId, paneId);
         }}
         onClose={() => closePanel("queue")}
         onDrawer={() => openPanel("queue")}
@@ -5486,6 +5543,7 @@ function App() {
         open={!!sessionsWin()}
         workspaceId={sessionsWin()?.id}
         workspaceName={sessionsWin()?.name}
+        paneRows={allPaneAgentRows()}
         isZellij={
           isWindows() &&
           (() => {
@@ -5541,6 +5599,13 @@ function App() {
         open={showPalette()}
         commands={paletteCommands()}
         onClose={() => setShowPalette(false)}
+      />
+      <CommandPalette
+        open={showJump()}
+        commands={jumpCommands()}
+        placeholder={t("cmd.jump.placeholder")}
+        emptyText={t("cmd.jump.empty")}
+        onClose={() => setShowJump(false)}
       />
 
       {/* Phase 40 → 46: floating Ports window, scoped to the active

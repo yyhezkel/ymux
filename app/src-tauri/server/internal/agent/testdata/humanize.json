@@ -1,0 +1,314 @@
+[
+ {
+  "subkind": "session-start",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "Claude",
+  "body": "Session started in /srv/app"
+ },
+ {
+  "subkind": "session-start",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "Claude",
+  "body": "סשן התחיל ב-/srv/app"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app",
+   "session_duration_seconds": 125
+  },
+  "title": "🎯 Session ended",
+  "body": "/srv/app · 2m 5s elapsed"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app",
+   "session_duration_seconds": 42
+  },
+  "title": "🎯 Session נסגר",
+  "body": "/srv/app · משך 42s"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "🎯 Session ended",
+  "body": "Session ended — /srv/app"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "🎯 Session נסגר",
+  "body": "סשן הסתיים — /srv/app"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "en",
+  "payload": {
+   "cwd": "/x",
+   "session_duration_seconds": -1
+  },
+  "title": "🎯 Session ended",
+  "body": "Session ended — /x"
+ },
+ {
+  "subkind": "session-end",
+  "lang": "en",
+  "payload": {
+   "cwd": "/x",
+   "session_duration_seconds": "12"
+  },
+  "title": "🎯 Session ended",
+  "body": "Session ended — /x"
+ },
+ {
+  "subkind": "stop",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app",
+   "last_assistant_message": "All tests pass."
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "All tests pass."
+ },
+ {
+  "subkind": "stop",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app",
+   "last_assistant_message": "All tests pass."
+  },
+  "title": "🎯 Claude סיים — התור שלך",
+  "body": "All tests pass."
+ },
+ {
+  "subkind": "stop",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "Finished in /srv/app"
+ },
+ {
+  "subkind": "stop",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app"
+  },
+  "title": "🎯 Claude סיים — התור שלך",
+  "body": "סיים ב-/srv/app"
+ },
+ {
+  "subkind": "stop",
+  "lang": "en",
+  "payload": {
+   "response_summary": "S",
+   "last_assistant_message": "L"
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "S"
+ },
+ {
+  "subkind": "stop",
+  "lang": "en",
+  "payload": {
+   "response_summary": "  ",
+   "last_assistant_message": "L"
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "L"
+ },
+ {
+  "subkind": "stop",
+  "lang": "en",
+  "payload": {
+   "last_assistant_message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+ },
+ {
+  "subkind": "stop",
+  "lang": "ar",
+  "payload": {
+   "cwd": "/x"
+  },
+  "title": "🎯 Claude finished — your turn",
+  "body": "Finished in /x"
+ },
+ {
+  "subkind": "notification",
+  "lang": "en",
+  "payload": {
+   "message": "Claude needs your permission"
+  },
+  "title": "Claude",
+  "body": "Claude needs your permission"
+ },
+ {
+  "subkind": "notification",
+  "lang": "en",
+  "payload": {},
+  "title": "Claude",
+  "body": "Claude needs you"
+ },
+ {
+  "subkind": "notification",
+  "lang": "he",
+  "payload": {},
+  "title": "Claude",
+  "body": "Claude זקוק לך"
+ },
+ {
+  "subkind": "pre-tool-use",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "go test ./..."
+   }
+  },
+  "title": "Claude wants to run: Bash",
+  "body": "go test ./..."
+ },
+ {
+  "subkind": "pre-tool-use",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "go test ./..."
+   }
+  },
+  "title": "Claude רוצה להריץ: Bash",
+  "body": "go test ./..."
+ },
+ {
+  "subkind": "pre-tool-use",
+  "lang": "en",
+  "payload": {
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy"
+   }
+  },
+  "title": "Claude wants to run: Bash",
+  "body": "yyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyyy…"
+ },
+ {
+  "subkind": "post-tool-use",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "go test ./..."
+   }
+  },
+  "title": "🔧 Bash completed",
+  "body": ""
+ },
+ {
+  "subkind": "post-tool-use",
+  "lang": "he",
+  "payload": {
+   "cwd": "/srv/app",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "go test ./..."
+   }
+  },
+  "title": "🔧 Bash סיים",
+  "body": ""
+ },
+ {
+  "subkind": "subagent-stop",
+  "lang": "en",
+  "title": "🤖 sub-agent finished",
+  "body": ""
+ },
+ {
+  "subkind": "subagent-stop",
+  "lang": "he",
+  "title": "🤖 סוכן-משנה סיים",
+  "body": ""
+ },
+ {
+  "subkind": "user-prompt-submit",
+  "lang": "en",
+  "title": "💬 prompt sent",
+  "body": ""
+ },
+ {
+  "subkind": "user-prompt-submit",
+  "lang": "he",
+  "title": "💬 שאלה נשלחה",
+  "body": ""
+ },
+ {
+  "subkind": "pre-compact",
+  "lang": "en",
+  "title": "📦 context compacted",
+  "body": ""
+ },
+ {
+  "subkind": "pre-compact",
+  "lang": "he",
+  "title": "📦 קונטקסט דוחס",
+  "body": ""
+ },
+ {
+  "subkind": "something-new",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv/app",
+   "tool_name": "Bash",
+   "tool_input": {
+    "command": "go test ./..."
+   }
+  },
+  "title": "Claude",
+  "body": ""
+ },
+ {
+  "subkind": "session-start",
+  "lang": "en",
+  "payload": {
+   "cwd": "/srv"
+  },
+  "ws_name": "api",
+  "title": "Claude",
+  "body": "[api] 🎯 Session started in /srv"
+ },
+ {
+  "subkind": "subagent-stop",
+  "lang": "en",
+  "ws_name": "api",
+  "title": "🤖 sub-agent finished",
+  "body": "[api] 🎯 "
+ },
+ {
+  "subkind": "something-new",
+  "lang": "en",
+  "ws_name": "api",
+  "title": "Claude",
+  "body": ""
+ }
+]

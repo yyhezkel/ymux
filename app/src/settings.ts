@@ -271,6 +271,8 @@ export interface BriefSettings {
   idle_minutes: number;
   // Phase 105.C: SessionStart context injection — ON by default.
   inject_context: boolean;
+  // SessionStart `[ymux-brief]` instructions — ON by default.
+  inject_protocol: boolean;
 }
 
 export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
@@ -279,6 +281,7 @@ export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
   absence_minutes: 30,
   idle_minutes: 15,
   inject_context: true,
+  inject_protocol: true,
 };
 
 export interface I18nSettings {

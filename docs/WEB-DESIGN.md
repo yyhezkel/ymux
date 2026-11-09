@@ -356,7 +356,8 @@ never enter that package's SQLite event log. Live verification is open (Rule #14
 the agent logic (`internal/agent`, Phase 99) → B2 hook listener for browser-created
 tmux sessions → B3 `feed.push`/`feed.decide` + the workspace events WS → B4 small verbs
 → B5 workspace state + layout verbs → B6 session history (§4.2, a CLI change). Policy:
-the daemon's per-session `auto/block/gate/none`, no `ymux-policy` port.
+the daemon's per-session `auto/block/gate/none`, no `ymux-policy` port (reversed for
+Block rules on 2026-11-09, see DECISIONS).
 
 A and B ship without touching the desktop. C is the merge-risk phase: land it
 behind the backend interface with `TauriBackend` first, ship a desktop release on

@@ -46,6 +46,7 @@ import {
 import { AddonsTab } from "./AddonsTab";
 import { YmuxToolsTab } from "./YmuxToolsTab";
 import { createLogger } from "./logger";
+import { fmtBytes } from "./insightsFmt";
 
 const log = createLogger("SETTINGS");
 
@@ -74,13 +75,6 @@ function missingFamily(list: FontEntry[], selected: string): string | undefined 
     (f) => f.name.toLowerCase() === selected.trim().toLowerCase(),
   );
   return hit && !hit.installed ? hit.name : undefined;
-}
-
-/** Bytes → "5.4 MB", so the user sees the cost before starting a download. */
-function formatBytes(n: number): string {
-  return n >= 1048576
-    ? `${(n / 1048576).toFixed(1)} MB`
-    : `${Math.max(1, Math.round(n / 1024))} KB`;
 }
 
 /**
@@ -186,7 +180,7 @@ function FontMissingNotice(props: {
               {props.busy
                 ? t("settings.font.installing")
                 : t("settings.font.install", {
-                    size: formatBytes(c().download_bytes),
+                    size: fmtBytes(c().download_bytes),
                   })}
             </button>
             <a href={c().homepage} target="_blank" rel="noreferrer">
@@ -848,6 +842,23 @@ export function SettingsModal(p: Props) {
                     <span>{t("settings.brief.injectContext.label")}</span>
                   </label>
                   <p class="settings-hint">{t("settings.brief.injectContext.hint")}</p>
+                  {/* Separate from injectContext: this one changes what the
+                      agent writes. Default ON, same reading as above. */}
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.brief?.inject_protocol !== false}
+                      onChange={(e) =>
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          inject_protocol: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t("settings.brief.injectProtocol.label")}</span>
+                  </label>
+                  <p class="settings-hint">{t("settings.brief.injectProtocol.hint")}</p>
                 </section>
                 <section>
                   <label class="settings-checkbox">

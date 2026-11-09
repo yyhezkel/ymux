@@ -10,7 +10,8 @@ covers:
 
 # Local RPC endpoint + MCP bridge
 
-Two files. `rpc_server.rs` (~2,560 lines) is the app's local control surface — a
+Two files. (`claude-sessions` finds its session with `ssh_handle_for_machine`, lists over
+`ymux_core::ssh_exec` and ignores the exit on purpose: `find` exits non-zero on any unreadable directory.) `rpc_server.rs` (~2,540 lines) is the app's local control surface — a
 newline-delimited JSON-RPC v2 server that the CLI, agent hooks, the reverse tunnel, and
 the MCP bridge all speak to. `mcp/src/main.rs` (~460 lines) is a standalone stdio MCP
 server that forwards a handful of tools onto that same endpoint.
@@ -26,7 +27,9 @@ there is no auth layer here, and the transport is what provides isolation.
 | Concurrency | **pool of 8 listeners** | one listener per path |
 
 `pipe_name()` / `pipe_names()` live in `ymux-core` (shared with `ymux-tunnel`, which
-must resolve the same path from the other side).
+must resolve the same path from the other side). With `YMUX_CONFIG_DIR` set, the name gets
+a per-dir suffix and local panes get `YMUX_PIPE_PATH`, so a dev build keeps its own hooks.
+On macOS tmux panes, the name joins `update-environment` so a running server passes it on.
 
 - **Windows needs a pool** because a named-pipe listener serves one client; a single
   listener means every concurrent connect gets ERROR_PIPE_BUSY. Each of the 8 slots
@@ -52,6 +55,9 @@ must resolve the same path from the other side).
 `dispatch()` ([dispatch@rpc_server.rs:635](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
+- **App** — `app.focus`: a second launch on this config dir asks this instance to show its
+  main window (`tray::focus_main`, on a blocking thread; the reply waits for the event loop,
+  so a hung UI times out in the caller).
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
   `update-workspace`, `delete-workspace`, `reset-layout`
   — `list-workspaces`, `new-workspace` and `update-workspace` replies run `secret_env::redact` (secret env rows `value: ""`), a second layer over `persist()`; `tree` / `ui.tree` emit no env
@@ -111,6 +117,13 @@ on their own path; the rest also move the timer and emit further down. If you ad
 subkind that should affect the traffic light, it goes through `apply_hook`, not through a
 second state machine here.
 
+**A foreign `session-end` is dropped before anything else runs.** `claude -p` outside a
+pane (the usage ticker) inherits no pane id, so the CLI borrows the one in `last.env`.
+`feed.push` compares the payload's `session_id` with the pane's recorded session
+(`session_end_is_ours` in `lib.rs`). On a mismatch it returns `passive` and changes
+nothing: no light, no brief, no context record, no feed card. `user-prompt-submit` and
+`stop` record the session. An end with no `session_id` is accepted.
+
 `stop-failure` (Claude Code `StopFailure`, a turn that died on an API error) is a
 state-only signal like `notification`: its pane arm clears `turn_started_at` WITHOUT
 `record_turn` (a failed turn must not skew the average), folds `apply_hook` → `failed`,
@@ -131,8 +144,11 @@ assistant message with a plain-text `[ymux-brief]` block (`task:` / `status:` /
 `ask:` / `rec:` / `next:` / `delta:`, one per line, plus the Phase 105 **sticky**
 `goal:` / `done:` — aliases `done when` / `done-when` / `done_when` — written once
 and repeated only on change; `PaneBrief` carries what this turn said, the session
-store keeps the last non-empty value. The Go port does NOT parse these two yet —
-BACKLOG P2). Because the CLI forwards the
+store keeps the last non-empty value; the Go port has them too). The tests here read
+the same fixtures as the Go port (`server/internal/agent/testdata/*.json` through
+`include_str!`: `parser` and `brief_json` in `brief.rs`, `injection` in
+`context_store.rs`, `humanize`, `keys` and `policy` in `rpc_server.rs::golden_tests`).
+Because the CLI forwards the
 Stop hook payload verbatim, the desktop parses `last_assistant_message` with **no
 CLI cooperation**: `parse_brief` is pure string ops (last marker line wins via a
 full-line scan, so a self-quoting agent doesn't truncate its brief; keys are ASCII
@@ -144,7 +160,8 @@ to `done`. No marker → a **degraded** brief (`degraded: true`, task from
 
 State lives in `AppState.briefs: HashMap<pane_id, PaneBriefEntry>` — entry =
 `{ brief, last_prompt, prompt_ms, session_ended, seq }`, keyed by the **resolved**
-pane (same `resolve_hook_pane` rule as `agent_runs`), in-memory only (same
+pane (same `resolve_hook_pane` rule as `agent_runs`; the hook handler also calls
+`sessions_overview::note_hook_attribution`, see `backend-core.md`), in-memory only (same
 rationale), hydrated by the `pane_briefs` command and pushed as the `pane:brief`
 event (whole entry, `seq`-guarded). Three `feed.push` arms feed it:
 `user-prompt-submit` stores the clipped last user prompt (the queue's "got from
@@ -192,8 +209,15 @@ first) and `session_context_get(session_id)`.
 
 **Injection (Phase 105.C).** RPC `context.inject` (its own arm, NOT a feed.push
 reply — SessionStart never touches the feed) resolves the pane with
-`resolve_hook_pane` and calls `injection_for_hook`: off when
-`settings.brief.inject_context` is false; otherwise it reads this session's
+`resolve_hook_pane` and calls `injection_for_hook`, which joins two independent
+parts: the context (`context_for_hook`, skipped when
+`settings.brief.inject_context` is false) and the brief protocol
+(`with_protocol`, skipped when `settings.brief.inject_protocol` is false; default
+on). `with_protocol` appends `BRIEF_PROTOCOL` (`include_str!` of
+`app/src/brief-protocol.txt`, the same file as the Queue's `BRIEF_SNIPPET`) after
+a blank line, outside `INJECT_MAX_BYTES`. With an empty context the block is the
+whole answer, so `clear` and an empty `startup` get it too. `context_for_hook`
+reads this session's
 record, the pane's workspace (falling back to the record's `ws_id`) and that
 workspace's `intent`, and the workspace's sessions for `startup`. The text comes
 from the pure `build_injection(source, this, intent, siblings)`: `compact`/`resume`

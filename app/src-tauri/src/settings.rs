@@ -865,6 +865,8 @@ pub(crate) struct Shortcuts {
     pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,
+    /// Open the jump palette over live sessions, needs-you first.
+    pub jump_palette: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -915,6 +917,10 @@ pub(crate) struct BriefOptions {
     /// ON by default — unlike the card triggers above it is invisible
     /// until an agent compacts or resumes.
     pub inject_context: bool,
+    /// Append the fixed `[ymux-brief]` instructions to every SessionStart
+    /// answer. ON by default. A separate switch from `inject_context`
+    /// because it changes what the agent writes in its answers.
+    pub inject_protocol: bool,
 }
 
 impl Default for BriefOptions {
@@ -925,6 +931,7 @@ impl Default for BriefOptions {
             absence_minutes: 30,
             idle_minutes: 15,
             inject_context: true,
+            inject_protocol: true,
         }
     }
 }
@@ -1018,6 +1025,7 @@ impl Default for Shortcuts {
             show_briefing: "Ctrl+Alt+Q".into(),
             toggle_context_rail: "Ctrl+Shift+K".into(),
             open_diff: "Ctrl+Shift+G".into(),
+            jump_palette: "Ctrl+Shift+O".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }
@@ -2762,8 +2770,8 @@ mod font_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate_rtl_profiles, migrate_settings, HookType, MigrationFlags, RtlProfile, RtlProfiles,
-        Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
+        migrate_rtl_profiles, migrate_settings, BriefOptions, HookType, MigrationFlags, RtlProfile,
+        RtlProfiles, Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
     };
 
     #[test]
@@ -2820,6 +2828,18 @@ mod tests {
             s.auto_connect_on_workspace_select,
             "missing auto_connect_on_workspace_select must default to true"
         );
+    }
+
+    #[test]
+    fn inject_protocol_defaults_on_and_is_independent_of_inject_context() {
+        let old: BriefOptions =
+            serde_json::from_str(r#"{"inject_context":false}"#).expect("parse");
+        assert!(old.inject_protocol, "a settings file without the key reads as on");
+        assert!(!old.inject_context);
+        let off: BriefOptions =
+            serde_json::from_str(r#"{"inject_protocol":false}"#).expect("parse");
+        assert!(!off.inject_protocol);
+        assert!(off.inject_context);
     }
 
     #[test]

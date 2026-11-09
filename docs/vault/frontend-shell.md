@@ -28,6 +28,7 @@ covers:
   - app/src/paneDrag.ts
   - app/src/panels.ts
   - app/src/CommandPalette.tsx
+  - app/src/paletteMatch.ts
   - app/src/WelcomeScreen.tsx
   - app/src/useNarrow.ts
   - app/src/icons.tsx
@@ -63,7 +64,11 @@ window only knows its sid; `PopoutTerminal` reads it to arm the tmux wheel proxy
 Every one of those `localStorage` writes (font-size seed, pane id, profile) is individually
 try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from running.
 
-## `App.tsx` (5,808) — one component, ~50 signals
+## `App.tsx` (5,916) — one component, ~50 signals
+
+`triggerHooksUpdate` runs `"$HOME/.ymux/bin/ymux" setup-hooks` through
+`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry). A
+failure rejects into the catch, so the toast cannot claim success.
 
 There is a single `function App()` starting at line 142 and it holds essentially all
 application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
@@ -278,7 +283,7 @@ the holding pane's restore hint (`rememberPaneSession`) — the backend migrates
 maps, but the hint is frontend-owned and would otherwise name a session that no longer
 exists on the next boot.
 
-## `LayoutView.tsx` (372) + `Divider.tsx` (72)
+## `LayoutView.tsx` (386) + `Divider.tsx` (72)
 
 Recursively renders `LayoutNode`: a `split` becomes two children plus a `Divider`, a
 `pane` becomes a `PaneView` (or `DiffPane` / `HelpPane` by `PaneKind`). `Divider` drives
@@ -450,9 +455,11 @@ greyscale, 8px, and red-green deficiency.
 **`queueModel.ts` (BRIEF)** — the pure model behind the Queue panel: `queueStatus`
 (needs-input / stuck / waiting / working / done / ended — live hook state always
 outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
+`compareQueueRows` (the one ordering rule: bucket, then oldest),
 `whatsHappening` (running rows show the user's last prompt, ended rows show
 `ask · rec` → delta → next), and `groupQueueRows` (group by workspace, the
-reference-table "CRM — 5" shape). Solid-free and unit-tested in
+reference-table "CRM — 5" shape), plus `overviewVerdict` for the active-sessions overview
+(`frontend-panes.md`; App passes it `allPaneAgentRows()`). Solid-free and unit-tested in
 `queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
 input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
 every workspace. Its clock is **`staleClockMs` (60 s)**, not `agentClockMs`: the light's
@@ -588,10 +595,37 @@ four layers.
 
 ## Smaller pieces
 
-- **`CommandPalette.tsx` (125)** — Ctrl+Shift+P. The command list comes from `App.tsx`,
+- **`CommandPalette.tsx` (~190)** — Ctrl+Shift+P. The command list comes from `App.tsx`,
   so each command calls **the same handler the existing UI uses**. It is a second entry
   point, never a reimplementation. A command with a predicate returning false is hidden
-  (e.g. pane commands with no active pane).
+  (e.g. pane commands with no active pane). Search is `matchesQuery` in
+  **`paletteMatch.ts`** (pure, zero-import, unit-tested, because `npm test` cannot load
+  JSX or the i18n JSON): every whitespace token must be a case-insensitive substring of
+  the localized label, the English label (`tEn`) or the command id. Word order and a
+  label's colon do not matter. No fuzzy scoring. Each row shows the current accelerator:
+  `App.tsx` maps command id to action in `PALETTE_SHORTCUTS` and reads `shortcutTable()`,
+  so a rebind shows at once. An unparseable binding shows no hint. `pane.focus.next/prev`
+  have no entry, because `tab_next/tab_prev` fire only in tabs mode. **Do not put an
+  accelerator in a `cmd.*` label**: shortcuts are rebindable and the text goes stale. The
+  hint is `<kbd dir="ltr">`, so its key order stays correct in RTL. The input is an ARIA
+  combobox over a listbox: focus stays in the input, and `aria-activedescendant` makes a
+  screen reader speak the selected row. A query change resets the selection to the first row.
+- **Jump palette (Orca idea #6)** — a second `<CommandPalette>` mount, default Ctrl+Shift+O
+  (`jump_palette`, rebindable; also the palette command `jump.open`). Do not move the default
+  to J: Ctrl+J is LF for the PTY, `blockDevtoolsKeys` swallows Ctrl+Shift+J in release
+  builds, and xterm turns Ctrl+Alt+J into ESC+LF, which is readline's vi-mode switch.
+  `showJump` is in `anyModalOpen()`. Rows come from `buildJumpRows` in `queueModel.ts`
+  (pure, tested): agent panes in `compareQueueRows` order across ALL workspaces, without the
+  workspace grouping that `groupQueueRows` adds, then connected plain shells in layout order.
+  A plain shell has `status: null` because a status word for it would be invented. The
+  `search` field replaces the default fields with workspace name, pane title and cwd, so a
+  hex pane id cannot match a short query. A pane has no cwd of its own, so the cwd is the
+  workspace card's (`workspaceCardInfo`). The status is visible text from `queue.status.*`,
+  and the emoji is `aria-hidden`. `jumpCommands` is a snapshot taken at open (`untrack`), so
+  a live re-sort cannot move a row under the selection. `jumpToPane` is the one activation
+  path, shared with the Queue: it re-checks that the pane still exists, then runs
+  `handleSetActive` and `focusPane`. Pane and workspace names are `dir="auto"`, the path is
+  `dir="ltr"`.
 - **`WelcomeScreen.tsx` (54)** — the zero-workspaces state. Pure presentational; every
   action reuses an existing flow.
 - **`TechText.tsx` (82)** — wraps technical tokens in `<code><bdi>…</bdi></code>` inside

@@ -28,7 +28,6 @@ use std::collections::HashSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use russh::client::Handle as SshHandle;
-use russh_sftp::client::SftpSession;
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 
@@ -194,17 +193,7 @@ pub(crate) async fn uninstall(handle: &SshHandle<SshClient>, home: &str) -> Resu
 
 /// One SFTP session for the whole set (each file is small; ~20 of them).
 async fn upload_all(handle: &SshHandle<SshClient>, dir: &str, files: &[(String, Vec<u8>)]) -> Result<(), String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let sftp = SftpSession::new(chan.into_stream())
-        .await
-        .map_err(|e| format!("sftp init: {e}"))?;
-    sftp.set_timeout(60).await;
+    let sftp = ymux_core::ssh_exec::open_sftp(handle).await?;
     let r = async {
         for (rel, bytes) in files {
             let path = format!("{dir}/{rel}");

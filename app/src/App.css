@@ -5107,13 +5107,56 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
   cursor: pointer;
   font-size: 13px;
   color: var(--w-text, #e6edf3);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.command-palette-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.command-palette-label {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.command-palette-status {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.command-palette-hint {
+  flex: none;
+  font-family: var(--w-font-mono);
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
 .command-palette-item.selected {
   background: var(--w-accent, #3b82f6);
   color: #fff;
+}
+.command-palette-item.selected .command-palette-hint,
+.command-palette-item.selected .command-palette-status,
+.command-palette-item.selected .command-palette-detail {
+  color: inherit;
 }
 .command-palette-empty {
   padding: 14px 16px;
@@ -7324,6 +7367,7 @@ body.ymux-dragging .pane-conn {
 .sessions-status.waiting_input { background: rgba(224, 175, 104, 0.18); color: var(--w-warn, #e0af68); border-color: transparent; }
 .sessions-status.error { background: rgba(247, 118, 142, 0.16); color: var(--w-danger, #f7768e); border-color: transparent; }
 .sessions-status.unknown { color: var(--w-text-faint); border-style: dashed; }
+.sessions-source { display: block; font-size: var(--w-fs-xs); color: var(--w-text-faint); white-space: nowrap; }
 .sessions-actions { margin-inline-start: 0; flex-wrap: nowrap; }
 /* Outline, not filled: the row's Open must not outshout the table. The
    explicit transparent background is what keeps `button.primary`'s accent

@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/crates/ymux-core/src/lib.rs
   - app/src-tauri/crates/ymux-core/src/http.rs
   - app/src-tauri/crates/ymux-core/src/log_writer.rs
+  - app/src-tauri/crates/ymux-core/src/ssh_exec.rs
   - app/src-tauri/crates/ymux-policy/src/lib.rs
   - app/src-tauri/crates/ymux-protocol/src/lib.rs
   - app/src-tauri/crates/ymux-ssh/src/lib.rs
@@ -25,9 +26,9 @@ Dependency direction: `app` → everything. `ymux-tunnel` → `ymux-core`. `ymux
 `ymux-types`. The pure-data crates (`types`, `policy`, `protocol`, `addons`) depend on
 nothing but serde, so a CLI or MCP subcrate can link them without the Tauri runtime.
 
-## `ymux-core` (2,207 across 3 files) — the cross-cutting one
+## `ymux-core` (2,749 across 4 files) — the cross-cutting one
 
-The only crate `app` cannot function without. Three files:
+The only crate `app` cannot function without. Four files:
 
 **`lib.rs`**
 - **The user-visible logger** — `log_debug/info/warn/error(tag, msg)`, `log_at`,
@@ -45,15 +46,27 @@ The only crate `app` cannot function without. Three files:
 - Pure layout walkers — `collect_panes`, `collect_panes_with_kind`,
   `first_terminal_connection`, `backfill_terminal_connections`.
 - **Known-hosts / TOFU** — `KnownHost`, `KnownHostsFile`, `load_known_hosts`,
-  `save_known_hosts`, `HostCheckOutcome`.
+  `save_known_hosts` (per-pid tmp name + rename, so two processes cannot rename each
+  other's partial file), `HostCheckOutcome`.
 - `SshClient` — the russh `client::Handler` type used in every `Handle<SshClient>`
   signature, plus the `BridgeSpawner` callback the forwarded-tcpip handoff uses.
+  `check_server_key` receives a `PublicKeyOrCertificate`: russh verifies the KEX
+  signature first and calls this only on the initial key exchange, never on a rekey. A
+  certificate is refused, because ymux advertises no certificate host-key algorithm and
+  `known_hosts.json` holds plain keys only. An RSA key under 2048 bits is refused here,
+  because ssh-key 0.7 no longer refuses it at decode. A forwarded-tcpip channel must call
+  `reply.accept()` before the bridge starts: russh registers the channel only when that
+  reply is processed. With no token or spawner the channel is rejected on the wire.
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,
   and the map aliases `SessionMap`, `PaneSessionMap`, `ForwardMap`.
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
 - **`pipe_name()` / `pipe_names()`** — the RPC endpoint paths,
   shared with `ymux-tunnel` so both ends resolve identically. The Unix side returns a
-  *list* because macOS caps `sun_path` at 104 bytes.
+  *list* because macOS caps `sun_path` at 104 bytes. A config-dir override
+  (`YMUX_CONFIG_DIR` / `WINMUX_CONFIG_DIR`) adds `-<8 hex>` (FNV-1a of the dir) to the
+  primary name; without one the name does not change. **`pipe_path_for_panes()`** returns
+  the value `spawn_local_pty` exports as `YMUX_PIPE_PATH`, only with an override: the CLI
+  cannot derive the suffix. On Unix it is the first candidate shorter than `sun_path`.
 
 **`log_writer.rs` (619)** — the queued writer behind the logger, and the reason
 `flush_log()` is public: a panic on its way to an abort loses queued lines otherwise.
@@ -65,6 +78,30 @@ mismatch, so a process whose file another rotated aside stops appending to `debu
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
+
+**`ssh_exec.rs` (542)** — the one drain loop for one-shot SSH exec. `exec(&Handle,
+cmd, ExecOpts { timeout, stdin, stderr: Merge|Drop|Separate, max_bytes })` returns
+`ExecOutcome { exit: Code|Signal|Unknown, stdout, stderr, timed_out }`. It takes a
+handle, not a workspace, because provisioning connects before a workspace exists.
+The copies it replaces stopped at the first of EOF / ExitStatus with the code
+initialised to 0; OpenSSH usually sends EOF first, so a failed command read as success.
+Rules that matter:
+- The exit is only what the server said. Close or channel-gone with no status is
+  `Unknown`, never 0. `require_code()` turns signal / timeout / unknown into `Err` for
+  callers that need a number; a caller that tolerates them matches on `exit` and says why.
+- `timeout` counts from after the request is sent; `None` waits for as long as the
+  connection lives. Opening the channel has its own fixed 15 s bound (`Err`).
+- After the exit, the wait for EOF is a grace: 500 ms idle, 5 s hard limit, so a daemon
+  that holds stdout cannot burn the timeout, and output sshd flushes after the status
+  still arrives. EOF without a status has no grace: a command can close stdout and run on.
+- `timed_out` is true only if the exit is still unknown when the deadline hits.
+- Going over `max_bytes` (default 32 MiB per stream) is `Err`, never a silent cut.
+- Logs exit and byte counts only, never the command or the output (Rules #1, #8).
+
+`Drain` is the pure state machine (no I/O, no clock of its own); the tests drive every
+message ordering through it. `open_sftp` is here too: the one SFTP open, with the 60 s
+per-request deadline (russh-sftp's default is 10 s per 255 KiB chunk), used by the app
+crate and by `ymux-bootstrap`.
 
 ## `ymux-types` (1,019) — pure persistence/wire types
 
@@ -133,7 +170,9 @@ out of this crate.
 
 ~270 LOC of actual surface: `AuthMethod` (which method succeeded),
 `key_load_needs_passphrase` (an error-message classifier), and `pkwh`/`pkwh_pub` (an
-RSA-aware `PrivateKey` wrapper). Functions that take a `Handle<SshClient>` plus
+RSA-aware `PrivateKey` wrapper), and `auth_with_agent_identity` (one agent identity: RSA
+signs with SHA-512, a certificate identity is skipped; generic over the handler so the
+wizard's `TestClient` shares it). Functions that take a `Handle<SshClient>` plus
 credentials and return a result — nothing that needs `AppState`.
 
 `try_authenticate` step 3 (default keys `~/.ssh/id_{ed25519,ecdsa,rsa}`) takes its paths
@@ -150,7 +189,9 @@ in cleartext.
 **`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
 ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
-together or not at all.** Rule #8: the token never reaches a log.
+together or not at all.** Rule #8: the token never reaches a log. That includes
+`exec_simple`'s error text: it names the exit code and never the command, because the
+`last.env` script holds the token and callers log that error.
 
 `render_env_file` (the `~/.ymux/run/last.env` body) writes `YMUX_*` lines only; the `WINMUX_*`
 dual-write was dropped, the CLI still reads the legacy names as a fallback. So the file is
@@ -173,7 +214,9 @@ was shelved, and this crate is what unshelved it.
 - **`Deny`** — refuse outright.
 
 `split_chained_command` exists because `a && b; c` must be judged per command, not as one
-string. `rpc_server::push_policy_audit` records the outcomes.
+string. `rpc_server::push_policy_audit` records the outcomes. The Block half also exists
+in Go (`server/internal/agent/policy.go`, 2026-11-09): **a change to `BLOCK_PATTERNS` must
+be made on both sides**, and `server/internal/agent/testdata/policy.json` is the shared test.
 
 ## `ymux-protocol` (327) — mobile/web wire types
 
@@ -203,12 +246,13 @@ character.** The desktop compares a remote's `ymux-server --version` against thi
 constant to decide whether to offer an update, so a mismatch is not cosmetic: the two
 had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote look
 *newer* than the version the desktop ships and silently stopped the update offer.
-Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`. Bump them together, in the same
+Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`, `context.inject` + Block rules on the daemon to `2.20.0`. Bump them together, in the same
 commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy
 
-Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
+Remote commands go through `ymux_core::ssh_exec` (stderr dropped, output never logged; a
+signal or a missing status is `Err`). Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
 succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
 `ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the
