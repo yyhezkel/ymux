@@ -2759,8 +2759,8 @@ mod font_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate_rtl_profiles, migrate_settings, HookType, MigrationFlags, RtlProfile, RtlProfiles,
-        Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
+        migrate_rtl_profiles, migrate_settings, BriefOptions, HookType, MigrationFlags, RtlProfile,
+        RtlProfiles, Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
     };
 
     #[test]
