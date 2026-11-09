@@ -24,16 +24,15 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use russh::client::Handle as SshHandle;
-use russh::ChannelMsg;
+use ymux_core::ssh_exec::{open_sftp, ExecOpts, StderrMode};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncReadExt;
 
-use crate::{config_dir_pub, log_debug, AppState, Session, SshClient};
+use crate::{config_dir_pub, log_debug, AppState, SshClient};
 
 // ─── public schemas ────────────────────────────────────────────────────────
 
@@ -96,57 +95,18 @@ fn local_jsonl_path(workspace_id: &str, session_id: &str) -> Result<PathBuf, Str
 
 // ─── SSH/SFTP helpers (parallel to file_manager's private versions) ────────
 
-fn pick_ssh_handle(state: &AppState, workspace_id: &str) -> Option<Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    sessions.values().find_map(|s| match s {
-        Session::Ssh(ssh) if ssh.workspace_id == workspace_id => Some(ssh.handle.clone()),
-        _ => None,
-    })
-}
-
-async fn open_sftp(handle: &SshHandle<SshClient>) -> Result<SftpSession, String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let stream = chan.into_stream();
-    SftpSession::new(stream)
-        .await
-        .map_err(|e| format!("sftp init: {e}"))
-}
-
-/// Run a one-shot exec channel and capture stdout. Used to enumerate
-/// remote jsonl paths via `find`. Same shape as the snippets in
-/// claude_summary.rs / pane_list_claude_sessions in lib.rs — kept
-/// local here so the module stays self-contained.
+/// Run a one-shot exec and capture stdout. Used to enumerate remote jsonl
+/// paths via `find`. Exit ignored on purpose, `Unknown` included: `find` exits
+/// non-zero on any unreadable directory, and a partial listing still syncs
+/// what it names.
 async fn ssh_exec_capture(
     handle: &SshHandle<SshClient>,
     cmd: &str,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    Ok(String::from_utf8_lossy(&stdout).to_string())
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(timeout_secs) };
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, opts).await?;
+    Ok(outcome.stdout)
 }
 
 // ─── remote enumeration ────────────────────────────────────────────────────
@@ -275,7 +235,7 @@ pub(crate) async fn claude_log_sync(
     workspace_id: String,
     session_id: Option<String>,
 ) -> Result<ClaudeSyncResult, String> {
-    let handle = pick_ssh_handle(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace — connect a terminal pane first".to_string())?;
 
     let remotes = list_remote_jsonls(&handle, session_id.as_deref()).await?;
