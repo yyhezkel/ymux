@@ -88,7 +88,7 @@ put logic there.
   file we failed to understand destroys the user's workspaces.
 - **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
   runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
-  keeps a value in `workspaces`; the store is saved to `<config>/secret-env.json` when it
+  keeps a value in `workspaces`; the store is saved (per-pid tmp + rename) to `<config>/secret-env.json` when it
   changed, and a store failure returns `Err("secret env not saved: ..")` after
   `save_to_disk`. Startup loads the store beside `load_from_disk` and reconciles after it.
   `SecretEnvStore::load` skips undecryptable blobs (`log_warn` owner+key, never the blob); the next save drops them, so one bad row cannot wipe the valid ones.

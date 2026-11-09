@@ -515,7 +515,8 @@ pub fn load_known_hosts() -> KnownHostsFile {
 
 pub fn save_known_hosts(file: &KnownHostsFile) -> Result<(), String> {
     let path = known_hosts_path()?;
-    let tmp = path.with_extension("json.tmp");
+    // Per-pid name: two processes must not rename each other's partial file.
+    let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
     let text = serde_json::to_string_pretty(file).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).map_err(|e| format!("write tmp: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;

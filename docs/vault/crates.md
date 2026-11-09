@@ -45,7 +45,8 @@ The only crate `app` cannot function without. Three files:
 - Pure layout walkers — `collect_panes`, `collect_panes_with_kind`,
   `first_terminal_connection`, `backfill_terminal_connections`.
 - **Known-hosts / TOFU** — `KnownHost`, `KnownHostsFile`, `load_known_hosts`,
-  `save_known_hosts`, `HostCheckOutcome`.
+  `save_known_hosts` (per-pid tmp name + rename, so two processes cannot rename each
+  other's partial file), `HostCheckOutcome`.
 - `SshClient` — the russh `client::Handler` type used in every `Handle<SshClient>`
   signature, plus the `BridgeSpawner` callback the forwarded-tcpip handoff uses.
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,

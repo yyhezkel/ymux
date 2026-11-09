@@ -16701,7 +16701,7 @@ mod secret_env_persist_tests {
     fn clean(p: &std::path::Path) {
         let _ = std::fs::remove_dir_all(p);
         let _ = std::fs::remove_file(p);
-        let _ = std::fs::remove_file(p.with_extension("json.tmp"));
+        let _ = std::fs::remove_file(p.with_extension(format!("json.{}.tmp", std::process::id())));
     }
 
     // Pins: reconcile moves the secret value into the store, plain rows stay.
