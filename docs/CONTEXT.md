@@ -155,13 +155,20 @@ Rules:
 - Nothing to say → empty → the hook prints nothing.
 
 The budget is **~300 ms** and the hook **fails open**: a missing app, a slow
-tunnel or an error (including the Go daemon, which does not know the method)
-means no context, never a stalled session start. Set
+tunnel or an error means no context, never a stalled session start. Set
 `YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote whose tunnel round trip is
 slower than that.
 
 **Off switch:** Settings → General → Briefing → *Inject context into sessions*
 (`settings.brief.inject_context`, on by default).
+
+**The Go daemon answers it too** (`server/internal/term/inject.go`, daemon
+2.20.0), for sessions the browser created. The text is the same:
+`server/internal/agent/testdata/injection.json` is read by the tests on both
+sides. The daemon reads the off switch from its own settings document
+(`web-settings.json`). Its context store is also its own, so a session the
+desktop created has no record on the daemon and gets nothing when it is
+resumed in the browser.
 
 **Privacy:** the injected text is the user's own prompt and the agent's own
 briefs, returned to that same agent or to an agent working in the same

@@ -4,11 +4,12 @@ package term
 //
 // Decided 2026-10-05: browser-mode settings live on the daemon, shared by
 // every browser, not in each browser's localStorage. The document is the
-// desktop's `Settings` JSON, stored OPAQUE — the daemon never parses a field,
-// so the desktop type stays the only schema and a new setting needs no Go
-// change. It lives in <data dir>/web-settings.json behind the same optimistic
-// version guard as the web workspaces (webws.go): a PUT carrying a stale
-// version gets 409 with the current document.
+// desktop's `Settings` JSON, stored OPAQUE — the desktop type stays the only
+// schema and a new setting needs no Go change. It lives in
+// <data dir>/web-settings.json behind the same optimistic version guard as the
+// web workspaces (webws.go): a PUT carrying a stale version gets 409 with the
+// current document. The daemon reads exactly two fields, for its own hooks:
+// brief.inject_context and hooks.custom_block (hookRules below).
 //
 // Every write announces `settings:changed` {version, settings} on the events
 // socket; the WebBackend unwraps it into the desktop's `settings:changed`
@@ -35,9 +36,43 @@ type WebSettings struct {
 }
 
 type settingsStore struct {
-	mu   sync.Mutex
-	path string
-	doc  WebSettings
+	mu    sync.Mutex
+	path  string
+	doc   WebSettings
+	parts hookRules // derived from doc; parsed once per write
+}
+
+// hookRules is what the daemon's hook dispatch reads from the document.
+type hookRules struct {
+	injectContext bool
+	customBlock   []string
+}
+
+// parseHookRules reads the two fields. It fails safe, field by field: encoding/json
+// skips a value of the wrong type and fills the rest, so a damaged entry costs
+// only itself (a non-string list item arrives as "", which matches nothing).
+// The built-in block patterns are not in the document, so no content here can
+// remove them. Only a JSON false turns injection off.
+//
+// hooks.policy_enabled is deliberately not read: on the desktop it swaps Block
+// for an approval card, and under `none` the same switch would mean allow.
+func parseHookRules(doc json.RawMessage) hookRules {
+	var d struct {
+		Brief struct {
+			InjectContext *bool `json:"inject_context"`
+		} `json:"brief"`
+		Hooks struct {
+			CustomBlock []string `json:"custom_block"`
+		} `json:"hooks"`
+	}
+	if err := json.Unmarshal(doc, &d); err != nil {
+		// The error names the field and the JSON type, never a value.
+		logger.Warn("settings document has a damaged field; using the default for it", "err", err)
+	}
+	return hookRules{
+		injectContext: d.Brief.InjectContext == nil || *d.Brief.InjectContext,
+		customBlock:   d.Hooks.CustomBlock,
+	}
 }
 
 func newSettingsStore(path string) *settingsStore {
@@ -51,7 +86,15 @@ func newSettingsStore(path string) *settingsStore {
 	if len(s.doc.Settings) == 0 {
 		s.doc.Settings = json.RawMessage("null")
 	}
+	s.parts = parseHookRules(s.doc.Settings)
 	return s
+}
+
+// rules returns the parsed hook rules.
+func (s *settingsStore) rules() hookRules {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.parts
 }
 
 func (s *settingsStore) get() WebSettings {
@@ -79,6 +122,7 @@ func (s *settingsStore) put(version int64, settings json.RawMessage) (WebSetting
 		}
 	}
 	s.doc = next
+	s.parts = parseHookRules(next.Settings)
 	return next, nil
 }
 

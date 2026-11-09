@@ -16739,3 +16739,27 @@ mod lock_or_recover_tests {
         assert_eq!(f(&Mutex::new(vec![9u8])), Ok(1));
     }
 }
+
+// The fixture is shared with server/internal/agent/golden_test.go. It has no
+// state_since: Rust stamps the wall clock in apply_hook, Go takes it as a
+// parameter, so the two are not comparable.
+#[cfg(test)]
+mod agent_run_golden_tests {
+    use super::AgentRunState;
+
+    #[test]
+    fn golden_transitions_match_the_go_port() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/state.json")).expect("fixture");
+        for c in &cases {
+            let name = c["name"].as_str().expect("name");
+            let mut r = AgentRunState::default();
+            for s in c["steps"].as_array().expect("steps") {
+                let changed = r.apply_hook(s["subkind"].as_str().expect("subkind"), s["notification_type"].as_str());
+                assert_eq!(changed, s["changed"].as_bool().expect("changed"), "{name}");
+                assert_eq!(serde_json::to_value(r.state).expect("state"), s["state"], "{name}");
+                assert_eq!(u64::from(r.seq), s["seq"].as_u64().expect("seq"), "{name}");
+            }
+        }
+    }
+}
