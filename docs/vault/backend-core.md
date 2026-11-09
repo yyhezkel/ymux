@@ -542,6 +542,9 @@ list command. The module owns what the picker never needed:
   returns `Err` when the script did not finish (the attach guard reads a short list as
   "session gone"); `pane_kill_session` keeps its 800 ms and reports no status as
   `attempted`, never `killed`; the Claude session listing ignores the exit on purpose.
+- **`ssh_handle_for_machine` is the one session picker** for a workspace: its own session
+  first, else a sibling workspace's on the same user@host:port. It takes the workspaces
+  lock, so never call it while holding that guard.
 - `install_authorized_key` is the one copy of the `authorized_keys` append, used by
   `ssh_key_generate_and_install` and `provision_existing_install_key`. Its failure must
   stop the caller: both persist key auth on the strength of it. The key goes through

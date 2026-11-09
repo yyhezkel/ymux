@@ -5749,21 +5749,6 @@ fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &s
     ));
 }
 
-fn find_ssh_handle_for_workspace(
-    state: &AppState,
-    workspace_id: &str,
-) -> Option<Arc<client::Handle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for s in sessions.values() {
-        if let Session::Ssh(ssh) = s {
-            if ssh.workspace_id == workspace_id {
-                return Some(Arc::clone(&ssh.handle));
-            }
-        }
-    }
-    None
-}
-
 /// Phase 36 (#2.2) → 36.A: open an auto-forward for a remote listening
 /// port. We bind `127.0.0.1:0` and let the kernel hand us a free
 /// ephemeral port — the user reaches the server at whatever local port
@@ -5784,7 +5769,7 @@ pub(crate) async fn open_auto_forward(
             return Ok(e.local_port);
         }
     }
-    let handle = find_ssh_handle_for_workspace(state, workspace_id)
+    let handle = ssh_handle_for_machine(state, workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
 
     // Bind port 0 → kernel picks a free ephemeral port (Windows ~49152+).
@@ -5935,7 +5920,7 @@ pub(crate) fn close_workspace_forwards(forwards: &ForwardMap, workspace_id: &str
 // Phase 23.B: does the layout contain a non-terminal pane that depends on
 // a live workspace-level SSH handle? FileManager and Browser panes pull
 // the SSH handle out of `state.core.sessions` at runtime via
-// `pick_ssh_handle_for_workspace`; if we tear down the last terminal pane's
+// `ssh_handle_for_machine`; if we tear down the last terminal pane's
 // SSH session, those panes go dark with no in-UI way to reconnect.
 // ClaudeChat is local, doesn't count.
 #[allow(deprecated)]
@@ -8689,7 +8674,7 @@ fn workspace_close_pane(
     // SSH-consuming non-terminal panes AFTER the close. If yes, we
     // must keep the SSH handle alive even though the terminal pane
     // is gone — the file-manager / browser uses
-    // `pick_ssh_handle_for_workspace` which scans the live sessions
+    // `ssh_handle_for_machine` which scans the live sessions
     // for one matching the workspace_id. Killing the SSH session
     // here would leave those panes dead with no UI to reconnect.
     let keep_ssh_alive: bool;
@@ -8738,7 +8723,7 @@ fn workspace_close_pane(
                     "workspace_close_pane: keeping SSH session {sid} alive — workspace {workspace_id} still has FileManager/Browser pane(s)"
                 );
                 // Leave the session in state.core.sessions; it has no pane
-                // binding now but `pick_ssh_handle_for_workspace`
+                // binding now but `ssh_handle_for_machine`
                 // will still find it via its workspace_id.
             } else if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
                 // Closing a pane is not killing its session. `kill_session_inner`
@@ -10666,13 +10651,7 @@ async fn pane_probe_tmux_sessions(
 ) -> Result<Option<Vec<TmuxSessionInfo>>, String> {
     // A pane that's already connected (or a sibling on the same workspace)
     // gives us a handle for free — no second handshake.
-    let live = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.iter().find_map(|(_sid, sess)| match sess {
-            Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-            _ => None,
-        })
-    };
+    let live = ssh_handle_for_machine(&state, &workspace_id);
     if let Some(h) = live {
         return list_tmux_sessions_via_handle(&h).await.map(Some);
     }
@@ -11453,15 +11432,7 @@ async fn pane_list_claude_sessions(
         .filter(|p| !p.is_empty());
     // Locate any live SSH handle for this workspace. The shell command runs
     // on the remote where Claude Code is actually installed.
-    let handle_opt = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions
-            .iter()
-            .find_map(|(_sid, sess)| match sess {
-                Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-                _ => None,
-            })
-    };
+    let handle_opt = ssh_handle_for_machine(&state, &workspace_id);
 
     // Claude Code stores sessions under ~/.claude/projects/<encoded-cwd>/,
     // where <encoded-cwd> is the absolute working directory with every

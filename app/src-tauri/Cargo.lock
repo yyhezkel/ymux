@@ -7601,6 +7601,7 @@ dependencies = [
  "portable-pty",
  "russh",
  "russh-keys",
+ "russh-sftp",
  "serde",
  "serde_json",
  "tokio",

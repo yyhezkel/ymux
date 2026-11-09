@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use russh::client::{Handle, Msg};
 use russh::{Channel, ChannelMsg, Sig};
+use russh_sftp::client::SftpSession;
 
 use crate::{log_debug, log_warn, SshClient};
 
@@ -304,6 +305,27 @@ pub async fn exec(
         log_debug("SSH", &summary);
     }
     Ok(outcome)
+}
+
+/// Per-request SFTP deadline. russh-sftp's own default is 10 s, which is the
+/// budget for ONE 255 KiB chunk: far too tight on a busy or distant host,
+/// where a single late ack killed an otherwise healthy multi-megabyte upload.
+const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
+
+/// Open an SFTP session on a fresh channel of an existing handle.
+pub async fn open_sftp(handle: &Handle<SshClient>) -> Result<SftpSession, String> {
+    let chan = handle
+        .channel_open_session()
+        .await
+        .map_err(|e| format!("open channel: {e}"))?;
+    chan.request_subsystem(true, "sftp")
+        .await
+        .map_err(|e| format!("request sftp: {e}"))?;
+    let sftp = SftpSession::new(chan.into_stream())
+        .await
+        .map_err(|e| format!("sftp init: {e}"))?;
+    sftp.set_timeout(SFTP_REQUEST_TIMEOUT_SECS).await;
+    Ok(sftp)
 }
 
 #[cfg(test)]

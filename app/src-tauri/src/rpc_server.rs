@@ -2200,17 +2200,7 @@ async fn dispatch(
             // — but to keep changes small, we duplicate the workspace SSH
             // lookup here. NOTE: pane_list_claude_sessions(_impl)? helper
             // could be factored later.
-            let handle_opt = {
-                let sessions = state.core.sessions.lock().unwrap();
-                sessions
-                    .iter()
-                    .find_map(|(_sid, sess)| match sess {
-                        crate::Session::Ssh(s) if s.workspace_id == workspace_id => {
-                            Some(s.handle.clone())
-                        }
-                        _ => None,
-                    })
-            };
+            let handle_opt = crate::ssh_handle_for_machine(state, &workspace_id);
             let lim = limit.unwrap_or(30).min(200);
             let script = format!(
                 "find \"$HOME/.claude/projects\" -maxdepth 4 -name '*.jsonl' \

@@ -25,10 +25,6 @@ const REMOTE_DIR: &str = ".ymux/bin";
 const REMOTE_BASE_DIR: &str = ".ymux";
 const TMUX_CONF_REMOTE: &str = "tmux.conf";
 const TMUX_CONF_MANIFEST_KEY: &str = "tmux-conf";
-/// Per-request SFTP deadline. russh-sftp's own default is 10s, which is the
-/// budget for ONE 255KiB chunk — far too tight on a busy or distant host,
-/// where a single late ack killed an otherwise healthy multi-megabyte upload.
-const SFTP_REQUEST_TIMEOUT_SECS: u64 = 60;
 
 #[derive(Deserialize, Debug)]
 pub struct ManifestEntry {
@@ -152,32 +148,10 @@ async fn upload_via_sftp(
         tmp_path,
         bytes.len()
     ));
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: sftp channel_open failed: {e}"));
-            format!("open sftp channel: {e}")
-        })?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: sftp request_subsystem failed: {e}"));
-            format!("request sftp: {e}")
-        })?;
-    let stream = chan.into_stream();
-    let sftp = russh_sftp::client::SftpSession::new(stream)
-        .await
-        .map_err(|e| {
-            log_error("BOOT", &format!("bootstrap: SftpSession::new failed: {e}"));
-            format!("sftp init: {e}")
-        })?;
-    // russh-sftp defaults to a 10s deadline PER REQUEST, and each request is
-    // one 255KiB chunk written strictly serially (write → await ack → write).
-    // On a loaded or distant host 10s is far too tight: a 2.4MB payload is ~10
-    // sequential round trips, and one slow ack aborted the whole upload. The
-    // leftover we found on the server was 522,240 bytes — exactly two chunks.
-    sftp.set_timeout(SFTP_REQUEST_TIMEOUT_SECS).await;
+    let sftp = ymux_core::ssh_exec::open_sftp(handle).await.map_err(|e| {
+        log_error("BOOT", &format!("bootstrap: sftp open failed: {e}"));
+        e
+    })?;
     log_debug("BOOT", "bootstrap: sftp session ready");
 
     let upload = async {

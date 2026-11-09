@@ -17,7 +17,6 @@ use std::sync::Arc;
 
 use russh::client::Handle as SshHandle;
 use ymux_core::ssh_exec::{ExecOpts, ExitState, StderrMode};
-use russh_sftp::client::SftpSession;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
 
@@ -243,21 +242,9 @@ pub(crate) async fn sftp_upload(
     remote_path: &str,
     bytes: &[u8],
 ) -> Result<(), String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let sftp = SftpSession::new(chan.into_stream())
-        .await
-        .map_err(|e| format!("sftp init: {e}"))?;
-    // russh-sftp's default is a 10s deadline per 255KiB chunk, written
-    // serially — the daemon binaries here are ~12MB, so that default gave up
-    // long before a loaded host could finish. Same value as the bootstrap
-    // uploader; see ymux-bootstrap's SFTP_REQUEST_TIMEOUT_SECS.
-    sftp.set_timeout(60).await;
+    // Per-request deadline set by open_sftp: the daemon binaries here are
+    // ~12 MB, written serially in 255 KiB chunks.
+    let sftp = ymux_core::ssh_exec::open_sftp(handle).await?;
     let r = async {
         let mut f = sftp
             .create(remote_path)

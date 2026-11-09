@@ -38,7 +38,7 @@ use russh::client::Handle as SshHandle;
 use serde::{Deserialize, Serialize};
 
 use crate::file_manager::{
-    pick_ssh_handle_for_workspace, remote_exec, remote_read_bytes, remote_write_bytes,
+    remote_exec, remote_read_bytes, remote_write_bytes,
 };
 use crate::{config_dir, log_debug, log_info, log_warn, SshClient};
 
@@ -774,7 +774,7 @@ async fn resolve(
     match conn {
         // ── SSH: the project lives on the host, and so must the tickets.
         Some(ymux_types::Connection::Ssh { ref host, .. }) => {
-            let handle = pick_ssh_handle_for_workspace(state, workspace_id);
+            let handle = crate::ssh_handle_for_machine(state, workspace_id);
             // An override for an SSH workspace has to be a remote POSIX
             // path. Saying so beats a baffling remote mkdir error.
             if let Some(o) = ov {

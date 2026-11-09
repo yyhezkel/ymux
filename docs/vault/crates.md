@@ -26,7 +26,7 @@ Dependency direction: `app` → everything. `ymux-tunnel` → `ymux-core`. `ymux
 `ymux-types`. The pure-data crates (`types`, `policy`, `protocol`, `addons`) depend on
 nothing but serde, so a CLI or MCP subcrate can link them without the Tauri runtime.
 
-## `ymux-core` (2,727 across 4 files) — the cross-cutting one
+## `ymux-core` (2,749 across 4 files) — the cross-cutting one
 
 The only crate `app` cannot function without. Four files:
 
@@ -67,7 +67,7 @@ mismatch, so a process whose file another rotated aside stops appending to `debu
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
 
-**`ssh_exec.rs` (520)** — the one drain loop for one-shot SSH exec. `exec(&Handle,
+**`ssh_exec.rs` (542)** — the one drain loop for one-shot SSH exec. `exec(&Handle,
 cmd, ExecOpts { timeout, stdin, stderr: Merge|Drop|Separate, max_bytes })` returns
 `ExecOutcome { exit: Code|Signal|Unknown, stdout, stderr, timed_out }`. It takes a
 handle, not a workspace, because provisioning connects before a workspace exists.
@@ -87,7 +87,9 @@ Rules that matter:
 - Logs exit and byte counts only, never the command or the output (Rules #1, #8).
 
 `Drain` is the pure state machine (no I/O, no clock of its own); the tests drive every
-message ordering through it.
+message ordering through it. `open_sftp` is here too: the one SFTP open, with the 60 s
+per-request deadline (russh-sftp's default is 10 s per 255 KiB chunk), used by the app
+crate and by `ymux-bootstrap`.
 
 ## `ymux-types` (1,019) — pure persistence/wire types
 

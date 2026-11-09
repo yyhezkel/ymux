@@ -503,16 +503,8 @@ pub(crate) async fn ssh_exec_in_workspace(
     workspace_id: String,
     cmd: String,
 ) -> Result<String, String> {
-    let handle = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.values().find_map(|s| match s {
-            crate::Session::Ssh(ssh) if ssh.workspace_id == workspace_id => {
-                Some(ssh.handle.clone())
-            }
-            _ => None,
-        })
-    }
-    .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
+        .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
     // Non-zero, a signal, no status or a timeout all reach the toast as an
     // error. 120 s, not the 6 s below: this hits GitHub from the server.
     let opts = ExecOpts::timeout_secs(120);

@@ -24,16 +24,15 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use russh::client::Handle as SshHandle;
-use ymux_core::ssh_exec::{ExecOpts, StderrMode};
+use ymux_core::ssh_exec::{open_sftp, ExecOpts, StderrMode};
 use russh_sftp::client::SftpSession;
 use serde::Serialize;
 use tauri::State;
 use tokio::io::AsyncReadExt;
 
-use crate::{config_dir_pub, log_debug, AppState, Session, SshClient};
+use crate::{config_dir_pub, log_debug, AppState, SshClient};
 
 // ─── public schemas ────────────────────────────────────────────────────────
 
@@ -95,28 +94,6 @@ fn local_jsonl_path(workspace_id: &str, session_id: &str) -> Result<PathBuf, Str
 }
 
 // ─── SSH/SFTP helpers (parallel to file_manager's private versions) ────────
-
-fn pick_ssh_handle(state: &AppState, workspace_id: &str) -> Option<Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    sessions.values().find_map(|s| match s {
-        Session::Ssh(ssh) if ssh.workspace_id == workspace_id => Some(ssh.handle.clone()),
-        _ => None,
-    })
-}
-
-async fn open_sftp(handle: &SshHandle<SshClient>) -> Result<SftpSession, String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let stream = chan.into_stream();
-    SftpSession::new(stream)
-        .await
-        .map_err(|e| format!("sftp init: {e}"))
-}
 
 /// Run a one-shot exec and capture stdout. Used to enumerate remote jsonl
 /// paths via `find`. Exit ignored on purpose, `Unknown` included: `find` exits
@@ -258,7 +235,7 @@ pub(crate) async fn claude_log_sync(
     workspace_id: String,
     session_id: Option<String>,
 ) -> Result<ClaudeSyncResult, String> {
-    let handle = pick_ssh_handle(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace — connect a terminal pane first".to_string())?;
 
     let remotes = list_remote_jsonls(&handle, session_id.as_deref()).await?;

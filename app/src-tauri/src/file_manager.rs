@@ -20,8 +20,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{AppState, Session, SshClient};
-use ymux_core::ssh_exec::{exec, ExecOpts, StderrMode};
+use crate::{AppState, SshClient};
+use ymux_core::ssh_exec::{exec, open_sftp, ExecOpts, StderrMode};
 
 // ─── Phase 81: transfer progress + cancel ──────────────────────────────────
 //
@@ -539,42 +539,6 @@ fn sort_entries(out: &mut Vec<FileEntry>) {
 
 // ─── remote SFTP-side ──────────────────────────────────────────────────────
 
-/// Find an active SSH handle for the workspace by scanning the session
-/// map for the first Session::Ssh whose workspace_id matches.
-///
-/// `pub(crate)` so `tickets` can reach the SAME session the browser's
-/// port-forward already rides on (`open_auto_forward` in lib.rs resolves
-/// its handle the same way). SSH multiplexes, so an SFTP or exec channel
-/// costs no extra connection and no extra authentication.
-pub(crate) fn pick_ssh_handle_for_workspace(
-    state: &AppState,
-    workspace_id: &str,
-) -> Option<Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for sess in sessions.values() {
-        if let Session::Ssh(s) = sess {
-            if s.workspace_id == workspace_id {
-                return Some(s.handle.clone());
-            }
-        }
-    }
-    None
-}
-
-pub(crate) async fn open_sftp(handle: &SshHandle<SshClient>) -> Result<SftpSession, String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let stream = chan.into_stream();
-    SftpSession::new(stream)
-        .await
-        .map_err(|e| format!("sftp init: {e}"))
-}
-
 fn unix_perms_octal(perms: u32) -> String {
     format!("{:04o}", perms & 0o7777)
 }
@@ -594,7 +558,7 @@ pub(crate) async fn file_list_remote(
     path: String,
     show_hidden: bool,
 ) -> Result<Vec<FileEntry>, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace — connect a terminal pane first".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let path = normalize_remote_path(&path);
@@ -636,7 +600,7 @@ pub(crate) async fn file_home_remote(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<String, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
     // `echo $HOME` over an exec channel — cheaper than SFTP for a one-off.
     // stderr dropped so a noisy rc file cannot end up in the path.
@@ -658,7 +622,7 @@ pub(crate) async fn file_delete_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     // Try as file first; if that fails because it's a directory, recurse.
@@ -711,7 +675,7 @@ pub(crate) async fn file_rename_remote(
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let r = sftp
@@ -732,7 +696,7 @@ pub(crate) async fn file_copy_remote(
     src: String,
     dest: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let res = async {
@@ -757,7 +721,7 @@ pub(crate) async fn file_mkdir_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let r = sftp
@@ -779,7 +743,7 @@ pub(crate) async fn file_create_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     if sftp.metadata(&path).await.is_ok() {
@@ -837,7 +801,7 @@ pub(crate) async fn pane_upload_dropped(
     if safe.is_empty() || safe.starts_with('.') && safe.len() <= 2 {
         return Err("invalid file name".to_string());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let local = PathBuf::from(expand_path(&local_path));
     let sftp = open_sftp(&handle).await?;
@@ -874,7 +838,7 @@ pub(crate) async fn file_upload(
     let detail = format!("local={local_path} → remote={remote_path}");
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session".to_string())?;
         let local = PathBuf::from(expand_path(&local_path));
         let sftp = open_sftp(&handle).await?;
@@ -899,7 +863,7 @@ pub(crate) async fn file_download(
     let detail = format!("remote={remote_path} → local={local_path}");
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session".to_string())?;
         let local = PathBuf::from(expand_path(&local_path));
         if let Some(parent) = local.parent() {
@@ -934,7 +898,7 @@ pub(crate) async fn download_remote_file_via_osc(
 ) -> Result<String, String> {
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
         // Basename of a POSIX remote path; fall back to a generic name.
         let base = remote_path
@@ -1213,7 +1177,7 @@ pub(crate) async fn file_read_remote(
     workspace_id: String,
     path: String,
 ) -> Result<FileContents, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let bytes = remote_read_bytes(&handle, &path).await?;
     let size = bytes.len() as u64;
@@ -1227,7 +1191,7 @@ pub(crate) async fn file_write_remote(
     path: String,
     text: String,
 ) -> Result<u64, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let bytes = text.into_bytes();
     remote_write_bytes(&handle, &path, &bytes).await?;
@@ -1247,7 +1211,7 @@ pub(crate) async fn file_open_remote(
     workspace_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let dest = remote_temp_path(&workspace_id, &remote_path);
     if let Some(parent) = dest.parent() {
@@ -1431,7 +1395,7 @@ pub(crate) async fn file_manager_unzip_remote_check(
     } else {
         format!("{parent_dir}/{stem}")
     };
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1546,7 +1510,7 @@ pub(crate) async fn file_manager_zip_remote(
     if output_name.contains('/') || output_name.contains('\\') {
         return Err("zip: output_name must be a basename, not a path".into());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1594,7 +1558,7 @@ pub(crate) async fn file_manager_targz_remote(
     if output_name.contains('/') || output_name.contains('\\') {
         return Err("tar: output_name must be a basename, not a path".into());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1651,7 +1615,7 @@ pub(crate) async fn file_manager_unzip_remote(
     } else {
         format!("{parent_dir}/{stem}")
     };
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()

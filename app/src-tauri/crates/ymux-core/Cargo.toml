@@ -13,6 +13,7 @@ dirs = "5"
 # Phase 51.B2: russh handler impl + known_hosts persistence.
 russh = "0.49"
 russh-keys = "0.49"
+russh-sftp = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 async-trait = "0.1"

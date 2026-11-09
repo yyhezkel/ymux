@@ -18,7 +18,7 @@
 //! Both paths run the actual `claude` CLI on the *remote* server
 //! (via a fresh exec channel) because that's where the transcripts
 //! live and the Claude binary is already authenticated. SSH-only:
-//! `pick_handle` matches `Session::Ssh`, so Local/WSL workspaces
+//! `ssh_handle_for_machine` finds SSH sessions only, so Local/WSL workspaces
 //! error with "no active SSH session".
 
 use russh::client::Handle as SshHandle;
@@ -27,7 +27,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State};
 
 use crate::notes;
-use crate::{log_debug, log_info, log_warn, AppState, Session, SshClient};
+use crate::{log_debug, log_info, log_warn, AppState, SshClient};
 
 /// Output of one summarize call. Mirrored to the frontend.
 #[derive(Clone, Serialize)]
@@ -44,14 +44,6 @@ pub(crate) struct SummaryResult {
 
 fn iso_now() -> String {
     chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-}
-
-fn pick_handle(state: &AppState, workspace_id: &str) -> Option<std::sync::Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    sessions.values().find_map(|s| match s {
-        Session::Ssh(ssh) if ssh.workspace_id == workspace_id => Some(ssh.handle.clone()),
-        _ => None,
-    })
 }
 
 /// Run a shell pipeline over an SSH exec channel and return its stdout.
@@ -229,7 +221,7 @@ pub(crate) async fn summarize_session_inner(
     history_count: Option<u32>,
     prompt_override: Option<&str>,
 ) -> Result<SummaryResult, String> {
-    let handle = pick_handle(state, workspace_id)
+    let handle = crate::ssh_handle_for_machine(state, workspace_id)
         .ok_or_else(|| "no active SSH session — connect a terminal pane in this workspace first".to_string())?;
 
     let history = history_count.unwrap_or_else(|| {

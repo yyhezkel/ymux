@@ -83,7 +83,8 @@ user input.
 
 `exec` / `exec_stdin` run through `ymux_core::ssh_exec`: stderr merged, partial output
 kept on a timeout, exit ignored on purpose (callers read the output). `remote_home` is
-the exception: stderr dropped and a clean exit required, else `""`.
+the exception: stderr dropped and a clean exit required, else `""`. SFTP opens through
+`ymux_core::ssh_exec::open_sftp`.
 
 Detect / install / uninstall / update ymux add-ons over a workspace's existing SSH
 session. The manifest schema and the built-in registry live in the **`ymux-addons`

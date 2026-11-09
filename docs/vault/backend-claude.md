@@ -25,7 +25,7 @@ the result as a ymux Note tagged `summary`. Remote calls go through `ymux_core::
 and anything but a clean exit is `Err`, so a timed-out or failed `claude -p` is never
 saved as a note.
 
-SSH-only: `pick_handle` matches `Session::Ssh` only, so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
+SSH-only: `ssh_handle_for_machine` finds SSH sessions only (its own, else a sibling's on the same server), so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
 
 Two entry points:
 
