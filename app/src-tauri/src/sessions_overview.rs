@@ -24,6 +24,7 @@
 //! it logs the length of what it could not parse, never the text.
 
 use std::collections::HashSet;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -32,7 +33,7 @@ use tauri::State;
 use crate::{
     kill_pane_session_inner, kill_target, log_debug, log_info, log_warn,
     release_session_owner, session_owner_host_key, shell_quote, AppState, Connection,
-    KillSessionOutcome, KillTarget, Session, TmuxSessionInfo,
+    CoreState, KillSessionOutcome, KillTarget, Session, TmuxSessionInfo,
 };
 
 /// Upper bound on sessions per model call. The frontend chunks above this;
@@ -527,9 +528,22 @@ fn panes_holding_session(state: &AppState, workspace_id: &str, conn: Option<&Con
 /// stays as it is (titles and lights rely on it); the overview just refuses
 /// to read such a pane, because a wrong row is worse than an LLM row.
 pub(crate) fn note_hook_attribution(state: &AppState, claimed: Option<&str>, resolved: Option<&str>) {
+    note_attribution_parts(&state.core, &state.hook_unsure_panes, claimed, resolved);
+}
+
+/// `note_hook_attribution` over just the two fields it touches, so a test can
+/// build them: naming `AppState::default()` from test code drags tauri's
+/// webview runtime into the test binary, which then dies with
+/// STATUS_ENTRYPOINT_NOT_FOUND on Windows before any test runs.
+fn note_attribution_parts(
+    core: &CoreState,
+    unsure_panes: &Mutex<HashSet<String>>,
+    claimed: Option<&str>,
+    resolved: Option<&str>,
+) {
     let Some(pane) = resolved else { return };
-    let unsure = claimed != Some(pane) && connected_machine_count(state) > 1;
-    let Ok(mut set) = state.hook_unsure_panes.lock() else {
+    let unsure = claimed != Some(pane) && connected_machine_count(core) > 1;
+    let Ok(mut set) = unsure_panes.lock() else {
         return;
     };
     if unsure {
@@ -543,8 +557,8 @@ pub(crate) fn note_hook_attribution(state: &AppState, claimed: Option<&str>, res
 /// one machine. A hook can only arrive from one of these (a remote hook needs
 /// the reverse tunnel of a live session). A poisoned lock counts as "many",
 /// so attribution reads as unsure.
-fn connected_machine_count(state: &AppState) -> usize {
-    let Ok(sessions) = state.core.sessions.lock() else {
+fn connected_machine_count(core: &CoreState) -> usize {
+    let Ok(sessions) = core.sessions.lock() else {
         return usize::MAX;
     };
     sessions
@@ -633,17 +647,18 @@ mod tests {
 
     #[test]
     fn hook_attribution_flag_follows_the_last_hook() {
-        let state = AppState::default();
-        state.hook_unsure_panes.lock().unwrap().insert("p1".to_string());
+        // Deliberately not `AppState::default()` — see `note_attribution_parts`.
+        let core = CoreState::default();
+        let unsure = Mutex::new(HashSet::from(["p1".to_string()]));
         // A hook that names the pane it resolved to is direct: the flag clears.
-        note_hook_attribution(&state, Some("p1"), Some("p1"));
-        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
+        note_attribution_parts(&core, &unsure, Some("p1"), Some("p1"));
+        assert!(unsure.lock().unwrap().is_empty());
         // A name fallback with fewer than two connected machines is not unsure.
-        note_hook_attribution(&state, Some("dead"), Some("p1"));
-        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
+        note_attribution_parts(&core, &unsure, Some("dead"), Some("p1"));
+        assert!(unsure.lock().unwrap().is_empty());
         // No resolved pane: nothing to record.
-        note_hook_attribution(&state, Some("dead"), None);
-        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
+        note_attribution_parts(&core, &unsure, Some("dead"), None);
+        assert!(unsure.lock().unwrap().is_empty());
     }
 
     #[test]
