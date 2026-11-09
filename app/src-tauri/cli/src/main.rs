@@ -12,7 +12,7 @@ mod hooks;
 mod port_watch;
 mod session_meta;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use serde_json::{json, Value};
 use std::io::Read;
 use std::process::ExitCode;
@@ -385,6 +385,29 @@ struct Cli {
     quiet: bool,
 }
 
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum WaitFor {
+    Idle,
+}
+
+#[derive(Subcommand, Debug)]
+enum WorktreeOp {
+    /// Create a worktree on a new branch. Prints the refreshed list.
+    Create {
+        /// Branch name: letters, digits and - _ . / only.
+        name: String,
+        /// Workspace id. Defaults to the workspace of $YMUX_PANE_ID.
+        #[arg(long)]
+        workspace: Option<String>,
+        /// Commit or branch to start from.
+        #[arg(long, default_value = "HEAD")]
+        base: String,
+        /// Target directory. Defaults to a sibling of the repository.
+        #[arg(long)]
+        path: Option<String>,
+    },
+}
+
 #[derive(Subcommand, Debug)]
 enum Cmd {
     ListWorkspaces,
@@ -459,6 +482,52 @@ enum Cmd {
         pane: String,
         #[arg(long)]
         key: String,
+    },
+
+    /// Block until a pane's agent reaches a state. Needs agent hooks: a pane
+    /// no hook has reached is never reported as idle.
+    ///
+    /// Idle means the turn ended: done, needs-input or failed. The JSON
+    /// carries the actual state.
+    ///
+    /// The light stays `done` after a turn, so `wait` right after `send` can
+    /// see the PREVIOUS turn. Pass the `agent_seq` that `send` returned as
+    /// --after-seq. Wait for idle before you send: --after-seq cannot tell
+    /// a turn that is still running from the next one.
+    ///
+    /// Exit codes: 0 reached, 2 error, 3 timeout, 4 unknown pane, 5 timeout
+    /// and no hook ever reached the pane.
+    Wait {
+        /// The state to wait for.
+        #[arg(long = "for", value_enum)]
+        target: WaitFor,
+        /// Pane id. Defaults to $YMUX_PANE_ID.
+        #[arg(long)]
+        pane: Option<String>,
+        /// Seconds to wait (1 to 86400).
+        #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(1..=86400))]
+        timeout: u64,
+        /// Accept only a state newer than this `agent_seq` value.
+        #[arg(long)]
+        after_seq: Option<u64>,
+    },
+
+    /// Print a pane's recent text, read from its tmux or zellij session. A
+    /// pane with no multiplexer session is an error. The text goes to stdout
+    /// only and is never logged.
+    Read {
+        /// Pane id. Defaults to $YMUX_PANE_ID.
+        #[arg(long)]
+        pane: Option<String>,
+        /// Number of trailing lines (1 to 10000, default 200).
+        #[arg(long, value_parser = clap::value_parser!(u64).range(1..=10000))]
+        lines: Option<u64>,
+    },
+
+    /// Git worktrees of a workspace's repository, on the workspace's host.
+    Worktree {
+        #[command(subcommand)]
+        op: WorktreeOp,
     },
     Notify {
         #[arg(long)]
@@ -1549,12 +1618,120 @@ where
     buf.read_line(&mut response)
         .await
         .map_err(|e| e.to_string())?;
+    // Rule #1: a reply can carry pane text, so the error gets its size only.
     let resp: Value = serde_json::from_str(response.trim())
-        .map_err(|e| format!("bad response: {} ({})", e, response))?;
+        .map_err(|e| format!("bad response: {e} ({} bytes)", response.len()))?;
     if let Some(err) = resp.get("error") {
         return Err(format!("rpc error: {}", err));
     }
     Ok(resp.get("result").cloned().unwrap_or(Value::Null))
+}
+
+/// `--pane`, else this shell's own pane. An empty value counts as absent.
+fn effective_pane(pane: &Option<String>) -> Option<String> {
+    pane.clone()
+        .or_else(|| std::env::var("YMUX_PANE_ID").ok())
+        .filter(|s| !s.is_empty())
+}
+
+const WAIT_EXIT_TIMEOUT: u8 = 3;
+const WAIT_EXIT_UNKNOWN_PANE: u8 = 4;
+const WAIT_EXIT_NO_AGENT_STATE: u8 = 5;
+/// Each poll is a new connection and, on TCP, a new HMAC handshake.
+const WAIT_POLL_SECS: u64 = 2;
+/// A tunnel reconnect must not end a long wait; a dead endpoint must.
+const WAIT_MAX_RPC_FAILURES: u32 = 3;
+
+#[derive(Debug, PartialEq, Eq)]
+enum WaitStep {
+    Reached,
+    KeepWaiting,
+    UnknownPane,
+}
+
+/// One `pane.agent-state` reply against the wait condition. `unknown` is the
+/// state of a pane no hook has reached, and it never satisfies the wait.
+fn wait_step(snapshot: &Value, after_seq: Option<u64>) -> WaitStep {
+    if snapshot.get("known").and_then(Value::as_bool) != Some(true) {
+        return WaitStep::UnknownPane;
+    }
+    let state = snapshot.get("state").and_then(Value::as_str).unwrap_or("unknown");
+    let seq = snapshot.get("seq").and_then(Value::as_u64).unwrap_or(0);
+    let turn_ended = matches!(state, "done" | "needs-input" | "failed");
+    if turn_ended && after_seq.is_none_or(|floor| seq > floor) {
+        WaitStep::Reached
+    } else {
+        WaitStep::KeepWaiting
+    }
+}
+
+/// Name and exit code for a wait that ran out of time.
+fn timeout_outcome(snapshot: &Value) -> (&'static str, u8) {
+    match snapshot.get("state").and_then(Value::as_str) {
+        Some("unknown") | None => ("no-agent-state", WAIT_EXIT_NO_AGENT_STATE),
+        Some(_) => ("timeout", WAIT_EXIT_TIMEOUT),
+    }
+}
+
+/// `ymux wait`. Polls because the endpoint has no subscribe path: each
+/// connection serves one request.
+async fn run_wait(
+    pane: &str,
+    timeout_secs: u64,
+    after_seq: Option<u64>,
+    raw: bool,
+    quiet: bool,
+) -> ExitCode {
+    let started = tokio::time::Instant::now();
+    let limit = std::time::Duration::from_secs(timeout_secs);
+    let mut failures = 0u32;
+    let mut last = json!({ "state": "unknown", "seq": 0 });
+    let (outcome, code) = loop {
+        match rpc_call("pane.agent-state", json!({ "pane_id": pane })).await {
+            Ok(snapshot) => {
+                failures = 0;
+                match wait_step(&snapshot, after_seq) {
+                    WaitStep::Reached => {
+                        last = snapshot;
+                        break ("reached", 0);
+                    }
+                    WaitStep::UnknownPane => {
+                        last = snapshot;
+                        break ("unknown-pane", WAIT_EXIT_UNKNOWN_PANE);
+                    }
+                    WaitStep::KeepWaiting => last = snapshot,
+                }
+            }
+            Err(e) => {
+                failures += 1;
+                if failures >= WAIT_MAX_RPC_FAILURES {
+                    eprintln!("error: {e}");
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        if started.elapsed() >= limit {
+            break timeout_outcome(&last);
+        }
+        let left = limit.saturating_sub(started.elapsed());
+        tokio::time::sleep(left.min(std::time::Duration::from_secs(WAIT_POLL_SECS))).await;
+    };
+    if !quiet {
+        let v = json!({
+            "pane_id": pane,
+            "outcome": outcome,
+            "state": last.get("state"),
+            "seq": last.get("seq"),
+            "waited_secs": started.elapsed().as_secs(),
+        });
+        let s = if raw {
+            serde_json::to_string(&v).unwrap_or_default()
+        } else {
+            serde_json::to_string_pretty(&v).unwrap_or_default()
+        };
+        println!("{s}");
+    }
+    ExitCode::from(code)
 }
 
 fn derive_hook_title(subcommand: &str, payload: &Value) -> String {
@@ -1803,6 +1980,45 @@ async fn real_main() -> ExitCode {
         }
         Cmd::SendKey { pane, key } => {
             rpc_call("send-key", json!({ "pane_id": pane, "key": key })).await
+        }
+        Cmd::Wait {
+            target: WaitFor::Idle,
+            pane,
+            timeout,
+            after_seq,
+        } => {
+            let Some(pane) = effective_pane(pane) else {
+                eprintln!("error: no pane: pass --pane or set YMUX_PANE_ID");
+                return ExitCode::from(2);
+            };
+            return run_wait(&pane, *timeout, *after_seq, cli.raw, cli.quiet).await;
+        }
+        Cmd::Read { pane, lines } => match effective_pane(pane) {
+            Some(pane) => {
+                rpc_call("pane.scrollback", json!({ "pane_id": pane, "lines": lines })).await
+            }
+            None => Err("no pane: pass --pane or set YMUX_PANE_ID".to_string()),
+        },
+        Cmd::Worktree {
+            op:
+                WorktreeOp::Create {
+                    name,
+                    workspace,
+                    base,
+                    path,
+                },
+        } => {
+            rpc_call(
+                "worktree.create",
+                json!({
+                    "name": name,
+                    "workspace_id": workspace,
+                    "pane_id": effective_pane(&None),
+                    "base": base,
+                    "path": path,
+                }),
+            )
+            .await
         }
         Cmd::Notify {
             title,
@@ -3031,6 +3247,74 @@ async fn real_main() -> ExitCode {
             eprintln!("error: {}", e);
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod wait_read_worktree_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn snap(state: &str, seq: u64) -> Value {
+        json!({ "known": true, "state": state, "seq": seq })
+    }
+
+    // Pins: every state that ends a turn counts as idle.
+    #[test]
+    fn turn_end_states_reach_idle() {
+        for s in ["done", "needs-input", "failed"] {
+            assert_eq!(wait_step(&snap(s, 1), None), WaitStep::Reached, "{s}");
+        }
+    }
+
+    // Pins: no hooks is not idle, and running is not idle.
+    #[test]
+    fn unknown_and_running_keep_waiting() {
+        assert_eq!(wait_step(&snap("unknown", 0), None), WaitStep::KeepWaiting);
+        assert_eq!(wait_step(&snap("running", 3), None), WaitStep::KeepWaiting);
+    }
+
+    // Pins: a pane no layout holds stops the wait at once.
+    #[test]
+    fn unknown_pane_is_distinct() {
+        let v = json!({ "known": false, "state": "unknown", "seq": 0 });
+        assert_eq!(wait_step(&v, None), WaitStep::UnknownPane);
+    }
+
+    // Pins: the previous turn's sticky `done` does not satisfy --after-seq.
+    #[test]
+    fn after_seq_rejects_the_previous_turn() {
+        assert_eq!(wait_step(&snap("done", 5), Some(5)), WaitStep::KeepWaiting);
+        assert_eq!(wait_step(&snap("done", 6), Some(5)), WaitStep::Reached);
+    }
+
+    // Pins: a timeout on a pane without hooks has its own exit code.
+    #[test]
+    fn timeout_codes_are_distinct() {
+        assert_eq!(timeout_outcome(&snap("running", 2)), ("timeout", WAIT_EXIT_TIMEOUT));
+        assert_eq!(
+            timeout_outcome(&snap("unknown", 0)),
+            ("no-agent-state", WAIT_EXIT_NO_AGENT_STATE)
+        );
+        let codes = [0, 2, WAIT_EXIT_TIMEOUT, WAIT_EXIT_UNKNOWN_PANE, WAIT_EXIT_NO_AGENT_STATE];
+        let unique: std::collections::HashSet<_> = codes.iter().collect();
+        assert_eq!(unique.len(), codes.len());
+    }
+
+    // Pins: the flags and their bounds, as a caller types them.
+    #[test]
+    fn verbs_parse() {
+        assert!(Cli::try_parse_from(["ymux", "wait", "--for", "idle", "--pane", "p"]).is_ok());
+        assert!(Cli::try_parse_from(["ymux", "wait", "--for", "busy"]).is_err());
+        assert!(Cli::try_parse_from(["ymux", "wait", "--for", "idle", "--timeout", "0"]).is_err());
+        assert!(Cli::try_parse_from(["ymux", "read", "--lines", "0"]).is_err());
+        assert!(Cli::try_parse_from(["ymux", "read", "--lines", "10001"]).is_err());
+        let c = Cli::try_parse_from(["ymux", "worktree", "create", "feature/x"]);
+        assert!(matches!(
+            c.map(|c| c.command),
+            Ok(Cmd::Worktree { op: WorktreeOp::Create { name, base, .. } })
+                if name == "feature/x" && base == "HEAD"
+        ));
     }
 }
 

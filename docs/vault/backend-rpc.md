@@ -49,7 +49,7 @@ must resolve the same path from the other side).
 
 ## The method catalog
 
-`dispatch()` ([dispatch@rpc_server.rs:635](../../app/src-tauri/src/rpc_server.rs)) is one big match
+`dispatch()` ([dispatch@rpc_server.rs:643](../../app/src-tauri/src/rpc_server.rs)) is one big match
 and **is** the canonical list — nothing else enumerates these:
 
 - **Workspaces** — `ping`, `list-workspaces`, `select-workspace`, `new-workspace`,
@@ -57,12 +57,14 @@ and **is** the canonical list — nothing else enumerates these:
   — `list-workspaces`, `new-workspace` and `update-workspace` replies run `secret_env::redact` (secret env rows `value: ""`), a second layer over `persist()`; `tree` / `ui.tree` emit no env
 - **Panes** — `tree`, `ui.tree`, `split`, `action.split`, `action.connect`,
   `pane.scrollback`, `pane.screenshot`, `set-pane-title`, `set-pane-annotation`,
-  `set-status`, `pane.persistence.get`, `pane.persistence.list`, `pane.kill-session`
+  `set-status`, `pane.persistence.get`, `pane.persistence.list`, `pane.kill-session`,
+  `pane.agent-state`, `worktree.create`
   <!-- Phase 91.F: the `LayoutNode::Pane` literal `split` builds also sets the new
   `diff_cwd: None` field (see crates.md) — mechanical, no protocol change. -->
 
 - **Input** — `send`, `send-key` (via `translate_key`: `cr`, `tab`, `escape`, `bs`,
-  `arrow-*`, `home`, `end`, and `ctrl-x` forms)
+  `arrow-*`, `home`, `end`, and `ctrl-x` forms). Both replies carry `agent_seq`
+  (`pane_agent_seq`, read before the write) for `ymux wait --after-seq`.
 - **Agent surface** — `notify`, `feed.push`, `feed.decide`, `context.inject` (Phase
   105.C, below), and the hook verbs
   `session-start`, `session-end`, `stop`, `user-prompt-submit`, `pre-tool-use`,
@@ -78,6 +80,19 @@ and **is** the canonical list — nothing else enumerates these:
   subscriber's tunnel port.
 - **Diagnostics** — `doctor`, `dev.get-state`, `dev.console-tail`,
   `dev.debug-log-tail`, `dev.report-bug`
+
+**One trust level.** After the HMAC handshake the tunnel is a raw byte bridge with no
+method filter, and `dispatch` has no per-pane or per-method check. So a caller that can
+`send` can call every method on every pane, also on panes of other hosts.
+`pane.scrollback` widens nothing: `send` could already type a command that reads a pane.
+
+**`pane.scrollback` is real** (it was an error stub until `ymux read`):
+`sessions_overview::pane_scrollback` asks the pane's multiplexer. `lines` defaults to 200
+and is clamped to 10,000. A pane with no multiplexer session is an `Err`, never an empty
+success. **`pane.agent-state`** reads `agent_runs` and separates `known: false` (no layout
+holds the pane) from `state: "unknown"` (no hook yet). **`worktree.create`** runs
+`worktrees::validate_branch_name` on the raw name, then shares
+`create_project_worktree` with the Tauri command.
 
 ## Hooks → toasts
 
@@ -228,7 +243,8 @@ helpers.
 ## Invariants
 
 - **Rule #1** — pane content crosses this endpoint (`pane.scrollback`, `read_pane`) but
-  is **never logged**. Log the byte count.
+  is **never logged**. Log the byte count. `handle_client` writes the reply and logs no
+  part of it.
 - **Rule #8** — the tunnel HMAC token reaches `port.opened` handlers; never log it.
 - **Rule #6** — a handler error becomes a JSON-RPC error object, never a panic. One bad
   request must not take down a pool slot.

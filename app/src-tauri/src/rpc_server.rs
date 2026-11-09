@@ -338,6 +338,14 @@ where
     // Return → `stream` (split halves) drop → pipe instance freed immediately.
 }
 
+/// The pane's hook counter, 0 before the first hook. Carried on the `send`
+/// replies so a driver can tell the next turn from the previous one.
+fn pane_agent_seq(state: &AppState, pane_id: &str) -> u32 {
+    crate::lock_or_recover(&state.agent_runs)
+        .get(pane_id)
+        .map_or(0, |r| r.seq)
+}
+
 // Phase 99: ported to Go (`server/internal/agent/keys.go`) — change both.
 fn translate_key(key: &str) -> Vec<u8> {
     match key.to_lowercase().as_str() {
@@ -829,8 +837,11 @@ async fn dispatch(
                 .get(pane_id)
                 .cloned()
                 .ok_or_else(|| format!("pane {pane_id} not connected"))?;
+            // Read BEFORE the write: `wait --after-seq` needs a value from
+            // before the turn this input starts.
+            let agent_seq = pane_agent_seq(state, pane_id);
             write_to_session(state, &sid, data.as_bytes())?;
-            Ok(json!({ "ok": true, "bytes": data.len() }))
+            Ok(json!({ "ok": true, "bytes": data.len(), "agent_seq": agent_seq }))
         }
 
         "send-key" => {
@@ -851,8 +862,9 @@ async fn dispatch(
                 .get(pane_id)
                 .cloned()
                 .ok_or_else(|| format!("pane {pane_id} not connected"))?;
+            let agent_seq = pane_agent_seq(state, pane_id);
             write_to_session(state, &sid, &bytes)?;
-            Ok(json!({ "ok": true, "bytes": bytes.len() }))
+            Ok(json!({ "ok": true, "bytes": bytes.len(), "agent_seq": agent_seq }))
         }
 
         "notify" => {
@@ -1089,22 +1101,93 @@ async fn dispatch(
             Ok(json!({ "ok": true, "bytes": bytes.len() }))
         }
 
-        // B1: scrollback. The backend does NOT buffer PTY output —
-        // Absolute Rule #1 ("Never log PTY input or output content")
-        // pushes the scrollback ring into the FRONTEND xterm.js, not
-        // into Rust state. Returning the buffer to an RPC caller
-        // would require a frontend round-trip we haven't built yet.
-        // For tmux sessions there's a clean workaround: send
-        // `tmux capture-pane -p -S -<lines>` to the pane via `send`
-        // and read its output from the next pty:data event. Document
-        // that in the error so agents have a path forward.
+        // The backend keeps no PTY buffer (Rule #1); the text comes from
+        // the pane's multiplexer. A pane without one is an error. Same
+        // reach as `send`: this endpoint has one trust level and no
+        // per-pane or per-method check. Rule #1: log the count, never the
+        // text. `lines` is a string when it comes through the MCP schema.
         "pane.scrollback" => {
-            Err(
-                "pane.scrollback: backend does not buffer PTY content (Absolute Rule #1). \
-                 Workaround for tmux: rpc `send` with data \
-                 `\\u001btmux capture-pane -p -S -<N>\\n` then read the next pty:data event."
-                    .to_string(),
-            )
+            let pane_id = params
+                .get("pane_id")
+                .or_else(|| params.get("pane"))
+                .and_then(|v| v.as_str())
+                .ok_or("missing pane_id")?;
+            let requested = params.get("lines").and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            });
+            let lines = crate::sessions_overview::clamp_scrollback_lines(requested);
+            let text = crate::sessions_overview::pane_scrollback(state, pane_id, lines).await?;
+            crate::log_debug(
+                "RPC",
+                &format!("pane.scrollback pane={pane_id} lines={lines} bytes={}", text.len()),
+            );
+            Ok(json!({ "pane_id": pane_id, "lines": lines, "text": text }))
+        }
+
+        // One pane's traffic-light state, for `ymux wait`. A pane that no
+        // layout holds is `known: false`; a known pane no hook has reached
+        // is `state: "unknown"`. Those two are different answers.
+        "pane.agent-state" => {
+            let pane_id = params
+                .get("pane_id")
+                .or_else(|| params.get("pane"))
+                .and_then(|v| v.as_str())
+                .ok_or("missing pane_id")?;
+            let known = {
+                let file = crate::lock_or_recover(&state.workspaces);
+                crate::find_workspace_for_pane(&file, pane_id).is_some()
+            };
+            let runs = crate::lock_or_recover(&state.agent_runs);
+            let run = runs.get(pane_id);
+            Ok(json!({
+                "pane_id": pane_id,
+                "known": known,
+                "state": run.map_or("unknown", |r| r.state.as_str()),
+                "state_since": run.and_then(|r| r.state_since_ms()),
+                "seq": run.map_or(0, |r| r.seq),
+            }))
+        }
+
+        // `ymux worktree create`. The workspace is explicit or the
+        // caller's own pane, and never the active one: that is whatever
+        // the person is looking at, and a branch in the wrong repo is a
+        // side effect nobody asked for.
+        "worktree.create" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("missing name")?;
+            crate::worktrees::validate_branch_name(name)?;
+            let explicit = params
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let workspace_id = match explicit {
+                Some(id) => id.to_string(),
+                None => {
+                    let pane_id = params
+                        .get("pane_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or("missing workspace_id (or pane_id)")?;
+                    let file = crate::lock_or_recover(&state.workspaces);
+                    crate::find_workspace_for_pane(&file, pane_id)
+                        .ok_or_else(|| format!("pane {pane_id} is in no workspace"))?
+                }
+            };
+            let base = params.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
+            let target = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let list =
+                crate::worktrees::create_project_worktree(state, &workspace_id, name, base, target)
+                    .await?;
+            let path = list
+                .iter()
+                .find(|e| e.branch.as_deref() == Some(name))
+                .map(|e| e.path.clone());
+            Ok(json!({ "ok": true, "branch": name, "path": path, "worktrees": list }))
         }
 
         // Same story for screenshots: xterm.js's canvas lives on the

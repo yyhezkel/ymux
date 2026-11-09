@@ -47,6 +47,7 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
   `-click`, `-find`, `-snapshot`, `-type`. This is how an agent drives the workspace
   browser.
 - **Agent** — `claude-hook`, `setup-hooks`, `claude-sessions-list`
+- **Driving other agents** — `wait`, `read`, `worktree create` (below)
 - **Notes / settings** — `note`, `settings` (`show` / `set` / `preset`)
 - **Ops** — `port-watch`, `session-meta`, `doctor`, `check-updates`
 - **Dev** — `dev get-state`, `console-tail`, `debug-log-tail`, `report-bug`
@@ -57,6 +58,31 @@ For `pre-tool-use` with `tool_name`, the summary is the first of `tool_input.com
 file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else empty
 (never a JSON dump). Without `tool_name` the old chain (command / tool / title /
 `agent: <sub>`, JSON-dump summary) is unchanged, as are all other subcommands.
+
+## `wait`, `read`, `worktree create`
+
+These verbs let one agent drive others with no sleep loop. `read` and `worktree create`
+go through the generic RPC path. `wait` returns its own `ExitCode` from its arm.
+
+**`run_wait`** polls `pane.agent-state` every 2 s (`WAIT_POLL_SECS`), because the
+endpoint has no subscribe path. The pure `wait_step` decides each reply. Idle is
+`done | needs-input | failed`, and needs-input is included because `idle_prompt` moves
+a finished agent from Done to NeedsInput. The JSON carries the actual state. Exit codes:
+0 reached, 2 error, 3 timeout, 4 unknown pane (`known: false`, at once), 5 timeout with
+`state: unknown`. **A pane with no hooks never reports idle**: it waits, because a hook
+can still arrive, and exits 5. Three RPC failures in sequence exit 2, so a tunnel
+reconnect does not end a long wait.
+
+**`--after-seq`**: Done is sticky, so `wait` right after `send` can see the previous
+turn. `send` and `send-key` return `agent_seq`, read before the write, and the wait then
+requires `seq > after_seq`.
+
+**`read`** prints the `pane.scrollback` JSON. `rpc_via`'s "bad response" error carries
+the byte count only, because a reply can hold pane text (Rule #1).
+
+**`worktree create`** sends the name to `worktree.create`, which validates it. It passes
+`$YMUX_PANE_ID` so the desktop can find the workspace; it never falls back to the active
+workspace.
 
 ## `hooks.rs` (730) — `ymux setup-hooks`
 

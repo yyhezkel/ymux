@@ -79,6 +79,60 @@ pub(crate) fn sanitize_branch_name(branch: &str) -> Result<String, String> {
     Ok(safe)
 }
 
+/// Strict check for a branch name that arrives over RPC, where the caller
+/// is an agent and not a person looking at a form. `sanitize_branch_name`
+/// only derives a directory; the RAW name is what reaches git.
+///
+/// An ASCII allow-list plus the `git check-ref-format` rules that the list
+/// does not already exclude. Every component is checked, because a ref
+/// `a/.b` or `a.lock/b` is as invalid as a top-level one.
+pub(crate) fn validate_branch_name(name: &str) -> Result<(), String> {
+    const MAX_LEN: usize = 200;
+    let bad = |why: &str| Err(format!("invalid branch name: {why}"));
+    if name.is_empty() || name.len() > MAX_LEN {
+        return bad("length must be 1 to 200 characters");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'))
+    {
+        return bad("use only letters, digits and - _ . /");
+    }
+    if name.starts_with('-') {
+        return bad("must not start with -");
+    }
+    if name.contains("..") {
+        return bad("must not contain ..");
+    }
+    if name.ends_with('.') {
+        return bad("must not end with .");
+    }
+    for part in name.split('/') {
+        if part.is_empty() {
+            return bad("empty path component");
+        }
+        if part.starts_with('.') || part.ends_with(".lock") {
+            return bad("a component must not start with . or end with .lock");
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a value that git would parse as an option, or that carries a
+/// control character. `git worktree add <target> -b <name> <base>` takes
+/// `base` and `target` positionally and those two have no allow-list: a
+/// base of `--force` would be an option. The shell quoting on the SSH path
+/// does not help, because the option reaches git intact.
+fn reject_git_option(label: &str, value: &str) -> Result<(), String> {
+    if value.starts_with('-') {
+        return Err(format!("{label} must not start with -"));
+    }
+    if value.chars().any(char::is_control) {
+        return Err(format!("{label} must not contain control characters"));
+    }
+    Ok(())
+}
+
 /// The directory component for a branch: `feature/x` must not create a
 /// nested `feature/` directory, so slashes collapse to hyphens.
 pub(crate) fn branch_dir_component(safe_branch: &str) -> String {
@@ -294,7 +348,7 @@ pub(crate) async fn exec_script_over(
 /// One-shot exec channel on an existing handle, stdout captured.
 /// Mirrors `claude_log::ssh_exec_capture` — each module keeps its own
 /// copy so it stays self-contained.
-async fn ssh_exec_capture(
+pub(crate) async fn ssh_exec_capture(
     handle: &SshHandle<SshClient>,
     cmd: &str,
     timeout_secs: u64,
@@ -356,7 +410,7 @@ async fn ssh_exec_capture(
     .is_err();
     let _ = ch.close().await;
     if timed_out {
-        return Err("git timed out on the remote host".to_string());
+        return Err("command timed out on the remote host".to_string());
     }
     Ok((code, String::from_utf8_lossy(&stdout).to_string()))
 }
@@ -583,25 +637,39 @@ pub(crate) async fn workspace_create_project_worktree(
     base_branch: String,
     target_path: Option<String>,
 ) -> Result<Vec<WorktreeEntry>, String> {
+    create_project_worktree(&state, &workspace_id, &branch_name, &base_branch, target_path).await
+}
+
+/// Body of `workspace_create_project_worktree`, shared with the
+/// `worktree.create` RPC method.
+pub(crate) async fn create_project_worktree(
+    state: &AppState,
+    workspace_id: &str,
+    branch_name: &str,
+    base_branch: &str,
+    target_path: Option<String>,
+) -> Result<Vec<WorktreeEntry>, String> {
     let branch_name = branch_name.trim().to_string();
     let safe_branch = sanitize_branch_name(&branch_name)?;
     let base_branch = base_branch.trim().to_string();
     if base_branch.is_empty() {
         return Err("base branch is required".to_string());
     }
+    reject_git_option("base branch", &base_branch)?;
     // Resolve the repo path from the workspace itself, so the default
     // target is a sibling of the REAL repo rather than of whatever path
     // a caller believed the repo to be.
     let (_probe, project_path) =
-        run_git_for_workspace(&state, &workspace_id, &["rev-parse", "--is-inside-work-tree"])
+        run_git_for_workspace(state, workspace_id, &["rev-parse", "--is-inside-work-tree"])
             .await?;
     let target = match target_path.map(|t| t.trim().to_string()) {
         Some(t) if !t.is_empty() => t,
         _ => default_worktree_target(&project_path, &safe_branch),
     };
+    reject_git_option("target path", &target)?;
     run_git_for_workspace(
-        &state,
-        &workspace_id,
+        state,
+        workspace_id,
         &["worktree", "add", &target, "-b", &branch_name, &base_branch],
     )
     .await?;
@@ -610,13 +678,44 @@ pub(crate) async fn workspace_create_project_worktree(
         &format!("[worktree] created {target} for ws={workspace_id} branch={branch_name}"),
     );
     let (text, _) =
-        run_git_for_workspace(&state, &workspace_id, &["worktree", "list", "--porcelain"]).await?;
+        run_git_for_workspace(state, workspace_id, &["worktree", "list", "--porcelain"]).await?;
     Ok(parse_worktree_porcelain(&text))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pins: names a person or agent really uses stay legal.
+    #[test]
+    fn branch_name_accepts_normal_refs() {
+        for ok in ["x", "feature/x", "fix_1.2-rc", "a/b/c"] {
+            assert_eq!(validate_branch_name(ok), Ok(()), "{ok}");
+        }
+    }
+
+    // Pins: the option, traversal, shell and ref-format shapes are refused
+    // before git sees them.
+    #[test]
+    fn branch_name_rejects_unsafe_refs() {
+        let long = "a".repeat(201);
+        for bad in [
+            "", "-b", "--force", "a..b", "a b", "a;rm", "$(x)", "a`b", "a\nb", "/a", "a/", "a//b",
+            ".a", "a/.b", "a.lock", "a.lock/b", "a.", "@{u}", "\u{5e4}", long.as_str(),
+        ] {
+            assert!(validate_branch_name(bad).is_err(), "{bad}");
+        }
+    }
+
+    // Pins: base and target cannot become git options.
+    #[test]
+    fn positional_git_args_cannot_be_options() {
+        assert!(reject_git_option("base branch", "--force").is_err());
+        assert!(reject_git_option("target path", "-x").is_err());
+        assert!(reject_git_option("target path", "/tmp/a\nb").is_err());
+        assert_eq!(reject_git_option("base branch", "origin/main"), Ok(()));
+        assert_eq!(reject_git_option("target path", "/srv/my repo-x"), Ok(()));
+    }
 
     #[test]
     fn parses_main_and_linked() {

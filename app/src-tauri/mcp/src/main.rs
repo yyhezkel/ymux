@@ -342,11 +342,11 @@ fn tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "read_pane",
-            "description": "Read recent scrollback text from a pane. Note: the backend currently returns an error because PTY content is buffered on the frontend (xterm.js), not in Rust state. The error message includes a tmux workaround (capture-pane).",
+            "description": "Read recent text from a pane, through its tmux or zellij session. Returns an error for a pane that has no multiplexer session.",
             "inputSchema": obj(
                 &[
                     ("pane_id", s("pane id (see list_panes)")),
-                    ("lines", s("number of trailing lines requested (currently ignored)"))
+                    ("lines", s("number of trailing lines (default 200, maximum 10000)"))
                 ],
                 &["pane_id"]
             )

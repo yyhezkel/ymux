@@ -23,6 +23,7 @@ Two kinds of caller, and the difference is the whole safety story:
 | `delete-session -f <name>` | child process, argv array | [`zellij_args_delete_force`](../app/src-tauri/src/lib.rs#L2257) |
 | `-s <name> action write-chars <chars>` | child process, argv array | [`zellij_args_write_chars`](../app/src-tauri/src/lib.rs#L2276) |
 | `-s <name> action dump-screen` | child process, argv array, stdout captured (Phase 90 active-sessions overview) | [`zellij_args_dump_screen`](../app/src-tauri/src/lib.rs) |
+| `-s <name> action dump-screen --full` | same, with the scrollback (`pane.scrollback` / `ymux read`) | [`zellij_args_dump_scrollback`](../app/src-tauri/src/lib.rs) |
 
 argv only, never a shell — Rule #3. New verbs go through
 [`zellij_try`](../app/src-tauri/src/lib.rs#L2325), which reports `Ok` /

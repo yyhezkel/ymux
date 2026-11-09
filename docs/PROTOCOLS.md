@@ -91,7 +91,40 @@ Write raw text to a connected pane's session (no key translation, just bytes).
 
 **Params:** `{ "pane_id": "<pid>", "data": "<utf-8 string>" }` (alias `"pane"` for `"pane_id"`)
 **Result:** `{ "ok": true, "bytes": <count> }`
+**Result:** `{ "ok": true, "bytes": <n>, "agent_seq": <n> }`. `agent_seq` is the
+pane's hook counter before the write (`send-key` returns it too).
+
 **Errors:** `"pane <id> not connected"`, `"no such session <sid>"`.
+
+### `pane.scrollback`
+
+The last lines of a pane, read from its multiplexer (`tmux capture-pane`,
+`zellij dump-screen --full`).
+
+**Params:** `{ "pane_id": "<pid>", "lines"?: <n> }` (default 200, clamped to 10000).
+
+**Result:** `{ "pane_id": "<pid>", "lines": <n>, "text": "<plain text>" }`.
+
+**Errors:** `"pane <id> not connected"`, `"pane <id> has no multiplexer session; …"`.
+
+### `pane.agent-state`
+
+**Params:** `{ "pane_id": "<pid>" }`.
+
+**Result:** `{ "pane_id", "known": <bool>, "state": "unknown" | "running" | "done" |
+"needs-input" | "failed", "state_since": <ms> | null, "seq": <n> }`. `known` is
+false when no workspace layout holds the pane. `state` is `unknown` when no hook
+has reached it.
+
+### `worktree.create`
+
+**Params:** `{ "name": "<branch>", "workspace_id"?: "<id>", "pane_id"?: "<pid>",
+"base"?: "<rev>", "path"?: "<dir>" }`. One of `workspace_id` or `pane_id` is
+required. `base` defaults to `HEAD`.
+
+**Result:** `{ "ok": true, "branch": "<name>", "path": "<dir>" | null, "worktrees": [ ... ] }`.
+
+**Errors:** `"invalid branch name: …"`, git's first error line.
 
 ### `send-key`
 
