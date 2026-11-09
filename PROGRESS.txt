@@ -8002,3 +8002,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Also: main was red (rust job) — zellij_tests used session_name_for_pane without importing it; added to `use super::{…}` (vault backend-core).
   PR #51 branch: merged origin/main (conflicts lib.rs → ssh_handle_for_machine with lock_or_recover; SessionsOverviewWindow → backend.call; PROGRESS both; vault re-stamped). PR #81 (dependabot) not merged: CI red because of the same main break.
   Result: compiles-untested until CI; Go blobs still need the rebake from the PR's ci-windows artifact.
+
+[2026-11-09] pre-tool-use defers in `auto` mode; context.inject default budget 1000 ms (branch fix/hooks-auto-mode-context-timeout).
+  Cause: hooks were removed from settings.json on 2026-10-26 because PreToolUse gated and denied commands in `auto` mode, which was not in the CLI's short-circuit list. SessionStart/UserPromptSubmit/Stop/SessionEnd went with them, so the Context Rail and injection stopped. Separately, context.inject takes 310-400 ms on a real tunnel, over the 300 ms budget.
+  Fix: cli/src/main.rs prints nothing in `auto` mode; default budget 1000 ms. Docs: CONTEXT, CLI, PROTOCOLS, vault cli.md.
+  Result: compiles-untested until CI; needs a new CLI on the server to take effect.

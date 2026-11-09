@@ -154,7 +154,7 @@ Rules:
   boundary.
 - Nothing to say → empty → the hook prints nothing.
 
-The budget is **~300 ms** and the hook **fails open**: a missing app, a slow
+The budget is **~1 s** and the hook **fails open**: a missing app, a slow
 tunnel or an error (including the Go daemon, which does not know the method)
 means no context, never a stalled session start. Set
 `YMUX_CONTEXT_TIMEOUT_MS` (100–3000) on a remote whose tunnel round trip is
