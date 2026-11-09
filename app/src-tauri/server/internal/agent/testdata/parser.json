@@ -1,0 +1,213 @@
+[
+ {
+  "name": "all fields",
+  "msg": "work done\n\n[ymux-brief]\ntask: T\nstatus: working\nask: A?\nrec: R\nnext: N\ndelta: D\ngoal: G\ndone: W",
+  "pre": "work done",
+  "parsed": {
+   "task": "T",
+   "status": "working",
+   "ask": "A?",
+   "rec": "R",
+   "next": "N",
+   "delta": "D",
+   "goal": "G",
+   "done": "W"
+  }
+ },
+ {
+  "name": "alias done-when",
+  "msg": "[ymux-brief]\ndone-when: x",
+  "pre": "",
+  "parsed": {
+   "done": "x"
+  }
+ },
+ {
+  "name": "alias done_when",
+  "msg": "[ymux-brief]\ndone_when: x",
+  "pre": "",
+  "parsed": {
+   "done": "x"
+  }
+ },
+ {
+  "name": "alias done when",
+  "msg": "[ymux-brief]\ndone when: x",
+  "pre": "",
+  "parsed": {
+   "done": "x"
+  }
+ },
+ {
+  "name": "a repeated key keeps the last value",
+  "msg": "[ymux-brief]\ndone: a\ndone_when: b\ntask: 1\ntask: 2",
+  "pre": "",
+  "parsed": {
+   "done": "b",
+   "task": "2"
+  }
+ },
+ {
+  "name": "status alias waiting",
+  "msg": "[ymux-brief]\nstatus: waiting",
+  "pre": "",
+  "parsed": {
+   "status": "waiting-for-you"
+  }
+ },
+ {
+  "name": "status alias waiting for you",
+  "msg": "[ymux-brief]\nstatus: Waiting For You",
+  "pre": "",
+  "parsed": {
+   "status": "waiting-for-you"
+  }
+ },
+ {
+  "name": "status alias blocked, key case folded",
+  "msg": "[ymux-brief]\nSTATUS: Blocked",
+  "pre": "",
+  "parsed": {
+   "status": "stuck"
+  }
+ },
+ {
+  "name": "an unknown status leaves the earlier one",
+  "msg": "[ymux-brief]\nstatus: done\nstatus: maybe",
+  "pre": "",
+  "parsed": {
+   "status": "done"
+  }
+ },
+ {
+  "name": "an unknown status alone is absent",
+  "msg": "[ymux-brief]\nstatus: maybe",
+  "pre": "",
+  "parsed": {}
+ },
+ {
+  "name": "no marker",
+  "msg": "just text\ntask: x",
+  "pre": "just text\ntask: x",
+  "parsed": null
+ },
+ {
+  "name": "the marker must be the whole line",
+  "msg": "see [ymux-brief] here\ntask: x",
+  "pre": "see [ymux-brief] here\ntask: x",
+  "parsed": null
+ },
+ {
+  "name": "the last marker wins",
+  "msg": "[ymux-brief]\ntask: old\n\ntext\n[ymux-brief]\ntask: new",
+  "pre": "[ymux-brief]\ntask: old\n\ntext",
+  "parsed": {
+   "task": "new"
+  }
+ },
+ {
+  "name": "marker case folded",
+  "msg": "[YMUX-Brief]\ntask: x",
+  "pre": "",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "marker in decoration",
+  "msg": "> `[ymux-brief]`\ntask: x",
+  "pre": "",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "bold key in a bullet",
+  "msg": "[ymux-brief]\n- **task**: x",
+  "pre": "",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "code fence and quote",
+  "msg": "```\n[ymux-brief]\n> task: x\n```",
+  "pre": "```",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "unknown keys and colonless lines",
+  "msg": "[ymux-brief]\nmood: fine\nno colon here\ntask: x",
+  "pre": "",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "an empty value is skipped",
+  "msg": "[ymux-brief]\ntask:\ntask:   \nnext: n",
+  "pre": "",
+  "parsed": {
+   "next": "n"
+  }
+ },
+ {
+  "name": "the value keeps later colons",
+  "msg": "[ymux-brief]\ntask: a: b: c",
+  "pre": "",
+  "parsed": {
+   "task": "a: b: c"
+  }
+ },
+ {
+  "name": "hebrew value",
+  "msg": "[ymux-brief]\ntask: בדיקת התקנה\ngoal: לשחרר גרסה",
+  "pre": "",
+  "parsed": {
+   "task": "בדיקת התקנה",
+   "goal": "לשחרר גרסה"
+  }
+ },
+ {
+  "name": "crlf",
+  "msg": "a\r\n[ymux-brief]\r\ntask: x\r\n",
+  "pre": "a",
+  "parsed": {
+   "task": "x"
+  }
+ },
+ {
+  "name": "a field at the cap is not clipped",
+  "msg": "[ymux-brief]\ntask: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "pre": "",
+  "parsed": {
+   "task": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  }
+ },
+ {
+  "name": "clip ascii",
+  "msg": "[ymux-brief]\ndelta: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "pre": "",
+  "parsed": {
+   "delta": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…"
+  }
+ },
+ {
+  "name": "clip counts characters, not bytes",
+  "msg": "[ymux-brief]\ngoal: אאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאא",
+  "pre": "",
+  "parsed": {
+   "goal": "אאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאאא…"
+  }
+ },
+ {
+  "name": "clip applies to the done alias",
+  "msg": "[ymux-brief]\ndone-when: דדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדד",
+  "pre": "",
+  "parsed": {
+   "done": "דדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדדד…"
+  }
+ }
+]

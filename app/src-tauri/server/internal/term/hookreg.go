@@ -62,9 +62,9 @@ type hookEntry struct {
 	released bool
 }
 
-// Hook policies (DECISIONS 2026-10-05). The desktop's auto/block are not
-// offered: `none` is auto plus the light and the feed, and a browser user who
-// wants "block" can deny from the gate.
+// Hook policies (DECISIONS 2026-10-05). The desktop's auto is not offered:
+// `none` is auto plus the light and the feed. Block is not a policy here but
+// a rule that applies under both (agent.BlockedBy, DECISIONS 2026-11-09).
 const (
 	policyNone = "none"
 	policyGate = "gate"

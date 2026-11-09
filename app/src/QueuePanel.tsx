@@ -7,6 +7,7 @@ import type { Geometry } from "./floatingWindow";
 import type { Surface } from "./panels";
 import { groupQueueRows, type QueueRow } from "./queueModel";
 import { QueueRowView } from "./QueueRow";
+import briefProtocol from "./brief-protocol.txt?raw";
 
 // BRIEF: the Queue — every agent pane across every workspace, sorted by
 // who needs the user. Grouped by workspace (the reference table's "CRM —
@@ -32,26 +33,9 @@ const log = createLogger("QUEUE");
 // The adoption snippet — what the user pastes into a project's CLAUDE.md
 // (or the agent's equivalent) so its agents actually write briefs.
 // Deliberately English and verbatim: it is instructions FOR an agent, not
-// UI copy, and it must match brief.rs's parser exactly.
-export const BRIEF_SNIPPET = `## ymux briefs
-
-End EVERY final answer with this plain-text block, as the last lines of
-the message:
-
-[ymux-brief]
-task: the task in a few words
-status: working | waiting-for-you | stuck | done
-ask: one closed question — only when you need my decision
-rec: your recommendation for that question, in one sentence
-next: the immediate next step
-delta: what changed since your previous brief
-goal: the session's overall goal, one imperative line
-done: when this session counts as done, one line
-
-Rules: every value ≤ 80 chars, imperative, one line. Write \`goal\` and
-\`done\` in your FIRST brief and repeat them only when they change.
-\`ask\` never appears without \`rec\`; no history — only this turn's
-facts; omit a field rather than leaving it empty.`;
+// UI copy, and it must match brief.rs's parser exactly. The same file is the
+// block SessionStart injects (context_store.rs), so the two cannot drift.
+export const BRIEF_SNIPPET = briefProtocol.trimEnd();
 
 export function QueuePanel(p: Props) {
   const groups = () => groupQueueRows(p.rows);

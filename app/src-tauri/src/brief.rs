@@ -20,8 +20,8 @@
 //! on its first brief and again only when they change, so most briefs
 //! carry neither. The per-session context store keeps the last non-empty
 //! value (`context_store.rs`); the per-pane brief here just carries what
-//! this turn said. The Go port (`server/internal/agent/brief.go`) does NOT
-//! know these two keys yet — BACKLOG parity entry.
+//! this turn said. The Go port (`server/internal/agent/brief.go`) has the
+//! same keys; both sides' tests read `testdata/parser.json` there.
 //!
 //! The Stop hook already forwards `last_assistant_message` verbatim to the
 //! desktop (the CLI pushes the whole hook payload), so this module needs no
@@ -391,5 +391,52 @@ mod tests {
         let msg = format!("[ymux-brief]\ndelta: {long}\n");
         let p = parse_brief(&msg).expect("marker");
         assert!(p.delta.expect("delta").chars().count() <= 201); // 200 + ellipsis
+    }
+
+    // The fixtures are shared with server/internal/agent/golden_test.go.
+    #[test]
+    fn golden_parser_matches_the_go_port() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/parser.json")).expect("fixture");
+        for c in &cases {
+            let name = c["name"].as_str().expect("name");
+            let msg = c["msg"].as_str().expect("msg");
+            assert_eq!(pre_brief_text(msg), c["pre"].as_str().expect("pre"), "{name}: pre");
+            let want = &c["parsed"];
+            let got = parse_brief(msg);
+            if want.is_null() {
+                assert!(got.is_none(), "{name}");
+                continue;
+            }
+            let got = got.unwrap_or_else(|| panic!("{name}: no brief"));
+            for (key, value) in [
+                ("task", &got.task),
+                ("ask", &got.ask),
+                ("rec", &got.rec),
+                ("next", &got.next),
+                ("delta", &got.delta),
+                ("goal", &got.goal),
+                ("done", &got.done),
+            ] {
+                assert_eq!(value.as_deref(), want[key].as_str(), "{name}: {key}");
+            }
+            let status = got.status.map(|s| serde_json::to_value(s).expect("status"));
+            assert_eq!(status.as_ref().and_then(|s| s.as_str()), want["status"].as_str(), "{name}: status");
+        }
+    }
+
+    #[test]
+    fn golden_json_shape_matches_the_go_port() {
+        let f: serde_json::Value =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/brief_json.json")).expect("fixture");
+        for c in f["briefs"].as_array().expect("briefs") {
+            let b = brief_from_stop(
+                c["message"].as_str(),
+                c["title"].as_str(),
+                u128::from(c["updated_ms"].as_u64().expect("updated_ms")),
+            );
+            assert_eq!(serde_json::to_value(&b).expect("json"), c["expect"], "{}", c["name"]);
+        }
+        assert_eq!(serde_json::to_value(PaneBriefEntry::default()).expect("json"), f["empty_entry"]);
     }
 }

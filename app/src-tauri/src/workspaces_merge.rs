@@ -210,7 +210,13 @@ pub(crate) fn reconcile(
         serde_json::from_str::<Value>(disk),
     ) {
         (Ok(b), Ok(o), Ok(t)) => {
-            let (merged, mut notes) = merge_workspaces(&b, &o, &t);
+            let (mut merged, mut notes) = merge_workspaces(&b, &o, &t);
+            // Our version always wins. `ours` equals `base` for this scalar,
+            // so the merge rule would keep an older build's number on disk
+            // for as long as we keep saving. The gate already refused a newer one.
+            if let (Some(m), Some(v)) = (merged.as_object_mut(), o.get("version")) {
+                m.insert("version".to_string(), v.clone());
+            }
             let text = match serde_json::to_string_pretty(&merged) {
                 Ok(t) => t,
                 // Merged fine but will not serialize: writing `ours` is
@@ -281,6 +287,17 @@ mod tests {
             "and their edit survived too"
         );
         assert!(notes.iter().any(|n| n.contains("merged instead of overwriting")), "{notes:?}");
+    }
+
+    #[test]
+    fn a_merge_writes_our_schema_version_over_an_older_one() {
+        // Pins the version after a downgrade: a stuck older number lets an
+        // older build pass its own schema gate on the next write.
+        let ours = r#"{"version":4,"workspaces":[]}"#;
+        let disk = r#"{"version":1,"workspaces":[]}"#;
+        let (text, _) = reconcile(ours, Some(ours), disk);
+        let v: Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["version"], 4);
     }
 
     #[test]

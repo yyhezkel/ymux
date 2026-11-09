@@ -8002,3 +8002,20 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Also: main was red (rust job) — zellij_tests used session_name_for_pane without importing it; added to `use super::{…}` (vault backend-core).
   PR #51 branch: merged origin/main (conflicts lib.rs → ssh_handle_for_machine with lock_or_recover; SessionsOverviewWindow → backend.call; PROGRESS both; vault re-stamped). PR #81 (dependabot) not merged: CI red because of the same main break.
   Result: compiles-untested until CI; Go blobs still need the rebake from the PR's ci-windows artifact.
+
+[2026-11-09] pre-tool-use defers in `auto` mode; context.inject default budget 1000 ms (branch fix/hooks-auto-mode-context-timeout).
+  Cause: hooks were removed from settings.json on 2026-10-26 because PreToolUse gated and denied commands in `auto` mode, which was not in the CLI's short-circuit list. SessionStart/UserPromptSubmit/Stop/SessionEnd went with them, so the Context Rail and injection stopped. Separately, context.inject takes 310-400 ms on a real tunnel, over the 300 ms budget.
+  Fix: cli/src/main.rs prints nothing in `auto` mode; default budget 1000 ms. Docs: CONTEXT, CLI, PROTOCOLS, vault cli.md.
+  Result: compiles-untested until CI; needs a new CLI on the server to take effect.
+
+[2026-11-09] Foreign session-end dropped; `auto` mode keeps the pane light honest (same branch).
+  Cause: `claude -p "/usage"` outside a pane has no YMUX_PANE_ID, the CLI borrows the pane in last.env, and its SessionEnd cleared that pane's light, brief and context. Reproduced live on the server (one run, one session-end on the last.env pane). On 2026-10-26, 38 of 39 fully logged session-end events had no other hook for their session id.
+  Fix: AgentRunState.session_id (set by user-prompt-submit and stop, persisted); feed.push returns passive for a session-end naming another session; Go port in agent/state.go + term/hookdispatch.go. CLI in `auto` mode spawns a detached `notification` push of type tool_running, so the light leaves NeedsInput; the daemon sends no web notification for it.
+  Result: compiles-untested until CI. Go changed, so the two server blobs need the rebake from the PR's ci-windows artifact. SessionEnd is NOT registered on the server until the desktop with this guard ships.
+
+2026-11-09 | Backlog research + implementation run
+  Task: fresh, unanchored research on every open BACKLOG item plus Orca, then implementation in parallel worktrees.
+  Reports: knowledge/research/ymux-2026-11-09-*.md. Live steps: knowledge/research/ymux-2026-11-09-live-checks.md.
+  PRs (all draft, not merged): #84 port-watch 3 s + hook timing + 1000 ms inject budget; #85 brief protocol at SessionStart; #86 fmtBytes + dead code; #87 palette token search + hints; #88 overview prefers the Queue verdict; #89 smart-bidi fixes + profile setting; #90 tauri 2.11.6, zip 9.5, npm advisories, Dependabot; #91 workspaces merge base + single-instance gate; #92 shared SSH exec core (fixes the EOF exit-status race); #93 daemon 2.20.0 context.inject + Block rules in the browser + golden fixtures; #94 jump palette; #95 diff line notes; #96 worktree recipe; #97 ymux wait/read/worktree; #99 macOS arm64 runner to macos-15; #100 russh 0.65.1.
+  Orca idea #1 (usage-limit auto-continue) closed at the gate: Claude Code has it natively.
+  Result: compiles on CI, untested live (Rule #14).
