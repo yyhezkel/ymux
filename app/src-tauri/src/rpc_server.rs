@@ -186,7 +186,8 @@ pub async fn run(state: AppState, app: AppHandle) {
 #[cfg(not(windows))]
 fn spawn_unix_listener(name: String, state: AppState, app: AppHandle) -> Result<(), String> {
     // Stale socket file from a previous crash blocks bind — remove it.
-    // A second live instance is prevented upstream (single-instance app).
+    // config_lock::gate_for_process stops a second live instance on this dir
+    // before the server starts. A build older than the gate can still unlink.
     let _ = std::fs::remove_file(&name);
     let listener = tokio::net::UnixListener::bind(&name).map_err(|e| {
         crate::log_warn("RPC", &format!("rpc_server: bind {name} failed: {e}"));
@@ -644,6 +645,15 @@ async fn dispatch(
         // can fall back to its static policy fast when the desktop is
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
+        // A second launch on this config dir asks us to come forward, then
+        // exits (config_lock::gate_for_process).
+        "app.focus" => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || crate::tray::focus_main(&app))
+                .await
+                .map_err(|e| format!("app.focus: {e}"))??;
+            Ok(json!({ "ok": true }))
+        }
         "list-workspaces" => {
             let mut file = state.workspaces.lock().unwrap().clone();
             // AI-NOTE: second layer — persist() already blanks secret values,
@@ -2231,17 +2241,7 @@ async fn dispatch(
             // — but to keep changes small, we duplicate the workspace SSH
             // lookup here. NOTE: pane_list_claude_sessions(_impl)? helper
             // could be factored later.
-            let handle_opt = {
-                let sessions = state.core.sessions.lock().unwrap();
-                sessions
-                    .iter()
-                    .find_map(|(_sid, sess)| match sess {
-                        crate::Session::Ssh(s) if s.workspace_id == workspace_id => {
-                            Some(s.handle.clone())
-                        }
-                        _ => None,
-                    })
-            };
+            let handle_opt = crate::ssh_handle_for_machine(state, &workspace_id);
             let lim = limit.unwrap_or(30).min(200);
             let script = format!(
                 "find \"$HOME/.claude/projects\" -maxdepth 4 -name '*.jsonl' \
@@ -2254,28 +2254,14 @@ async fn dispatch(
                 lim
             );
             if let Some(handle) = handle_opt {
-                let mut ch = handle
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| format!("channel_open: {e}"))?;
-                ch.exec(true, script.as_bytes())
-                    .await
-                    .map_err(|e| format!("exec: {e}"))?;
-                let mut out_bytes = Vec::new();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-                    while let Some(msg) = ch.wait().await {
-                        match msg {
-                            russh::ChannelMsg::Data { ref data } => out_bytes.extend_from_slice(data),
-                            russh::ChannelMsg::Eof
-                            | russh::ChannelMsg::Close
-                            | russh::ChannelMsg::ExitStatus { .. } => break,
-                            _ => {}
-                        }
-                    }
-                })
-                .await;
-                let _ = ch.close().await;
-                let raw = String::from_utf8_lossy(&out_bytes).to_string();
+                // Exit and timeout ignored on purpose, `Unknown` included:
+                // `find` exits non-zero on any unreadable directory, and a
+                // partial listing is still a useful listing.
+                let opts = ymux_core::ssh_exec::ExecOpts {
+                    stderr: ymux_core::ssh_exec::StderrMode::Drop,
+                    ..ymux_core::ssh_exec::ExecOpts::timeout_secs(8)
+                };
+                let raw = ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout;
                 let mut out = serde_json::Map::new();
                 let mut arr: Vec<Value> = Vec::new();
                 for line in raw.lines() {
