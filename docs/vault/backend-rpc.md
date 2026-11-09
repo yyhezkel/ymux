@@ -192,8 +192,15 @@ first) and `session_context_get(session_id)`.
 
 **Injection (Phase 105.C).** RPC `context.inject` (its own arm, NOT a feed.push
 reply — SessionStart never touches the feed) resolves the pane with
-`resolve_hook_pane` and calls `injection_for_hook`: off when
-`settings.brief.inject_context` is false; otherwise it reads this session's
+`resolve_hook_pane` and calls `injection_for_hook`, which joins two independent
+parts: the context (`context_for_hook`, skipped when
+`settings.brief.inject_context` is false) and the brief protocol
+(`with_protocol`, skipped when `settings.brief.inject_protocol` is false; default
+on). `with_protocol` appends `BRIEF_PROTOCOL` (`include_str!` of
+`app/src/brief-protocol.txt`, the same file as the Queue's `BRIEF_SNIPPET`) after
+a blank line, outside `INJECT_MAX_BYTES`. With an empty context the block is the
+whole answer, so `clear` and an empty `startup` get it too. `context_for_hook`
+reads this session's
 record, the pane's workspace (falling back to the record's `ws_id`) and that
 workspace's `intent`, and the workspace's sessions for `startup`. The text comes
 from the pure `build_injection(source, this, intent, siblings)`: `compact`/`resume`

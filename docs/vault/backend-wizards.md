@@ -47,7 +47,9 @@ Tauri.
 (`entry_card_on_return` / `entry_card_on_idle`, both default-false opt-ins, plus
 `absence_minutes`=30 / `idle_minutes`=15) and Phase 105.C's `inject_context`
 (default **true**: answer SessionStart with context — `docs/CONTEXT.md`; the
-container default makes a missing key read as on), container-level `#[serde(default)]`,
+container default makes a missing key read as on) and `inject_protocol`
+(default **true**, same missing-key reading: append the `[ymux-brief]` instructions
+— `docs/BRIEF.md`), container-level `#[serde(default)]`,
 hung off `Settings.brief`. Mirrored in `app/src/settings.ts` (`BriefSettings`)
 and round-tripped by SettingsModal's General tab — the settings_save
 whole-document replace makes that mirror mandatory, per the `terminal.rtl`

@@ -265,9 +265,11 @@ output). Row click = `handleSetActive` + `focusPane`; a drawer closes itself on
 jump. Rides the shared PanelSurface lifecycle like Tickets. The row itself is
 `QueueRowView` from `QueueRow.tsx` (Phase 105, with `STATUS_EMOJI` and `relAge`),
 shared with the Briefing card and the Context Rail — see `frontend-shell.md`.
-`BRIEF_SNIPPET` (the empty state's copy-paste CLAUDE.md block) carries the sticky
-`goal:` / `done:` keys and the "≤ 80 chars, imperative, goal/done once, repeat only
-on change" rule since the Phase 105 follow-up; keep it in sync with `docs/BRIEF.md`.
+`BRIEF_SNIPPET` (the empty state's copy-paste CLAUDE.md block) is the raw text of
+`app/src/brief-protocol.txt`, the same file SessionStart injects (`context_store.rs`).
+It carries the sticky `goal:` / `done:` keys and the "≤ 80 chars, imperative,
+goal/done once, repeat only on change" rule since the Phase 105 follow-up; keep the
+file in sync with `docs/BRIEF.md`.
 
 **`ClaudeUsageIndicator.tsx` (182)** + **`claudeUsageFmt.ts` (120)** — the always-visible
 subscription-usage chip. With room it shows session · week · top model (session only when
