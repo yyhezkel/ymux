@@ -448,7 +448,8 @@ side is silently missing here until someone types it — update both in the same
 Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cwd from
 `session-owners.json`, a grouping key only) and `SessionSummary`, the row shape of
 `sessions_overview_summarize` (`status` is a closed union ending in `unknown`, which is
-what the backend emits for anything the model did not say cleanly).
+what the backend emits for anything the model did not say cleanly). `TmuxSessionInfo.pane_ids`
+is optional here: the Rust side omits an empty list, and the web backend never sends it.
 
 **`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it

@@ -452,7 +452,8 @@ greyscale, 8px, and red-green deficiency.
 outranks a brief for placement), `QUEUE_BUCKET` (who-needs-you sort order),
 `whatsHappening` (running rows show the user's last prompt, ended rows show
 `ask · rec` → delta → next), and `groupQueueRows` (group by workspace, the
-reference-table "CRM — 5" shape). Solid-free and unit-tested in
+reference-table "CRM — 5" shape), plus `overviewVerdict` for the active-sessions overview
+(`frontend-panes.md`; App passes it `allPaneAgentRows()`). Solid-free and unit-tested in
 `queueModel.test.ts`, same reasoning as `paneAgentState.ts`. App.tsx builds its
 input rows in `allPaneAgentRows()` — the generalization of `paneAgentLights()` to
 every workspace. Its clock is **`staleClockMs` (60 s)**, not `agentClockMs`: the light's

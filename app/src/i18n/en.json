@@ -1351,6 +1351,7 @@
   "sessions.status.waiting_input": "Waiting for you",
   "sessions.status.error": "Error",
   "sessions.status.unknown": "Unknown",
+  "sessions.status.fromScreen": "read from screen",
   "sessions.summarizing": "Summarizing with Claude on the machine…",
   "sessions.summaryFailed": "Summaries unavailable: {error}",
   "sessions.retry": "Retry",

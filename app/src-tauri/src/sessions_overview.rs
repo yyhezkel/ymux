@@ -23,6 +23,7 @@
 //! `subtype` / `is_error` flags. The parse-failure path is the tempting one;
 //! it logs the length of what it could not parse, never the text.
 
+use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
@@ -31,7 +32,7 @@ use tauri::State;
 use crate::{
     kill_pane_session_inner, kill_target, log_debug, log_info, log_warn,
     release_session_owner, session_owner_host_key, shell_quote, AppState, Connection,
-    KillSessionOutcome, KillTarget, Session,
+    KillSessionOutcome, KillTarget, Session, TmuxSessionInfo,
 };
 
 /// Upper bound on sessions per model call. The frontend chunks above this;
@@ -481,31 +482,95 @@ pub(crate) async fn sessions_overview_summarize(
     Ok(rows)
 }
 
-/// The pane, if any, currently mounted on `name` for THIS workspace's host.
+/// Every pane currently mounted on `name` for THIS workspace's host.
 /// `find_pane_by_tmux_session` matches by name alone, and two hosts can each
-/// have a `dev` — so the connection is checked too.
-fn pane_holding_session(state: &AppState, workspace_id: &str, conn: Option<&Connection>, name: &str) -> Option<String> {
+/// have a `dev` — so the connection is checked too. A poisoned lock reads as
+/// "no pane": callers then take their pane-less path.
+fn panes_holding_session(state: &AppState, workspace_id: &str, conn: Option<&Connection>, name: &str) -> Vec<String> {
     let host_is_local = !matches!(conn, Some(Connection::Ssh { .. }));
     // The dialog runs on a header; the pane holding the session is on a
     // screen of the same machine (see `same_machine_workspace_ids`).
     let machine_ids = crate::same_machine_workspace_ids(state, workspace_id);
-    let session_id = {
-        let sessions = state.core.sessions.lock().ok()?;
+    let session_ids: HashSet<String> = {
+        let Ok(sessions) = state.core.sessions.lock() else {
+            return Vec::new();
+        };
         sessions
             .iter()
-            .find(|(_, s)| match s {
+            .filter(|(_, s)| match s {
                 Session::Ssh(ss) => {
                     machine_ids.contains(&ss.workspace_id) && ss.tmux_session.as_deref() == Some(name)
                 }
                 Session::Local(ls) => host_is_local && ls.tmux_session.as_deref() == Some(name),
             })
-            .map(|(sid, _)| sid.clone())?
+            .map(|(sid, _)| sid.clone())
+            .collect()
     };
-    let pane_sessions = state.core.pane_sessions.lock().ok()?;
+    let Ok(pane_sessions) = state.core.pane_sessions.lock() else {
+        return Vec::new();
+    };
     pane_sessions
         .iter()
-        .find(|(_, sid)| sid.as_str() == session_id)
+        .filter(|(_, sid)| session_ids.contains(sid.as_str()))
         .map(|(pane_id, _)| pane_id.clone())
+        .collect()
+}
+
+/// Record whether the hook that just resolved to `resolved` can be trusted to
+/// come from that pane's host.
+///
+/// A hook carries no host identity. When its `pane_id` is stale,
+/// `resolve_hook_pane` falls back to `find_pane_by_tmux_session`, which matches
+/// the NAME on any host — so the agent state and brief of another machine's
+/// `dev` can land on this machine's `dev` pane. That needs a second connected
+/// machine; with one, the name can only mean that machine. The name fallback
+/// stays as it is (titles and lights rely on it); the overview just refuses
+/// to read such a pane, because a wrong row is worse than an LLM row.
+pub(crate) fn note_hook_attribution(state: &AppState, claimed: Option<&str>, resolved: Option<&str>) {
+    let Some(pane) = resolved else { return };
+    let unsure = claimed != Some(pane) && connected_machine_count(state) > 1;
+    let Ok(mut set) = state.hook_unsure_panes.lock() else {
+        return;
+    };
+    if unsure {
+        set.insert(pane.to_string());
+    } else {
+        set.remove(pane);
+    }
+}
+
+/// Distinct machines the desktop holds a session to; all local sessions are
+/// one machine. A hook can only arrive from one of these (a remote hook needs
+/// the reverse tunnel of a live session). A poisoned lock counts as "many",
+/// so attribution reads as unsure.
+fn connected_machine_count(state: &AppState) -> usize {
+    let Ok(sessions) = state.core.sessions.lock() else {
+        return usize::MAX;
+    };
+    sessions
+        .values()
+        .map(|s| match s {
+            Session::Ssh(ss) => Some((ss.host.clone(), ss.user.clone(), ss.port)),
+            Session::Local(_) => None,
+        })
+        .collect::<HashSet<_>>()
+        .len()
+}
+
+/// Stamp `pane_ids` on each listed session, leaving out any pane whose last
+/// hook might be another host's (`note_hook_attribution`). Such a row, like a
+/// row with no pane, gets its status from the LLM.
+pub(crate) fn stamp_pane_ids(state: &AppState, workspace_id: &str, sessions: &mut [TmuxSessionInfo]) {
+    let Ok(conn) = workspace_connection(state, workspace_id) else {
+        return;
+    };
+    let Some(unsure) = state.hook_unsure_panes.lock().ok().map(|s| s.clone()) else {
+        return;
+    };
+    for s in sessions.iter_mut() {
+        s.pane_ids = panes_holding_session(state, workspace_id, conn.as_ref(), &s.name);
+        s.pane_ids.retain(|p| !unsure.contains(p));
+    }
 }
 
 /// Kill `name` on the workspace's machine. A session one of our panes is
@@ -523,7 +588,7 @@ pub(crate) async fn sessions_kill_by_name(
         return Err("session name cannot be empty".into());
     }
     let conn = workspace_connection(&state, &workspace_id)?;
-    if let Some(pane_id) = pane_holding_session(&state, &workspace_id, conn.as_ref(), &name) {
+    if let Some(pane_id) = panes_holding_session(&state, &workspace_id, conn.as_ref(), &name).into_iter().next() {
         log_debug(
             "SESSIONS",
             &format!("kill_by_name: ws={workspace_id} routed through pane {pane_id}"),
@@ -564,6 +629,21 @@ mod tests {
 
     fn names(n: &[&str]) -> Vec<String> {
         n.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn hook_attribution_flag_follows_the_last_hook() {
+        let state = AppState::default();
+        state.hook_unsure_panes.lock().unwrap().insert("p1".to_string());
+        // A hook that names the pane it resolved to is direct: the flag clears.
+        note_hook_attribution(&state, Some("p1"), Some("p1"));
+        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
+        // A name fallback with fewer than two connected machines is not unsure.
+        note_hook_attribution(&state, Some("dead"), Some("p1"));
+        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
+        // No resolved pane: nothing to record.
+        note_hook_attribution(&state, Some("dead"), None);
+        assert!(state.hook_unsure_panes.lock().unwrap().is_empty());
     }
 
     #[test]

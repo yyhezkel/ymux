@@ -107,6 +107,60 @@ export function inQueue(r: QueueRow): boolean {
   return r.light !== null || r.brief !== null;
 }
 
+/** One active-sessions row's verdict, and only ever one. `queue` = a pane on
+ *  this session has a current Queue state, shown for free. `screen` = the row
+ *  needs the on-demand LLM read of the screen, which stays local to the
+ *  overview and never feeds the Queue: an unexpiring guess must not light the
+ *  sidebar or the badge. `summaryTickable`: the status is free, but no real
+ *  summary text exists (a degraded brief, or nothing to show). */
+export type OverviewVerdict =
+  | { source: "queue"; status: QueueStatus; happening: Happening | null; summaryTickable: boolean }
+  | { source: "screen" };
+
+/** Event-based freshness, no age cap: a brief is current until a newer prompt
+ *  starts a turn. During a live turn the hook state is the verdict, so the
+ *  brief's age is irrelevant. */
+function countsInOverview(r: QueueRow): boolean {
+  if (!r.connected || !inQueue(r)) return false;
+  if (r.state === "running" || r.state === "needs-input" || r.state === "failed" || r.waitingOnPermission) {
+    return true;
+  }
+  const prompt = r.brief?.prompt_ms ?? null;
+  if (prompt === null) return true;
+  const updated = r.brief?.brief?.updated_ms;
+  return updated !== undefined && prompt <= updated;
+}
+
+/** `paneIds` is the session's stamped panes; absent on the web backend, which
+ *  sends the row to the LLM. Several panes can mount one session: the most
+ *  urgent wins, then the most recent situation. */
+export function overviewVerdict(
+  paneIds: readonly string[] | undefined,
+  rows: readonly QueueRow[],
+): OverviewVerdict {
+  if (!paneIds || paneIds.length === 0) return { source: "screen" };
+  const ids = new Set(paneIds);
+  let top: QueueRow | null = null;
+  for (const r of rows) {
+    if (!ids.has(r.paneId) || !countsInOverview(r)) continue;
+    if (top === null || moreUrgent(r, top)) top = r;
+  }
+  if (top === null) return { source: "screen" };
+  const happening = whatsHappening(top);
+  return {
+    source: "queue",
+    status: queueStatus(top),
+    happening,
+    summaryTickable: happening === null || top.brief?.brief?.degraded === true,
+  };
+}
+
+function moreUrgent(a: QueueRow, b: QueueRow): boolean {
+  const ba = QUEUE_BUCKET[queueStatus(a)];
+  const bb = QUEUE_BUCKET[queueStatus(b)];
+  return ba !== bb ? ba < bb : (rowSinceMs(a) ?? 0) > (rowSinceMs(b) ?? 0);
+}
+
 export interface QueueGroup {
   wsId: string;
   wsName: string;

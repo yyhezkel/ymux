@@ -1351,6 +1351,7 @@
   "sessions.status.waiting_input": "بانتظارك",
   "sessions.status.error": "خطأ",
   "sessions.status.unknown": "غير معروف",
+  "sessions.status.fromScreen": "مقروء من الشاشة",
   "sessions.summarizing": "جارٍ التلخيص عبر Claude على الجهاز…",
   "sessions.summaryFailed": "الملخصات غير متاحة: {error}",
   "sessions.retry": "إعادة المحاولة",

@@ -1351,6 +1351,7 @@
   "sessions.status.waiting_input": "Ждёт вас",
   "sessions.status.error": "Ошибка",
   "sessions.status.unknown": "Неизвестно",
+  "sessions.status.fromScreen": "прочитано с экрана",
   "sessions.summarizing": "Claude на машине готовит сводки…",
   "sessions.summaryFailed": "Сводки недоступны: {error}",
   "sessions.retry": "Повторить",

@@ -144,7 +144,8 @@ to `done`. No marker → a **degraded** brief (`degraded: true`, task from
 
 State lives in `AppState.briefs: HashMap<pane_id, PaneBriefEntry>` — entry =
 `{ brief, last_prompt, prompt_ms, session_ended, seq }`, keyed by the **resolved**
-pane (same `resolve_hook_pane` rule as `agent_runs`), in-memory only (same
+pane (same `resolve_hook_pane` rule as `agent_runs`; the hook handler also calls
+`sessions_overview::note_hook_attribution`, see `backend-core.md`), in-memory only (same
 rationale), hydrated by the `pane_briefs` command and pushed as the `pane:brief`
 event (whole entry, `seq`-guarded). Three `feed.push` arms feed it:
 `user-prompt-submit` stores the clipped last user prompt (the queue's "got from
