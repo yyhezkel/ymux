@@ -81,6 +81,10 @@ user input.
 
 ## `addons.rs` (1,030) — the add-on manager
 
+`exec` / `exec_stdin` run through `ymux_core::ssh_exec`: stderr merged, partial output
+kept on a timeout, exit ignored on purpose (callers read the output). `remote_home` is
+the exception: stderr dropped and a clean exit required, else `""`.
+
 Detect / install / uninstall / update ymux add-ons over a workspace's existing SSH
 session. The manifest schema and the built-in registry live in the **`ymux-addons`
 crate**; this module is the desktop side that runs the actions and exposes the `addon_*`

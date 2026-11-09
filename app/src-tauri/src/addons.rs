@@ -16,7 +16,7 @@
 use std::sync::Arc;
 
 use russh::client::Handle as SshHandle;
-use russh::ChannelMsg;
+use ymux_core::ssh_exec::{ExecOpts, ExitState, StderrMode};
 use russh_sftp::client::SftpSession;
 use tauri::State;
 use tokio::io::AsyncWriteExt;
@@ -61,37 +61,26 @@ pub(crate) fn is_local_workspace(state: &AppState, workspace_id: &str) -> bool {
     false
 }
 
-/// Run a command on the remote and capture stdout+stderr (best-effort, timed).
+/// Run a command on the remote and capture stdout+stderr, best-effort and
+/// timed. Keeps partial output on a timeout, and ignores the exit on purpose:
+/// callers read the output (`log_sync` tolerates a short read, detect scripts
+/// print their own verdict), so a signal or an `Unknown` exit is not an error
+/// here.
 pub(crate) async fn exec(handle: &SshHandle<SshClient>, cmd: &str, timeout_secs: u64) -> Result<String, String> {
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut out = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                ChannelMsg::ExtendedData { ref data, .. } => out.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    Ok(String::from_utf8_lossy(&out).to_string())
+    let outcome =
+        ymux_core::ssh_exec::exec(handle, cmd, ExecOpts::timeout_secs(timeout_secs)).await?;
+    Ok(outcome.stdout)
 }
 
+/// `$HOME` on the remote, or `""` when it cannot be read. Unlike `exec` it
+/// drops stderr and wants a clean exit: a partial or rc-polluted value would
+/// become a wrong path in every later command.
 pub(crate) async fn remote_home(handle: &SshHandle<SshClient>) -> String {
-    exec(handle, "printf %s \"$HOME\"", 8)
-        .await
-        .unwrap_or_default()
-        .trim()
-        .to_string()
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) };
+    match ymux_core::ssh_exec::exec(handle, "printf %s \"$HOME\"", opts).await {
+        Ok(o) if o.exit == ExitState::Code(0) => o.stdout.trim().to_string(),
+        _ => String::new(),
+    }
 }
 
 fn expand(script: &str, home: &str) -> String {
@@ -311,29 +300,9 @@ pub(crate) async fn exec_stdin(
     stdin: &[u8],
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    ch.data(stdin).await.map_err(|e| format!("stdin: {e}"))?;
-    ch.eof().await.ok();
-    let mut out = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                ChannelMsg::ExtendedData { ref data, .. } => out.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    Ok(String::from_utf8_lossy(&out).to_string())
+    let opts = ExecOpts { stdin: Some(stdin), ..ExecOpts::timeout_secs(timeout_secs) };
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, opts).await?;
+    Ok(outcome.stdout)
 }
 
 /// §3.1: resolve how to run a privileged command. Returns the prefix to put
