@@ -107,7 +107,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
   itself in `choose`; the inline consumer (`PaneView.chooseDir`) owns them.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
-## `SettingsModal.tsx` (1,869)
+## `SettingsModal.tsx` (1,971)
 
 The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hooks,
 notifications, logs, Claude, updates, shortcuts. Reads and writes through

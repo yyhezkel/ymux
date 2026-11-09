@@ -112,7 +112,7 @@
     "app/src/ProvisionNewServerFlow.tsx": "92565c4ed73376385e6e1f0332dbabd55388ccceac23f4eb29fea38c886949c8",
     "app/src/QuickLocalCreateFlow.tsx": "4dee72621931eef7608938df0299acd3e5189d82b681a59b08ed34bb57be0b68",
     "app/src/QuickSshCreateFlow.tsx": "8e202a7cfdfbefd48bda445ca8e46bf42ad3eb5587cc9cd47f46c6e69fa7c929",
-    "app/src/SettingsModal.tsx": "62e359702e69b7e13307a6815449d7de2c0e520eb914972473417b784d00017c",
+    "app/src/SettingsModal.tsx": "14b1ff8cb52836a464145b646b6ce5ceca6646144f348a9b991b91c73dabf694",
     "app/src/SetupWizard.tsx": "c46efb7858255713694801a5f445b5a7f7e6d2cfaf13115ad629b3cc99b34ee6",
     "app/src/SshConnectionFields.tsx": "d941ab2158c1b3ba7bed88f89723898dd55067180242f7c6f7da079e9765a641",
     "app/src/SshKeyOfferModal.tsx": "f8826daa4105d5f7c86ec282340465bd5ef43a8dfdbd81bdd27d9a184e690a21",
@@ -149,7 +149,7 @@
     "app/src/fontProbe.ts": "6cc45ec0c426ac41f33e925a8e10b7cc39a9180980f6c5e5973acfb5d0c23e49",
     "app/src/i18n/index.ts": "1013459969e03370a61e5f11184b382a57efc5de09f627948f13e60f268adfd4",
     "app/src/insightsCommands.ts": "77dc863d426c28687b4c9ec24059e7ca2ad6c13d6888ed9d1d81e780b41f043c",
-    "app/src/insightsFmt.ts": "f95ec7e37aa0ab7fec5fd7863e00804b0feb76abd76ae4b25f9318243c10c213",
+    "app/src/insightsFmt.ts": "f05fa3ffe2d2ca39b84115cd6f11b56e54e274cfbcdd175032f7583a3b1c9a21",
     "app/src/insightsReport.ts": "0dd5f368789ea8a0c0c51a02aea8231902c3da1baa6da1ea76ae5c9ce0ede84f",
     "app/src/layoutOps.ts": "26e4f09dddf91167928b2a1bd71a6fdb098f994ca0288ec80b76892d02a0585d",
     "app/src/logger.ts": "c85c9dfadca8818f9a524796a69084b337b7e0132f27f516a4fa4a1297ab7ea5",
@@ -178,7 +178,7 @@
     "app/src/ClaudeUsageIndicator.tsx": "a0a471be371431b35239c20dd70e52e3ea49a5cb4b382865faaf443c05201f70",
     "app/src/DiffPane.tsx": "858ccaa0a5e21b0a9bcefc1e390810121e1fa42683d25271b160f576fab98c51",
     "app/src/FeedPanel.tsx": "afc5c5b1df122ef468b9b4476eee93ee49f88c22bc64a088f6bf738cadb0360f",
-    "app/src/FileEditor.tsx": "9ae4f420b97dcf8f0b9ece3e1e26fd533d776c41e9aad1d2dd8018c31d968a32",
+    "app/src/FileEditor.tsx": "4b93e4ddbd58f026290ed1ac0687f91dfd16035c88140abbc1baf902534cf05a",
     "app/src/FileManagerPane.tsx": "0cc6af3d02b046971aa532d0b2e188083a05dc0f1782460261a482c4fd7f2ff0",
     "app/src/FileManagerWindow.tsx": "dc988da67aa9e75d38e7d289155f007124ca229fb5ebee3e461e93388dd88e7a",
     "app/src/HelpPane.tsx": "2bb243ef25f974e043ed341de0b9315e1c40309683ae5f641ea9c8bff5c5dd23",
@@ -204,7 +204,7 @@
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
     "app/src/popoutWheelArm.ts": "8b7559b9500f4a0f27c60fd95ba5fe4c9d7fb94480f5bc97ceeb67de4ba36544",
-    "app/src/transferStore.ts": "bf7c27c887fa67f0e02aad61c762df13e395f8fa938f94b5bd6bf129e0292eb4"
+    "app/src/transferStore.ts": "6fbc169d324945e94a0b327a1fe9a7b54373bc8fa220a2fb89f95422caa8e58f"
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "cd906a7ddce5e29388fe52001a27d63fe54d4e0b2329b2a1c84f4ca5b4713b8e",
