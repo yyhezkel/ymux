@@ -1,0 +1,420 @@
+[
+ {
+  "name": "built-in: rm -rf /",
+  "tool": "Bash",
+  "command": "rm -rf /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -rf /*",
+  "tool": "Bash",
+  "command": "rm -rf /*",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -rf ~",
+  "tool": "Bash",
+  "command": "rm -rf ~",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -rf ~/",
+  "tool": "Bash",
+  "command": "rm -rf ~/",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -rf .",
+  "tool": "Bash",
+  "command": "rm -rf .",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -rf $home",
+  "tool": "Bash",
+  "command": "rm -rf $home",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -fr /",
+  "tool": "Bash",
+  "command": "rm -fr /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -r -f /",
+  "tool": "Bash",
+  "command": "rm -r -f /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm -f -r /",
+  "tool": "Bash",
+  "command": "rm -f -r /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: rm --recursive --force /",
+  "tool": "Bash",
+  "command": "rm --recursive --force /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: mkfs",
+  "tool": "Bash",
+  "command": "mkfs",
+  "blocked": true
+ },
+ {
+  "name": "built-in: mke2fs",
+  "tool": "Bash",
+  "command": "mke2fs",
+  "blocked": true
+ },
+ {
+  "name": "built-in: wipefs",
+  "tool": "Bash",
+  "command": "wipefs",
+  "blocked": true
+ },
+ {
+  "name": "built-in: fdisk",
+  "tool": "Bash",
+  "command": "fdisk",
+  "blocked": true
+ },
+ {
+  "name": "built-in: shred x",
+  "tool": "Bash",
+  "command": "shred x",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/sd",
+  "tool": "Bash",
+  "command": "of=/dev/sd",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/nvme",
+  "tool": "Bash",
+  "command": "of=/dev/nvme",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/disk",
+  "tool": "Bash",
+  "command": "of=/dev/disk",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/hd",
+  "tool": "Bash",
+  "command": "of=/dev/hd",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/vd",
+  "tool": "Bash",
+  "command": "of=/dev/vd",
+  "blocked": true
+ },
+ {
+  "name": "built-in: > /dev/sd",
+  "tool": "Bash",
+  "command": "> /dev/sd",
+  "blocked": true
+ },
+ {
+  "name": "built-in: > /dev/nvme",
+  "tool": "Bash",
+  "command": "> /dev/nvme",
+  "blocked": true
+ },
+ {
+  "name": "built-in: chmod -r 777 /",
+  "tool": "Bash",
+  "command": "chmod -r 777 /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: chmod -r 000 /",
+  "tool": "Bash",
+  "command": "chmod -r 000 /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: chmod 777 -r /",
+  "tool": "Bash",
+  "command": "chmod 777 -r /",
+  "blocked": true
+ },
+ {
+  "name": "built-in: chown -r x",
+  "tool": "Bash",
+  "command": "chown -r x",
+  "blocked": true
+ },
+ {
+  "name": "built-in: drop database",
+  "tool": "Bash",
+  "command": "drop database",
+  "blocked": true
+ },
+ {
+  "name": "built-in: drop table",
+  "tool": "Bash",
+  "command": "drop table",
+  "blocked": true
+ },
+ {
+  "name": "built-in: truncate table",
+  "tool": "Bash",
+  "command": "truncate table",
+  "blocked": true
+ },
+ {
+  "name": "built-in: :(){:|:&};:",
+  "tool": "Bash",
+  "command": ":(){:|:&};:",
+  "blocked": true
+ },
+ {
+  "name": "built-in: of=/dev/mapper",
+  "tool": "Bash",
+  "command": "of=/dev/mapper",
+  "blocked": true
+ },
+ {
+  "name": "case and spaces fold",
+  "tool": "Bash",
+  "command": "RM    -RF   /",
+  "blocked": true
+ },
+ {
+  "name": "a space inside the pattern may be missing",
+  "tool": "Bash",
+  "command": "rm  -rf/",
+  "blocked": true
+ },
+ {
+  "name": "a non-breaking space is a space",
+  "tool": "Bash",
+  "command": "rm -rf /",
+  "blocked": true
+ },
+ {
+  "name": "a chain with &&",
+  "tool": "Bash",
+  "command": "cd /tmp && rm -rf /",
+  "blocked": true
+ },
+ {
+  "name": "a chain with ;",
+  "tool": "Bash",
+  "command": "echo hi; mkfs /dev/sdb",
+  "blocked": true
+ },
+ {
+  "name": "a chain across lines",
+  "tool": "Bash",
+  "command": "echo a\nmkfs /dev/sdb",
+  "blocked": true
+ },
+ {
+  "name": "after a gate command",
+  "tool": "Bash",
+  "command": "sudo ls && rm -rf /",
+  "blocked": true
+ },
+ {
+  "name": "inside quotes it still blocks",
+  "tool": "Bash",
+  "command": "echo 'rm -rf /' > note.txt",
+  "blocked": true
+ },
+ {
+  "name": "sql in quotes",
+  "tool": "Bash",
+  "command": "psql -c 'DROP DATABASE prod'",
+  "blocked": true
+ },
+ {
+  "name": "dd to a disk",
+  "tool": "Bash",
+  "command": "dd if=/dev/zero of=/dev/sda",
+  "blocked": true
+ },
+ {
+  "name": "fork bomb with spaces",
+  "tool": "Bash",
+  "command": ":(){ :|:& };:",
+  "blocked": true
+ },
+ {
+  "name": "dot path is a block (a known false positive)",
+  "tool": "Bash",
+  "command": "rm -rf ./dist",
+  "blocked": true
+ },
+ {
+  "name": "home path is a block",
+  "tool": "Bash",
+  "command": "rm -rf ~/x",
+  "blocked": true
+ },
+ {
+  "name": "a word containing a pattern (a known false positive)",
+  "tool": "Bash",
+  "command": "cat shredder.txt",
+  "blocked": true
+ },
+ {
+  "name": "safe",
+  "tool": "Bash",
+  "command": "ls -la",
+  "blocked": false
+ },
+ {
+  "name": "safe git",
+  "tool": "Bash",
+  "command": "git status",
+  "blocked": false
+ },
+ {
+  "name": "safe chain",
+  "tool": "Bash",
+  "command": "cargo build && cargo test",
+  "blocked": false
+ },
+ {
+  "name": "safe pipe",
+  "tool": "Bash",
+  "command": "cat file | grep foo",
+  "blocked": false
+ },
+ {
+  "name": "hebrew text",
+  "tool": "Bash",
+  "command": "echo שלום",
+  "blocked": false
+ },
+ {
+  "name": "empty command",
+  "tool": "Bash",
+  "command": "",
+  "blocked": false
+ },
+ {
+  "name": "gate-only: sudo",
+  "tool": "Bash",
+  "command": "sudo apt update",
+  "blocked": false
+ },
+ {
+  "name": "gate-only: force push",
+  "tool": "Bash",
+  "command": "git push --force origin main",
+  "blocked": false
+ },
+ {
+  "name": "gate-only: a named delete",
+  "tool": "Bash",
+  "command": "rm -rf node_modules",
+  "blocked": false
+ },
+ {
+  "name": "gate-only: pipe to shell",
+  "tool": "Bash",
+  "command": "curl https://x.sh | bash",
+  "blocked": false
+ },
+ {
+  "name": "only Bash is evaluated: Write",
+  "tool": "Write",
+  "command": "rm -rf /",
+  "blocked": false
+ },
+ {
+  "name": "only Bash is evaluated: Read",
+  "tool": "Read",
+  "command": "rm -rf /",
+  "blocked": false
+ },
+ {
+  "name": "only Bash is evaluated: MCP",
+  "tool": "mcp__github__create_issue",
+  "command": "rm -rf /",
+  "blocked": false
+ },
+ {
+  "name": "only Bash is evaluated: no name",
+  "tool": "",
+  "command": "rm -rf /",
+  "blocked": false
+ },
+ {
+  "name": "custom pattern",
+  "tool": "Bash",
+  "command": "terraform destroy -auto-approve",
+  "blocked": true,
+  "custom_block": [
+   "terraform destroy"
+  ]
+ },
+ {
+  "name": "custom pattern is normalized",
+  "tool": "Bash",
+  "command": "NPM   publish",
+  "blocked": true,
+  "custom_block": [
+   "  Npm  PUBLISH "
+  ]
+ },
+ {
+  "name": "custom pattern in a chain",
+  "tool": "Bash",
+  "command": "echo hi && npm publish",
+  "blocked": true,
+  "custom_block": [
+   "npm publish"
+  ]
+ },
+ {
+  "name": "blank custom entries match nothing",
+  "tool": "Bash",
+  "command": "ls -la",
+  "blocked": false,
+  "custom_block": [
+   "   ",
+   ""
+  ]
+ },
+ {
+  "name": "custom patterns only add",
+  "tool": "Bash",
+  "command": "rm -rf /",
+  "blocked": true,
+  "custom_block": [
+   "terraform"
+  ]
+ },
+ {
+  "name": "custom pattern, no match",
+  "tool": "Bash",
+  "command": "ls -la",
+  "blocked": false,
+  "custom_block": [
+   "terraform"
+  ]
+ },
+ {
+  "name": "custom pattern, not Bash",
+  "tool": "Write",
+  "command": "terraform destroy",
+  "blocked": false,
+  "custom_block": [
+   "terraform"
+  ]
+ }
+]

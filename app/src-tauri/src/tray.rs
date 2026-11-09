@@ -78,6 +78,19 @@ fn show_main(app: &AppHandle) {
     }
 }
 
+/// `app.focus` RPC: a second launch asks this instance to come forward.
+/// The `is_visible` getter waits for the event loop, so a hung UI cannot
+/// report success. Blocking: call it off the async runtime.
+pub(crate) fn focus_main(app: &AppHandle) -> Result<(), String> {
+    let w = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no main window".to_string())?;
+    w.show().map_err(|e| e.to_string())?;
+    let _ = w.unminimize();
+    w.set_focus().map_err(|e| e.to_string())?;
+    w.is_visible().map(|_| ()).map_err(|e| e.to_string())
+}
+
 /// Set the taskbar badge to `count` (Windows overlay). `0` clears it. Called
 /// by the frontend whenever the unread notification count changes.
 #[tauri::command]

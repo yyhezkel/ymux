@@ -362,7 +362,7 @@ export function describeConnection(c: Connection): string {
 //
 // The connection discriminator lives on the ts-rs-generated `Connection`
 // binding (`{ type: "local" | "ssh" }`). Before this refactor, ~10 sites
-// across App.tsx, Sidebar.tsx, FileManagerWindow.tsx and PaneView.tsx
+// across App.tsx, Sidebar.tsx and PaneView.tsx
 // repeated `c?.type === "ssh"` inline, with subtle semantic drift
 // (workspace-only vs. layout-walk vs. pane-with-fallback). These
 // predicates collapse the pattern to three sharp questions:

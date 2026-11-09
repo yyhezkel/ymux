@@ -60,8 +60,9 @@ session ✅ closed.
 - **Queue panel** (Ctrl+Shift+Q, palette "Queue: Open") — every agent pane,
   grouped by workspace with counts, sorted by who needs you: blocked/stuck →
   waiting-for-you → done/closed → running. Live hook state always outranks a
-  brief for placement. Its empty state carries a copy-paste CLAUDE.md snippet —
-  that is the adoption path (a bundled skill is BACKLOG).
+  brief for placement. Its empty state carries a copy-paste CLAUDE.md snippet.
+  That snippet is the fallback. The adoption path is the SessionStart injection
+  below.
 - **Briefing card** (Ctrl+Alt+Q, palette "Briefing: Show") — on entering a
   workspace: the 🎯 intent one-liner (stored on the workspace, schema v3) plus
   that workspace's brief rows. The automatic triggers — return-after-absence
@@ -73,6 +74,21 @@ session ✅ closed.
 - **Context Rail** (Ctrl+Shift+K, Phase 105) — every brief also lands, one
   line per turn, in its Claude session's persisted log, next to the session's
   first prompt. See `docs/CONTEXT.md`.
+
+## How an agent learns the format
+
+`context.inject` appends the fixed instructions to its answer on every
+SessionStart source (`startup`, `resume`, `clear`, `compact`), also when there
+is no context to send. The block is outside the context's 1536-byte cap. The
+text is `app/src/brief-protocol.txt`, which is also the Queue's snippet, so the
+two cannot drift.
+
+**Off switch:** Settings → General → Briefing → *Teach sessions the brief
+format* (`settings.brief.inject_protocol`, on by default). It is separate from
+`inject_context`.
+
+**Limits:** the Go daemon does not answer `context.inject`, so a session that
+dials the daemon does not get the block. The hook fails open at about 300 ms.
 
 ## Privacy
 

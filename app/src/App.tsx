@@ -821,19 +821,14 @@ function App() {
     if (!b) return;
     setHooksUpdating(true);
     try {
-      // Pipe the setup-hooks command through the active SSH pane via
-      // the existing tunnel by reusing the connect-with-cmd path. We
-      // can't shell out from Rust without an SSH handle; the user's
-      // own pane runs the CLI under their PATH (which AddYmuxToPath
-      // sets up). The command writes settings.json, then a fresh
-      // restart of Claude picks up the new hooks.
+      // Runs over an exec channel on the workspace's live SSH session. The
+      // full path: a non-login exec does not load the PATH entry bootstrap
+      // adds to the rc file. The command writes settings.json, then a fresh
+      // restart of Claude picks up the new hooks. A failure rejects and
+      // reaches the catch below, so the toast cannot claim success.
       await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
-        cmd: "ymux setup-hooks --agent claude --force --source github",
-      }).catch(async () => {
-        // Older builds without ssh_exec_in_workspace — fall back to a
-        // pane.send: ask the user to run the command themselves.
-        log.warn("ssh_exec_in_workspace not available; user must run manually");
+        cmd: '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
       });
       flashSummaryToast("ok", t("hooks_update.toast_done", { version: b.latest }));
       setHooksBanner(null);

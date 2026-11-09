@@ -47,7 +47,9 @@ Tauri.
 (`entry_card_on_return` / `entry_card_on_idle`, both default-false opt-ins, plus
 `absence_minutes`=30 / `idle_minutes`=15) and Phase 105.C's `inject_context`
 (default **true**: answer SessionStart with context — `docs/CONTEXT.md`; the
-container default makes a missing key read as on), container-level `#[serde(default)]`,
+container default makes a missing key read as on) and `inject_protocol`
+(default **true**, same missing-key reading: append the `[ymux-brief]` instructions
+— `docs/BRIEF.md`), container-level `#[serde(default)]`,
 hung off `Settings.brief`. Mirrored in `app/src/settings.ts` (`BriefSettings`)
 and round-tripped by SettingsModal's General tab — the settings_save
 whole-document replace makes that mirror mandatory, per the `terminal.rtl`
@@ -146,12 +148,19 @@ seconds:
 3. **Check/fix Windows permissions** via `icacls` — sshd-style "too open" private keys,
    with one-click remediation.
 4. **Test connect** — opens a real russh session and runs the same auth ladder the app
-   uses, so a green test means the workspace will connect.
+   uses, so a green test means the workspace will connect. Its `TestClient` handler
+   accepts every host key and does not touch `known_hosts.json`: host-key enforcement is
+   the real connect's job, not this probe's.
 
 ## `updater.rs` — check, install (Windows NSIS / macOS dmg), version manager
 
 **Check path** fetches a remote `manifest.json`, compares versions, emits
 `update:available`. It never downloads.
+
+`ssh_exec_in_workspace` (the hooks banner's Update button; session via
+`ssh_handle_for_machine`) has 120 s because it hits
+GitHub from the server. It and `ssh_exec_simple` (6 s, hooks check and session labels)
+return `Err` on anything but a clean exit, so the toast and the logs tell the truth.
 
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.

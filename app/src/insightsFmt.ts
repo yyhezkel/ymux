@@ -4,7 +4,7 @@
 
 /** 1024-based size, e.g. `1.4 GB`. Sub-KB values stay integral. */
 export function fmtBytes(n: number): string {
-  if (!n) return "0";
+  if (!n) return "0 B";
   const neg = n < 0;
   const u = ["B", "KB", "MB", "GB", "TB"];
   let i = 0;

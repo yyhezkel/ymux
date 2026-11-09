@@ -22,4 +22,10 @@ entry_card_on_idle: boolean, absence_minutes: number, idle_minutes: number,
  * ON by default — unlike the card triggers above it is invisible
  * until an agent compacts or resumes.
  */
-inject_context: boolean, };
+inject_context: boolean,
+/**
+ * Append the fixed `[ymux-brief]` instructions to every SessionStart
+ * answer. ON by default. A separate switch from `inject_context`
+ * because it changes what the agent writes in its answers.
+ */
+inject_protocol: boolean, };
