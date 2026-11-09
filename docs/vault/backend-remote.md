@@ -63,6 +63,8 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
 
 - Progress streams to the frontend as `provisioning:progress` events, which is what
   makes the wizard's live log feel native.
+- **Auth is key then password**, and each step reads `AuthResult::success()`: a partial
+  success counts as failure.
 - **One russh `client::Handle` per run**, reused across every step's exec channel
   (`ymux_core::ssh_exec`). Package steps have no timeout; probes and the short key and
   user commands get 120 s. A signal or a missing exit status fails the step, never

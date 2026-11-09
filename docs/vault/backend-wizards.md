@@ -145,7 +145,9 @@ seconds:
 3. **Check/fix Windows permissions** via `icacls` — sshd-style "too open" private keys,
    with one-click remediation.
 4. **Test connect** — opens a real russh session and runs the same auth ladder the app
-   uses, so a green test means the workspace will connect.
+   uses, so a green test means the workspace will connect. Its `TestClient` handler
+   accepts every host key and does not touch `known_hosts.json`: host-key enforcement is
+   the real connect's job, not this probe's.
 
 ## `updater.rs` — check, install (Windows NSIS / macOS dmg), version manager
 

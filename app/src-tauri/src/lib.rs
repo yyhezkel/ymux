@@ -4221,7 +4221,8 @@ async fn ssh_key_generate_and_install(
     let ok = handle
         .authenticate_password(&ssh_user, &password)
         .await
-        .map_err(|e| format!("authenticate: {e}"))?;
+        .map_err(|e| format!("authenticate: {e}"))?
+        .success();
     if !ok {
         return Err("authentication failed (password rejected)".into());
     }
@@ -4378,7 +4379,8 @@ async fn provision_existing_install_key(
     let ok = handle
         .authenticate_password(&ssh_user, &password)
         .await
-        .map_err(|e| format!("authenticate: {e}"))?;
+        .map_err(|e| format!("authenticate: {e}"))?
+        .success();
     if !ok {
         return Err("authentication failed (password rejected)".into());
     }
@@ -4925,9 +4927,34 @@ async fn spawn_ssh(
         let mut last_data_at = std::time::Instant::now();
         // Phase 38: stable ids for the disconnect log line.
         let ch_id = channel.id();
+        // Writes get their own task because russh's per-channel receiver is
+        // bounded (Config::channel_buffer_size). A write parked on the
+        // server's window must not stop this loop from reading: with the
+        // receiver full, the session task blocks delivering data and never
+        // reads the WINDOW_ADJUST the write is waiting for, which hangs every
+        // channel on the connection.
+        let (mut reader, writer) = channel.split();
+        let mut writer_task = tokio::spawn(async move {
+            loop {
+                match rx.recv().await {
+                    Some(SshCmd::Data(d)) => {
+                        if writer.data(&d[..]).await.is_err() {
+                            break;
+                        }
+                    }
+                    Some(SshCmd::Resize(c, r)) => {
+                        let _ = writer.window_change(c, r, 0, 0).await;
+                    }
+                    Some(SshCmd::Kill) | None => {
+                        let _ = writer.close().await;
+                        break;
+                    }
+                }
+            }
+        });
         loop {
             tokio::select! {
-                msg = channel.wait() => {
+                msg = reader.wait() => {
                     match msg {
                         Some(ChannelMsg::Data { data }) => {
                             last_data_at = std::time::Instant::now();
@@ -4999,22 +5026,10 @@ async fn spawn_ssh(
                         _ => {}
                     }
                 }
-                cmd = rx.recv() => {
-                    match cmd {
-                        Some(SshCmd::Data(d)) => {
-                            if channel.data(&d[..]).await.is_err() { break; }
-                        }
-                        Some(SshCmd::Resize(c, r)) => {
-                            let _ = channel.window_change(c, r, 0, 0).await;
-                        }
-                        Some(SshCmd::Kill) | None => {
-                            let _ = channel.close().await;
-                            break;
-                        }
-                    }
-                }
+                _ = &mut writer_task => break,
             }
         }
+        writer_task.abort();
         let _ = handle_for_task
             .disconnect(russh::Disconnect::ByApplication, "", "en")
             .await;

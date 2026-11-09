@@ -50,6 +50,13 @@ The only crate `app` cannot function without. Four files:
   other's partial file), `HostCheckOutcome`.
 - `SshClient` — the russh `client::Handler` type used in every `Handle<SshClient>`
   signature, plus the `BridgeSpawner` callback the forwarded-tcpip handoff uses.
+  `check_server_key` receives a `PublicKeyOrCertificate`: russh verifies the KEX
+  signature first and calls this only on the initial key exchange, never on a rekey. A
+  certificate is refused, because ymux advertises no certificate host-key algorithm and
+  `known_hosts.json` holds plain keys only. An RSA key under 2048 bits is refused here,
+  because ssh-key 0.7 no longer refuses it at decode. A forwarded-tcpip channel must call
+  `reply.accept()` before the bridge starts: russh registers the channel only when that
+  reply is processed. With no token or spawner the channel is rejected on the wire.
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,
   and the map aliases `SessionMap`, `PaneSessionMap`, `ForwardMap`.
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
@@ -159,7 +166,9 @@ out of this crate.
 
 ~270 LOC of actual surface: `AuthMethod` (which method succeeded),
 `key_load_needs_passphrase` (an error-message classifier), and `pkwh`/`pkwh_pub` (an
-RSA-aware `PrivateKey` wrapper). Functions that take a `Handle<SshClient>` plus
+RSA-aware `PrivateKey` wrapper), and `auth_with_agent_identity` (one agent identity: RSA
+signs with SHA-512, a certificate identity is skipped; generic over the handler so the
+wizard's `TestClient` shares it). Functions that take a `Handle<SshClient>` plus
 credentials and return a result — nothing that needs `AppState`.
 
 `try_authenticate` step 3 (default keys `~/.ssh/id_{ed25519,ecdsa,rsa}`) takes its paths

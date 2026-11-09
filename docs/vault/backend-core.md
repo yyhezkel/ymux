@@ -259,7 +259,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9393](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9408](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -277,7 +277,11 @@ a wide argument list because every connection mode funnels through it: `persiste
   explicit key file (optional passphrase) → default `~/.ssh/id_*` → password. Then
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
-  `request_shell`, channel-pump task. Next to the background `check_remote_hooks` it also
+  `request_shell`, channel-pump task. The pump splits the channel: a writer task owns
+  `SshCmd` (data, resize, kill) and the loop only reads. russh's per-channel receiver is
+  bounded to 100 messages and the session task blocks when it is full, so a write parked
+  on the server's window inside the read loop would hang every channel on the connection.
+  Next to the background `check_remote_hooks` it also
   spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
