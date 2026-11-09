@@ -122,6 +122,13 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	if len(p.Payload) > 0 {
 		_ = json.Unmarshal(p.Payload, &pl)
 	}
+	// A SessionEnd from a `claude -p` that borrowed this pane must touch
+	// nothing: no light, no brief, no context record, no card.
+	if p.Subkind == "session-end" && !agent.SessionEndIsOurs(e.run.SessionID, pl.SessionID) {
+		r.mu.Unlock()
+		logger.Debug("foreign session-end ignored", "pane", e.paneID)
+		return map[string]any{"request_id": p.RequestID, "decision": "passive"}
+	}
 	runSeq, briefSeq := e.run.Seq, e.brief.Seq
 	r.applyLocked(e, p.Subkind, pl, p.ClaudeTitle)
 	// Copies taken under the lock; everything below runs without it, so a
@@ -170,7 +177,8 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 	passive := map[string]any{"request_id": p.RequestID, "decision": "passive"}
 	// The desktop's early returns: a prompt is turn bookkeeping, a
 	// notification or stop-failure is a state signal only — none ever makes a card.
-	if p.Subkind == "notification" && pl.NotificationType != "idle_prompt" && r.notify != nil {
+	if p.Subkind == "notification" && pl.NotificationType != "idle_prompt" &&
+		pl.NotificationType != agent.ToolRunningNotification && r.notify != nil {
 		// Phase 114: Claude asking for something is worth a notification
 		// even though it makes no card. idle_prompt follows a stop, whose
 		// card already sent one.
@@ -286,6 +294,9 @@ func waitTimeout(secs *int64) time.Duration {
 func (r *HookRegistry) applyLocked(e *hookEntry, subkind string, pl hookPayload, claudeTitle string) {
 	now := r.now()
 	nowMs := now.UnixMilli()
+	if (subkind == "user-prompt-submit" || subkind == "stop") && pl.SessionID != "" {
+		e.run.SessionID = pl.SessionID
+	}
 	switch subkind {
 	case "pre-tool-use", "notification":
 		e.run.ApplyHook(subkind, pl.NotificationType, now)

@@ -119,6 +119,31 @@ func TestAnsweringAnElicitationResumesRunning(t *testing.T) {
 	}
 }
 
+func TestAToolStartingAfterAPermissionPromptResumesRunning(t *testing.T) {
+	var r Run
+	r.ApplyHook("notification", "permission_prompt", t0)
+	if !r.ApplyHook("notification", ToolRunningNotification, t0) || r.CurrentState() != StateRunning {
+		t.Fatalf("state = %q, want running", r.CurrentState())
+	}
+}
+
+func TestASessionEndCountsOnlyForThePanesOwnSession(t *testing.T) {
+	for _, c := range []struct {
+		current, ended string
+		want           bool
+	}{
+		{"a", "a", true},
+		{"a", "b", false}, // claude -p borrowing this pane
+		{"", "b", false},
+		{"a", "", true}, // an older CLI sends no id
+		{"", "", true},
+	} {
+		if got := SessionEndIsOurs(c.current, c.ended); got != c.want {
+			t.Errorf("SessionEndIsOurs(%q, %q) = %v, want %v", c.current, c.ended, got, c.want)
+		}
+	}
+}
+
 func TestAnUnmappedNotificationChangesNothing(t *testing.T) {
 	var r Run
 	r.ApplyHook("stop", "", t0)

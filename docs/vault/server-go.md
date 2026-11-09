@@ -234,7 +234,9 @@ falls back to `last.env` (the desktop) exactly as before.
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
   prompt; `stop` → `RecordTurn` + `BriefFromStop`; `stop-failure` → `StateFailed` (timer cleared, NO `RecordTurn`, state-only: early passive return like `notification`); `session-end` → run reset (seq+1) +
-  `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
+  `session_ended`. A `session-end` naming another Claude session (`agent.SessionEndIsOurs`,
+  the same rule as `session_end_is_ours` in `lib.rs`) returns `passive` and changes nothing.
+  Notification type `tool_running` never sends a web notification. A hook whose `pane_id` or `tmux_session` is not the matched session's
   is denied. A permission request meets the **Block rules** first, then the session's
   **policy** (Phase 101, below).
   `ping` and `context.inject` (below) answer; any other method is a JSON-RPC error.
@@ -672,6 +674,8 @@ this endpoint itself, so the daemon keeps no per-pane state. `POST /api/v2/git/w
 the directory only (`sanitizeBranch`, `defaultWorktreeTarget` = `<parent>/<base>-<safe>`),
 base / branch refused when option-shaped, `git worktree add -b <branch> -- <target>
 <base>` (the `--` the Rust lacks), then the parsed list. `runGit` is the test seam.
+
+`runClaude` sets `YMUX_HEADLESS=1` on every call, so the CLI hooks do nothing for these one-shot runs.
 
 **`term/claudetools.go` (Phase 119, WEB-DESIGN F5) — the desktop's `claude -p` tools for a
 browser.** `GET /api/v2/claude/usage?force=1` ports `claude_usage.rs` (`claude -p /usage
