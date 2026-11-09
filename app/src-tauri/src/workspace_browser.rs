@@ -26,7 +26,7 @@
 //! for the active workspace and `workspace_browser_show` again on
 //! close.
 //!
-//! Pinned tauri =2.10.3 with `features = ["unstable"]` — the
+//! Pinned tauri =2.11.6 with `features = ["unstable"]` — the
 //! `Window::add_child(WebviewBuilder, ...)` API still lives behind
 //! the unstable gate in this version. See CLAUDE.md "Pinned deps".
 
@@ -128,7 +128,7 @@ struct TicketCapture {
 }
 
 /// The child webview is a plain external page with no IPC surface, and
-/// `WebviewBuilder` has no `on_ipc` in 2.10 anyway. So the Dev-Mode
+/// `WebviewBuilder` has no `on_ipc` in 2.11 anyway. So the Dev-Mode
 /// inspect script talks back through the one hook that does exist —
 /// navigation.
 ///
@@ -136,10 +136,10 @@ struct TicketCapture {
 /// neither is the capability layer. `tauri::manager::webview` prepends
 /// `__TAURI_INTERNALS__` and the invoke bootstrap to EVERY webview's init
 /// scripts, external URLs included, so an `invoke` function reaches the
-/// tunneled page. In 2.10.3 `Webview::on_message` ACL-checks only plugin
-/// commands unless an app ACL manifest exists, and ymux has none (bare
-/// `tauri_build::build()`), so capabilities never gate app commands.
-/// What denies them is `ipc_guard::guarded`, which rejects every app
+/// tunneled page. Up to 2.11.0 `Webview::on_message` ACL-checked only plugin
+/// commands unless an app ACL manifest existed, and ymux has none (bare
+/// `tauri_build::build()`). 2.11.1 also ACL-checks remote origins. What
+/// denies every origin is still `ipc_guard::guarded`, which rejects every app
 /// command from a `WEBVIEW_LABEL_PREFIX` label before the dispatcher.
 ///
 /// The script sets `location.href = "ymux-ticket:<base64url>"`. This
@@ -818,31 +818,6 @@ pub(crate) fn close_popout_window(app: &AppHandle, workspace_id: &str) {
     if let Some(w) = app.get_webview_window(&popout_window_label(workspace_id)) {
         let _ = w.close();
     }
-}
-
-#[tauri::command]
-pub(crate) async fn workspace_browser_resize(
-    state: State<'_, AppState>,
-    workspace_id: String,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-) -> Result<(), String> {
-    let webview = state
-        .workspace_browsers
-        .lock()
-        .unwrap()
-        .get(&workspace_id)
-        .cloned()
-        .ok_or_else(|| format!("no browser webview for workspace {workspace_id}"))?;
-    webview
-        .set_position(LogicalPosition::new(x, y))
-        .map_err(|e| format!("set_position: {e}"))?;
-    webview
-        .set_size(LogicalSize::new(w.max(1.0), h.max(1.0)))
-        .map_err(|e| format!("set_size: {e}"))?;
-    Ok(())
 }
 
 /// `workspace_delete` hooks here to wipe the workspace's Browser state

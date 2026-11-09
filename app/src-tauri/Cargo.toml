@@ -49,7 +49,7 @@ tauri-build = { version = "2", features = [] }
 # including `main`, which renders live PTY output (Rule #1). The explicit
 # `.devtools(false)` on the main and popout window builders in lib.rs is
 # what keeps that from happening; they are not optional.
-tauri = { version = "=2.10.3", features = ["unstable", "tray-icon", "image-png", "devtools"] }
+tauri = { version = "=2.11.6", features = ["unstable", "tray-icon", "image-png", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
@@ -64,10 +64,11 @@ anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = "0.3"
 bytes = "1"
-russh = "0.49"
-russh-keys = "0.49"
+# ring, not the aws-lc-rs default: ring is already in the tree and needs no
+# cmake/NASM step. Keep this feature list the same in every crate that names
+# russh, or feature unification brings aws-lc-rs back.
+russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "2"
-async-trait = "0.1"
 rand = "0.8"
 hmac = "0.12"
 sha2 = "0.10"
@@ -120,7 +121,7 @@ ymux-addons = { path = "crates/ymux-addons", features = ["ts"] }
 # features include `deflate` which covers the common-case .zip
 # everyone produces; AES + Bzip2 + Zstd are turned off to keep the
 # binary lean — agents we package don't routinely emit those.
-zip = { version = "2", default-features = false, features = ["deflate", "time"] }
+zip = { version = "9.5", default-features = false, features = ["deflate", "time"] }
 # beta.3-lh-insights: native local Insights for Local workspaces (Windows-first).
 # sysinfo covers CPU/mem/disks/net/processes cross-platform without WMI plumbing.
 # bollard 0.17 auto-pulls hyper-named-pipe under `[target.'cfg(windows)']`,

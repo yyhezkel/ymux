@@ -7,8 +7,13 @@
 // text and any error verbatim. A worktree strip along the top switches
 // which worktree the pane looks at (`diff_pane_set_cwd`); a file list
 // jumps to a file's hunk. Parsing is in `diffModel.ts` (pure, tested).
+//
+// Line notes: the user notes a diff line and pastes the batch into a pane.
+// Anchors and the prompt text are in `diffNotes.ts` (pure, tested). The rows
+// are rebuilt on every diff event, so the editor and the send controls live
+// in a tray outside the rows and the keyboard cursor is held by anchor.
 
-import { createSignal, createMemo, createEffect, on, For, onCleanup, onMount, Show } from "solid-js";
+import { createSelector, createSignal, createMemo, createEffect, on, For, onCleanup, onMount, Show } from "solid-js";
 import { backend, type UnlistenFn } from "./backend";
 import type { DiffSource } from "./bindings/DiffSource";
 import type { WorktreeEntry } from "./bindings/WorktreeEntry";
@@ -16,19 +21,45 @@ import type { LayoutNode } from "./types";
 import { t } from "./i18n";
 import { keyEq } from "./shortcuts";
 import { TechText } from "./TechText";
-import { parseDiff, statusLetter, pathKey } from "./diffModel";
+import { parseDiff, statusLetter, pathKey, type LineRef } from "./diffModel";
+import {
+  NOTE_MAX_CHARS,
+  buildNotesPrompt,
+  diffTargetKey,
+  indexLines,
+  noteKey,
+  noteStatus,
+  sanitizeNote,
+  type DiffNote,
+  type DiffSendResult,
+  type DiffSendTarget,
+} from "./diffNotes";
 import {
   IconGitCompare,
   IconGitBranch,
   IconChevronDown,
   IconClose,
+  IconPencil,
   IconPlus,
   IconRefresh,
   IconExternalLink,
+  IconTrash,
 } from "./icons";
 import { createLogger } from "./logger";
 
 const log = createLogger("DIFF");
+
+// Module scope on purpose: a workspace switch unmounts LayoutView and with it
+// this pane, and the notes must still be there when the user comes back.
+const [notesByTarget, setNotesByTarget] = createSignal<Record<string, DiffNote[]>>({});
+let nextNoteId = 1;
+
+interface NoteDraft extends LineRef {
+  targetKey: string;
+  lineText: string;
+  /** The note being edited, or null for a new note. */
+  editingId: string | null;
+}
 
 interface StatusEntry {
   xy: string;
@@ -49,6 +80,9 @@ interface Props {
   onNewWorktree: (workspaceId: string) => void;
   /** Feed the listing back to App so sidebar cards can show a branch. */
   onWorktreesListed: (workspaceId: string, entries: WorktreeEntry[]) => void;
+  /** Connected terminal panes of this workspace. */
+  sendTargets: DiffSendTarget[];
+  onSendPrompt: (paneId: string, text: string) => Promise<DiffSendResult>;
 }
 
 function describeSource(s: DiffSource): string {
@@ -80,8 +114,123 @@ export function DiffPane(p: Props) {
   const [worktrees, setWorktrees] = createSignal<WorktreeEntry[]>([]);
   const [wtError, setWtError] = createSignal<string | null>(null);
 
+  const [draft, setDraft] = createSignal<NoteDraft | null>(null);
+  const [draftText, setDraftText] = createSignal<string>("");
+  const [cursor, setCursor] = createSignal<LineRef | null>(null);
+  const [targetPane, setTargetPane] = createSignal<string>("");
+  const [sending, setSending] = createSignal<boolean>(false);
+  const [sendStatus, setSendStatus] = createSignal<{ ok: boolean; msg: string } | null>(null);
+  let draftRef: HTMLTextAreaElement | undefined;
+
   const parsed = createMemo(() => parseDiff(diffText()));
   const isEmpty = () => !error() && diffText().trim().length === 0 && files().length === 0;
+
+  const lineIndex = createMemo(() => indexLines(parsed()));
+  const noteableRows = createMemo(() => parsed().refs.flatMap((r, i) => (r ? [i] : [])));
+  const cursorRow = createMemo(() => {
+    const c = cursor();
+    return c ? (lineIndex().get(noteKey(c))?.idx ?? -1) : -1;
+  });
+  const isCursorRow = createSelector(cursorRow);
+
+  const targetKey = () => diffTargetKey(p.workspaceId, cwd(), source());
+  const notes = (): DiffNote[] => notesByTarget()[targetKey()] ?? [];
+  const notesWithStatus = createMemo(() =>
+    notes().map((note) => ({ note, status: noteStatus(note, lineIndex()) })),
+  );
+  const notesOnLine = createMemo(() => {
+    const out = new Map<string, DiffNote[]>();
+    for (const { note, status } of notesWithStatus()) {
+      if (status !== "current") continue;
+      const k = noteKey(note);
+      out.set(k, [...(out.get(k) ?? []), note]);
+    }
+    return out;
+  });
+  const prompt = createMemo(() =>
+    buildNotesPrompt(notesWithStatus(), { cwd: cwd(), branch: branch(), source: source() }),
+  );
+  const validTarget = () => p.sendTargets.some((x) => x.paneId === targetPane());
+  const canSend = () => !sending() && !error() && prompt().length > 0 && validTarget();
+
+  const updateNotes = (key: string, fn: (list: DiffNote[]) => DiffNote[]) => {
+    setNotesByTarget((all) => ({ ...all, [key]: fn(all[key] ?? []) }));
+    setSendStatus(null);
+  };
+
+  const closeDraft = () => {
+    setDraft(null);
+    setDraftText("");
+    bodyRef?.focus();
+  };
+
+  const openDraft = (next: NoteDraft, text: string) => {
+    setDraft(next);
+    setDraftText(text);
+    queueMicrotask(() => draftRef?.focus());
+  };
+
+  const startNoteAt = (idx: number) => {
+    const ref = parsed().refs[idx];
+    if (!ref) return;
+    setCursor(ref);
+    openDraft({ ...ref, targetKey: targetKey(), lineText: parsed().lines[idx].text, editingId: null }, "");
+  };
+
+  const editNote = (n: DiffNote) =>
+    openDraft({ file: n.file, side: n.side, line: n.line, targetKey: targetKey(), lineText: n.lineText, editingId: n.id }, n.text);
+
+  const saveDraft = () => {
+    const d = draft();
+    const text = sanitizeNote(draftText());
+    if (!d || !text) return;
+    updateNotes(d.targetKey, (list) =>
+      d.editingId
+        ? list.map((n) => (n.id === d.editingId ? { ...n, text } : n))
+        : [...list, { id: String(nextNoteId++), file: d.file, side: d.side, line: d.line, lineText: d.lineText, text }],
+    );
+    closeDraft();
+  };
+
+  const deleteNote = (id: string) => updateNotes(targetKey(), (list) => list.filter((n) => n.id !== id));
+
+  const send = async () => {
+    if (!canSend()) return;
+    setSending(true);
+    setSendStatus(null);
+    try {
+      // Rule #1: this text is pane input. Never log it.
+      const result = await p.onSendPrompt(targetPane(), prompt());
+      setSendStatus(
+        result === "sent" ? { ok: true, msg: t("diff.notes.sent") }
+        : result === "no_bracketed_paste" ? { ok: false, msg: t("diff.notes.errNoPaste") }
+        : { ok: false, msg: t("diff.notes.errNotConnected") },
+      );
+    } catch (e) {
+      log.error("send notes failed", e);
+      setSendStatus({ ok: false, msg: t("diff.notes.errSend", { err: String(e) }) });
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /** The first line that can take a note, at or after a row. */
+  const firstNoteableFrom = (idx: number): number =>
+    noteableRows().find((i) => i >= idx) ?? -1;
+
+  const currentHunkHeader = () => parsed().hunks[hunkIdx()]?.headerIdx ?? 0;
+
+  const moveCursor = (delta: number) => {
+    const rows = noteableRows();
+    if (rows.length === 0) return;
+    const at = rows.indexOf(cursorRow());
+    const next = at < 0
+      ? firstNoteableFrom(currentHunkHeader())
+      : rows[Math.max(0, Math.min(rows.length - 1, at + delta))];
+    if (next < 0) return;
+    setCursor(parsed().refs[next]);
+    scrollToLine(next, "nearest");
+  };
 
   const apply = async (next: DiffSource) => {
     setSource(next);
@@ -134,24 +283,38 @@ export function DiffPane(p: Props) {
   const isCurrentWorktree = (wt: WorktreeEntry) =>
     !!cwd() && pathKey(wt.path) === pathKey(cwd());
 
-  // ↑/↓ (and j/k, Hebrew-layout-safe) jump between hunks.
+  // ↑/↓ (and j/k, Hebrew-layout-safe) jump between hunks. With Shift they
+  // move the line cursor, and N opens a note on the cursor's line.
   const onBodyKey = (e: KeyboardEvent) => {
     const total = parsed().hunks.length;
     if (total === 0) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (!e.shiftKey && keyEq(e, "n")) {
+      e.preventDefault();
+      const row = cursorRow() >= 0 ? cursorRow() : firstNoteableFrom(currentHunkHeader());
+      if (row >= 0) startNoteAt(row);
+      return;
+    }
     let delta = 0;
     if (e.key === "ArrowDown" || keyEq(e, "j")) delta = 1;
     else if (e.key === "ArrowUp" || keyEq(e, "k")) delta = -1;
     else return;
     e.preventDefault();
+    if (e.shiftKey) {
+      moveCursor(delta);
+      return;
+    }
     const next = Math.max(0, Math.min(total - 1, hunkIdx() + delta));
     setHunkIdx(next);
-    scrollToLine(parsed().hunks[next]?.headerIdx);
+    const header = parsed().hunks[next]?.headerIdx;
+    scrollToLine(header);
+    if (header != null) setCursor(parsed().refs[firstNoteableFrom(header)] ?? null);
   };
 
-  const scrollToLine = (idx: number | undefined) => {
+  const scrollToLine = (idx: number | undefined, block: ScrollLogicalPosition = "center") => {
     if (idx == null) return;
     const el = bodyRef?.querySelector(`[data-line-idx="${idx}"]`) as HTMLElement | null;
-    if (el) el.scrollIntoView({ block: "center", behavior: "smooth" });
+    if (el) el.scrollIntoView({ block, behavior: "smooth" });
   };
 
   const jumpToFile = (path: string) => {
@@ -341,6 +504,7 @@ export function DiffPane(p: Props) {
         class="pane-body diff-pane-body"
         ref={(el) => (bodyRef = el)}
         tabIndex={0}
+        aria-label={t("diff.notes.bodyLabel")}
         onKeyDown={onBodyKey}
       >
         <Show when={error()}>
@@ -352,17 +516,52 @@ export function DiffPane(p: Props) {
         <Show when={!error() && !isEmpty()}>
           <pre class="diff-pane-pre">
             <For each={parsed().lines}>
-              {(line, idx) => (
-                <div class={`dl dl-${line.kind}`} data-line-idx={idx()}>
-                  <span class="dl-gutter">
-                    {line.kind === "add" ? "+" :
-                     line.kind === "del" ? "-" :
-                     line.kind === "hunk" ? "@" :
-                     line.kind === "file" ? "·" : " "}
-                  </span>
-                  <span class="dl-text">{line.text}</span>
-                </div>
-              )}
+              {(line, idx) => {
+                // A parse makes new line objects, so a row never outlives
+                // the ref it reads here.
+                const ref = parsed().refs[idx()];
+                return (
+                  <>
+                    <div
+                      class={`dl dl-${line.kind}`}
+                      classList={{ "dl-cursor": isCursorRow(idx()) }}
+                      data-line-idx={idx()}
+                    >
+                      <span class="dl-note-slot">
+                        {/* Mouse only: the keyboard path is Shift+arrows and N,
+                            so one Tab stop serves the whole diff. */}
+                        <Show when={ref}>
+                          <button
+                            class="dl-note-add"
+                            tabIndex={-1}
+                            title={t("diff.notes.add")}
+                            aria-label={t("diff.notes.add")}
+                            onClick={() => startNoteAt(idx())}
+                          >
+                            <IconPlus size={11} />
+                          </button>
+                        </Show>
+                      </span>
+                      <span class="dl-gutter">
+                        {line.kind === "add" ? "+" :
+                         line.kind === "del" ? "-" :
+                         line.kind === "hunk" ? "@" :
+                         line.kind === "file" ? "·" : " "}
+                      </span>
+                      <span class="dl-text">{line.text}</span>
+                    </div>
+                    <Show when={ref && notesOnLine().get(noteKey(ref))}>
+                      {(list) => (
+                        <div class="dl-notes">
+                          <For each={list()}>
+                            {(n) => <div class="dl-note" dir="auto">{n.text}</div>}
+                          </For>
+                        </div>
+                      )}
+                    </Show>
+                  </>
+                );
+              }}
             </For>
           </pre>
           <Show when={truncated()}>
@@ -370,6 +569,142 @@ export function DiffPane(p: Props) {
           </Show>
         </Show>
       </div>
+
+      <div class="sr-only" role="status">
+        {(() => {
+          const c = cursor();
+          const row = cursorRow();
+          return c && row >= 0 ? `${c.file}:${c.line} ${parsed().lines[row].text}` : "";
+        })()}
+      </div>
+
+      <Show when={draft() || notes().length > 0}>
+        <section class="diff-notes" aria-label={t("diff.notes.title", { count: notes().length })}>
+          <Show when={draft()}>
+            {(d) => (
+              <div class="diff-note-editor">
+                <span class="diff-note-ref" dir="ltr">
+                  <TechText text={`${d().file}:${d().line}`} /> ({t(`diff.notes.side.${d().side}`)})
+                </span>
+                <textarea
+                  ref={(el) => (draftRef = el)}
+                  dir="auto"
+                  rows={3}
+                  maxLength={NOTE_MAX_CHARS}
+                  aria-label={t("diff.notes.noteLabel")}
+                  placeholder={t("diff.notes.placeholder")}
+                  value={draftText()}
+                  onInput={(e) => setDraftText(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.isComposing) return;
+                    if (e.key === "Escape") {
+                      e.preventDefault();
+                      closeDraft();
+                    } else if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
+                      e.preventDefault();
+                      saveDraft();
+                    }
+                  }}
+                />
+                <div class="diff-notes-row">
+                  <button disabled={!sanitizeNote(draftText())} onClick={saveDraft}>{t("common.save")}</button>
+                  <button onClick={closeDraft}>{t("common.cancel")}</button>
+                  <span class="diff-notes-hint">{t("diff.notes.editorHint")}</span>
+                </div>
+              </div>
+            )}
+          </Show>
+
+          <Show when={notes().length > 0}>
+            <h3 class="diff-notes-title">{t("diff.notes.title", { count: notes().length })}</h3>
+            <ul class="diff-notes-list">
+              <For each={notesWithStatus()}>
+                {(entry) => (
+                  <li class="diff-note-item">
+                    <button
+                      class="diff-note-ref"
+                      dir="ltr"
+                      title={t("diff.notes.jump")}
+                      disabled={!lineIndex().has(noteKey(entry.note))}
+                      onClick={() => {
+                        setCursor(entry.note);
+                        scrollToLine(lineIndex().get(noteKey(entry.note))?.idx);
+                      }}
+                    >
+                      <TechText text={`${entry.note.file}:${entry.note.line}`} /> ({t(`diff.notes.side.${entry.note.side}`)})
+                    </button>
+                    <Show when={entry.status === "outdated"}>
+                      <span class="diff-note-outdated" title={t("diff.notes.outdatedHint")}>
+                        {t("diff.notes.outdated")}
+                      </span>
+                    </Show>
+                    <span class="diff-note-text" dir="auto">{entry.note.text}</span>
+                    <button
+                      class="diff-note-btn"
+                      title={t("diff.notes.edit")}
+                      aria-label={t("diff.notes.edit")}
+                      onClick={() => editNote(entry.note)}
+                    >
+                      <IconPencil size={12} />
+                    </button>
+                    <button
+                      class="diff-note-btn"
+                      title={t("diff.notes.delete")}
+                      aria-label={t("diff.notes.delete")}
+                      onClick={() => deleteNote(entry.note.id)}
+                    >
+                      <IconTrash size={12} />
+                    </button>
+                  </li>
+                )}
+              </For>
+            </ul>
+
+            <span class="diff-notes-label" id={`diff-notes-preview-${p.pane.pane_id}`}>{t("diff.notes.preview")}</span>
+            {/* A per-line base direction: a Hebrew note stays readable
+                between English frame lines. Focusable so the keyboard can
+                scroll it. */}
+            <pre
+              class="diff-notes-preview"
+              tabIndex={0}
+              role="region"
+              aria-labelledby={`diff-notes-preview-${p.pane.pane_id}`}
+            >{prompt()}</pre>
+
+            <div class="diff-notes-row">
+              <label class="diff-notes-label">
+                {t("diff.notes.target")}{" "}
+                <select onChange={(e) => setTargetPane(e.currentTarget.value)}>
+                  <option value="" selected={!validTarget()}>
+                    {p.sendTargets.length > 0 ? t("diff.notes.choosePane") : t("diff.notes.noPanes")}
+                  </option>
+                  <For each={p.sendTargets}>
+                    {(x) => (
+                      <option value={x.paneId} selected={x.paneId === targetPane()}>
+                        {x.isAgent ? `${x.label} (${t("diff.notes.agentTag")})` : x.label}
+                      </option>
+                    )}
+                  </For>
+                </select>
+              </label>
+              <button disabled={!canSend()} onClick={() => void send()}>{t("diff.notes.send")}</button>
+            </div>
+            <p class="diff-notes-hint">{t("diff.notes.sendHint")}</p>
+            <div role="status">
+              <Show when={sendStatus()}>
+                {(s) => (
+                  <p class={s().ok ? "diff-notes-hint" : "diff-notes-err"}>
+                    {s().msg}{" "}
+                    <Show when={s().ok}>
+                      <button onClick={() => updateNotes(targetKey(), () => [])}>{t("diff.notes.clear")}</button>
+                    </Show>
+                  </p>
+                )}
+              </Show>
+            </div>
+          </Show>
+        </section>
+      </Show>
     </div>
   );
 }

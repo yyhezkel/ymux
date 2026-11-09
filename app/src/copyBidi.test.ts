@@ -8,7 +8,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { visualToLogical, visualToLogicalStream } from "./copyBidi.ts";
+import { stripIsolates, visualToLogical, visualToLogicalStream } from "./copyBidi.ts";
 import { reorderRtlForDisplay } from "./bidi.ts";
 
 /** The shapes bidi.test.ts already cares about, plus the ones that bite. */
@@ -162,4 +162,14 @@ test("stream: a mid-line fragment is handled, not thrown", () => {
 test("stream and clipboard agree when there are no escapes", () => {
   const visual = reorderRtlForDisplay("יש 42 קבצים בתיקייה");
   assert.equal(visualToLogicalStream(visual), visualToLogical(visual));
+});
+
+test("stripIsolates removes U+2066-U+2069 and nothing else", () => {
+  assert.equal(stripIsolates("\u2068main.rs\u2069"), "main.rs");
+  assert.equal(stripIsolates("\u2066a\u2067b\u2068c\u2069"), "abc");
+  assert.equal(stripIsolates("שלום main.rs"), "שלום main.rs");
+  // Neighbours of the range stay: LRM/RLM, ZWJ, and U+2065 / U+206A.
+  const keep = "\u200e\u200f\u200d\u2065\u206a";
+  assert.equal(stripIsolates(keep), keep);
+  assert.equal(stripIsolates("\u2068\u2069"), "");
 });

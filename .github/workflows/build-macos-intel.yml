@@ -4,7 +4,7 @@
 # parallel as a matrix:
 #
 #   x86_64  -> macos-15-intel   -> ymux_x64_macos13.dmg
-#   arm64   -> macos-14         -> ymux_arm64_macos13.dmg
+#   arm64   -> macos-15         -> ymux_arm64_macos13.dmg
 #
 # Before this there was only the x86_64 build, so Apple Silicon ran the
 # whole app under Rosetta. Separate builds rather than one universal
@@ -19,7 +19,7 @@
 #
 # Deployment target is 13.0 via tauri.macos.conf.json (minimumSystemVersion)
 # + MACOSX_DEPLOYMENT_TARGET, so building on a newer image still produces
-# a Ventura-compatible app. Note macos-14 is the oldest arm64 image, which
+# a Ventura-compatible app. Note macos-15 replaced the retired macos-14 arm64 image, which
 # is fine: every Apple Silicon Mac can run macOS 13+ anyway.
 #
 # SIGNING: a Developer ID identity + notarisation when the secrets are
@@ -108,7 +108,7 @@ jobs:
             expect_arch: x86_64
             reject_arch: arm64
           - arch: arm64
-            runner: macos-14
+            runner: macos-15
             target: aarch64-apple-darwin
             expect_arch: arm64
             reject_arch: x86_64

@@ -87,7 +87,7 @@ export class PtySessions {
     }
   }
 
-  /** Smart bidi on / off for one attach (pane_set_smart_bidi, or the leaf at connect). */
+  /** Smart bidi on / off for one attach (the resolved RTL-profile value at connect). */
   setBidi(sid: string, on: boolean): void {
     this.live.get(sid)?.bidi.setEnabled(on);
   }

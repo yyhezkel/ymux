@@ -26,11 +26,11 @@
 //! value goes through `ymux_core::shell_quote` — never raw concatenation.
 
 use russh::client::Handle as SshHandle;
-use russh::ChannelMsg;
 use serde::Serialize;
 
 use crate::local_setup;
 use crate::{AppState, Connection, SshClient};
+use ymux_core::ssh_exec::ExecOpts;
 use ymux_core::{log_debug, shell_quote};
 
 /// One entry from `git worktree list --porcelain`.
@@ -291,74 +291,21 @@ pub(crate) async fn exec_script_over(
     }
 }
 
-/// One-shot exec channel on an existing handle, stdout captured.
-/// Mirrors `claude_log::ssh_exec_capture` — each module keeps its own
-/// copy so it stays self-contained.
+/// One-shot exec on an existing handle, stderr merged into the text (`2>&1`
+/// in `git_script` already routes it there; this covers a server that splits
+/// the streams anyway). A signal or a missing status is `Err`, not code 0:
+/// the caller reads code 0 as "this is a repo".
 async fn ssh_exec_capture(
     handle: &SshHandle<SshClient>,
     cmd: &str,
     timeout_secs: u64,
 ) -> Result<(i32, String), String> {
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut code = 0i32;
-    // The exit status and EOF arrive in EITHER order, and breaking on
-    // whichever lands first loses the other. This used to `break` on Eof,
-    // so a failing git often reported code 0: `git_script` folds stderr
-    // into stdout with `2>&1`, so "fatal: not a git repository" came back
-    // as SUCCESSFUL output, parsed to zero worktrees, and a directory
-    // that is not a repo could be pinned as a project folder. Whether it
-    // failed was a race — the same path probed clean and then scanned
-    // dirty seconds later.
-    //
-    // So: collect until BOTH have arrived, or the channel closes. Never
-    // wait on EOF alone, which would hang a server that omits Close until
-    // the timeout.
-    let mut got_eof = false;
-    let mut got_status = false;
-    let timed_out = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout_secs),
-        async {
-            while let Some(msg) = ch.wait().await {
-                match msg {
-                    ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                    // `2>&1` should route stderr here already; keep it in
-                    // case a server splits the streams anyway.
-                    ChannelMsg::ExtendedData { ref data, .. } => {
-                        stdout.extend_from_slice(data)
-                    }
-                    ChannelMsg::ExitStatus { exit_status } => {
-                        code = exit_status as i32;
-                        got_status = true;
-                        if got_eof {
-                            break;
-                        }
-                    }
-                    ChannelMsg::Eof => {
-                        got_eof = true;
-                        if got_status {
-                            break;
-                        }
-                    }
-                    ChannelMsg::Close => break,
-                    _ => {}
-                }
-            }
-        },
-    )
-    .await
-    .is_err();
-    let _ = ch.close().await;
-    if timed_out {
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, ExecOpts::timeout_secs(timeout_secs)).await?;
+    if outcome.timed_out {
         return Err("command timed out on the remote host".to_string());
     }
-    Ok((code, String::from_utf8_lossy(&stdout).to_string()))
+    let code = outcome.require_code()?;
+    Ok((code, outcome.stdout))
 }
 
 /// Any live SSH handle already open to this host.

@@ -465,6 +465,23 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-11-09 — Block rules apply in the browser; the Block half of `ymux-policy` is ported
+- **Decided (Yossi):** a command that matches a Block rule is denied on the daemon too.
+  This reverses, for Block only, 2026-10-04 "do **not** port `ymux-policy` to Go" and the
+  2026-10-05 reading of `none` as "nothing blocks". Before it, `none` answered `allow` for
+  every permission request, `rm -rf /` included.
+- **What:** `internal/agent/policy.go` holds the built-in block patterns and the matcher.
+  A session's custom patterns come from `hooks.custom_block` in the browser settings
+  document. A match denies under `none` and under `gate`, with a passive audit card
+  (`policy-block`), as the desktop's Block does.
+- **Fail-safe:** the built-ins are in the binary, so no settings content can remove them.
+  A damaged custom entry costs only itself.
+- **Not ported, on purpose:** Auto and Gate. The session's own policy decides those.
+- **Differs from the desktop:** `hooks.policy_enabled` is not read. On the desktop, off
+  turns Block into an approval card; under `none` the same switch would mean allow.
+- **Limit:** `custom_block` in the desktop's settings is a separate document and does not
+  reach the daemon. Only the browser's own list applies there.
+
 ### 2026-10-07 — Phase F: the browser reaches the desktop's usability, in five PRs
 - **Decided (Yossi):** "the browser must be as usable as the desktop" — a parity pass
   over the 134 desktop commands the browser backend did not handle. Order approved:

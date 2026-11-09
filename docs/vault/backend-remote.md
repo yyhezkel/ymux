@@ -63,7 +63,12 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
 
 - Progress streams to the frontend as `provisioning:progress` events, which is what
   makes the wizard's live log feel native.
-- **One russh `client::Handle` per run**, reused across every step's exec channel.
+- **Auth is key then password**, and each step reads `AuthResult::success()`: a partial
+  success counts as failure.
+- **One russh `client::Handle` per run**, reused across every step's exec channel
+  (`ymux_core::ssh_exec`). Package steps have no timeout; probes and the short key and
+  user commands get 120 s. A signal or a missing exit status fails the step, never
+  passes it.
 - **Failures do not abort the run.** Each step ends `pending | running | done | failed`;
   the wizard offers retry/skip per step and a checkpoint is saved after every state
   change, so a second pass resumes.
@@ -77,6 +82,11 @@ most often.** It and `local_setup.rs` are the two paths that build remote comman
 user input.
 
 ## `addons.rs` (1,030) — the add-on manager
+
+`exec` / `exec_stdin` run through `ymux_core::ssh_exec`: stderr merged, partial output
+kept on a timeout, exit ignored on purpose (callers read the output). `remote_home` is
+the exception: stderr dropped and a clean exit required, else `""`. SFTP opens through
+`ymux_core::ssh_exec::open_sftp`.
 
 Detect / install / uninstall / update ymux add-ons over a workspace's existing SSH
 session. The manifest schema and the built-in registry live in the **`ymux-addons`

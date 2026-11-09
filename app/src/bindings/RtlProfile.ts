@@ -35,4 +35,10 @@ rtl_mode: string, auto_direction: boolean, mirror_arrows_rtl: boolean, tui_owns_
  * an existing settings.json this reads as `"any_rtl"`, so an upgrade
  * cannot silently move a pane onto the newer rule.
  */
-direction_policy: string, };
+direction_policy: string,
+/**
+ * Wrap Latin runs near Hebrew/Arabic in bidi isolates. Opt-in, off when
+ * absent, so an existing settings.json loads unchanged. Rust does not
+ * read this: the frontend resolves it and passes it to `pane_connect`.
+ */
+smart_bidi: boolean, };
