@@ -37,6 +37,7 @@ use crate::{log_debug, log_info, log_warn, AppState};
 #[cfg(target_os = "macos")]
 mod macos;
 use ymux_core::http::get_with_retry;
+use ymux_core::ssh_exec::{ExecOpts, StderrMode};
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -512,32 +513,28 @@ pub(crate) async fn ssh_exec_in_workspace(
         })
     }
     .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
-    ssh_exec_simple(&handle, &cmd).await
+    // Non-zero, a signal, no status or a timeout all reach the toast as an
+    // error. 120 s, not the 6 s below: this hits GitHub from the server.
+    let opts = ExecOpts::timeout_secs(120);
+    let outcome = ymux_core::ssh_exec::exec(&handle, &cmd, opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("remote command failed (exit {code}): {}", outcome.stdout.trim())),
+    }
 }
 
+/// Short best-effort remote command: stdout on a clean exit, otherwise `Err`
+/// with the exit only, because callers log the error.
 pub(crate) async fn ssh_exec_simple(
     handle: &std::sync::Arc<russh::client::Handle<crate::SshClient>>,
     cmd: &str,
 ) -> Result<String, String> {
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd).await.map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(6), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    Ok(String::from_utf8_lossy(&stdout).to_string())
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(6) };
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("remote command failed (exit {code})")),
+    }
 }
 
 /// Helper for CLI / RPC dispatch — not a Tauri command.

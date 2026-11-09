@@ -22,7 +22,7 @@
 //! error with "no active SSH session".
 
 use russh::client::Handle as SshHandle;
-use russh::ChannelMsg;
+use ymux_core::ssh_exec::{ExecOpts, StderrMode};
 use serde::Serialize;
 use tauri::{AppHandle, State};
 
@@ -54,32 +54,21 @@ fn pick_handle(state: &AppState, workspace_id: &str) -> Option<std::sync::Arc<Ss
     })
 }
 
-/// Run a shell pipeline over an SSH exec channel and return its
-/// captured stdout. Times out at 30s — `claude -p` typically finishes
-/// in 2-5s with a small history window.
+/// Run a shell pipeline over an SSH exec channel and return its stdout.
+/// Anything but a clean exit is `Err`: a timed-out or failed `claude -p`
+/// must not be saved as a note. `detect` tolerates the `Err` and falls back
+/// to a bare `claude`.
 async fn ssh_exec(
     handle: &SshHandle<SshClient>,
     cmd: &str,
     timeout_secs: u64,
 ) -> Result<String, String> {
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd).await.map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    Ok(String::from_utf8_lossy(&stdout).to_string())
+    let opts = ExecOpts { stderr: StderrMode::Separate, ..ExecOpts::timeout_secs(timeout_secs) };
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("remote command failed (exit {code}): {}", outcome.stderr.trim())),
+    }
 }
 
 /// Escape a string for safe single-quoted bash inclusion. Used to
