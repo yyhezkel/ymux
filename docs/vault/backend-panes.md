@@ -43,8 +43,9 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,741)** — dual-column file manager: lists, transfers, mutations on
-both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
+**`file_manager.rs` (1,744)** — dual-column file manager: lists, transfers, mutations on
+both sides. Local ops use `std::fs`; zip 9's `ZipFile::name` returns a `Result`, so a bad
+entry name stops the local unzip with an error. Remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.

@@ -120,7 +120,7 @@ ymux-addons = { path = "crates/ymux-addons", features = ["ts"] }
 # features include `deflate` which covers the common-case .zip
 # everyone produces; AES + Bzip2 + Zstd are turned off to keep the
 # binary lean — agents we package don't routinely emit those.
-zip = { version = "2", default-features = false, features = ["deflate", "time"] }
+zip = { version = "9.5", default-features = false, features = ["deflate", "time"] }
 # beta.3-lh-insights: native local Insights for Local workspaces (Windows-first).
 # sysinfo covers CPU/mem/disks/net/processes cross-platform without WMI plumbing.
 # bollard 0.17 auto-pulls hyper-named-pipe under `[target.'cfg(windows)']`,
