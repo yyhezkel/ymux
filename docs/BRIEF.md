@@ -71,6 +71,11 @@ session ✅ closed.
 - **Sidebar** — a workspace holding a stuck/waiting pane carries the existing
   attention dot at a middle intensity (blocking permission > brief > activity).
 
+- **Active sessions overview** — a session mounted on a connected pane with a
+  current Queue state shows that status and text, free, on open. Other sessions
+  stay tickable for the on-demand LLM read, labelled "read from screen". The LLM
+  verdict never feeds the Queue. Details: `docs/vault/frontend-panes.md`.
+
 - **Context Rail** (Ctrl+Shift+K, Phase 105) — every brief also lands, one
   line per turn, in its Claude session's persisted log, next to the session's
   first prompt. See `docs/CONTEXT.md`.

@@ -181,6 +181,9 @@ pub(crate) struct AppState {
     /// pane id (same resolve_hook_pane rule as agent_runs). In-memory only
     /// (unlike agent_runs, which is persisted) — see `brief.rs`.
     pub(crate) briefs: Arc<Mutex<HashMap<String, brief::PaneBriefEntry>>>,
+    /// Panes whose last hook could have come from a different host — see
+    /// `sessions_overview::note_hook_attribution`. In-memory only.
+    pub(crate) hook_unsure_panes: Arc<Mutex<std::collections::HashSet<String>>>,
     /// Phase 105: per-Claude-session context (first prompt + brief log),
     /// persisted under `<config>/context/sessions/` — see `context_store.rs`.
     pub(crate) context: context_store::ContextState,
@@ -2897,6 +2900,7 @@ pub(crate) fn forget_agent_run(
 /// Removes a closed pane's `agent_runs` entry and tells the frontend
 /// (Unknown → it deletes its copy). No emit when nothing was tracked.
 fn clear_pane_agent_run(state: &AppState, app: &AppHandle, pane_id: &str) {
+    lock_or_recover(&state.hook_unsure_panes).remove(pane_id);
     let seq = forget_agent_run(&mut lock_or_recover(&state.agent_runs), pane_id);
     // guard dropped above — emit runs lock-free
     if let Some(seq) = seq {
@@ -3734,6 +3738,7 @@ fn parse_zellij_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             owned: false,
             in_cwd: false,
             foreign: None,
+            pane_ids: Vec::new(),
             owner_cwd: None,
         });
     }
@@ -10064,6 +10069,12 @@ pub(crate) struct TmuxSessionInfo {
     /// by construction and the frontend needs no scope conditional.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub foreign: Option<ForeignScope>,
+    /// BRIEF: the panes mounted on this session on THIS host, for the
+    /// overview's Queue verdict. Empty (and omitted) when none is, or when
+    /// the attribution of a pane's hooks is unsure. Only
+    /// `pane_list_tmux_sessions` stamps it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pane_ids: Vec<String>,
     /// Phase 90: the cwd recorded in `session-owners.json` when ymux claimed
     /// this session, regardless of WHICH workspace claimed it. Exists for the
     /// active-sessions overview, which groups rows by directory and would
@@ -10411,6 +10422,7 @@ async fn pane_list_tmux_sessions(
     // to the host — and so a session outside the scope stays one click away
     // instead of vanishing.
     annotate_session_scope(&mut out, &host_key, &workspace_id, scope_path, &ws_names);
+    sessions_overview::stamp_pane_ids(&state, &workspace_id, &mut out);
     Ok(out)
 }
 
@@ -10707,6 +10719,7 @@ fn parse_tmux_sessions(text: &str) -> Vec<TmuxSessionInfo> {
             owned: false,
             in_cwd: false,
             foreign: None,
+            pane_ids: Vec::new(),
             owner_cwd: None,
         });
     }

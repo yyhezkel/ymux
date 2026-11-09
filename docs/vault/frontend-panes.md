@@ -308,6 +308,19 @@ disabled on zellij with the reason in the tooltip) and **Kill** (two clicks, the
 re-arms after 3 s). Summaries are screen-derived content: rendered, never passed to
 `log.*` (Rule #1).
 
+**One verdict per row (BRIEF).** `overviewVerdict(s.pane_ids, paneRows)` in `queueModel.ts`
+decides. A row with a current pane shows `queueStatus` + `whatsHappening` on open, free, with
+the checkbox disabled. Every other row keeps the LLM pill, labelled *read from screen*. A
+pane is current when it is connected, in the Queue, and no prompt is newer than its brief,
+unless a live hook (running, needs-input, failed, permission card) already gives the status;
+there is no age cap. Several panes on one session: the most urgent wins (`QUEUE_BUCKET`),
+then the most recent. A degraded brief, or a status with no text, keeps the free status but
+the row stays tickable for an LLM summary. Tick state filters through `summarizable`, so a
+row that gains a brief after it was ticked drops out of the count. The LLM verdict lives only
+in this window's signal and never reaches the Queue, the sidebar or the badge. Missing
+`pane_ids` (the Go daemon's list does not send them, and `claudetools.go` is unchanged) means
+the LLM path, so the browser behaves as before.
+
 **`DiffPane.tsx`** — on mount it subscribes to `diff-pane-updated` **before** calling
 `diff_pane_start` (the first emit is hash-gated and never repeats, so a late listener would
 miss it; a `disposed` guard covers unmount-before-listen) and `diff_pane_stop` on cleanup.

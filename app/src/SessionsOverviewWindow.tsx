@@ -5,6 +5,7 @@ import { sessionDisplay } from "./paneTitle";
 import { currentLanguage, t } from "./i18n";
 import { IconClose, IconRefresh } from "./icons";
 import { createLogger } from "./logger";
+import { overviewVerdict, type OverviewVerdict, type QueueRow, type QueueStatus } from "./queueModel";
 
 const log = createLogger("SESSIONS");
 
@@ -22,11 +23,26 @@ const log = createLogger("SESSIONS");
 // counter drops a late answer after a refresh so a stale summary never lands
 // on a fresh row.
 //
+// BRIEF: a row whose session is mounted on a pane with a current Queue state
+// shows that state, free and at once, and cannot be ticked (`overviewVerdict`).
+// Only the other rows need the LLM. Its verdict stays in this window: the
+// Queue never reads it.
+//
 // Rule #1: summaries are derived from screen content. They are rendered,
 // never logged — `log.*` here only ever sees counts and error kinds.
 
 /** Backend cap is 25 per call; 10 keeps the first summaries arriving sooner. */
 const SUMMARY_CHUNK = 10;
+/** Which existing pill colour a Queue status borrows. Colour only: the label
+ *  stays the Queue's own word. */
+const QUEUE_PILL: Record<QueueStatus, SessionSummary["status"]> = {
+  "needs-input": "waiting_input",
+  waiting: "waiting_input",
+  stuck: "error",
+  working: "working",
+  done: "idle",
+  ended: "idle",
+};
 /** Mirrors `validate_tmux_rename_target` in lib.rs. */
 const RENAME_RE = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -34,6 +50,8 @@ interface Props {
   open: boolean;
   workspaceId?: string;
   workspaceName?: string;
+  /** App's allPaneAgentRows(), the same rows the Queue reads. */
+  paneRows: QueueRow[];
   /** Windows local workspace: zellij, which refuses rename (docs/ZELLIJ.md §1). */
   isZellij: boolean;
   onClose: () => void;
@@ -83,6 +101,15 @@ export function SessionsOverviewWindow(p: Props) {
   // Which rows the next "Summarize selected" covers, and which are in flight.
   const [selected, setSelected] = createSignal<Set<string>>(new Set<string>());
   const [inFlight, setInFlight] = createSignal<Set<string>>(new Set<string>());
+  const verdicts = createMemo(() => {
+    const out = new Map<string, OverviewVerdict>();
+    for (const s of rows()) out.set(s.name, overviewVerdict(s.exited ? undefined : s.pane_ids, p.paneRows));
+    return out;
+  });
+  const queueVerdict = (s: TmuxSessionInfo) => {
+    const v = verdicts().get(s.name);
+    return v?.source === "queue" ? v : null;
+  };
   let reqId = 0;
   let disarmTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -125,10 +152,11 @@ export function SessionsOverviewWindow(p: Props) {
     }
   };
 
-  // Only rows that can be captured: an EXITED zellij session has no running
-  // server to read from.
-  const summarizable = (s: TmuxSessionInfo) => !s.exited;
-  const isSelected = (name: string) => selected().has(name);
+  // Only rows that can be captured (an EXITED zellij session has no running
+  // server to read from) and that have no free summary already.
+  const summarizable = (s: TmuxSessionInfo) => !s.exited && (queueVerdict(s)?.summaryTickable ?? true);
+  // Through summarizable: a row can gain a current brief after it was ticked.
+  const isSelected = (s: TmuxSessionInfo) => summarizable(s) && selected().has(s.name);
   const toggleSelected = (name: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
@@ -150,8 +178,9 @@ export function SessionsOverviewWindow(p: Props) {
     const all = selectableNames();
     return all.length > 0 && all.every((n) => selected().has(n));
   };
+  const selectedNames = () => selectableNames().filter((n) => selected().has(n));
   const summarizeSelected = () => {
-    const names = selectableNames().filter((n) => selected().has(n));
+    const names = selectedNames();
     if (names.length === 0 || summarizing()) return;
     const id = ++reqId;
     void summarize(names, id);
@@ -323,6 +352,16 @@ export function SessionsOverviewWindow(p: Props) {
   const statusOf = (s: TmuxSessionInfo): SessionSummary["status"] | null =>
     s.exited ? null : (summaries()[s.name]?.status ?? null);
 
+  // A row without a free summary shows the LLM's, if it was asked for one.
+  const summaryOf = (s: TmuxSessionInfo): { text: string; dim: boolean } => {
+    const v = queueVerdict(s);
+    const llm = summaries()[s.name]?.summary;
+    if (llm && (!v || v.summaryTickable)) return { text: llm, dim: false };
+    const h = v?.happening;
+    if (!h) return { text: "", dim: false };
+    return { text: h.kind === "prompt" ? t("queue.gotFromYou", { text: h.text }) : h.text, dim: h.dim };
+  };
+
   return (
     <Show when={p.open}>
       <div class="modal-backdrop" onClick={p.onClose}>
@@ -339,7 +378,7 @@ export function SessionsOverviewWindow(p: Props) {
                   {t("sessions.retry")}
                 </button>
               </Show>
-              <Show when={!summarizing() && !summaryError() && rows().length > 0 && selected().size === 0}>
+              <Show when={!summarizing() && !summaryError() && selectableNames().length > 0 && selectedNames().length === 0}>
                 {t("sessions.selectHint")}
               </Show>
             </span>
@@ -353,10 +392,10 @@ export function SessionsOverviewWindow(p: Props) {
               </button>
               <button
                 class="sessions-head-btn primary"
-                disabled={summarizing() || selected().size === 0}
+                disabled={summarizing() || selectedNames().length === 0}
                 onClick={summarizeSelected}
               >
-                {t("sessions.summarizeSelected", { n: selected().size })}
+                {t("sessions.summarizeSelected", { n: selectedNames().length })}
               </button>
             </Show>
             <button
@@ -405,7 +444,7 @@ export function SessionsOverviewWindow(p: Props) {
                             type="checkbox"
                             title={t("sessions.selectGroup")}
                             disabled={summarizing() || !g.rows.some(summarizable)}
-                            checked={g.rows.filter(summarizable).every((s) => isSelected(s.name)) && g.rows.some(summarizable)}
+                            checked={g.rows.filter(summarizable).every(isSelected) && g.rows.some(summarizable)}
                             onChange={(e) =>
                               setManySelected(
                                 g.rows.filter(summarizable).map((s) => s.name),
@@ -423,12 +462,12 @@ export function SessionsOverviewWindow(p: Props) {
                       </tr>
                       <For each={g.rows}>
                         {(s) => (
-                          <tr classList={{ "sessions-row-busy": busy() === s.name, "sessions-row-selected": isSelected(s.name) }}>
+                          <tr classList={{ "sessions-row-busy": busy() === s.name, "sessions-row-selected": isSelected(s) }}>
                             <td class="sessions-col-tick">
                               <input
                                 type="checkbox"
                                 disabled={summarizing() || !summarizable(s)}
-                                checked={isSelected(s.name)}
+                                checked={isSelected(s)}
                                 onChange={() => toggleSelected(s.name)}
                               />
                             </td>
@@ -487,26 +526,45 @@ export function SessionsOverviewWindow(p: Props) {
                             </td>
                             <td>
                               <Show
-                                when={statusOf(s)}
+                                when={queueVerdict(s)}
                                 fallback={
                                   <Show
-                                    when={inFlight().has(s.name)}
-                                    fallback={<span class="sessions-dash">—</span>}
+                                    when={statusOf(s)}
+                                    fallback={
+                                      <Show
+                                        when={inFlight().has(s.name)}
+                                        fallback={<span class="sessions-dash">—</span>}
+                                      >
+                                        <span class="sessions-spinner" aria-hidden="true" />
+                                      </Show>
+                                    }
                                   >
-                                    <span class="sessions-spinner" aria-hidden="true" />
+                                    {(st) => (
+                                      <>
+                                        <span class={`sessions-status ${st()}`}>
+                                          {t(`sessions.status.${st()}`)}
+                                        </span>
+                                        <span class="sessions-source">{t("sessions.status.fromScreen")}</span>
+                                      </>
+                                    )}
                                   </Show>
                                 }
                               >
-                                {(st) => (
-                                  <span class={`sessions-status ${st()}`}>
-                                    {t(`sessions.status.${st()}`)}
+                                {(v) => (
+                                  <span class={`sessions-status ${QUEUE_PILL[v().status]}`}>
+                                    {t(`queue.status.${v().status}`)}
                                   </span>
                                 )}
                               </Show>
                             </td>
                             <td class="sessions-col-summary">
-                              <span class="sessions-summary" title={summaries()[s.name]?.summary}>
-                                {summaries()[s.name]?.summary ?? ""}
+                              <span
+                                class="sessions-summary"
+                                classList={{ "queue-dim": summaryOf(s).dim }}
+                                dir="auto"
+                                title={summaryOf(s).text}
+                              >
+                                {summaryOf(s).text}
                               </span>
                             </td>
                             <td>
