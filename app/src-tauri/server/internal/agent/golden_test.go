@@ -27,7 +27,7 @@ func loadFixture(t *testing.T, name string, v any) {
 	}
 }
 
-func eqPtr(a, b *string) bool {
+func samePtr(a, b *string) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
@@ -62,8 +62,8 @@ func TestGoldenParser(t *testing.T) {
 			status = &s
 		}
 		w := c.Parsed
-		if !eqPtr(got.Task, w.Task) || !eqPtr(status, w.Status) || !eqPtr(got.Ask, w.Ask) || !eqPtr(got.Rec, w.Rec) ||
-			!eqPtr(got.Next, w.Next) || !eqPtr(got.Delta, w.Delta) || !eqPtr(got.Goal, w.Goal) || !eqPtr(got.Done, w.Done) {
+		if !samePtr(got.Task, w.Task) || !samePtr(status, w.Status) || !samePtr(got.Ask, w.Ask) || !samePtr(got.Rec, w.Rec) ||
+			!samePtr(got.Next, w.Next) || !samePtr(got.Delta, w.Delta) || !samePtr(got.Goal, w.Goal) || !samePtr(got.Done, w.Done) {
 			t.Errorf("%s: got %+v", c.Name, got)
 		}
 	}
