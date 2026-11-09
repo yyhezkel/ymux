@@ -144,8 +144,11 @@ assistant message with a plain-text `[ymux-brief]` block (`task:` / `status:` /
 `ask:` / `rec:` / `next:` / `delta:`, one per line, plus the Phase 105 **sticky**
 `goal:` / `done:` — aliases `done when` / `done-when` / `done_when` — written once
 and repeated only on change; `PaneBrief` carries what this turn said, the session
-store keeps the last non-empty value. The Go port does NOT parse these two yet —
-BACKLOG P2). Because the CLI forwards the
+store keeps the last non-empty value; the Go port has them too). The tests here read
+the same fixtures as the Go port (`server/internal/agent/testdata/*.json` through
+`include_str!`: `parser` and `brief_json` in `brief.rs`, `injection` in
+`context_store.rs`, `humanize`, `keys` and `policy` in `rpc_server.rs::golden_tests`).
+Because the CLI forwards the
 Stop hook payload verbatim, the desktop parses `last_assistant_message` with **no
 CLI cooperation**: `parse_brief` is pure string ops (last marker line wins via a
 full-line scan, so a self-quoting agent doesn't truncate its brief; keys are ASCII

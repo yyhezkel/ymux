@@ -107,7 +107,10 @@ put logic there.
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
   status `environment variable refused by sshd: K` + `log_warn`, connect continues.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
-  in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
+  in `AppState.agent_runs` (`golden_transitions_match_the_go_port` reads
+  `server/internal/agent/testdata/state.json`, shared with the Go port; `state_since` is
+  not in it, because Rust stamps the wall clock here and Go takes it as a parameter).
+  `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints
   what it is handed. `Failed` (`"failed"`) is entered by subkind `stop-failure` (turn died
   on an API error) and exits like any state, e.g. the next `user-prompt-submit` → Running.

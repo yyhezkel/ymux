@@ -2874,3 +2874,60 @@ mod tests {
         }
     }
 }
+
+// The fixtures are shared with server/internal/agent/golden_test.go, so a
+// drift between these functions and their Go ports fails here or there.
+#[cfg(test)]
+mod golden_tests {
+    use super::{humanize_notification, translate_key};
+    use serde_json::Value;
+
+    fn fixture(text: &str) -> Vec<Value> {
+        serde_json::from_str(text).expect("fixture")
+    }
+
+    #[test]
+    fn humanize_matches_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/humanize.json")) {
+            let (subkind, lang) = (c["subkind"].as_str().expect("subkind"), c["lang"].as_str().expect("lang"));
+            let got = humanize_notification(subkind, &c["payload"], c["ws_name"].as_str().unwrap_or(""), lang);
+            let want = (
+                c["title"].as_str().expect("title").to_string(),
+                c["body"].as_str().expect("body").to_string(),
+            );
+            assert_eq!(got, want, "{subkind}/{lang}");
+        }
+    }
+
+    #[test]
+    fn keys_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/keys.json")) {
+            let name = c["name"].as_str().expect("name");
+            let want: Vec<u8> = c["bytes"]
+                .as_array()
+                .expect("bytes")
+                .iter()
+                .map(|b| u8::try_from(b.as_u64().expect("byte")).expect("u8"))
+                .collect();
+            assert_eq!(translate_key(name), want, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn block_rules_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/policy.json")) {
+            let name = c["name"].as_str().expect("name");
+            let custom: Vec<String> = c["custom_block"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_str().expect("pattern").to_string()).collect())
+                .unwrap_or_default();
+            let v = ymux_policy::evaluate_with(
+                c["tool"].as_str().expect("tool"),
+                c["command"].as_str(),
+                &custom,
+                &[],
+            );
+            assert_eq!(v.decision == ymux_policy::Decision::Block, c["blocked"].as_bool().expect("blocked"), "{name}");
+        }
+    }
+}
