@@ -12,6 +12,8 @@ import {
   QUEUE_BUCKET,
   whatsHappening,
   groupQueueRows,
+  buildJumpRows,
+  compareQueueRows,
   inQueue,
   rowSinceMs,
   type QueueRow,
@@ -146,6 +148,93 @@ test("groups sort by most urgent row, rows oldest-first inside a bucket", () => 
   assert.equal(groups[0].rows[0].paneId, "c2"); // oldest waiting first
   assert.equal(groups[1].wsName, "Tax");
   assert.equal(groups[1].attention, 0);
+});
+
+const noCwd = () => null;
+const plainShell = (paneId: string, wsId = "ws1"): QueueRow =>
+  row({ paneId, wsId, state: "unknown", stateSince: null, light: null });
+
+test("compareQueueRows: bucket first, then oldest, then no timestamp", () => {
+  const blocked = row({ paneId: "b", state: "needs-input", light: "red", stateSince: NOW - 1_000 });
+  const oldDone = row({ paneId: "o", stateSince: NOW - 90_000 });
+  const newDone = row({ paneId: "n", stateSince: NOW - 10_000 });
+  const noTime = row({ paneId: "t", stateSince: null });
+  const sorted = [noTime, newDone, oldDone, blocked].sort(compareQueueRows);
+  assert.deepEqual(sorted.map((r) => r.paneId), ["b", "o", "n", "t"]);
+});
+
+test("buildJumpRows: a blocked pane outranks a working pane of an earlier workspace", () => {
+  const rows = [
+    row({ wsId: "a", paneId: "working", state: "running", light: "green", startedAt: NOW - 500_000 }),
+    withBrief({ status: "waiting-for-you" }, { wsId: "a", paneId: "waiting" }),
+    row({ wsId: "b", paneId: "blocked", state: "needs-input", light: "red" }),
+    row({ wsId: "b", paneId: "done" }),
+  ];
+  assert.deepEqual(
+    buildJumpRows(rows, noCwd).map((r) => [r.paneId, r.status]),
+    [
+      ["blocked", "needs-input"],
+      ["waiting", "waiting"],
+      ["done", "done"],
+      ["working", "working"],
+    ],
+  );
+});
+
+test("buildJumpRows: oldest first inside a bucket", () => {
+  const rows = [
+    row({ paneId: "new", state: "needs-input", light: "red", stateSince: NOW - 5_000 }),
+    row({ paneId: "old", state: "needs-input", light: "red", stateSince: NOW - 50_000 }),
+  ];
+  assert.deepEqual(buildJumpRows(rows, noCwd).map((r) => r.paneId), ["old", "new"]);
+});
+
+test("buildJumpRows: a plain shell sorts after agents and has no invented status", () => {
+  const rows = [
+    plainShell("shell-1"),
+    row({ paneId: "working", state: "running", light: "green" }),
+    plainShell("shell-2"),
+  ];
+  const out = buildJumpRows(rows, noCwd);
+  assert.deepEqual(out.map((r) => r.paneId), ["working", "shell-1", "shell-2"]);
+  assert.equal(out[1].status, null);
+});
+
+test("buildJumpRows: a pane with no agent signal and no connection is left out", () => {
+  const dead = row({ paneId: "dead", state: "unknown", light: null, connected: false });
+  assert.deepEqual(buildJumpRows([dead], noCwd), []);
+});
+
+test("buildJumpRows: an ended session stays, as in the Queue", () => {
+  const ended = row({
+    paneId: "ended",
+    light: null,
+    connected: false,
+    brief: { brief: null, last_prompt: null, prompt_ms: null, session_ended: true, seq: 1 },
+  });
+  assert.deepEqual(buildJumpRows([ended], noCwd).map((r) => r.status), ["ended"]);
+});
+
+test("buildJumpRows: carries the searchable fields and the workspace's cwd", () => {
+  const rows = [row({ wsId: "w", wsName: "runner › crm", paneId: "p", title: "api" })];
+  const [r] = buildJumpRows(rows, (id) => (id === "w" ? "/srv/crm" : null));
+  assert.deepEqual(r, {
+    wsId: "w",
+    wsName: "runner › crm",
+    paneId: "p",
+    title: "api",
+    cwd: "/srv/crm",
+    status: "done",
+  });
+});
+
+test("buildJumpRows does not reorder its input", () => {
+  const rows = [
+    row({ paneId: "done" }),
+    row({ paneId: "blocked", state: "needs-input", light: "red" }),
+  ];
+  buildJumpRows(rows, noCwd);
+  assert.deepEqual(rows.map((r) => r.paneId), ["done", "blocked"]);
 });
 
 test("rowSinceMs prefers the live turn start while working", () => {

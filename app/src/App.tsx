@@ -15,7 +15,9 @@ import { QueuePanel } from "./QueuePanel";
 import { BriefingCard } from "./BriefingCard";
 import { ContextRail, loadRailPrefs, saveRailPrefs } from "./ContextRail";
 import { RAIL_COLLAPSED_W } from "./contextModel";
-import { inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
+import { buildJumpRows, inQueue, queueStatus, QUEUE_BUCKET, whatsHappening, rowSinceMs, type QueueRow } from "./queueModel";
+import { STATUS_EMOJI } from "./QueueRow";
+import { shortenCwd } from "./cwdShort";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
@@ -155,6 +157,7 @@ const PALETTE_CAPS: Partial<Record<string, Capability>> = {
 const PALETTE_SHORTCUTS: Partial<Record<string, ShortcutActionId>> = {
   "workspace.new": "new_workspace",
   "queue.open": "toggle_queue",
+  "jump.open": "jump_palette",
   "contextRail.toggle": "toggle_context_rail",
   "briefing.show": "show_briefing",
   "pane.split.right": "split_horizontal",
@@ -474,6 +477,7 @@ function App() {
     createSignal<ProjectFolderModalMode | null>(null);
   // Phase 35 (#1.3): command palette (Ctrl+Shift+P).
   const [showPalette, setShowPalette] = createSignal(false);
+  const [showJump, setShowJump] = createSignal(false);
   // Phase 36 (#2.2): live auto port-forwards (all workspaces).
   const [portForwards, setPortForwards] = createSignal<ForwardRow[]>([]);
   // Phase 46: ports the remote watcher has reported but the user
@@ -674,7 +678,7 @@ function App() {
   // current rect once `anyModalOpen()` flips back to false.
   const anyModalOpen = () =>
     showSetup() !== false || editingWorkspace() !== null || showNotes() ||
-    showSettings() || showPalette() || showPortsWindow() || installingUpdate() ||
+    showSettings() || showPalette() || showJump() || showPortsWindow() || installingUpdate() ||
     // Dev-Mode ticket modal — same reason as the rest: the native
     // Browser Webview paints above HTML and must be hidden for it.
     pendingCapture() !== null || projectFolderModal() !== null ||
@@ -1212,6 +1216,7 @@ function App() {
     return [
       { id: "workspace.new", ...labels("cmd.workspace.new"), handler: () => openNewWorkspace() },
       { id: "queue.open", ...labels("cmd.queue.open"), handler: () => openPanel("queue") },
+      { id: "jump.open", ...labels("cmd.jump.open"), handler: () => setShowJump(true) },
       { id: "contextRail.toggle", ...labels("cmd.contextRail.toggle"), handler: () => toggleContextRail() },
       { id: "briefing.show", ...labels("cmd.briefing.show"), enabled: () => hasWs, handler: () => { if (ws) setBriefingWs(ws.id); } },
       { id: "workspace.rename", ...labels("cmd.workspace.rename"), enabled: () => hasWs, handler: () => { if (ws) setEditingWorkspace(ws); } },
@@ -1391,6 +1396,36 @@ function App() {
     allPaneAgentRows().filter(
       (r) => inQueue(r) && QUEUE_BUCKET[queueStatus(r)] <= 1,
     ).length;
+  // The one "go to this pane" path: the Queue and the jump palette both call
+  // it. The target is re-checked because a jump row is a snapshot and its
+  // pane can close while the palette is open.
+  const jumpToPane = async (wsId: string, paneId: string): Promise<void> => {
+    const ws = file().workspaces.find((w) => w.id === wsId);
+    if (!ws?.layout || !collectPanes(ws.layout).includes(paneId)) {
+      log.info(`jump ws=${wsId} pane=${paneId}: target is gone`);
+      return;
+    }
+    if ((await handleSetActive(wsId)) === wsId) focusPane(paneId);
+  };
+  // A snapshot taken when the palette opens (untrack): live re-sorting would
+  // move rows under the selection, so Enter could land on another pane.
+  const jumpCommands = createMemo((): Command[] => {
+    if (!showJump()) return [];
+    return untrack(() => {
+      const cards = workspaceCardInfo();
+      return buildJumpRows(allPaneAgentRows(), (id) => cards[id]?.cwd ?? null).map((row) => ({
+        id: row.paneId,
+        label: row.title,
+        detail: row.wsName,
+        path: row.cwd ? shortenCwd(row.cwd, null) : undefined,
+        status: row.status
+          ? { icon: STATUS_EMOJI[row.status], text: t(`queue.status.${row.status}`) }
+          : undefined,
+        search: [row.wsName, row.title, row.cwd ?? ""],
+        handler: () => void jumpToPane(row.wsId, row.paneId),
+      }));
+    });
+  });
   const paneAgentStateSince = (): Record<string, number | null> => {
     const runs = agentRuns();
     const out: Record<string, number | null> = {};
@@ -3674,7 +3709,13 @@ function App() {
 
     // ── app chrome ──
     // Phase 35 (#1.3): the command palette.
-    { id: "command_palette", run: (e) => { e.preventDefault(); setShowPalette((v) => !v); } },
+    { id: "command_palette", run: (e) => { e.preventDefault(); setShowJump(false); setShowPalette((v) => !v); } },
+    // The jump palette. Default Ctrl+Shift+O, not Orca's J: Ctrl+J is a
+    // newline (LF) that shells and vim need, this table has no terminal
+    // exemption for it, and blockDevtoolsKeys swallows Ctrl+Shift+J in
+    // release builds. xterm also sends ESC+C0 for Ctrl+Alt+letter, and
+    // M-C-j switches readline to vi mode, so Ctrl+Alt+J is out too.
+    { id: "jump_palette", run: (e) => { e.preventDefault(); setShowPalette(false); setShowJump((v) => !v); } },
     // Phase 65.W: the GLOBAL sidebar toggle — works everywhere, including
     // when an xterm pane or the FileManager has focus.
     { id: "toggle_sidebar", run: (e) => { e.preventDefault(); cycleSidebarMode(); } },
@@ -5465,10 +5506,7 @@ function App() {
         nowMs={agentClockMs()}
         onJump={(wsId, paneId) => {
           if (surfaceOf("queue") === "drawer") closePanel("queue");
-          void (async () => {
-            await handleSetActive(wsId);
-            focusPane(paneId);
-          })();
+          void jumpToPane(wsId, paneId);
         }}
         onClose={() => closePanel("queue")}
         onDrawer={() => openPanel("queue")}
@@ -5558,6 +5596,13 @@ function App() {
         open={showPalette()}
         commands={paletteCommands()}
         onClose={() => setShowPalette(false)}
+      />
+      <CommandPalette
+        open={showJump()}
+        commands={jumpCommands()}
+        placeholder={t("cmd.jump.placeholder")}
+        emptyText={t("cmd.jump.empty")}
+        onClose={() => setShowJump(false)}
       />
 
       {/* Phase 40 → 46: floating Ports window, scoped to the active

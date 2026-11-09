@@ -55,6 +55,8 @@ export interface ShortcutsSettings {
   // Phase 105: collapse / expand the Context Rail.
   toggle_context_rail: string;
   open_diff: string;
+  // Orca idea #6: the jump palette over live sessions.
+  jump_palette: string;
   copy_on_select_with_ctrl_c: boolean;
 }
 
@@ -91,6 +93,7 @@ export const DEFAULT_SHORTCUTS: ShortcutsSettings = {
   show_briefing: "Ctrl+Alt+Q",
   toggle_context_rail: "Ctrl+Shift+K",
   open_diff: "Ctrl+Shift+G",
+  jump_palette: "Ctrl+Shift+O",
   copy_on_select_with_ctrl_c: true,
 };
 
@@ -132,6 +135,7 @@ export const SHORTCUT_GROUPS: { key: string; ids: ShortcutActionId[] }[] = [
       "toggle_settings",
       "toggle_notes",
       "command_palette",
+      "jump_palette",
       "toggle_sidebar",
       "toggle_sidebar_soft",
       "summarize_claude",
