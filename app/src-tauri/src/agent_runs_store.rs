@@ -40,6 +40,9 @@ pub(crate) struct PersistedRun {
     sum_ms: u64,
     count: u32,
     seq: u32,
+    // Default: a file written before this field loads with no session.
+    #[serde(default)]
+    session_id: Option<String>,
 }
 
 fn to_ms(t: SystemTime) -> Option<u64> {
@@ -72,6 +75,7 @@ pub(crate) fn snapshot(runs: &HashMap<String, AgentRunState>) -> AgentRunsFile {
                 sum_ms: u64::try_from(r.sum_ms).unwrap_or(u64::MAX),
                 count: r.count,
                 seq: r.seq,
+                session_id: r.session_id.clone(),
             },
         );
     }
@@ -119,6 +123,7 @@ pub(crate) fn restore(
                 state: p.state,
                 state_since: Some(since),
                 seq: p.seq,
+                session_id: p.session_id,
             },
         );
     }
@@ -234,6 +239,7 @@ mod agent_runs_store_tests {
             state,
             state_since: since,
             seq: 7,
+            session_id: Some("s1".to_string()),
         }
     }
 
@@ -268,6 +274,7 @@ mod agent_runs_store_tests {
         assert_eq!(r.state_since, Some(since));
         assert_eq!(r.turn_started_at, Some(now() - Duration::from_secs(5)));
         assert_eq!((r.sum_ms, r.count, r.seq), (90_000, 3, 7));
+        assert_eq!(r.session_id.as_deref(), Some("s1"));
     }
 
     #[test]
