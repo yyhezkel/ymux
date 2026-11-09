@@ -338,7 +338,7 @@ The frontend reads `settings.theme` on startup and writes the colors as CSS cust
 |---|---|---|
 | `YMUX_SOCKET_ADDR` | unset | If set (anywhere), CLI uses TCP transport with this `host:port`. Required on Linux. |
 | `YMUX_TUNNEL_TOKEN` | unset | If TCP transport is selected, used as the HMAC key for the challenge-response handshake. Required on Linux. |
-| `YMUX_PIPE_PATH` | `\\.\pipe\ymux-<USER>` | Override the default named-pipe path (Windows only). |
+| `YMUX_PIPE_PATH` | `\\.\pipe\ymux-<USER>` (Unix: a socket path list) | Override the default pipe or socket path. The app exports it to local panes when `YMUX_CONFIG_DIR` is set. |
 | `YMUX_PANE_ID` | unset | Stamped on `feed.push` so the agent feed card knows which pane it belongs to. |
 | `HOME` | OS-provided | Used to find `~/.ymux/run/last.env` for the fallback env load. |
 | `USERNAME` | OS-provided | Used in the default Windows pipe name if `YMUX_PIPE_PATH` is unset. |

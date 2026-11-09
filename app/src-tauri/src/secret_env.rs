@@ -68,8 +68,9 @@ impl SecretEnvStore {
             entries,
         })
         .map_err(|e| format!("encode secret-env.json: {e}"))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("write secret-env.json.tmp: {e}"))?;
+        // Per-pid name: two processes must not rename each other's partial file.
+        let tmp = path.with_extension(format!("json.{}.tmp", std::process::id()));
+        std::fs::write(&tmp, json).map_err(|e| format!("write secret-env tmp: {e}"))?;
         std::fs::rename(&tmp, path).map_err(|e| format!("rename secret-env.json: {e}"))
     }
 
