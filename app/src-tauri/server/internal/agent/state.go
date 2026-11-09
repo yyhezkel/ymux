@@ -55,10 +55,22 @@ var needsInputNotifications = map[string]bool{
 	"elicitation_url_dialog": true,
 }
 
+// ToolRunningNotification is not a Claude Code value: the CLI sends it in
+// `auto` mode, where pre-tool-use no longer reaches the daemon.
+const ToolRunningNotification = "tool_running"
+
 // resumedNotifications mean the human answered and work resumed.
 var resumedNotifications = map[string]bool{
-	"elicitation_complete": true,
-	"elicitation_response": true,
+	"elicitation_complete":  true,
+	"elicitation_response":  true,
+	ToolRunningNotification: true,
+}
+
+// SessionEndIsOurs reports whether a SessionEnd belongs to the session this
+// pane is running (session_end_is_ours in lib.rs). An end with no id cannot
+// be judged and is accepted.
+func SessionEndIsOurs(current, ended string) bool {
+	return ended == "" || current == ended
 }
 
 // Run is one pane's agent run state (AgentRunState in lib.rs). The zero
@@ -75,6 +87,9 @@ type Run struct {
 	// uint32 for the same reason as the Rust side: the event carries a
 	// plain JSON number and the frontend compares it.
 	Seq uint32
+	// SessionID is the Claude session this pane is running, from the latest
+	// user-prompt-submit or stop. See SessionEndIsOurs.
+	SessionID string
 }
 
 // CurrentState returns State, reading the zero value as StateUnknown.

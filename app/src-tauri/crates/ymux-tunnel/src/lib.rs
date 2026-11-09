@@ -8,7 +8,7 @@
 
 use hmac::{Hmac, Mac};
 use rand::RngCore;
-use russh::{Channel, ChannelMsg};
+use russh::Channel;
 use sha2::Sha256;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufStream};
 
@@ -371,28 +371,18 @@ pub async fn write_remote_env_file(
     Ok(())
 }
 
+/// The error text must not carry `cmd`: the env-file script holds the tunnel
+/// token and callers log this error (Rule #8).
 async fn exec_simple(
     handle: &russh::client::Handle<SshClient>,
     cmd: &str,
 ) -> Result<(), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open exec channel: {e}"))?;
-    chan.exec(true, cmd).await.map_err(|e| format!("exec: {e}"))?;
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
+    let outcome =
+        ymux_core::ssh_exec::exec(handle, cmd, ymux_core::ssh_exec::ExecOpts::timeout_secs(30)).await?;
+    match outcome.require_code()? {
+        0 => Ok(()),
+        code => Err(format!("remote command failed (exit {code})")),
     }
-    let _ = chan.close().await;
-    if exit_code != 0 {
-        return Err(format!("exec '{}' exit {}", cmd, exit_code));
-    }
-    Ok(())
 }
 
 /// Used as a small helper inside the russh `Handler`: spawn a bridge task. Exists so

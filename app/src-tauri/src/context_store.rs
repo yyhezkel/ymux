@@ -651,8 +651,28 @@ pub(crate) fn build_injection(
     }
 }
 
-/// RPC `context.inject` body: resolve the pane's workspace + this session,
-/// build the text. Returns "" when injection is off or there is nothing.
+/// The `[ymux-brief]` instructions. One file feeds this and the Queue's
+/// copy-paste snippet (`BRIEF_SNIPPET`), so the two cannot drift.
+const BRIEF_PROTOCOL: &str = include_str!("../../src/brief-protocol.txt");
+
+/// Append the fixed protocol block to the context. The block is outside
+/// `INJECT_MAX_BYTES` so it never crowds out the deltas, and it is the whole
+/// answer when the context is empty (`clear`, an empty `startup`).
+fn with_protocol(context: String, protocol_on: bool) -> String {
+    if !protocol_on {
+        return context;
+    }
+    let protocol = BRIEF_PROTOCOL.trim_end();
+    if context.is_empty() {
+        protocol.to_string()
+    } else {
+        format!("{context}\n\n{protocol}")
+    }
+}
+
+/// RPC `context.inject` body: the session/workspace context (when
+/// `inject_context` is on) followed by the brief protocol (when
+/// `inject_protocol` is on). Returns "" when there is nothing to say.
 /// Rule #1: logs carry ids, the source and the byte count — never text.
 pub(crate) fn injection_for_hook(
     state: &AppState,
@@ -660,10 +680,35 @@ pub(crate) fn injection_for_hook(
     session_id: Option<&str>,
     source: &str,
 ) -> String {
-    let enabled = lock(&state.settings).brief.inject_context;
-    if !enabled {
-        return String::new();
-    }
+    let (context_on, protocol_on) = {
+        let settings = lock(&state.settings);
+        (settings.brief.inject_context, settings.brief.inject_protocol)
+    };
+    let context = if context_on {
+        context_for_hook(state, pane_id, session_id, source)
+    } else {
+        String::new()
+    };
+    let text = with_protocol(context, protocol_on);
+    log_debug(
+        "CONTEXT",
+        &format!(
+            "inject source={source} session={} pane={} bytes={}",
+            session_id.unwrap_or("-"),
+            pane_id.unwrap_or("-"),
+            text.len()
+        ),
+    );
+    text
+}
+
+/// Resolve the pane's workspace + this session and build the context text.
+fn context_for_hook(
+    state: &AppState,
+    pane_id: Option<&str>,
+    session_id: Option<&str>,
+    source: &str,
+) -> String {
     let Ok(dir) = sessions_dir() else {
         return String::new();
     };
@@ -687,17 +732,7 @@ pub(crate) fn injection_for_hook(
         ("startup", Some(w)) => state.context.list_at(&dir, w),
         _ => Vec::new(),
     };
-    let text = build_injection(source, this.as_ref(), intent.as_deref(), &siblings);
-    log_debug(
-        "CONTEXT",
-        &format!(
-            "inject source={source} session={} pane={} bytes={}",
-            session_id.unwrap_or("-"),
-            pane_id.unwrap_or("-"),
-            text.len()
-        ),
-    );
-    text
+    build_injection(source, this.as_ref(), intent.as_deref(), &siblings)
 }
 
 // ─── Tauri commands ─────────────────────────────────────────────────────────
@@ -924,6 +959,55 @@ mod tests {
         big.set_first_prompt(&"ש".repeat(2000), 1);
         let out = build_injection("compact", Some(&big), None, &[]);
         assert!(out.len() <= INJECT_MAX_BYTES);
+    }
+
+    // The fixture is shared with server/internal/term/inject_test.go.
+    #[test]
+    fn golden_injection_matches_the_go_port() {
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_str(include_str!("../server/internal/agent/testdata/injection.json")).expect("fixture");
+        for c in &cases {
+            let name = c["name"].as_str().expect("name");
+            let this: Option<SessionContext> = serde_json::from_value(c["this"].clone()).expect("this");
+            let siblings: Vec<SessionContext> = serde_json::from_value(c["siblings"].clone()).expect("siblings");
+            let got = build_injection(c["source"].as_str().expect("source"), this.as_ref(), c["intent"].as_str(), &siblings);
+            assert_eq!(got, c["want"].as_str().expect("want"), "{name}");
+            assert!(got.len() <= INJECT_MAX_BYTES, "{name}");
+        }
+    }
+
+    #[test]
+    fn protocol_is_the_whole_answer_when_the_context_is_empty() {
+        for source in ["startup", "resume", "clear", "compact"] {
+            let out = with_protocol(build_injection(source, None, None, &[]), true);
+            assert_eq!(out, BRIEF_PROTOCOL.trim_end(), "source {source}");
+        }
+    }
+
+    #[test]
+    fn protocol_follows_the_context_outside_the_byte_cap() {
+        let mut c = SessionContext::new("s1");
+        c.set_first_prompt(&"ש".repeat(2000), 1);
+        let context = build_injection("compact", Some(&c), None, &[]);
+        let out = with_protocol(context.clone(), true);
+        assert!(out.starts_with(&format!("{context}\n\n")), "context comes first");
+        assert!(out.ends_with(BRIEF_PROTOCOL.trim_end()), "the block is not clipped");
+        assert!(out.len() > INJECT_MAX_BYTES, "the block is not counted: {}", out.len());
+    }
+
+    #[test]
+    fn protocol_off_leaves_the_context_unchanged() {
+        assert_eq!(with_protocol(String::new(), false), "");
+        assert_eq!(with_protocol("[ymux-context]\nGoal: x".into(), false), "[ymux-context]\nGoal: x");
+    }
+
+    #[test]
+    fn protocol_text_carries_the_wire_format() {
+        let lines: Vec<&str> = BRIEF_PROTOCOL.lines().collect();
+        assert!(lines.contains(&"[ymux-brief]"), "the marker is a whole line");
+        for key in ["task:", "status:", "ask:", "rec:", "next:", "delta:", "goal:", "done:"] {
+            assert!(lines.iter().any(|l| l.starts_with(key)), "missing {key}");
+        }
     }
 
     #[test]

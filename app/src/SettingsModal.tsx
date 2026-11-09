@@ -841,6 +841,23 @@ export function SettingsModal(p: Props) {
                     <span>{t("settings.brief.injectContext.label")}</span>
                   </label>
                   <p class="settings-hint">{t("settings.brief.injectContext.hint")}</p>
+                  {/* Separate from injectContext: this one changes what the
+                      agent writes. Default ON, same reading as above. */}
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={p.settings.brief?.inject_protocol !== false}
+                      onChange={(e) =>
+                        update("brief", {
+                          ...DEFAULT_BRIEF_SETTINGS,
+                          ...p.settings.brief,
+                          inject_protocol: e.currentTarget.checked,
+                        })
+                      }
+                    />
+                    <span>{t("settings.brief.injectProtocol.label")}</span>
+                  </label>
+                  <p class="settings-hint">{t("settings.brief.injectProtocol.hint")}</p>
                 </section>
                 <section>
                   <label class="settings-checkbox">
