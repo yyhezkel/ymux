@@ -19,7 +19,7 @@ async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
 # Phase 51.B3: Session/SshSession/ForwardEntry runtime types.
-tokio = { version = "1", features = ["sync", "rt", "macros"] }
+tokio = { version = "1", features = ["sync", "rt", "macros", "time"] }
 portable-pty = "0.8"
 # Phase 51.C: pipe_name resolution for the Named Pipe RPC endpoint.
 whoami = "1"

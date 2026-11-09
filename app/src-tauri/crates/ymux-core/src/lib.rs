@@ -17,6 +17,8 @@
 // See http.rs — GET-only, jittered exponential backoff on transport errors.
 pub mod http;
 mod log_writer;
+// The one drain loop for one-shot SSH exec. See ssh_exec.rs.
+pub mod ssh_exec;
 pub use log_writer::flush_log;
 
 use std::collections::HashMap;
