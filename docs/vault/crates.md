@@ -115,6 +115,10 @@ when unset; `diff_cwd` is view state and deliberately did **not** bump the schem
 `ymux-core`'s `backfill_terminal_connections` and every `LayoutNode::Pane { … }` literal in
 the tree carry the field (a struct-literal add is exhaustive, so all of them do).
 
+**`LayoutNode::Pane.smart_bidi: Option<bool>`** is retired: the setting moved to the RTL
+profiles and nothing reads this field. It stays so an existing `workspaces.json` keeps its
+shape.
+
 **`LayoutNode::Pane.claude_running: Option<bool>`** (after `diff_cwd`, same `serde(default,
 skip_serializing_if)` elision, no schema bump) persists "Claude is running in this pane" so a
 reattach seeds the bidi TUI signal. Stale-true is accepted: see DECISIONS.md.

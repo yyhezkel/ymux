@@ -123,7 +123,8 @@ group.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the
-`auto_direction` / `mirror_arrows_rtl` / `tui_owns_bidi` / `direction_policy` knobs.
+`auto_direction` / `mirror_arrows_rtl` / `tui_owns_bidi` / `direction_policy` /
+`smart_bidi` knobs. `smart_bidi` applies when a pane connects, and the hint says so.
 `setRtlField` writes a **complete** profile object rather than a partial: Rust's
 per-field `serde(default)` would otherwise resurrect type-defaults instead of
 profile-defaults. `RTL_FIELD_DEFAULTS` holds `auto_per_line` for both profiles and

@@ -98,6 +98,9 @@ export interface RtlProfileFields {
    *  "any_rtl", the pre-2026-08-19 rule — see `directionPolicy` in
    *  terminalInstance.ts for why this is per pane class and not per TUI. */
   direction_policy?: DirectionPolicy;
+  /** Wrap Latin runs near RTL text in bidi isolates. Absent reads as off.
+   *  `connectPane` passes the resolved value to `pane_connect`. */
+  smart_bidi?: boolean;
 }
 
 /** `local` = native Windows ConPTY panes; `remote` = anything with a POSIX
@@ -560,6 +563,8 @@ export function resolveRtlProfiles(
     // split, so there is no deprecated global to inherit from, and an absent
     // value must mean the older rule rather than the newer one.
     directionPolicy: p?.direction_policy ?? "any_rtl",
+    // No flat-field fallback: it postdates the split, and absent means off.
+    smartBidi: p?.smart_bidi ?? false,
   });
   const out = {
     local: pick(t.rtl?.local, "auto_per_line", true),
@@ -573,9 +578,9 @@ export function resolveRtlProfiles(
   rtlLog.info(
     `rtl-profiles block=${t.rtl ? 1 : 0} ` +
       `local(mode=${out.local.rtlMode},tui=${out.local.tuiOwnsBidi ? 1 : 0},` +
-      `policy=${out.local.directionPolicy}) ` +
+      `policy=${out.local.directionPolicy},bidi=${out.local.smartBidi ? 1 : 0}) ` +
       `remote(mode=${out.remote.rtlMode},tui=${out.remote.tuiOwnsBidi ? 1 : 0},` +
-      `policy=${out.remote.directionPolicy})`,
+      `policy=${out.remote.directionPolicy},bidi=${out.remote.smartBidi ? 1 : 0})`,
   );
   return out;
 }
