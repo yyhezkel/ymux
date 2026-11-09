@@ -8,6 +8,7 @@ import { paneDragStore, installPaneDragEscape } from "./paneDrag";
 // in case any of its in-pane Webview wiring proves useful for a
 // future iteration.
 import { DiffPane } from "./DiffPane";
+import type { DiffSendResult, DiffSendTarget } from "./diffNotes";
 // Phase 53 (rebased): FileManagerPane no longer imported here — the
 // Files surface moved to a workspace-level panel (sidebar 🗂) that
 // App.tsx mounts, not the pane layout.
@@ -126,6 +127,9 @@ interface Props {
   onDiffOpenWorktree: (workspaceId: string, wt: WorktreeEntry) => void;
   onDiffNewWorktree: (workspaceId: string) => void;
   onWorktreesListed: (workspaceId: string, entries: WorktreeEntry[]) => void;
+  // Diff line notes: where a batch of notes can go, and the send itself.
+  diffSendTargets: DiffSendTarget[];
+  onDiffSendPrompt: (paneId: string, text: string) => Promise<DiffSendResult>;
   // Phase 24.D: onWorkspacesFileUpdate removed — its only consumers
   // were the (now-gone) ChatPane / ClaudeLogPane Match arms.
 }
@@ -317,6 +321,8 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           onOpenWorktree={props.all.onDiffOpenWorktree}
           onNewWorktree={props.all.onDiffNewWorktree}
           onWorktreesListed={props.all.onWorktreesListed}
+          sendTargets={props.all.diffSendTargets}
+          onSendPrompt={props.all.onDiffSendPrompt}
         />
       </Match>
       <Match when={kind() === "help"}>

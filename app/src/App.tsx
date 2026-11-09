@@ -21,6 +21,7 @@ import { shortenCwd } from "./cwdShort";
 import { paneLabel, sessionDisplay, type PaneNode } from "./paneTitle";
 import { windowPaneName } from "./windowPaneName";
 import { pathKey } from "./diffModel";
+import { bracketedPastePayload, type DiffSendResult, type DiffSendTarget } from "./diffNotes";
 import { setPaneSwapHandler } from "./paneDrag";
 import {
   allPaneSessions,
@@ -2182,6 +2183,38 @@ function App() {
     }
     const pid = activePaneId();
     if (pid) void splitPane(pid, "horizontal", "diff");
+  };
+
+  // Diff line notes: the connected terminals of the active workspace. The
+  // number tells apart panes that share the workspace-name fallback label.
+  const diffSendTargets = (): DiffSendTarget[] => {
+    const ws = activeWs();
+    if (!ws?.layout) return [];
+    const connected = connectedPanes();
+    const lights = paneAgentLights();
+    const out: DiffSendTarget[] = [];
+    for (const paneId of collectPanes(ws.layout)) {
+      const node = findPane(ws.layout, paneId);
+      if (!node || paneKindOf(node) !== "terminal" || !connected.has(paneId)) continue;
+      const name = paneLabel(node, { workspaceName: ws.name, workspaceConnection: ws.connection });
+      out.push({ paneId, label: `${out.length + 1}. ${name}`, isAgent: lights[paneId] != null });
+    }
+    return out;
+  };
+
+  // Writes by session id, so a popped-out pane works too: its grid instance
+  // is detached for input but still parses the output, so its mode is live.
+  // A paste without brackets turns each line break into Enter, so refuse it.
+  // The check reads xterm's mode. Unverified: zellij is believed to keep that
+  // mode on itself and to strip the brackets for an inner shell without it.
+  const sendDiffPrompt = async (paneId: string, text: string): Promise<DiffSendResult> => {
+    const sessionId = paneToSession.get(paneId);
+    const ti = terms.get(paneId);
+    const data = bracketedPastePayload(text);
+    if (!sessionId || !ti || !data) return "not_connected";
+    if (!ti.term.modes.bracketedPasteMode) return "no_bracketed_paste";
+    await backend.call("pty_write", { sessionId, data });
+    return "sent";
   };
 
   // Phase 84.A: close a tab and land on a sensible neighbour. The
@@ -5236,6 +5269,8 @@ function App() {
                       const root = file().workspaces.find((w) => w.id === projectRootOf(wsId));
                       if (root) setProjectFolderModal({ kind: "worktree", workspace: root });
                     }}
+                    diffSendTargets={diffSendTargets()}
+                    onDiffSendPrompt={sendDiffPrompt}
                     workspacePaneCount={(() => {
                       const l = activeWs()?.layout;
                       return l ? collectPanes(l).length : 0;

@@ -43,14 +43,15 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,685)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
-both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
+**`file_manager.rs` (1,688)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
+both sides. Local ops use `std::fs`; zip 9's `ZipFile::name` returns a `Result`, so a bad
+entry name stops the local unzip with an error. Remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.
 
-**`workspace_browser.rs` (1,226)** — **at most one child Webview per workspace**, attached
-to the main window via `Window::add_child` (this is what pins `tauri = "=2.10.3"` with
+**`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
+to the main window via `Window::add_child` (this is what pins `tauri = "=2.11.6"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
 creates, reveals or repositions it; there is no separate resize command. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
@@ -121,10 +122,11 @@ the child, and that was wrong; Phase 82.E corrected it in place. `tauri::manager
 prepends `__TAURI_INTERNALS__` and the invoke bootstrap to **every** webview's init
 scripts, external URLs included, so an `invoke` function does reach the tunneled page.
 The capability layer does **not** deny it: ymux has no app ACL manifest (`build.rs` is a
-bare `tauri_build::build()`, no `permissions/`), and Tauri 2.10.3 `Webview::on_message`
-ACL-checks app (non-plugin) commands only when one exists. Capabilities gate plugin
-commands only, so every app command was reachable from the tunneled page. What denies it
-now is `ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
+bare `tauri_build::build()`, no `permissions/`), and up to Tauri 2.11.0 `Webview::on_message`
+ACL-checked app (non-plugin) commands only when one existed, so every app command was
+reachable from the tunneled page. Tauri 2.11.1 (GHSA-7gmj-67g7-phm9) also ACL-checks remote
+origins, so a remote page is now refused before the handler. What denies every origin is
+`ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
 starts with `WEBVIEW_LABEL_PREFIX` (`workspace-browser-`) is rejected with
 `ymux: command <cmd> is not available to the workspace Browser webview`, warn-logged once
 per label (names only). It reads the label, never capabilities, so editing
@@ -133,7 +135,7 @@ per label (names only). It reads the label, never capabilities, so editing
 
 The Dev-Mode inspect script still talks back through navigation
 (`location.href = "ymux-ticket:<base64url>"`, decoded by `handle_ticket_navigation`,
-re-emitted as `browser:ticket-captured`) because `WebviewBuilder` has no `on_ipc` in 2.10.
+re-emitted as `browser:ticket-captured`) because `WebviewBuilder` has no `on_ipc` in 2.11.
 
 **Phase 82.E — the macOS "site JS is dead" probe.** On macOS a page renders in this
 webview but the site's own JavaScript never runs; the identical code path is fine on

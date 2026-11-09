@@ -362,6 +362,10 @@ persist and would restart timers and re-fire guards (`rootIdOf`, `activeRootId` 
   `worktreesVersion` bumps on `ProjectFolderModal`'s `onDone` so an open Diff strip re-lists;
   `onDiffOpenWorktree` → `openWorktree(projectRootOf(wsId), wt)`, `onDiffNewWorktree` opens the
   worktree modal for that project root. All threaded through `LayoutView` to `DiffPane`.
+- **Diff line-note send** — `diffSendTargets()` lists the active workspace's connected terminal
+  panes, numbered because untitled panes share the workspace-name label. `sendDiffPrompt` is the
+  send: `pty_write` by session id, one bracketed paste, refused when `term.modes.bracketedPasteMode`
+  is off (`frontend-panes.md` § DiffPane). Both threaded through `LayoutView` to `DiffPane`.
 - **`+` on a header** (Phase 92: every header, `IconTerminal`) → `newScreen(w)`, which is
   `newSessionRow(w)` when `sessionsAsRows() && wsCaps(w).sessionPersistence` and otherwise
   `workspace_new_screen({parentWorkspaceId, name: null})` → `updateFile` → `handleSetActive`
