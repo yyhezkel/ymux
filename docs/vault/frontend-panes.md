@@ -15,6 +15,7 @@ covers:
   - app/src/mdViewerStore.ts
   - app/src/DiffPane.tsx
   - app/src/diffModel.ts
+  - app/src/diffNotes.ts
   - app/src/InsightsWindow.tsx
   - app/src/InsightsAnalytics.tsx
   - app/src/InsightsClaudeCost.tsx
@@ -330,6 +331,28 @@ because the plain `.pane-body { overflow: hidden }` declared later used to win a
 never scrolled; and `.diff-pane-pre` pins `direction: ltr` the way `.terminal-container`
 does — a unified diff is a fixed-column grid and must not inherit the Hebrew UI's
 `dir="rtl"`, which flipped every line's gutter and alignment on Yossi's Windows install.
+
+**Line notes.** The user attaches a note to a diff line and pastes the batch into a pane
+of the same workspace. `parseDiff` now also returns `refs`, parallel to `lines`: file +
+side + line, numbered from the `@@` header, null for a header or a combined `@@@` hunk.
+While a hunk's declared count is open, a raw `--- x` / `+++ x` is content (a deleted `-- x`),
+not a file header. `diffNotes.ts` (pure, node-tested) holds the anchor (`noteKey`, plus the
+line text), `noteStatus`, `buildNotesPrompt`, the sanitizers and `bracketedPastePayload`.
+Status is derived from the current parse, never stored; a note whose line moved reads as
+outdated, on purpose, because matching text alone could choose the wrong `}`. Notes live in
+a **module-scope** signal keyed by `diffTargetKey` (workspace + cwd + source), because a
+workspace switch unmounts the pane. They are not persisted. Rows are rebuilt on every diff
+event, so the editor and send controls sit in a tray outside them and the keyboard cursor
+is held by anchor: Shift+arrows move it, N opens a note, and the gutter buttons are
+`tabIndex=-1` so the whole diff is one Tab stop. The prompt frame is English on purpose; the
+preview shows the exact text. `sendDiffPrompt` in App writes to `pty_write` by session id
+(so a popped-out pane works), one bracketed paste and no Enter, and **refuses when xterm's
+`bracketedPasteMode` is off**, because an unbracketed paste turns each line break into Enter.
+Limit: zellij keeps that mode on for itself and strips the brackets for an inner shell that
+did not ask for them, so the check cannot see that case. All text is stripped of C0, C1, DEL
+and bidi controls twice: when the prompt is built and at the last step before the PTY. Rule
+#1: the prompt is pane input and is never logged. `pty_write` exists on both hosts, so
+there is no capability gate beyond `diffPane`.
 
 **`HelpPane.tsx` (96)** — renders bundled markdown (currently ssh-key-setup) keyed by
 topic and UI language, with a Copy button on every fenced block.
