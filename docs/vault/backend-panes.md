@@ -215,8 +215,9 @@ can land on the same directory from either side of the rename. `reconcile(ours, 
 theirs)` is a **pure function with unit tests**, which is the point: an idle app never
 saves, so the interesting path cannot be reached by launching one and waiting. Beyond the
 `reconcile` seam, `two_instance_save_tests` in `lib.rs` drive `write_workspaces_text` with two
-merge bases over one tempdir (two instances' edits both survive; an older build's rewrite does
-not strip `parent_id`; a newer on-disk schema refuses the write byte-identically). A second
+merge bases over one tempdir (two instances' edits both survive, also across a second save; our
+delete sticks after a merge; an older build's rewrite does not strip `parent_id`; a newer on-disk
+schema refuses the write byte-identically). `reconcile` always writes our schema version. A second
 instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content

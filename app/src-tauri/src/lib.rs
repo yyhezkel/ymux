@@ -974,6 +974,17 @@ pub(crate) fn hex_utf8(s: &str) -> String {
 /// our own delta on top of theirs instead of flattening their work.
 static LAST_KNOWN: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
+/// Hash of the text this process last wrote. It sets a log level only: a
+/// save that finds our own earlier merge on disk logs at debug level.
+static LAST_LANDED_HASH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn text_hash(text: &str) -> u64 {
+    use std::hash::{Hash as _, Hasher as _};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut h);
+    h.finish()
+}
+
 pub(crate) fn remember_file_text(text: &str) {
     if let Ok(mut g) = LAST_KNOWN.lock() {
         *g = Some(text.to_string());
@@ -1044,10 +1055,17 @@ fn write_workspaces_text(
     }
 
     let (text, notes) = workspaces_merge::reconcile(ours, base_text.as_deref(), &on_disk);
+    // After one merge the base is `ours`, so disk != base on every later
+    // save. Only a file we did not write ourselves deserves a WARN.
+    let repeat = text_hash(&on_disk) == LAST_LANDED_HASH.load(std::sync::atomic::Ordering::Relaxed);
     for n in &notes {
-        log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        if repeat {
+            log_debug("WORKSPACE", &format!("save_to_disk: {n}"));
+        } else {
+            log_warn("WORKSPACE", &format!("save_to_disk: {n}"));
+        }
     }
-    if !notes.is_empty() {
+    if !notes.is_empty() && !repeat {
         log_info(
             "WORKSPACE",
             &format!(
@@ -1070,9 +1088,13 @@ fn write_workspaces_text(
     }
 
     std::fs::rename(&tmp, path).map_err(|e| format!("rename: {e}"))?;
+    // The base is `ours`, not the merged `text`. With `text` as the base the
+    // next save sees disk == base, takes the fast path in `reconcile`, and
+    // writes our in-memory state over the other writer's rows.
     if let Ok(mut g) = last_known.lock() {
-        *g = Some(text.clone());
+        *g = Some(ours.to_string());
     }
+    LAST_LANDED_HASH.store(text_hash(&text), std::sync::atomic::Ordering::Relaxed);
     Ok(text)
 }
 
@@ -16494,6 +16516,73 @@ mod two_instance_save_tests {
         for want in ["shared", "from-a", "from-b"] {
             assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
         }
+    }
+
+    #[test]
+    fn a_second_save_keeps_another_writers_workspace() {
+        // Pins the base after a merge. With the merged text as the base, the
+        // second A save takes the fast path and X disappears with no log line.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let t0 = doc(v, json!([{ "id": "shared", "name": "shared" }]));
+        std::fs::write(&path, &t0).expect("seed");
+        let (a, b) = (Mutex::new(Some(t0.clone())), Mutex::new(Some(t0)));
+
+        let b_ours = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "x", "name": "x", "future_field": 1 },
+        ]));
+        write_workspaces_text(&path, &b_ours, &b).expect("B save");
+
+        let a1 = doc(v, json!([{ "id": "shared", "name": "shared" }, { "id": "a1", "name": "a1" }]));
+        write_workspaces_text(&path, &a1, &a).expect("A first save");
+        let a2 = doc(v, json!([
+            { "id": "shared", "name": "shared" },
+            { "id": "a1", "name": "a1" },
+            { "id": "a2", "name": "a2" },
+        ]));
+        let landed = write_workspaces_text(&path, &a2, &a).expect("A second save");
+
+        let got = ids(&landed);
+        for want in ["shared", "x", "a1", "a2"] {
+            assert!(got.iter().any(|g| g == want), "{want} lost: {got:?}");
+        }
+        let after: Value = serde_json::from_str(&landed).expect("json");
+        let x = after["workspaces"]
+            .as_array()
+            .expect("workspaces array")
+            .iter()
+            .find(|w| w["id"] == "x")
+            .expect("x row");
+        assert_eq!(x["future_field"], 1, "a field only B knows was stripped");
+    }
+
+    #[test]
+    fn a_delete_after_a_merge_still_sticks() {
+        // Pins the other half of the base rule: our own delete must survive
+        // the merge path that every save takes after the first merge.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("workspaces.json");
+        let v = WORKSPACES_SCHEMA_VERSION;
+        let both = json!([{ "id": "keep", "name": "keep" }, { "id": "gone", "name": "gone" }]);
+        let t0 = doc(v, both.clone());
+        std::fs::write(&path, &t0).expect("seed");
+        let a = Mutex::new(Some(t0));
+
+        let with_x = doc(v, json!([
+            { "id": "keep", "name": "keep" },
+            { "id": "gone", "name": "gone" },
+            { "id": "x", "name": "x" },
+        ]));
+        std::fs::write(&path, with_x).expect("other writer");
+        write_workspaces_text(&path, &doc(v, both), &a).expect("merge save");
+
+        let landed = write_workspaces_text(&path, &doc(v, json!([{ "id": "keep", "name": "keep" }])), &a)
+            .expect("delete save");
+        let got = ids(&landed);
+        assert!(!got.iter().any(|g| g == "gone"), "delete undone: {got:?}");
+        assert!(got.iter().any(|g| g == "x"), "x lost: {got:?}");
     }
 
     #[test]

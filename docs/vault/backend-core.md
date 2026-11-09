@@ -166,14 +166,20 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1078](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1101](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:989](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:1001](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
 2. **Three-way merge before writing.** `LAST_KNOWN` (a `static Mutex<Option<String>>`)
-   holds the file text as this process last read or wrote it. `save_to_disk` re-reads
+   holds the file text as this process last read it, or the `ours` text of its last save.
+   It must never hold the merged result: with the merged text as the base, the next save
+   finds disk == base, takes the fast path, and drops the other writer's rows with no log
+   line. So after one merge, every later save takes the merge path. `LAST_LANDED_HASH` sets
+   only the log level: a save that finds our own earlier merge on disk logs at debug, not WARN.
+   A merge always writes our schema version, so an older number cannot stay on disk.
+   `save_to_disk` re-reads
    the file and hands `(ours, base, theirs)` to `workspaces_merge::reconcile`. Reason:
    a stable build and a dev build share `%APPDATA%` unless someone sets
    `YMUX_CONFIG_DIR` (or the pre-rename `WINMUX_CONFIG_DIR`), and a plain dump is last-write-wins across the whole document —
@@ -197,7 +203,7 @@ parameters so a test can run two "instances" (two bases) over one tempdir.
    reads the field and will write v1 back over a v2 file. Step 2 is what covers that
    case; the gate adds the log line that was missing when it cost hours in 2026-08.
 4. Write `workspaces.<pid>.tmp`, `write_all`, **`sync_all`**, then `rename`. Rule #7.
-5. `remember_file_text` updates the merge base.
+5. `write_workspaces_text` stores `ours` as the merge base. `remember_file_text` sets it on load.
 6. Log line records `N workspaces: R root / N-R nested / P repo` — the tree *shape*,
    not just a count, because two pinned folders once lost `parent_id` with nothing in
    the log to bracket when.
@@ -240,7 +246,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9417](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9439](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -263,7 +269,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([emit_data@lib.rs:2647](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2669](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one
