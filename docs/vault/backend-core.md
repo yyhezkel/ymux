@@ -114,8 +114,11 @@ put logic there.
   The entry is removed, and an Unknown `pane:agent-run` emitted (seq+1), by
   `clear_pane_agent_run` on `workspace_close_pane` and workspace-delete teardown
   (`teardown_workspace_runtime`); no emit when the pane had no entry.
+  `session_id` holds the Claude session the pane runs (set by `user-prompt-submit` and
+  `stop`, persisted), and `session_end_is_ours` compares a SessionEnd against it.
   `NEEDS_INPUT_NOTIFICATIONS` and `RESUMED_NOTIFICATIONS` list the
-  `notification_type` values that mean "blocked on the user" and "unblocked". A `stop`
+  `notification_type` values that mean "blocked on the user" and "unblocked"
+  (`tool_running` is ours, not Claude Code's: the CLI sends it in `auto` mode). A `stop`
   arriving after a notification still wins, an unmapped notification changes nothing,
   and a long turn does not keep resetting its own clock — all of that is pinned by unit
   tests in the same file (and ported, with the same test names, to the daemon's
@@ -166,9 +169,9 @@ put logic there.
 
 ## Persistence — the part to get right
 
-`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1101](../../app/src-tauri/src/lib.rs)), which hands the
+`%APPDATA%\ymux\workspaces.json`, via `save_to_disk` ([save_to_disk@lib.rs:1147](../../app/src-tauri/src/lib.rs)), which hands the
 gate + merge + write to `write_workspaces_text(path, ours, last_known)`
-([write_workspaces_text@lib.rs:1001](../../app/src-tauri/src/lib.rs)). The path and the merge base are
+([write_workspaces_text@lib.rs:1047](../../app/src-tauri/src/lib.rs)). The path and the merge base are
 parameters so a test can run two "instances" (two bases) over one tempdir.
 
 1. Serialize to pretty JSON.
@@ -256,7 +259,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9451](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9497](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -279,7 +282,7 @@ a wide argument list because every connection mode funnels through it: `persiste
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
   `pairing::mobile_pairing_set_shell`, Phase 113.)
-- `emit_data` ([emit_data@lib.rs:2669](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
+- `emit_data` ([emit_data@lib.rs:2715](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
   "simplify" it. It does **not** emit itself: decoded text goes to `pty_emit.rs`, one

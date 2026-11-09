@@ -58,6 +58,13 @@ file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else
 (never a JSON dump). Without `tool_name` the old chain (command / tool / title /
 `agent: <sub>`, JSON-dump summary) is unchanged, as are all other subcommands.
 
+**`pre-tool-use` and `permission_mode` (main.rs).** The CLI reads the mode before it
+dials the desktop. `auto` prints nothing and exits 0, so Claude Code's own classifier
+decides and the ymux policy does not run. It also spawns a detached copy of the CLI
+(`report_tool_running`) that pushes notification type `tool_running`, so the pane light
+leaves NeedsInput without Claude Code waiting. `acceptEdits`, `bypassPermissions` and `skip`
+print an explicit `allow`. Every other mode goes to the desktop policy engine.
+
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
 Registers agent hooks that point at the local `ymux` binary, so Claude Code (and codex,
@@ -80,7 +87,7 @@ agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 **`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
 new job, and still never a feed card. The `session-start` branch (after the env gate)
 sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
-`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+`tokio::time::timeout` of `context_timeout_ms()` (1000 ms, `YMUX_CONTEXT_TIMEOUT_MS`
 clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
 nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
 stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":

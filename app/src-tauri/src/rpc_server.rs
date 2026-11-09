@@ -1412,6 +1412,37 @@ async fn dispatch(
                 pane_id.as_deref(),
                 params.get("tmux_session").and_then(|v| v.as_str()),
             );
+            let hook_session = params
+                .get("payload")
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(pane) = resolved_pane.as_deref() {
+                // A SessionEnd from a `claude -p` that borrowed this pane
+                // must touch nothing: no light, no brief, no context record,
+                // no feed card. See `session_end_is_ours`.
+                if subkind == "session-end" {
+                    let current = state
+                        .agent_runs
+                        .lock()
+                        .ok()
+                        .and_then(|runs| runs.get(pane).and_then(|e| e.session_id.clone()));
+                    if !crate::session_end_is_ours(current.as_deref(), hook_session) {
+                        crate::log_debug(
+                            "RPC",
+                            &format!("feed.push: foreign session-end ignored pane={pane} req_id={req_id}"),
+                        );
+                        return Ok(json!({ "request_id": req_id, "decision": "passive" }));
+                    }
+                }
+                if let (true, Some(id), Ok(mut runs)) = (
+                    matches!(subkind.as_str(), "user-prompt-submit" | "stop"),
+                    hook_session,
+                    state.agent_runs.lock(),
+                ) {
+                    runs.entry(pane.to_string()).or_default().session_id = Some(id.to_string());
+                }
+            }
             // Notification type, read here so the state machine below and
             // the early return share one source. The CLI sends nothing but
             // the type in this payload — see the sanitised dispatch there.

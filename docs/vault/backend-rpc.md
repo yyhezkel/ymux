@@ -116,6 +116,13 @@ on their own path; the rest also move the timer and emit further down. If you ad
 subkind that should affect the traffic light, it goes through `apply_hook`, not through a
 second state machine here.
 
+**A foreign `session-end` is dropped before anything else runs.** `claude -p` outside a
+pane (the usage ticker) inherits no pane id, so the CLI borrows the one in `last.env`.
+`feed.push` compares the payload's `session_id` with the pane's recorded session
+(`session_end_is_ours` in `lib.rs`). On a mismatch it returns `passive` and changes
+nothing: no light, no brief, no context record, no feed card. `user-prompt-submit` and
+`stop` record the session. An end with no `session_id` is accepted.
+
 `stop-failure` (Claude Code `StopFailure`, a turn that died on an API error) is a
 state-only signal like `notification`: its pane arm clears `turn_started_at` WITHOUT
 `record_turn` (a failed turn must not skew the average), folds `apply_hook` → `failed`,
