@@ -205,7 +205,7 @@ fn summary_pipeline(
     // `bash -lc '…'`. So `command -v claude` here sees the user's
     // full rc-extended PATH.
     let inner = format!(
-        "if command -v {claude} >/dev/null 2>&1 || [ -x {claude} ]; then \
+        "export YMUX_HEADLESS=1; if command -v {claude} >/dev/null 2>&1 || [ -x {claude} ]; then \
            if command -v jq >/dev/null 2>&1; then \
              jq -r {jq} < {path} 2>/dev/null | tail -n {n} | {claude} -p {prompt}; \
            else \
