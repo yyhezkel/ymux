@@ -12,6 +12,7 @@ covers:
   - app/src/SshKeyOfferModal.tsx
   - app/src/WorkspaceExtrasFields.tsx
   - app/src/ProjectFolderModal.tsx
+  - app/src/WorktreeRecipeDialog.tsx
   - app/src/ConfirmDeleteWorkspace.tsx
   - app/src/NotesModal.tsx
   - app/src/DirPicker.tsx
@@ -89,7 +90,12 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
 - **`ProjectFolderModal.tsx` (266)** — two dialogs over one chrome: `pin` (type a folder
   path — usually a repo, but a directory without git pins too, demoted, via
   `project_folder_probe`'s verdict) and `worktree` (create a worktree inside a pinned
-  folder).
+  folder). After a create it keeps `busy` and mounts `WorktreeRecipeDialog`.
+- **`WorktreeRecipeDialog.tsx`** — the trust prompt for `.ymux/worktree.json`, in a `Portal`
+  over the parent modal. It renders nothing until `worktree_recipe_preview` answers, so no
+  recipe means no dialog. An approved recipe runs with no prompt. Focus starts on Skip, and
+  Escape skips. The backend enforces the approval; the dialog only collects it. It closes by
+  itself on a clean run and stays open for anything else, with the output for that run only.
 - **`ConfirmDeleteWorkspace.tsx` (123)** — deleting a workspace takes its **whole
   subtree**: pinned project folders, the worktree workspaces under them, and any live
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box

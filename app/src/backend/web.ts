@@ -990,6 +990,9 @@ export class WebBackend implements Backend {
         target: strOrNull(str(a.targetPath).trim()) ?? "",
       });
     },
+    // The browser arm has no trust store and no recipe runner, so it reports
+    // "no recipe": the prompt never opens and `worktree_recipe_run` never runs.
+    worktree_recipe_preview: async () => null,
     // lib.rs workspace_open_worktree: a child row of the project folder, at
     // the worktree's path — or the existing one, made active.
     workspace_open_worktree: async (a) => {

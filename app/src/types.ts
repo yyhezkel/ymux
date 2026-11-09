@@ -22,6 +22,8 @@ export type { WorkspaceGroup } from "./bindings/WorkspaceGroup";
 // `is_project_root`. There is no ProjectFolder type any more — a pinned
 // repo IS a workspace, nested under the one it was pinned from.
 export type { WorktreeEntry } from "./bindings/WorktreeEntry";
+export type { WorktreeRecipePreview } from "./bindings/WorktreeRecipePreview";
+export type { WorktreeRecipeResult } from "./bindings/WorktreeRecipeResult";
 export type { FeedItem } from "./bindings/FeedItem";
 export type { FeedItemState } from "./bindings/FeedItemState";
 export type { ClaudeUsage } from "./bindings/ClaudeUsage";

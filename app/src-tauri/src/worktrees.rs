@@ -356,7 +356,7 @@ async fn ssh_exec_capture(
     .is_err();
     let _ = ch.close().await;
     if timed_out {
-        return Err("git timed out on the remote host".to_string());
+        return Err("command timed out on the remote host".to_string());
     }
     Ok((code, String::from_utf8_lossy(&stdout).to_string()))
 }
