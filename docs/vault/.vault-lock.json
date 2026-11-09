@@ -10,7 +10,7 @@
   "backend-core": {
     "app/src-tauri/src/agent_runs_store.rs": "dae5c992e653e55ee97a555176d317c18f687405790c55352fd3efce6d7b9c47",
     "app/src-tauri/src/config_lock.rs": "3785df0a43aa1ddb150b0d0b864fbd25fb1b75c817b7a63c6cabbb0b78ded206",
-    "app/src-tauri/src/ipc_guard.rs": "4925c6413a7cac989c898deba7f6a9d96ed4d0f3f674329f467472d106ca66e7",
+    "app/src-tauri/src/ipc_guard.rs": "24d6ac54f401db2a95ae46a1654007a8109a6b3d2138794e1ba7d7a3dc58277c",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
     "app/src-tauri/src/lib.rs": "5be3eee4ea08a27ddf243c58e37b61e7701d147a8e289f8d70793da4298be7af",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
@@ -29,7 +29,7 @@
     "app/src-tauri/src/stt.rs": "35956e8f38309ab501f3b0ca2d0f28407b0fea2b29a365e4d035262108072a39",
     "app/src-tauri/src/tickets.rs": "50b09167474299a1102dfa653d12f4723980bd471944f27d6d8811c623a4caa5",
     "app/src-tauri/src/tray.rs": "9b4d6837960813e638b738bc78356ee98c63ba92f92d1183b0008e08c07345ff",
-    "app/src-tauri/src/workspace_browser.rs": "82ff2d318122610f910964442fdc2d787b4feeae3216a3303b6573bdc06b4602",
+    "app/src-tauri/src/workspace_browser.rs": "3e0c3a1523eccdbf24588efd909478e5765009f3390e50a0245a75d4aaccbfbd",
     "app/src-tauri/src/workspaces_merge.rs": "2d54f4a92490eed2004581b491c1c0bf8c6cdb43ef8f250117f8e3d095f53ec9",
     "app/src-tauri/src/worktrees.rs": "04ac615f7f0ea2eece62857acd03a6ff3e2df38d69784178ad5d3bdcbb5ccf1a"
   },
@@ -64,11 +64,11 @@
     "app/src-tauri/src/updater/macos.rs": "de1d85244406fd99d9d4786a82f81b0dae94cb05f2c116c43716a7167086e45a"
   },
   "build-glue": {
-    "app/package.json": "24887812c5cfafcecf611b4e3df100d3f010a527661fac36059f5b743feddd71",
+    "app/package.json": "1a708a757974fd184c3fc3e7f55783719539ff50e1a69d98a82a97e7e618e6d8",
     "app/scripts/build-linux-cli.ps1": "fd35c1b2b24c94d6ac5a27844a1088dd2e98b47051c7e32a662489ca19d72cc4",
     "app/scripts/build-release.ps1": "c4e6fe10cd859a4f17166b57549b9fe0a2cfd9c6c9b4ae8c356e972408c9ad8a",
     "app/scripts/reset-local-setup.ps1": "b1379109edfcf7357468a2c737d0c1496f5fd4d7059c1755a982750f75176cba",
-    "app/src-tauri/Cargo.toml": "b209454b67802facdff2f5fde0b21b221466bba12f1138e7a44dffcf7221adc1",
+    "app/src-tauri/Cargo.toml": "822a70c42985c409770eedfbd750bde37c462c6f2e9383d87792b185e8a3f146",
     "app/src-tauri/build.rs": "7d4104386f05a6a4bad42bd1a41f69f4fd718116e259f50ad3d25dfaa9dbd677",
     "app/src-tauri/tauri.conf.json": "2e172c601a00a353dc71543cbc9dd30255d9c0f2e11078f34869abe84208fb33",
     "app/vite.config.ts": "8390a35f6f21304b51c20dc42f153bb50e4e37ca8bf0d4ebfcf8fd954ff10c8f",

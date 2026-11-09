@@ -49,7 +49,7 @@ tauri-build = { version = "2", features = [] }
 # including `main`, which renders live PTY output (Rule #1). The explicit
 # `.devtools(false)` on the main and popout window builders in lib.rs is
 # what keeps that from happening; they are not optional.
-tauri = { version = "=2.10.3", features = ["unstable", "tray-icon", "image-png", "devtools"] }
+tauri = { version = "=2.11.6", features = ["unstable", "tray-icon", "image-png", "devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
