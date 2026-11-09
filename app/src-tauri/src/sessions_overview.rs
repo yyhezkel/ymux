@@ -193,7 +193,7 @@ fn frame_captures(captures: &[String]) -> String {
 fn build_ssh_summary_script(names: &[String], claude_path: &str, prompt: &str) -> String {
     let quoted: Vec<String> = names.iter().map(|n| shell_quote(n)).collect();
     let model = crate::claude_summary::wrap_login(&format!(
-        "{} -p {} --output-format json",
+        "YMUX_HEADLESS=1 {} -p {} --output-format json",
         crate::claude_summary::bash_squote(claude_path),
         crate::claude_summary::bash_squote(prompt),
     ));
@@ -293,6 +293,7 @@ async fn run_local_claude(prompt: &str, input: &[u8]) -> Result<String, String> 
         .ok_or_else(|| "claude is not installed on this machine".to_string())?;
     let mut c = crate::local_setup::hidden_cmd(&claude.to_string_lossy());
     c.args(["-p", prompt, "--output-format", "json"]);
+    c.env("YMUX_HEADLESS", "1");
     c.stdin(std::process::Stdio::piped());
     #[cfg(not(target_os = "windows"))]
     c.env("PATH", crate::local_setup::unix_path_env());

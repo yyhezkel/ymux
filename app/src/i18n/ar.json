@@ -807,9 +807,9 @@
   "cmd.pane.split.down": "اللوحة: تقسيم للأسفل",
   "cmd.pane.close": "اللوحة: إغلاق",
   "cmd.pane.focus.next": "اللوحة: التالية",
-  "cmd.pane.maximize": "اللوحة: تكبير/استعادة (Ctrl+Enter)",
+  "cmd.pane.maximize": "اللوحة: تكبير/استعادة",
   "cmd.pane.viewMode.toggle": "اللوحة: التبديل بين علامات التبويب والتقسيم",
-  "cmd.pane.distributeEvenly": "اللوحة: توزيع بالتساوي (Ctrl+Alt+=)",
+  "cmd.pane.distributeEvenly": "اللوحة: توزيع بالتساوي",
   "notify.distributedEvenly": "تم توزيع التقسيمات بالتساوي",
   "pane.maximize.tooltip": "تكبير/استعادة — Ctrl+Enter أو نقر مزدوج أو Esc",
   "cmd.pane.focus.prev": "اللوحة: السابقة",
@@ -1390,6 +1390,8 @@
   "context.waiting": "بانتظارك:",
   "context.log.more": "{n} أخرى",
   "context.prompt.original": "الرسالة الأصلية",
-  "settings.brief.injectContext.label": "حقن السياق في الجلسات",
+  "settings.brief.injectProtocol.label": "تعليم الجلسات تنسيق الموجز",
+  "settings.brief.injectProtocol.hint": "تتلقى كل جلسة Claude تعليمات بإنهاء إجاباتها النهائية بكتلة [ymux-brief]، من أجل قائمة الانتظار وContext Rail. تظهر هذه الأسطر في إجابات الوكيل. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks).",
+  "settings.brief.injectContext.label":"حقن السياق في الجلسات",
   "settings.brief.injectContext.hint": "عند ضغط جلسة Claude أو استئنافها، تتلقى رسالتها الأولى وآخر أسطر التقدم؛ وتتلقى الجلسة الجديدة هدف مساحة العمل والجلسات الأخرى فيها. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks)."
 }

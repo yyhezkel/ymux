@@ -11,12 +11,10 @@ ymux-types = { path = "../ymux-types" }
 # Config-dir resolution for the debug-log path.
 dirs = "5"
 # Phase 51.B2: russh handler impl + known_hosts persistence.
-russh = "0.49"
-russh-keys = "0.49"
+russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }
 russh-sftp = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 tracing = "0.1"
 # Phase 51.B3: Session/SshSession/ForwardEntry runtime types.
@@ -28,6 +26,9 @@ whoami = "1"
 # Types only here — TLS features are enabled by the app crate
 # (cargo feature unification merges them in workspace builds).
 ureq = { version = "2", default-features = false }
+
+[dev-dependencies]
+bytes = "1"
 
 [features]
 # Test-only default config dir (temp, per pid). Dependents enable it via dev-dependencies.

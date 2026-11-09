@@ -27,6 +27,8 @@ saved as a note.
 
 SSH-only: `ssh_handle_for_machine` finds SSH sessions only (its own, else a sibling's on the same server), so a Local/WSL workspace fails with "no active SSH session" — there is no local `claude` fallback.
 
+The pipeline exports `YMUX_HEADLESS=1`, so the CLI hooks do nothing for this run. Without it the run borrows a pane through `last.env`, and the `[ymux-brief]` instruction ends up in the saved summary.
+
 Two entry points:
 
 - **Manual** — Ctrl+Alt+B, the Summarize button in Settings → Claude, or the

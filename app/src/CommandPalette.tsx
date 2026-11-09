@@ -1,5 +1,6 @@
 import { createMemo, createSignal, createEffect, For, Show, onCleanup } from "solid-js";
 import { t } from "./i18n";
+import { matchesQuery } from "./paletteMatch";
 
 // Phase 35 (#1.3): VSCode-style command palette. Opened with
 // Ctrl+Shift+P. The command list is supplied by the parent (App.tsx)
@@ -9,6 +10,11 @@ import { t } from "./i18n";
 export interface Command {
   id: string;
   label: string;
+  // English label, so an English query works in a translated UI.
+  labelEn?: string;
+  // Current accelerator as display text. Absent when the command has no
+  // binding or the user's binding does not parse.
+  shortcut?: string | null;
   handler: () => void;
   // When present and returns false, the command is hidden (scope
   // constraint, e.g. pane commands with no active pane).
@@ -30,13 +36,9 @@ export function CommandPalette(p: Props) {
     p.commands.filter((c) => (c.enabled ? c.enabled() : true)),
   );
 
-  // Case-insensitive substring match on the label. v1 — no fuzzy lib.
-  const filtered = createMemo(() => {
-    const q = query().trim().toLowerCase();
-    const list = visible();
-    if (q.length === 0) return list;
-    return list.filter((c) => c.label.toLowerCase().includes(q));
-  });
+  const filtered = createMemo(() =>
+    visible().filter((c) => matchesQuery(query(), [c.label, c.labelEn ?? "", c.id])),
+  );
 
   // Reset query + selection and focus the input each time it opens.
   createEffect(() => {
@@ -112,7 +114,11 @@ export function CommandPalette(p: Props) {
                     onMouseEnter={() => setSelected(i())}
                     onClick={() => run(cmd)}
                   >
-                    {cmd.label}
+                    <span class="command-palette-label">{cmd.label}</span>
+                    {/* dir="ltr": an accelerator keeps its order in an RTL UI. */}
+                    <Show when={cmd.shortcut}>
+                      <kbd class="command-palette-hint" dir="ltr">{cmd.shortcut}</kbd>
+                    </Show>
                   </div>
                 )}
               </For>

@@ -601,9 +601,9 @@ pub(crate) async fn test_ssh_connect(
         // Same path-bypass we ship in try_authenticate v2 — read with
         // std::fs ourselves, hand the bytes to decode_secret_key.
         match std::fs::read_to_string(&p) {
-            Ok(text) => match russh_keys::decode_secret_key(&text, key_passphrase.as_deref()) {
+            Ok(text) => match russh::keys::decode_secret_key(&text, key_passphrase.as_deref()) {
                 Ok(key) => match crate::pkwh_pub(key) {
-                    Ok(pkwh) => match handle.authenticate_publickey(&user, pkwh).await {
+                    Ok(pkwh) => match handle.authenticate_publickey(&user, pkwh).await.map(|r| r.success()) {
                         Ok(true) => {
                             return TestResult {
                                 ok: true,
@@ -677,7 +677,7 @@ pub(crate) async fn test_ssh_connect(
 
     // 3) Password.
     if let Some(pw) = password {
-        match handle.authenticate_password(&user, &pw).await {
+        match handle.authenticate_password(&user, &pw).await.map(|r| r.success()) {
             Ok(true) => {
                 return TestResult {
                     ok: true,
@@ -728,7 +728,7 @@ async fn try_agent_auth(
     {
         for pipe_path in [r"\\.\pipe\openssh-ssh-agent", r"\\.\pipe\pageant"] {
             let connect_fut =
-                russh_keys::agent::client::AgentClient::connect_named_pipe(pipe_path);
+                russh::keys::agent::client::AgentClient::connect_named_pipe(pipe_path);
             let mut agent = match tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 connect_fut,
@@ -752,7 +752,7 @@ async fn try_agent_auth(
             }
             for id in identities {
                 if let Ok(true) =
-                    handle.authenticate_publickey_with(user, id, &mut agent).await
+                    ymux_ssh::auth_with_agent_identity(handle, user, id, &mut agent).await
                 {
                     return Some(true);
                 }
@@ -768,12 +768,11 @@ async fn try_agent_auth(
 }
 
 pub(crate) struct TestClient;
-#[async_trait::async_trait]
 impl russh::client::Handler for TestClient {
     type Error = russh::Error;
     async fn check_server_key(
         &mut self,
-        _server_public_key: &russh_keys::PublicKey,
+        _server_public_key: &russh::keys::PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
         Ok(true)
     }

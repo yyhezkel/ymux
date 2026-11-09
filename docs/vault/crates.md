@@ -50,6 +50,13 @@ The only crate `app` cannot function without. Four files:
   other's partial file), `HostCheckOutcome`.
 - `SshClient` — the russh `client::Handler` type used in every `Handle<SshClient>`
   signature, plus the `BridgeSpawner` callback the forwarded-tcpip handoff uses.
+  `check_server_key` receives a `PublicKeyOrCertificate`: russh verifies the KEX
+  signature first and calls this only on the initial key exchange, never on a rekey. A
+  certificate is refused, because ymux advertises no certificate host-key algorithm and
+  `known_hosts.json` holds plain keys only. An RSA key under 2048 bits is refused here,
+  because ssh-key 0.7 no longer refuses it at decode. A forwarded-tcpip channel must call
+  `reply.accept()` before the bridge starts: russh registers the channel only when that
+  reply is processed. With no token or spawner the channel is rejected on the wire.
 - **Session types** — `Session::{Local,Ssh}`, `LocalSession`, `SshSession`, `SshCmd`,
   and the map aliases `SessionMap`, `PaneSessionMap`, `ForwardMap`.
 - `CoreState` — the 7 russh/session/forwards/watcher fields `AppState` wraps.
@@ -159,7 +166,9 @@ out of this crate.
 
 ~270 LOC of actual surface: `AuthMethod` (which method succeeded),
 `key_load_needs_passphrase` (an error-message classifier), and `pkwh`/`pkwh_pub` (an
-RSA-aware `PrivateKey` wrapper). Functions that take a `Handle<SshClient>` plus
+RSA-aware `PrivateKey` wrapper), and `auth_with_agent_identity` (one agent identity: RSA
+signs with SHA-512, a certificate identity is skipped; generic over the handler so the
+wizard's `TestClient` shares it). Functions that take a `Handle<SshClient>` plus
 credentials and return a result — nothing that needs `AppState`.
 
 `try_authenticate` step 3 (default keys `~/.ssh/id_{ed25519,ecdsa,rsa}`) takes its paths
@@ -201,7 +210,9 @@ was shelved, and this crate is what unshelved it.
 - **`Deny`** — refuse outright.
 
 `split_chained_command` exists because `a && b; c` must be judged per command, not as one
-string. `rpc_server::push_policy_audit` records the outcomes.
+string. `rpc_server::push_policy_audit` records the outcomes. The Block half also exists
+in Go (`server/internal/agent/policy.go`, 2026-11-09): **a change to `BLOCK_PATTERNS` must
+be made on both sides**, and `server/internal/agent/testdata/policy.json` is the shared test.
 
 ## `ymux-protocol` (327) — mobile/web wire types
 
@@ -231,7 +242,7 @@ character.** The desktop compares a remote's `ymux-server --version` against thi
 constant to decide whether to offer an update, so a mismatch is not cosmetic: the two
 had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote look
 *newer* than the version the desktop ships and silently stopped the update offer.
-Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`. Bump them together, in the same
+Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`, `context.inject` + Block rules on the daemon to `2.20.0`. Bump them together, in the same
 commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy

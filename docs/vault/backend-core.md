@@ -107,7 +107,10 @@ put logic there.
   `channel_open_session`, before the best-effort `set_env(false, ..)`; refused names → pane
   status `environment variable refused by sshd: K` + `log_warn`, connect continues.
 - **`PaneAgentState` / `AgentRunState` / `PaneAgentSnapshot`** — per-pane Claude state,
-  in `AppState.agent_runs`. `apply_hook(subkind, notification_type)` is the transition
+  in `AppState.agent_runs` (`golden_transitions_match_the_go_port` reads
+  `server/internal/agent/testdata/state.json`, shared with the Go port; `state_since` is
+  not in it, because Rust stamps the wall clock here and Go takes it as a parameter).
+  `apply_hook(subkind, notification_type)` is the transition
   table and it is the **single owner** of the state machine; the frontend only paints
   what it is handed. `Failed` (`"failed"`) is entered by subkind `stop-failure` (turn died
   on an API error) and exits like any state, e.g. the next `user-prompt-submit` → Running.
@@ -259,7 +262,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9393](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9408](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`,
 `tmux_session_name`, plus the credential arguments.
@@ -277,7 +280,11 @@ a wide argument list because every connection mode funnels through it: `persiste
   explicit key file (optional passphrase) → default `~/.ssh/id_*` → password. Then
   best-effort bootstrap, `tcpip_forward(0)` for the reverse tunnel, env file via
   `ymux-tunnel`, shell channel with `set_env` for the `YMUX_*` vars, `request_pty`,
-  `request_shell`, channel-pump task. Next to the background `check_remote_hooks` it also
+  `request_shell`, channel-pump task. The pump splits the channel: a writer task owns
+  `SshCmd` (data, resize, kill) and the loop only reads. russh's per-channel receiver is
+  bounded to 100 messages and the session task blocks when it is full, so a write parked
+  on the server's window inside the read loop would hang every channel on the connection.
+  Next to the background `check_remote_hooks` it also
   spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
@@ -447,7 +454,9 @@ list command. The module owns what the picker never needed:
 
 - **`sessions_overview_summarize(workspace_id, names, lang)`** — capture the last 40 lines of
   each named session (240 chars per line) and run **one** `claude -p … --output-format json`
-  over all of them, **on the machine that holds the sessions**. Over SSH the capture loop and
+  over all of them, **on the machine that holds the sessions**. The call sets
+  `YMUX_HEADLESS=1` so the CLI hooks do nothing: a `[ymux-brief]` block after the array
+  would make `extract_json_array` fail and every row read `unknown`. Over SSH the capture loop and
   the model call are a single remote pipeline (`build_ssh_summary_script`: `tmux capture-pane
   -p -t "=$s:" -S -40 | cut … | bash -lc '<claude> -p …'`), so screen bytes never cross to
   the desktop. macOS captures through `local_tmux_output` and Windows through
@@ -545,7 +554,7 @@ list command. The module owns what the picker never needed:
 - `persist` gates on `LoadState::Loaded`. Anything that writes workspaces must go
   through it.
 - **Every invoke is guarded, then counted** — `invoke_handler(ipc_guard::guarded(ipc_meter::metered(generate_handler![…])))`.
-  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser).
+  `ipc_guard.rs` is outermost: it rejects any command from a `workspace-browser-*` webview before the meter or handler sees it (see `backend-panes.md` § workspace_browser). The handler list has no Browser resize entry: `workspace_browser_show` repositions the webview.
   `ipc_meter.rs` also counts the two hot emits (`emit:pty:data`,
   `emit:osc-notification`) and, once a minute and only above 120 calls, writes one
   `[IPC] N calls in 60s (~X/s) — top: cmd=count …` line (WARN at ≥10/s). Names and

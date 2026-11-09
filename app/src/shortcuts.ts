@@ -344,7 +344,11 @@ export function buildShortcutTable(
  *  "Ctrl+Shift+M". Returns null for anything unparseable (which
  *  therefore never counts as a conflict). */
 export function canonicalAccel(s: string | undefined | null): string | null {
-  const p = parseShortcut(s);
+  return formatAccel(parseShortcut(s));
+}
+
+/** Display form of a parsed accelerator, e.g. "Ctrl+Shift+M". */
+export function formatAccel(p: ParsedShortcut | null): string | null {
   if (!p) return null;
   const parts: string[] = [];
   if (p.ctrl) parts.push("Ctrl");

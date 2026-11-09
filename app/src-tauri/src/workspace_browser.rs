@@ -820,31 +820,6 @@ pub(crate) fn close_popout_window(app: &AppHandle, workspace_id: &str) {
     }
 }
 
-#[tauri::command]
-pub(crate) async fn workspace_browser_resize(
-    state: State<'_, AppState>,
-    workspace_id: String,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
-) -> Result<(), String> {
-    let webview = state
-        .workspace_browsers
-        .lock()
-        .unwrap()
-        .get(&workspace_id)
-        .cloned()
-        .ok_or_else(|| format!("no browser webview for workspace {workspace_id}"))?;
-    webview
-        .set_position(LogicalPosition::new(x, y))
-        .map_err(|e| format!("set_position: {e}"))?;
-    webview
-        .set_size(LogicalSize::new(w.max(1.0), h.max(1.0)))
-        .map_err(|e| format!("set_size: {e}"))?;
-    Ok(())
-}
-
 /// `workspace_delete` hooks here to wipe the workspace's Browser state
 /// (the user explicitly deleted it — they don't want logins surviving).
 /// Removes the legacy `browser-sessions/<ws>` dir synchronously, then
