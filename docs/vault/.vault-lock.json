@@ -12,11 +12,11 @@
     "app/src-tauri/src/config_lock.rs": "03436b4143023749d7fc217f11a67bf95ff810b02c1e3e236309703290853f0d",
     "app/src-tauri/src/ipc_guard.rs": "24d6ac54f401db2a95ae46a1654007a8109a6b3d2138794e1ba7d7a3dc58277c",
     "app/src-tauri/src/ipc_meter.rs": "c723d716d8a23ff54a6a55aed70b1412265e2fbad52293bab3fb1ae391c252af",
-    "app/src-tauri/src/lib.rs": "36d2508edda5eee21611f003884692083dbbfdebf3993e32539757e73c7930c0",
+    "app/src-tauri/src/lib.rs": "ea6c3af78cc54ab6237f02405f4f28318a5ec562f5dd367d6c8f1fc610cc67aa",
     "app/src-tauri/src/main.rs": "28cba068e31a41ebcfdeda899e0ea8c96bc848268b72bcb71d2fc88cadc90635",
     "app/src-tauri/src/pty_emit.rs": "7b360a3f5a020fbcd7fdeed289ddfec86083c68d11ca5b884be2f65042243424",
     "app/src-tauri/src/secret_env.rs": "c34ba7b50a9598a16e91765932f4ef2c1249c6dca9a2d5667a5b2233660b8b4e",
-    "app/src-tauri/src/sessions_overview.rs": "57ba3094cf0d4773391df4b0e3abc9b9a0904a2527e075b16bc198b70a11e919"
+    "app/src-tauri/src/sessions_overview.rs": "a622c91c7612440a12b9d5bdb488048ff5b53b994875fe2440b1583ddd030c55"
   },
   "backend-panes": {
     "app/src-tauri/src/browser_diag.js": "5e041238e847e5523b153533d2d3de40a62a3b5fc14387d284cd7672455b0478",
@@ -32,7 +32,7 @@
     "app/src-tauri/src/workspace_browser.rs": "7dd63bd7cd83c0a287346af1bb36f74e331f7064264c78fe7ab1b3f448b3780d",
     "app/src-tauri/src/workspaces_merge.rs": "44fa99afb85402fb9cacdf5557393fe5c09adc9e367dad295187130c94574c39",
     "app/src-tauri/src/worktree_recipe.rs": "d7ecec777269129861b9668be3da177d2d47dcba3cbfd7f3c22f4230caf8c034",
-    "app/src-tauri/src/worktrees.rs": "188ef85a168f77076c21a7659199269656988b02e91b46d6e8f3fda0b5a56d80"
+    "app/src-tauri/src/worktrees.rs": "d05c30ac45fe11674b3849eba497ecb2fb10d7fd3a0b72ef8ecd08a817d13a30"
   },
   "backend-remote": {
     "app/src-tauri/src/addons.rs": "ad6bd42034f4457b1a0247d1051b6d9108cbfdfaced6d97bd23774f8d2ca713c",
@@ -44,10 +44,10 @@
   },
   "backend-rpc": {
     "app/src-tauri/mcp/Cargo.toml": "5837dfebec492396ba2177a733127fa3edb014effd634ec973800b5eb0ba1b41",
-    "app/src-tauri/mcp/src/main.rs": "2dda4a3115fad5e2903b9fc65dc7dd5d460a28187dd39b793dc689f70587aaae",
+    "app/src-tauri/mcp/src/main.rs": "516d59fbf54a952563428476101be4681317e0c2828117ea3197ac15422a1cf8",
     "app/src-tauri/src/brief.rs": "39065fb5a2cfa6b1200fe51db1cf8a3d3f0d67824c56e07cb8f430133c747569",
     "app/src-tauri/src/context_store.rs": "e5f0b2d0ce16a334d962e49c9558217718c6c1c6c02f1b34e27fb4f98a765937",
-    "app/src-tauri/src/rpc_server.rs": "750b6ad30729964cf162ab470887d0f81324750d81eb01e9c10b3fa3cd720398"
+    "app/src-tauri/src/rpc_server.rs": "376d99334f6090033b004da4ebe255387d60b9c1d1b887d73fc61c14edd9f53e"
   },
   "backend-sessions": {
     "app/src-tauri/src/bidi_filter.rs": "5471227b1a2caf8d7a3ad9c1034bd06159de3c6213834a3877abb097722b08e5",
@@ -86,7 +86,7 @@
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
     "app/src-tauri/cli/src/hooks.rs": "797d32d03f9f610dfca9438674964999117f38e5f1fa190aa670eebf557e0240",
-    "app/src-tauri/cli/src/main.rs": "18e1c43fa455ca8c20a5ae816785404664d809f0a94d9ac8dc80ac4b863de015",
+    "app/src-tauri/cli/src/main.rs": "b18621cf60e8c284533e27f5cc8d8ade7f5757dad2c5f7dc651eee6112fdc7fb",
     "app/src-tauri/cli/src/port_watch.rs": "2cbe1c091f5f4b7ae79c54bee7dff231f0bb528e162e4ad9c8673b1711fe286c",
     "app/src-tauri/cli/src/session_meta.rs": "e51cfa3e0bba15ee820b02e81504431678b79373638091a742058f9814f23640"
   },

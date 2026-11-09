@@ -30,7 +30,7 @@ ymux [--raw] [--quiet] <command> [args...]
 | 0 | success |
 | 2 | client-side or server-side RPC error (message on stderr) |
 
-`claude-hook` overrides these — see its section.
+`claude-hook` and `wait` override these — see their sections.
 
 ## Commands
 
@@ -118,6 +118,67 @@ ymux send-key --pane <pane_id> --key <name>
 Translates a named key to the right escape bytes and writes them. Recognized:
 `enter`, `tab`, `ctrl-c`, `ctrl-d`, `ctrl-z`, `ctrl-l`, `esc`, `backspace`, `up`,
 `down`, `left`, `right`, `home`, `end`. Unknown keys are sent verbatim.
+
+`send` and `send-key` return `agent_seq`, the pane's hook counter before the
+write. Pass it to `wait --after-seq`.
+
+### `wait`
+
+```
+ymux wait --for idle [--pane <id>] [--timeout <s>] [--after-seq <n>]
+```
+
+Blocks until the pane's agent ends its turn. Polls every 2 s. `--pane` defaults
+to `$YMUX_PANE_ID`. `--timeout` defaults to 600 (range 1 to 86400).
+
+Idle means `done`, `needs-input` or `failed`. The `state` field gives the actual
+one, so a driver can tell a finished turn from a permission prompt.
+
+The state comes from agent hooks. A pane no hook has reached has the state
+`unknown` and is **never** reported as idle: the wait continues (the hook can
+arrive later) and ends with exit code 5.
+
+`done` stays lit after a turn. A `wait` right after `send` can see the previous
+turn, so wait for idle before you send and pass the value that `send` returned:
+
+```
+s=$(ymux send --pane p --data $'run the tests\r' | jq .agent_seq)
+ymux wait --for idle --pane p --after-seq "$s"
+ymux read --pane p --lines 100
+```
+
+Output: `{ "pane_id", "outcome", "state", "seq", "waited_secs" }`.
+
+| Code | `outcome` | Meaning |
+|---|---|---|
+| 0 | `reached` | the turn ended |
+| 2 | (none, message on stderr) | no pane given, or three RPC failures in sequence |
+| 3 | `timeout` | time ran out, the agent is still working |
+| 4 | `unknown-pane` | no workspace holds this pane |
+| 5 | `no-agent-state` | time ran out, no hook ever reached the pane |
+
+### `read`
+
+```
+ymux read [--pane <id>] [--lines <n>]
+```
+
+Prints `{ "pane_id", "lines", "text" }` with the last `n` lines (default 200,
+range 1 to 10000) as plain text. The text comes from the pane's tmux or zellij
+session, so a pane with no multiplexer session is an error (exit 2). The text
+goes to stdout only and is never logged.
+
+### `worktree create`
+
+```
+ymux worktree create <name> [--workspace <id>] [--base <rev>] [--path <dir>]
+```
+
+Creates a git worktree on the new branch `<name>`, on the workspace's host.
+`--workspace` defaults to the workspace of `$YMUX_PANE_ID`, and there is no
+fallback to the active workspace. `--base` defaults to `HEAD`. `--path` defaults
+to a sibling of the repository. The name allows letters, digits and `- _ . /`
+and must be a legal git ref. Prints `{ "ok", "branch", "path", "worktrees" }`.
 
 ### `notify`
 
@@ -220,7 +281,8 @@ echo '{"summary":"Claude finished thinking"}' \
 | Command | Local (Windows pipe) | Remote (TCP via tunnel) | Requires connected session? |
 |---|---|---|---|
 | `list-workspaces`, `tree`, `select-workspace`, `new-workspace`, `delete-workspace`, `notify`, `set-status` | yes | yes | no |
-| `send`, `send-key` | yes | yes | **yes** — pane must be connected |
+| `send`, `send-key`, `read` | yes | yes | **yes** — pane must be connected |
+| `wait`, `worktree create` | yes | yes | `wait`: no. `worktree create`: an SSH workspace needs a live session to its host |
 | `claude-hook` | yes (will use the local pipe) | yes (the typical use) | no for passive; for blocking, the app must be running and the user must respond |
 
 ## `ymux dev` — introspection (Phase 8.E)

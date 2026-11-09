@@ -3563,6 +3563,15 @@ fn zellij_args_dump_screen(session: &str) -> Vec<String> {
     ]
 }
 
+/// `pane.scrollback`: the same dump with the scrollback included. zellij has
+/// no line count here, so the caller tails the text.
+#[cfg(windows)]
+fn zellij_args_dump_scrollback(session: &str) -> Vec<String> {
+    let mut args = zellij_args_dump_screen(session);
+    args.push("--full".into());
+    args
+}
+
 /// What actually happened when a zellij verb ran.
 ///
 /// The distinction that matters is `Failed` vs `Missing`. `zellij_run` used to
@@ -12146,6 +12155,36 @@ pub(crate) async fn kill_target(target: KillTarget) -> KillSessionOutcome {
 /// that matched only `Session::Ssh` — a zellij pane fell through it, no verb
 /// ran, and it still answered `killed: true`. Two implementations of "kill"
 /// is how that happened; there is now one.
+/// The multiplexer session behind a live session id, for the verbs that
+/// act on the session rather than on the PTY (`kill`, `pane.scrollback`).
+///
+/// A snapshot: the lock does not cross the caller's `.await`, and russh's
+/// Handle is an Arc, so this is cheap. Phase 80: WSL panes (Session::Local
+/// with a tmux name) go through wsl.exe, not an SSH exec channel.
+pub(crate) fn mux_target_for_session(state: &AppState, sid: &str) -> KillTarget {
+    let sessions = lock_or_recover(&state.core.sessions);
+    match sessions.get(sid) {
+        Some(Session::Ssh(s)) => match &s.tmux_session {
+            Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
+            None => KillTarget::None,
+        },
+        // `Session::Local` covers BOTH a WSL pane and a native local pane,
+        // so the distro - not the variant - is what tells them apart.
+        // A native-local kill routed through the single `Some(name)` arm
+        // would become `wsl.exe -- tmux kill-session` against the DEFAULT
+        // distro. Split explicitly rather than relying on ordering.
+        Some(Session::Local(l)) => match (&l.tmux_session, &l.wsl_distro) {
+            (Some(name), Some(distro)) => KillTarget::Wsl(Some(distro.clone()), name.clone()),
+            #[cfg(windows)]
+            (Some(name), None) => KillTarget::Zellij(name.clone()),
+            #[cfg(not(windows))]
+            (Some(name), None) => KillTarget::LocalUnix(name.clone()),
+            (None, _) => KillTarget::None,
+        },
+        None => KillTarget::None,
+    }
+}
+
 pub(crate) async fn kill_pane_session_inner(
     state: &AppState,
     pane_id: &str,
@@ -12154,35 +12193,7 @@ pub(crate) async fn kill_pane_session_inner(
     let Some(sid) = sid_opt else {
         return KillSessionOutcome::new("no_session", "none", None);
     };
-    // Snapshot the kill target without holding the lock across the
-    // .await — russh's Handle is shared as Arc<> so this is cheap.
-    // Phase 80: WSL panes (Session::Local with a tmux name) kill their
-    // session via wsl.exe instead of an SSH exec channel.
-    let target = {
-        let sessions = lock_or_recover(&state.core.sessions);
-        match sessions.get(&sid) {
-            Some(Session::Ssh(s)) => match &s.tmux_session {
-                Some(name) => KillTarget::Ssh(s.handle.clone(), name.clone()),
-                None => KillTarget::None,
-            },
-            // `Session::Local` covers BOTH a WSL pane and a native local pane,
-            // so the distro - not the variant - is what tells them apart.
-            // A native-local kill routed through the single `Some(name)` arm
-            // would become `wsl.exe -- tmux kill-session` against the DEFAULT
-            // distro. Split explicitly rather than relying on ordering.
-            Some(Session::Local(l)) => match (&l.tmux_session, &l.wsl_distro) {
-                (Some(name), Some(distro)) => {
-                    KillTarget::Wsl(Some(distro.clone()), name.clone())
-                }
-                #[cfg(windows)]
-                (Some(name), None) => KillTarget::Zellij(name.clone()),
-                #[cfg(not(windows))]
-                (Some(name), None) => KillTarget::LocalUnix(name.clone()),
-                (None, _) => KillTarget::None,
-            },
-            None => KillTarget::None,
-        }
-    };
+    let target = mux_target_for_session(state, &sid);
     let outcome = kill_target(target).await;
     // Now close the shell + remove session bookkeeping. This re-uses the
     // existing pane_disconnect logic by removing from pane_sessions and

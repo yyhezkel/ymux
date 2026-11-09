@@ -262,7 +262,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9341](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9351](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`, `smart_bidi`,
 `tmux_session_name`, plus the credential arguments.
@@ -485,6 +485,13 @@ list command. The module owns what the picker never needed:
   straight to `kill_target` and releases the ownership claim on `killed | already_gone`.
   `KillTarget` + `kill_target` were lifted out of `kill_pane_session_inner` for exactly this —
   a pure move, so there is still one implementation of "kill".
+- **`pane_scrollback(state, pane_id, lines)`** — RPC `pane.scrollback` / `ymux read`.
+  `mux_target_for_session` (`lib.rs`, also lifted out of `kill_pane_session_inner`) names
+  the backend: SSH and WSL run `tmux_capture_script` (`shell_quote`, `=name:`), macOS uses
+  `local_tmux_output` with an argv, and Windows uses `zellij_args_dump_scrollback` (`--full`).
+  `tail_capture` strips ANSI, drops the blank padding and keeps the last N lines, because
+  `-S -N` also returns the screen and zellij has no line count. **Rule #1:** errors and
+  logs carry an exit code at most.
 - **Headers vs screens (Phase 92).** `is_header(w)` = `parent_id.is_none() ||
   is_project_root || is_folder`: a root (the machine) or a pinned folder is a HEADER — it holds rows and
   never panes (`layout: None`); every other workspace is a SCREEN, the only kind with a

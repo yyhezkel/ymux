@@ -191,8 +191,12 @@ messages apart instead would break on localization) or when no SSH session is li
 A directory git rejects probes to `Ok(false)` and pins as a plain demoted folder —
 "Check for a git repository" promotes it after `git init`, and THAT re-check still
 uses `git_probe_worktrees`, the older always-fatal variant, because there the user
-asked "is this a repo?" and git's verbatim message is the answer. Every git call
-dispatches on that workspace's connection:
+asked "is this a repo?" and git's verbatim message is the answer.
+`create_project_worktree` is the body of `workspace_create_project_worktree` and also
+serves RPC `worktree.create`; `reject_git_option` stops a base or target that git would
+parse as an option. `validate_branch_name` is the strict ref check for the RPC caller
+only (the GUI keeps `sanitize_branch_name`). Every git call dispatches on that
+workspace's connection:
 
 | connection | transport |
 |---|---|
