@@ -59,7 +59,9 @@ type hookRules struct {
 func parseHookRules(doc json.RawMessage) hookRules {
 	var d struct {
 		Brief struct {
-			InjectContext *bool `json:"inject_context"`
+			// Raw, not *bool: encoding/json allocates the pointer before it
+			// finds a wrong type, and "no" would then read as false.
+			InjectContext json.RawMessage `json:"inject_context"`
 		} `json:"brief"`
 		Hooks struct {
 			CustomBlock []string `json:"custom_block"`
@@ -70,7 +72,7 @@ func parseHookRules(doc json.RawMessage) hookRules {
 		logger.Warn("settings document has a damaged field; using the default for it", "err", err)
 	}
 	return hookRules{
-		injectContext: d.Brief.InjectContext == nil || *d.Brief.InjectContext,
+		injectContext: string(d.Brief.InjectContext) != "false",
 		customBlock:   d.Hooks.CustomBlock,
 	}
 }
