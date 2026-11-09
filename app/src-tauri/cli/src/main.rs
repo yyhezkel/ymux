@@ -1242,15 +1242,38 @@ fn render_dev_state_text(v: &Value) -> String {
 }
 
 /// Phase 105.C: how long `claude-hook session-start` waits for the
-/// desktop's `context.inject`. ~300 ms by default, so a session start never
-/// stalls; `YMUX_CONTEXT_TIMEOUT_MS` overrides it (clamped 100..=3000) for a
-/// remote whose tunnel round trips are slower than that.
+/// desktop's `context.inject`. 1000 ms by default: a real tunnel round trip
+/// measured 310-400 ms, so the original 300 ms budget lost the context on
+/// most session starts. `YMUX_CONTEXT_TIMEOUT_MS` overrides it (clamped
+/// 100..=3000) for a remote whose tunnel is slower than that.
 fn context_timeout_ms() -> u64 {
     std::env::var("YMUX_CONTEXT_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .map(|v| v.clamp(100, 3000))
-        .unwrap_or(300)
+        .unwrap_or(1000)
+}
+
+/// Tell the desktop a tool is starting, without making Claude Code wait: a
+/// detached copy of this binary runs the `notification` branch. In `auto`
+/// mode this is what takes a pane out of NeedsInput after an approval.
+/// stdout and stderr are null so the hook's own pipes close when we exit.
+fn report_tool_running() {
+    use std::io::Write as _;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let child = std::process::Command::new(exe)
+        .args(["claude-hook", "notification"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(br#"{"notification_type":"tool_running"}"#);
+        }
+    }
 }
 
 /// Phase 105.C: the one stdout line a SessionStart hook prints — Claude
@@ -2397,6 +2420,17 @@ async fn real_main() -> ExitCode {
                     .get("permission_mode")
                     .and_then(|v| v.as_str())
                     .unwrap_or("default");
+                // In `auto` mode Claude Code's own classifier decides. Print
+                // nothing: an explicit `allow` would skip that classifier,
+                // and a trip to the desktop would run the ymux policy on
+                // top of it, which gated and denied commands in this mode.
+                if permission_mode == "auto" {
+                    hook_dlog(&format!(
+                        "defer tool={tool_name_log} mode=auto session={session_id_log}"
+                    ));
+                    report_tool_running();
+                    return ExitCode::SUCCESS;
+                }
                 if matches!(
                     permission_mode,
                     "acceptEdits" | "bypassPermissions" | "skip"
@@ -2430,7 +2464,7 @@ async fn real_main() -> ExitCode {
             // feed: no feed.push, no card, no toast. Phase 105.C gives it one
             // job instead — ask the desktop for this session's context
             // (`context.inject`) and hand it to Claude Code as
-            // `additionalContext`. Budget ~300 ms, FAIL-OPEN: any error,
+            // `additionalContext`. Budget ~1 s, FAIL-OPEN: any error,
             // timeout or empty answer prints nothing and exits 0, so a
             // missing desktop never slows or breaks a session start.
             //
@@ -2520,6 +2554,7 @@ async fn real_main() -> ExitCode {
                     "elicitation_url_dialog",
                     "elicitation_complete",
                     "elicitation_response",
+                    "tool_running",
                 ];
                 if !RELEVANT.contains(&ntype) {
                     // auth_success, or a type Claude Code added after this

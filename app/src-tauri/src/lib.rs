@@ -310,7 +310,28 @@ const NEEDS_INPUT_NOTIFICATIONS: &[&str] = &[
 ];
 
 /// Notification types that mean the human answered and work resumed.
-const RESUMED_NOTIFICATIONS: &[&str] = &["elicitation_complete", "elicitation_response"];
+/// `tool_running` is not a Claude Code value: the CLI sends it in `auto`
+/// mode, where `pre-tool-use` no longer reaches the desktop.
+const RESUMED_NOTIFICATIONS: &[&str] = &[
+    "elicitation_complete",
+    "elicitation_response",
+    "tool_running",
+];
+
+/// Does a SessionEnd belong to the session this pane is running?
+///
+/// `claude -p` runs outside any pane (the usage ticker, for one), and the
+/// CLI then borrows the pane in `last.env`, so its SessionEnd lands on a pane
+/// running a different session. Only `user-prompt-submit` and `stop` record a
+/// pane's session, and a `/usage` run fires neither, so an unknown current
+/// session means the end is not ours. An end with no id cannot be judged and
+/// is accepted, which is what an older CLI sends.
+pub(crate) fn session_end_is_ours(current: Option<&str>, ended: Option<&str>) -> bool {
+    match ended.filter(|s| !s.is_empty()) {
+        None => true,
+        Some(id) => current == Some(id),
+    }
+}
 
 #[derive(Default, Clone)]
 pub(crate) struct AgentRunState {
@@ -325,6 +346,9 @@ pub(crate) struct AgentRunState {
     // carries a plain JSON number, and the frontend compares the two.
     // Four billion hooks on a single pane is not a scenario.
     pub(crate) seq: u32,
+    /// The Claude session this pane is running, from the latest
+    /// `user-prompt-submit` or `stop`. See `session_end_is_ours`.
+    pub(crate) session_id: Option<String>,
 }
 
 impl AgentRunState {
@@ -549,6 +573,28 @@ mod agent_run_tests {
         r.apply_hook("notification", Some("elicitation_dialog"));
         assert!(r.apply_hook("notification", Some("elicitation_response")));
         assert_eq!(r.state, PaneAgentState::Running);
+    }
+
+    #[test]
+    fn a_tool_starting_after_a_permission_prompt_resumes_running() {
+        // In `auto` mode nothing else takes the pane out of NeedsInput
+        // until the turn's Stop.
+        let mut r = AgentRunState::default();
+        r.apply_hook("notification", Some("permission_prompt"));
+        assert!(r.apply_hook("notification", Some("tool_running")));
+        assert_eq!(r.state, PaneAgentState::Running);
+    }
+
+    #[test]
+    fn a_session_end_counts_only_for_the_panes_own_session() {
+        use super::session_end_is_ours as ours;
+        assert!(ours(Some("a"), Some("a")));
+        // `claude -p` borrowing this pane through last.env.
+        assert!(!ours(Some("a"), Some("b")));
+        assert!(!ours(None, Some("b")));
+        // An older CLI sends no id: it cannot be judged, so it stands.
+        assert!(ours(Some("a"), None));
+        assert!(ours(None, Some("")));
     }
 
     #[test]
