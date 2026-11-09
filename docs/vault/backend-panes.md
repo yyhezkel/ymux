@@ -43,7 +43,7 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,741)** — dual-column file manager: lists, transfers, mutations on
+**`file_manager.rs` (1,685)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
 both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
@@ -180,7 +180,7 @@ other arm returns a clean error.
 
 ## Git
 
-**`worktrees.rs` (715)** — enumerate and create git worktrees for a workspace flagged
+**`worktrees.rs` (733)** — enumerate and create git worktrees for a workspace flagged
 `is_project_root` whose cwd is a repo, plus the pin flow's validation step,
 **`project_folder_probe`**: `Err` only when the directory does not exist on the host
 (`dir_exists_over` — `tokio::fs` locally, `test -d` over WSL/SSH; parsing git's fatal
@@ -195,7 +195,7 @@ dispatches on that workspace's connection:
 |---|---|
 | `Local` / none | `tokio::process::Command`, arg array |
 | `Wsl` | `local_setup::wsl_exec` (an `sh -ls` script) |
-| `Ssh` | an exec channel on a **live** handle to that host |
+| `Ssh` | `ymux_core::ssh_exec::exec` on a **live** handle to that host; a signal or a missing status is `Err`, never code 0 |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
 from any session to the same host. The dispatch is `run_git_over` on top of

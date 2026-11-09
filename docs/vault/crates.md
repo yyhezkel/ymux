@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/crates/ymux-core/src/lib.rs
   - app/src-tauri/crates/ymux-core/src/http.rs
   - app/src-tauri/crates/ymux-core/src/log_writer.rs
+  - app/src-tauri/crates/ymux-core/src/ssh_exec.rs
   - app/src-tauri/crates/ymux-policy/src/lib.rs
   - app/src-tauri/crates/ymux-protocol/src/lib.rs
   - app/src-tauri/crates/ymux-ssh/src/lib.rs
@@ -25,9 +26,9 @@ Dependency direction: `app` → everything. `ymux-tunnel` → `ymux-core`. `ymux
 `ymux-types`. The pure-data crates (`types`, `policy`, `protocol`, `addons`) depend on
 nothing but serde, so a CLI or MCP subcrate can link them without the Tauri runtime.
 
-## `ymux-core` (2,207 across 3 files) — the cross-cutting one
+## `ymux-core` (2,749 across 4 files) — the cross-cutting one
 
-The only crate `app` cannot function without. Three files:
+The only crate `app` cannot function without. Four files:
 
 **`lib.rs`**
 - **The user-visible logger** — `log_debug/info/warn/error(tag, msg)`, `log_at`,
@@ -70,6 +71,30 @@ mismatch, so a process whose file another rotated aside stops appending to `debu
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
+
+**`ssh_exec.rs` (542)** — the one drain loop for one-shot SSH exec. `exec(&Handle,
+cmd, ExecOpts { timeout, stdin, stderr: Merge|Drop|Separate, max_bytes })` returns
+`ExecOutcome { exit: Code|Signal|Unknown, stdout, stderr, timed_out }`. It takes a
+handle, not a workspace, because provisioning connects before a workspace exists.
+The copies it replaces stopped at the first of EOF / ExitStatus with the code
+initialised to 0; OpenSSH usually sends EOF first, so a failed command read as success.
+Rules that matter:
+- The exit is only what the server said. Close or channel-gone with no status is
+  `Unknown`, never 0. `require_code()` turns signal / timeout / unknown into `Err` for
+  callers that need a number; a caller that tolerates them matches on `exit` and says why.
+- `timeout` counts from after the request is sent; `None` waits for as long as the
+  connection lives. Opening the channel has its own fixed 15 s bound (`Err`).
+- After the exit, the wait for EOF is a grace: 500 ms idle, 5 s hard limit, so a daemon
+  that holds stdout cannot burn the timeout, and output sshd flushes after the status
+  still arrives. EOF without a status has no grace: a command can close stdout and run on.
+- `timed_out` is true only if the exit is still unknown when the deadline hits.
+- Going over `max_bytes` (default 32 MiB per stream) is `Err`, never a silent cut.
+- Logs exit and byte counts only, never the command or the output (Rules #1, #8).
+
+`Drain` is the pure state machine (no I/O, no clock of its own); the tests drive every
+message ordering through it. `open_sftp` is here too: the one SFTP open, with the 60 s
+per-request deadline (russh-sftp's default is 10 s per 255 KiB chunk), used by the app
+crate and by `ymux-bootstrap`.
 
 ## `ymux-types` (1,019) — pure persistence/wire types
 
@@ -151,7 +176,9 @@ in cleartext.
 **`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
 ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
-together or not at all.** Rule #8: the token never reaches a log.
+together or not at all.** Rule #8: the token never reaches a log. That includes
+`exec_simple`'s error text: it names the exit code and never the command, because the
+`last.env` script holds the token and callers log that error.
 
 `render_env_file` (the `~/.ymux/run/last.env` body) writes `YMUX_*` lines only; the `WINMUX_*`
 dual-write was dropped, the CLI still reads the legacy names as a fallback. So the file is
@@ -209,7 +236,8 @@ commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy
 
-Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
+Remote commands go through `ymux_core::ssh_exec` (stderr dropped, output never logged; a
+signal or a missing status is `Err`). Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
 succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
 `ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the

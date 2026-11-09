@@ -152,6 +152,11 @@ seconds:
 **Check path** fetches a remote `manifest.json`, compares versions, emits
 `update:available`. It never downloads.
 
+`ssh_exec_in_workspace` (the hooks banner's Update button; session via
+`ssh_handle_for_machine`) has 120 s because it hits
+GitHub from the server. It and `ssh_exec_simple` (6 s, hooks check and session labels)
+return `Err` on anything but a clean exit, so the toast and the logs tell the truth.
+
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.
 

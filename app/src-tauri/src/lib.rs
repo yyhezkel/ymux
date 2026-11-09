@@ -65,6 +65,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use russh::client;
 use russh::ChannelMsg;
+use ymux_core::ssh_exec::{ExecOpts, StderrMode};
 // Phase 51.H: russh-keys imports removed (now used only inside ymux-ssh).
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -4228,42 +4229,7 @@ async fn ssh_key_generate_and_install(
     // 3) Append the public key to ~/.ssh/authorized_keys. No sudo —
     //    writes only to the user's own home, so this works even for
     //    a non-root user with no sudo at all.
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
 
     // 4) Update the workspace's stored Connection — switch from
     //    password to key. The next pane_connect will use the key path
@@ -4418,42 +4384,7 @@ async fn provision_existing_install_key(
     }
 
     // 3) Append pubkey to ~/.ssh/authorized_keys. Idempotent (grep -qxF).
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
     // Drop the password-authenticated handle.
     drop(handle);
 
@@ -4512,27 +4443,35 @@ async fn provision_existing_install_key(
     Ok(workspace_id)
 }
 
-/// Run `echo $HOME` over a fresh exec channel. Returns (stdout, exit_code).
-async fn remote_get_home(
-    handle: &mut client::Handle<SshClient>,
-) -> Result<(String, i32), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, "echo $HOME").await.map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    let mut code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
+/// Append a public key to the login user's `authorized_keys`. Idempotent
+/// (`grep -qxF`). A failure must stop the caller: it goes on to persist key
+/// auth on the strength of this call.
+async fn install_authorized_key(
+    handle: &client::Handle<SshClient>,
+    pub_line: &str,
+) -> Result<(), String> {
+    let key = shell_quote(pub_line);
+    let install_cmd = format!(
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
+         (grep -qxF {key} ~/.ssh/authorized_keys || echo {key} >> ~/.ssh/authorized_keys)",
+    );
+    let outcome = ymux_core::ssh_exec::exec(handle, &install_cmd, ExecOpts::timeout_secs(30)).await?;
+    match outcome.require_code()? {
+        0 => Ok(()),
+        code => Err(format!("install pubkey failed (exit {code}): {}", outcome.stdout)),
     }
-    let _ = chan.close().await;
-    Ok((String::from_utf8_lossy(&out).to_string(), code))
+}
+
+/// Read `$HOME` on the remote. stderr dropped so rc-file noise cannot end up
+/// in the path.
+async fn remote_get_home(handle: &client::Handle<SshClient>) -> Result<String, String> {
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(15) };
+    let outcome = ymux_core::ssh_exec::exec(handle, "echo $HOME", opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("reading $HOME failed (exit {code})")),
+    }
 }
 
 /// Phase 41: result of the connect→host-key→authenticate handshake,
@@ -5567,7 +5506,7 @@ async fn setup_workspace_reverse_tunnel(
     // conclude ymux is not in this session and stop gating altogether.
     let socket_addr = format!("127.0.0.1:{remote_port}");
     match remote_get_home(handle).await {
-        Ok((home_out, _)) => {
+        Ok(home_out) => {
             let home = home_out.trim();
             if home.is_empty() {
                 log_warn("TUNNEL", "tunnel: skip env-file write - $HOME came back empty");
@@ -5782,21 +5721,14 @@ async fn spawn_port_watcher(
     // AFTER the live-dedup above: the pattern matches this workspace's own
     // live watcher too.
     if is_safe_workspace_id(workspace_id) {
-        if let Ok(mut kchan) = handle.channel_open_session().await {
-            let kill = format!(
-                "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
-            );
-            if kchan.exec(true, kill.as_str()).await.is_ok() {
-                loop {
-                    match kchan.wait().await {
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
+        let kill = format!(
+            "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
+        );
+        // Result ignored: this is cleanup, and a failure here must not stop
+        // the fresh watcher from launching. Bounded so a hung remote cannot.
+        let _ = ymux_core::ssh_exec::exec(handle, &kill, ExecOpts::timeout_secs(10)).await;
     }
-    // The watcher IS the remote CLI (`ymux port-watch`), talking the RPC
+    // The watcher IS the remote CLI
     // protocol this desktop compiled against. Launching a binary we know is
     // the wrong build produces failures far from their cause — the repeating
     // reverse-tunnel handshake rejections in Yossi's log are what that looks
@@ -5897,21 +5829,6 @@ fn clear_workspace_detection(state: &AppState, app: &AppHandle, workspace_id: &s
     ));
 }
 
-fn find_ssh_handle_for_workspace(
-    state: &AppState,
-    workspace_id: &str,
-) -> Option<Arc<client::Handle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for s in sessions.values() {
-        if let Session::Ssh(ssh) = s {
-            if ssh.workspace_id == workspace_id {
-                return Some(Arc::clone(&ssh.handle));
-            }
-        }
-    }
-    None
-}
-
 /// Phase 36 (#2.2) → 36.A: open an auto-forward for a remote listening
 /// port. We bind `127.0.0.1:0` and let the kernel hand us a free
 /// ephemeral port — the user reaches the server at whatever local port
@@ -5932,7 +5849,7 @@ pub(crate) async fn open_auto_forward(
             return Ok(e.local_port);
         }
     }
-    let handle = find_ssh_handle_for_workspace(state, workspace_id)
+    let handle = ssh_handle_for_machine(state, workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
 
     // Bind port 0 → kernel picks a free ephemeral port (Windows ~49152+).
@@ -6083,7 +6000,7 @@ pub(crate) fn close_workspace_forwards(forwards: &ForwardMap, workspace_id: &str
 // Phase 23.B: does the layout contain a non-terminal pane that depends on
 // a live workspace-level SSH handle? FileManager and Browser panes pull
 // the SSH handle out of `state.core.sessions` at runtime via
-// `pick_ssh_handle_for_workspace`; if we tear down the last terminal pane's
+// `ssh_handle_for_machine`; if we tear down the last terminal pane's
 // SSH session, those panes go dark with no in-UI way to reconnect.
 // ClaudeChat is local, doesn't count.
 #[allow(deprecated)]
@@ -8837,7 +8754,7 @@ fn workspace_close_pane(
     // SSH-consuming non-terminal panes AFTER the close. If yes, we
     // must keep the SSH handle alive even though the terminal pane
     // is gone — the file-manager / browser uses
-    // `pick_ssh_handle_for_workspace` which scans the live sessions
+    // `ssh_handle_for_machine` which scans the live sessions
     // for one matching the workspace_id. Killing the SSH session
     // here would leave those panes dead with no UI to reconnect.
     let keep_ssh_alive: bool;
@@ -8886,7 +8803,7 @@ fn workspace_close_pane(
                     "workspace_close_pane: keeping SSH session {sid} alive — workspace {workspace_id} still has FileManager/Browser pane(s)"
                 );
                 // Leave the session in state.core.sessions; it has no pane
-                // binding now but `pick_ssh_handle_for_workspace`
+                // binding now but `ssh_handle_for_machine`
                 // will still find it via its workspace_id.
             } else if let Some(mut s) = state.core.sessions.lock().map_err(|e| e.to_string())?.remove(&sid) {
                 // Closing a pane is not killing its session. `kill_session_inner`
@@ -9281,37 +9198,16 @@ async fn tmux_rename_session_via_handle(
         shell_quote(&format!("={old_name}")),
         shell_quote(new_name),
     );
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut exit_code: Option<u32> = None;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                ChannelMsg::Eof | ChannelMsg::Close => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    let stderr_text = String::from_utf8_lossy(&stdout).trim().to_string();
-    match exit_code {
-        Some(0) => Ok(()),
-        Some(code) => Err(if stderr_text.is_empty() {
+    let outcome = ymux_core::ssh_exec::exec(handle, &cmd, ExecOpts::timeout_secs(5)).await?;
+    let output = outcome.stdout.trim().to_string();
+    match outcome.exit {
+        ymux_core::ssh_exec::ExitState::Code(0) => Ok(()),
+        ymux_core::ssh_exec::ExitState::Code(code) => Err(if output.is_empty() {
             format!("tmux exit {code}")
         } else {
-            stderr_text
+            output
         }),
-        None => Err("tmux rename-session did not return an exit status".into()),
+        _ => Err("tmux rename-session did not return an exit status".into()),
     }
 }
 
@@ -10612,31 +10508,19 @@ async fn list_tmux_sessions_via_handle(
     handle: &client::Handle<SshClient>,
 ) -> Result<Vec<TmuxSessionInfo>, String> {
     let script = tmux_list_script();
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, script.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(6), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(6) };
+    let outcome = ymux_core::ssh_exec::exec(handle, &script, opts).await?;
+    // The script ends in `true`, so anything but 0 means it did not finish:
+    // `Err`, because the attach guard reads a short list as "session gone".
+    match outcome.require_code()? {
+        0 => {}
+        code => return Err(format!("tmux list failed (exit {code})")),
+    }
     // Pure list (with Phase 81 meta joined by parse_tmux_sessions). Visibility
     // filtering is a picker concern applied by the caller that owns `state`
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
-    Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+    Ok(parse_tmux_sessions(&outcome.stdout))
 }
 
 /// Pure verdict of the attach-only guard: is `target` a live session?
@@ -10847,13 +10731,7 @@ async fn pane_probe_tmux_sessions(
 ) -> Result<Option<Vec<TmuxSessionInfo>>, String> {
     // A pane that's already connected (or a sibling on the same workspace)
     // gives us a handle for free — no second handshake.
-    let live = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.iter().find_map(|(_sid, sess)| match sess {
-            Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-            _ => None,
-        })
-    };
+    let live = ssh_handle_for_machine(&state, &workspace_id);
     if let Some(h) = live {
         return list_tmux_sessions_via_handle(&h).await.map(Some);
     }
@@ -11634,15 +11512,7 @@ async fn pane_list_claude_sessions(
         .filter(|p| !p.is_empty());
     // Locate any live SSH handle for this workspace. The shell command runs
     // on the remote where Claude Code is actually installed.
-    let handle_opt = {
-        let sessions = state.core.sessions.lock().map_err(|e| e.to_string())?;
-        sessions
-            .iter()
-            .find_map(|(_sid, sess)| match sess {
-                Session::Ssh(s) if s.workspace_id == workspace_id => Some(s.handle.clone()),
-                _ => None,
-            })
-    };
+    let handle_opt = ssh_handle_for_machine(&state, &workspace_id);
 
     // Claude Code stores sessions under ~/.claude/projects/<encoded-cwd>/,
     // where <encoded-cwd> is the absolute working directory with every
@@ -11675,28 +11545,11 @@ async fn pane_list_claude_sessions(
     );
 
     let raw = if let Some(handle) = handle_opt {
-        // Run via SSH exec.
-        let mut ch = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("channel_open: {e}"))?;
-        ch.exec(true, script.as_bytes())
-            .await
-            .map_err(|e| format!("exec: {e}"))?;
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-            while let Some(msg) = ch.wait().await {
-                match msg {
-                    russh::ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                    russh::ChannelMsg::ExtendedData { .. } => {}
-                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
-                    _ => {}
-                }
-            }
-        })
-        .await;
-        let _ = ch.close().await;
-        String::from_utf8_lossy(&out).to_string()
+        // Run via SSH exec. Exit and timeout ignored on purpose, `Unknown`
+        // included: `find` exits non-zero on any unreadable directory, and a
+        // partial listing is still a useful listing.
+        let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) };
+        ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout
     } else {
         // No SSH session live → run locally on Windows. Translate to a small
         // walk of %USERPROFILE%\.claude\projects\*\*.jsonl. We don't try to
@@ -12193,43 +12046,26 @@ pub(crate) async fn kill_target(target: KillTarget) -> KillSessionOutcome {
             // in this function, this one genuinely goes through a remote
             // shell, so Rule #3's argv rule has nothing to apply to.
             let cmd = format!("tmux kill-session -t {} 2>&1", shell_quote(&name));
-            let mut status: Option<u32> = None;
-            let mut output = String::new();
-            let mut transport_err: Option<String> = None;
-            match handle.channel_open_session().await {
-                Ok(mut ch) => {
-                    if let Err(e) = ch.exec(true, cmd.as_bytes()).await {
-                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
-                        transport_err = Some(e.to_string());
+            // 800 ms covers the drain only; `exec` bounds the channel setup
+            // itself. No status means "attempted" below, never "killed".
+            let opts = ExecOpts {
+                timeout: Some(std::time::Duration::from_millis(800)),
+                ..ExecOpts::default()
+            };
+            let (status, output, transport_err) =
+                match ymux_core::ssh_exec::exec(&handle, &cmd, opts).await {
+                    Ok(o) => {
+                        let code = match o.exit {
+                            ymux_core::ssh_exec::ExitState::Code(c) => Some(c),
+                            _ => None,
+                        };
+                        (code, o.stdout, None)
                     }
-                    // Drain the channel briefly so the server completes the
-                    // exec — and keep what it said, which is the whole point.
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(800),
-                        async {
-                            while let Some(msg) = ch.wait().await {
-                                match msg {
-                                    ChannelMsg::Data { ref data } => {
-                                        output.push_str(&String::from_utf8_lossy(data));
-                                    }
-                                    ChannelMsg::ExitStatus { exit_status } => {
-                                        status = Some(exit_status);
-                                        break;
-                                    }
-                                    ChannelMsg::Eof | ChannelMsg::Close => break,
-                                    _ => {}
-                                }
-                            }
-                        },
-                    )
-                    .await;
-                    let _ = ch.close().await;
-                }
-                Err(e) => {
-                    log_warn("SSH", &format!("pane_kill_session: channel_open failed: {e}"));
-                    transport_err = Some(e.to_string());
-                }
-            }
+                    Err(e) => {
+                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
+                        (None, String::new(), Some(e))
+                    }
+                };
             let output = output.trim().to_string();
             match (transport_err, status) {
                 // Could not reach the host at all. Not a failed kill — an
