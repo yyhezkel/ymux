@@ -21,6 +21,7 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use crate::{AppState, Session, SshClient};
+use ymux_core::ssh_exec::{exec, ExecOpts, StderrMode};
 
 // ─── Phase 81: transfer progress + cancel ──────────────────────────────────
 //
@@ -638,23 +639,17 @@ pub(crate) async fn file_home_remote(
     let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
     // `echo $HOME` over an exec channel — cheaper than SFTP for a one-off.
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.exec(true, "printf '%s' \"$HOME\"")
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    use russh::ChannelMsg;
-    let mut out = Vec::new();
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-            _ => {}
-        }
+    // stderr dropped so a noisy rc file cannot end up in the path.
+    let outcome = exec(
+        &handle,
+        "printf '%s' \"$HOME\"",
+        ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) },
+    )
+    .await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout.trim().to_string()),
+        code => Err(format!("reading $HOME failed (exit {code})")),
     }
-    Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
 #[tauri::command]
@@ -1514,45 +1509,22 @@ pub(crate) async fn file_manager_unzip_local(
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// Shared helper for the two remote subcommand-style entrypoints —
-/// runs a `bash -lc <command>` on the workspace's existing SSH handle
-/// and waits for it to exit. Returns the joined stdout+stderr text
-/// and the exit code. Caller decides how to surface non-zero codes.
 /// Run a command over a fresh exec channel; returns (merged stdout+stderr, exit code).
 ///
 /// NOTE: no timeout. Every caller here is a user-initiated long operation
 /// (zip / targz / unzip) where that is correct. Callers on a latency-
 /// sensitive path must wrap this themselves rather than change the
 /// signature under the existing ones.
+///
+/// A signal or a missing exit status is `Err`: every caller reads code 0 as
+/// "it worked" (`mv` into place, `test -e`).
 pub(crate) async fn remote_exec(
     handle: &SshHandle<SshClient>,
     command: &str,
 ) -> Result<(String, i32), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.exec(true, command)
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    Ok((String::from_utf8_lossy(&out_buf).to_string(), exit_code))
+    let outcome = exec(handle, command, ExecOpts::default()).await?;
+    let code = outcome.require_code()?;
+    Ok((outcome.stdout, code))
 }
 
 /// Phase 57: zip on the remote side. Requires the standard `zip`
@@ -1637,7 +1609,15 @@ pub(crate) async fn file_manager_targz_remote(
     }
     let cmd = parts.join(" ");
     let (out, code) = remote_exec(&handle, &cmd).await?;
-    if code != 0 {
+    // GNU tar exit 1 = a file changed while it was read. The archive exists
+    // and is usable, and this path always reported success before the exit
+    // status stopped getting lost. Exit 2 and up are real failures.
+    if code == 1 {
+        crate::log_warn("FM", &format!(
+            "file_manager_targz_remote ws={workspace_id} out={output_name}: tar exit 1 (a file changed while read)"
+        ));
+    }
+    if code != 0 && code != 1 {
         crate::log_error("FM", &format!(
             "file_manager_targz_remote FAILED ws={workspace_id} out={output_name} exit={code}: {out}"
         ));

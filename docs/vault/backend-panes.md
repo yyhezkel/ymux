@@ -43,7 +43,7 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,741)** — dual-column file manager: lists, transfers, mutations on
+**`file_manager.rs` (1,720)** — dual-column file manager (remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
 both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
