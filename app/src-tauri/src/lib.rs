@@ -5641,21 +5641,14 @@ async fn spawn_port_watcher(
     // AFTER the live-dedup above: the pattern matches this workspace's own
     // live watcher too.
     if is_safe_workspace_id(workspace_id) {
-        if let Ok(mut kchan) = handle.channel_open_session().await {
-            let kill = format!(
-                "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
-            );
-            if kchan.exec(true, kill.as_str()).await.is_ok() {
-                loop {
-                    match kchan.wait().await {
-                        Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-                        _ => {}
-                    }
-                }
-            }
-        }
+        let kill = format!(
+            "pkill -f 'port-watch [-]-workspace {workspace_id}' 2>/dev/null; true"
+        );
+        // Result ignored: this is cleanup, and a failure here must not stop
+        // the fresh watcher from launching. Bounded so a hung remote cannot.
+        let _ = ymux_core::ssh_exec::exec(handle, &kill, ExecOpts::timeout_secs(10)).await;
     }
-    // The watcher IS the remote CLI (`ymux port-watch`), talking the RPC
+    // The watcher IS the remote CLI
     // protocol this desktop compiled against. Launching a binary we know is
     // the wrong build produces failures far from their cause — the repeating
     // reverse-tunnel handshake rejections in Yossi's log are what that looks
@@ -9140,37 +9133,16 @@ async fn tmux_rename_session_via_handle(
         shell_quote(&format!("={old_name}")),
         shell_quote(new_name),
     );
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, cmd.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut exit_code: Option<u32> = None;
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::ExitStatus { exit_status } => exit_code = Some(exit_status),
-                ChannelMsg::Eof | ChannelMsg::Close => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
-    let stderr_text = String::from_utf8_lossy(&stdout).trim().to_string();
-    match exit_code {
-        Some(0) => Ok(()),
-        Some(code) => Err(if stderr_text.is_empty() {
+    let outcome = ymux_core::ssh_exec::exec(handle, &cmd, ExecOpts::timeout_secs(5)).await?;
+    let output = outcome.stdout.trim().to_string();
+    match outcome.exit {
+        ymux_core::ssh_exec::ExitState::Code(0) => Ok(()),
+        ymux_core::ssh_exec::ExitState::Code(code) => Err(if output.is_empty() {
             format!("tmux exit {code}")
         } else {
-            stderr_text
+            output
         }),
-        None => Err("tmux rename-session did not return an exit status".into()),
+        _ => Err("tmux rename-session did not return an exit status".into()),
     }
 }
 
@@ -10471,31 +10443,19 @@ async fn list_tmux_sessions_via_handle(
     handle: &client::Handle<SshClient>,
 ) -> Result<Vec<TmuxSessionInfo>, String> {
     let script = tmux_list_script();
-    use russh::ChannelMsg;
-    let mut ch = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("channel_open: {e}"))?;
-    ch.exec(true, script.as_bytes())
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let _ = tokio::time::timeout(std::time::Duration::from_secs(6), async {
-        while let Some(msg) = ch.wait().await {
-            match msg {
-                ChannelMsg::Data { ref data } => stdout.extend_from_slice(data),
-                ChannelMsg::Eof | ChannelMsg::Close | ChannelMsg::ExitStatus { .. } => break,
-                _ => {}
-            }
-        }
-    })
-    .await;
-    let _ = ch.close().await;
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(6) };
+    let outcome = ymux_core::ssh_exec::exec(handle, &script, opts).await?;
+    // The script ends in `true`, so anything but 0 means it did not finish:
+    // `Err`, because the attach guard reads a short list as "session gone".
+    match outcome.require_code()? {
+        0 => {}
+        code => return Err(format!("tmux list failed (exit {code})")),
+    }
     // Pure list (with Phase 81 meta joined by parse_tmux_sessions). Visibility
     // filtering is a picker concern applied by the caller that owns `state`
     // (pane_list_tmux_sessions); the Phase 80 restore probe deliberately keeps
     // the full list so it can re-attach a pane regardless of session origin.
-    Ok(parse_tmux_sessions(&String::from_utf8_lossy(&stdout)))
+    Ok(parse_tmux_sessions(&outcome.stdout))
 }
 
 /// Pure verdict of the attach-only guard: is `target` a live session?
@@ -11534,28 +11494,11 @@ async fn pane_list_claude_sessions(
     );
 
     let raw = if let Some(handle) = handle_opt {
-        // Run via SSH exec.
-        let mut ch = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| format!("channel_open: {e}"))?;
-        ch.exec(true, script.as_bytes())
-            .await
-            .map_err(|e| format!("exec: {e}"))?;
-        let mut out = Vec::new();
-        let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-            while let Some(msg) = ch.wait().await {
-                match msg {
-                    russh::ChannelMsg::Data { ref data } => out.extend_from_slice(data),
-                    russh::ChannelMsg::ExtendedData { .. } => {}
-                    russh::ChannelMsg::Eof | russh::ChannelMsg::Close | russh::ChannelMsg::ExitStatus { .. } => break,
-                    _ => {}
-                }
-            }
-        })
-        .await;
-        let _ = ch.close().await;
-        String::from_utf8_lossy(&out).to_string()
+        // Run via SSH exec. Exit and timeout ignored on purpose, `Unknown`
+        // included: `find` exits non-zero on any unreadable directory, and a
+        // partial listing is still a useful listing.
+        let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) };
+        ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout
     } else {
         // No SSH session live → run locally on Windows. Translate to a small
         // walk of %USERPROFILE%\.claude\projects\*\*.jsonl. We don't try to
@@ -12052,43 +11995,26 @@ pub(crate) async fn kill_target(target: KillTarget) -> KillSessionOutcome {
             // in this function, this one genuinely goes through a remote
             // shell, so Rule #3's argv rule has nothing to apply to.
             let cmd = format!("tmux kill-session -t {} 2>&1", shell_quote(&name));
-            let mut status: Option<u32> = None;
-            let mut output = String::new();
-            let mut transport_err: Option<String> = None;
-            match handle.channel_open_session().await {
-                Ok(mut ch) => {
-                    if let Err(e) = ch.exec(true, cmd.as_bytes()).await {
-                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
-                        transport_err = Some(e.to_string());
+            // 800 ms covers the drain only; `exec` bounds the channel setup
+            // itself. No status means "attempted" below, never "killed".
+            let opts = ExecOpts {
+                timeout: Some(std::time::Duration::from_millis(800)),
+                ..ExecOpts::default()
+            };
+            let (status, output, transport_err) =
+                match ymux_core::ssh_exec::exec(&handle, &cmd, opts).await {
+                    Ok(o) => {
+                        let code = match o.exit {
+                            ymux_core::ssh_exec::ExitState::Code(c) => Some(c),
+                            _ => None,
+                        };
+                        (code, o.stdout, None)
                     }
-                    // Drain the channel briefly so the server completes the
-                    // exec — and keep what it said, which is the whole point.
-                    let _ = tokio::time::timeout(
-                        std::time::Duration::from_millis(800),
-                        async {
-                            while let Some(msg) = ch.wait().await {
-                                match msg {
-                                    ChannelMsg::Data { ref data } => {
-                                        output.push_str(&String::from_utf8_lossy(data));
-                                    }
-                                    ChannelMsg::ExitStatus { exit_status } => {
-                                        status = Some(exit_status);
-                                        break;
-                                    }
-                                    ChannelMsg::Eof | ChannelMsg::Close => break,
-                                    _ => {}
-                                }
-                            }
-                        },
-                    )
-                    .await;
-                    let _ = ch.close().await;
-                }
-                Err(e) => {
-                    log_warn("SSH", &format!("pane_kill_session: channel_open failed: {e}"));
-                    transport_err = Some(e.to_string());
-                }
-            }
+                    Err(e) => {
+                        log_warn("SSH", &format!("pane_kill_session: exec failed: {e}"));
+                        (None, String::new(), Some(e))
+                    }
+                };
             let output = output.trim().to_string();
             match (transport_err, status) {
                 // Could not reach the host at all. Not a failed kill — an

@@ -10,7 +10,8 @@ covers:
 
 # Local RPC endpoint + MCP bridge
 
-Two files. `rpc_server.rs` (~2,560 lines) is the app's local control surface — a
+Two files. (`claude-sessions` lists over `ymux_core::ssh_exec` and ignores the exit on
+purpose: `find` exits non-zero on any unreadable directory.) `rpc_server.rs` (~2,540 lines) is the app's local control surface — a
 newline-delimited JSON-RPC v2 server that the CLI, agent hooks, the reverse tunnel, and
 the MCP bridge all speak to. `mcp/src/main.rs` (~460 lines) is a standalone stdio MCP
 server that forwards a handful of tools onto that same endpoint.

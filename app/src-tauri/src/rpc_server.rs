@@ -2223,28 +2223,14 @@ async fn dispatch(
                 lim
             );
             if let Some(handle) = handle_opt {
-                let mut ch = handle
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| format!("channel_open: {e}"))?;
-                ch.exec(true, script.as_bytes())
-                    .await
-                    .map_err(|e| format!("exec: {e}"))?;
-                let mut out_bytes = Vec::new();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-                    while let Some(msg) = ch.wait().await {
-                        match msg {
-                            russh::ChannelMsg::Data { ref data } => out_bytes.extend_from_slice(data),
-                            russh::ChannelMsg::Eof
-                            | russh::ChannelMsg::Close
-                            | russh::ChannelMsg::ExitStatus { .. } => break,
-                            _ => {}
-                        }
-                    }
-                })
-                .await;
-                let _ = ch.close().await;
-                let raw = String::from_utf8_lossy(&out_bytes).to_string();
+                // Exit and timeout ignored on purpose, `Unknown` included:
+                // `find` exits non-zero on any unreadable directory, and a
+                // partial listing is still a useful listing.
+                let opts = ymux_core::ssh_exec::ExecOpts {
+                    stderr: ymux_core::ssh_exec::StderrMode::Drop,
+                    ..ymux_core::ssh_exec::ExecOpts::timeout_secs(8)
+                };
+                let raw = ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout;
                 let mut out = serde_json::Map::new();
                 let mut arr: Vec<Value> = Vec::new();
                 for line in raw.lines() {
