@@ -18,11 +18,12 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::client;
-use russh::ChannelMsg;
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
+use ymux_core::ssh_exec::ExecOpts;
 
 use crate::{config_dir_pub, log_debug, log_error, log_info, log_warn, AppState};
 
@@ -1101,7 +1102,7 @@ fn shell_escape(s: &str) -> String {
 }
 
 async fn run_step(
-    handle: &mut client::Handle<crate::SshClient>,
+    handle: &client::Handle<crate::SshClient>,
     app: &AppHandle,
     run_id: &str,
     idx: usize,
@@ -1250,11 +1251,15 @@ async fn open_ssh(
     Err("authentication failed".to_string())
 }
 
+/// Bound for the short commands: probes, key install, user creation. The
+/// package steps go through `exec_status`, which has none.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(120);
+
 async fn exec_capture(
-    handle: &mut client::Handle<crate::SshClient>,
+    handle: &client::Handle<crate::SshClient>,
     cmd: &str,
 ) -> Result<String, String> {
-    let (code, text) = exec_status(handle, cmd).await?;
+    let (code, text) = exec_coded(handle, cmd, Some(PROBE_TIMEOUT)).await?;
     if code != 0 {
         return Err(format!("exit {code}: {text}"));
     }
@@ -1262,32 +1267,36 @@ async fn exec_capture(
 }
 
 /// Phase 32.A: like `exec_capture`, but always returns (exit_code, output)
-/// — even on non-zero exit. The Err arm is reserved for SSH channel
-/// failures (lost connection, channel open refused). Callers that need
-/// to distinguish "command ran and reported X" from "couldn't talk to
-/// the host" use this; everything else stays on `exec_capture`.
+/// — even on non-zero exit. The Err arm is reserved for what is not an exit
+/// code: a lost connection, a refused channel, a signal, no status at all.
+/// Callers that need to distinguish "command ran and reported X" from
+/// "couldn't talk to the host" use this; everything else stays on
+/// `exec_capture`. No timeout: an `apt-get upgrade` can run for many minutes,
+/// and the 30 s keepalive already ends the wait on a dead connection.
 async fn exec_status(
-    handle: &mut client::Handle<crate::SshClient>,
+    handle: &client::Handle<crate::SshClient>,
     cmd: &str,
 ) -> Result<(i32, String), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, cmd).await.map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExtendedData { data, .. }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
-    }
-    let text = String::from_utf8_lossy(&out).to_string();
-    Ok((exit_code, text))
+    exec_coded(handle, cmd, None).await
+}
+
+/// `exec_status` with the short bound, for read-only probes.
+async fn probe_status(
+    handle: &client::Handle<crate::SshClient>,
+    cmd: &str,
+) -> Result<(i32, String), String> {
+    exec_coded(handle, cmd, Some(PROBE_TIMEOUT)).await
+}
+
+async fn exec_coded(
+    handle: &client::Handle<crate::SshClient>,
+    cmd: &str,
+    timeout: Option<Duration>,
+) -> Result<(i32, String), String> {
+    let opts = ExecOpts { timeout, ..ExecOpts::default() };
+    let outcome = ymux_core::ssh_exec::exec(handle, cmd, opts).await?;
+    let code = outcome.require_code()?;
+    Ok((code, outcome.stdout))
 }
 
 /// Phase 32.A: probe whether the login user can run privileged
@@ -1296,11 +1305,11 @@ async fn exec_status(
 /// the frontend can surface "incorrect password attempts will be logged"
 /// vs "sudo: a password is required" vs "user not in sudoers".
 async fn preflight_sudo(
-    handle: &mut client::Handle<crate::SshClient>,
+    handle: &client::Handle<crate::SshClient>,
     user: &str,
 ) -> Result<(), ProvisioningError> {
     // Already root? sudo is irrelevant.
-    if let Ok((code, out)) = exec_status(handle, "id -u").await {
+    if let Ok((code, out)) = probe_status(handle, "id -u").await {
         if code == 0 && out.trim() == "0" {
             log_debug("PROVISION", "provisioning: preflight — user is root, skipping sudo check");
             return Ok(());
@@ -1308,7 +1317,7 @@ async fn preflight_sudo(
     }
     // Try passwordless sudo. The 2>&1 keeps stderr (the actual
     // diagnostic) on the same stream we capture.
-    match exec_status(handle, "sudo -n true 2>&1").await {
+    match probe_status(handle, "sudo -n true 2>&1").await {
         Ok((0, _)) => {
             log_debug("PROVISION", "provisioning: preflight — passwordless sudo works");
             Ok(())
@@ -1354,16 +1363,16 @@ async fn connect_existing_discover_inner(
     let mut handle = open_ssh(host, port, user, password, &None, &None).await?;
 
     let is_root = matches!(
-        exec_status(&mut handle, "id -u").await,
+        probe_status(&handle, "id -u").await,
         Ok((0, ref o)) if o.trim() == "0"
     );
     let can_sudo = is_root
-        || matches!(exec_status(&mut handle, "sudo -n true 2>&1").await, Ok((0, _)));
+        || matches!(probe_status(&handle, "sudo -n true 2>&1").await, Ok((0, _)));
 
     // Pick the admin group that exists on this distro.
-    let sudo_group = if matches!(exec_status(&mut handle, "getent group sudo").await, Ok((0, _))) {
+    let sudo_group = if matches!(probe_status(&handle, "getent group sudo").await, Ok((0, _))) {
         "sudo".to_string()
-    } else if matches!(exec_status(&mut handle, "getent group wheel").await, Ok((0, _))) {
+    } else if matches!(probe_status(&handle, "getent group wheel").await, Ok((0, _))) {
         "wheel".to_string()
     } else {
         "sudo".to_string()
@@ -1547,7 +1556,7 @@ async fn connect_existing_execute_inner(
 
     // Privilege prefix: nothing if we're already root, else `sudo `.
     let is_root = matches!(
-        exec_status(&mut handle, "id -u").await,
+        probe_status(&handle, "id -u").await,
         Ok((0, ref o)) if o.trim() == "0"
     );
     let sp = if is_root { "" } else { "sudo " };

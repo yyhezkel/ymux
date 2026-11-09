@@ -63,7 +63,10 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
 
 - Progress streams to the frontend as `provisioning:progress` events, which is what
   makes the wizard's live log feel native.
-- **One russh `client::Handle` per run**, reused across every step's exec channel.
+- **One russh `client::Handle` per run**, reused across every step's exec channel
+  (`ymux_core::ssh_exec`). Package steps have no timeout; probes and the short key and
+  user commands get 120 s. A signal or a missing exit status fails the step, never
+  passes it.
 - **Failures do not abort the run.** Each step ends `pending | running | done | failed`;
   the wizard offers retry/skip per step and a checkpoint is saved after every state
   change, so a second pass resumes.
