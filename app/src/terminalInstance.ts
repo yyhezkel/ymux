@@ -7,7 +7,7 @@ import type {
   ClipboardSelectionType,
 } from "@xterm/addon-clipboard";
 
-import { visualToLogical, visualToLogicalStream } from "./copyBidi";
+import { stripIsolates, visualToLogical, visualToLogicalStream } from "./copyBidi";
 import { backend } from "./backend";
 import { reorderRtlForDisplay } from "./bidi";
 import { createLogger } from "./logger";
@@ -167,6 +167,10 @@ export interface RtlProfileSettings {
    * settings.rs and the parity tests in textDirection.test.ts enforce it.
    */
   directionPolicy: DirectionPolicy;
+  /** Wrap Latin runs near RTL text in bidi isolates. The filter runs in the
+   *  backend, which does not read `terminal.rtl`: `connectPane` passes this
+   *  value to `pane_connect`, so a change applies at the next connect. */
+  smartBidi: boolean;
 }
 
 /** See `RtlProfileSettings.directionPolicy`. */
@@ -199,6 +203,7 @@ const g_rtl: Record<RtlProfileKind, RtlProfileSettings> = {
     mirrorArrowsRtl: true,
     tuiOwnsBidi: true,
     directionPolicy: "any_rtl",
+    smartBidi: false,
   },
   remote: {
     rtlMode: "auto_per_line",
@@ -208,6 +213,7 @@ const g_rtl: Record<RtlProfileKind, RtlProfileSettings> = {
     // Do not change this without reading the note on `directionPolicy`. Remote
     // panes render Hebrew correctly on this rule and the parity tests pin it.
     directionPolicy: "any_rtl",
+    smartBidi: false,
   },
 };
 const g_terminals: Set<TerminalInstance> = new Set();
@@ -758,9 +764,10 @@ export class TerminalInstance {
    * could have landed for local panes and missed SSH ones.
    */
   async copyToClipboard(text: string, via: string): Promise<boolean> {
-    if (!text) return false;
+    const clean = stripIsolates(text);
+    if (!clean) return false;
     const flip = this.bufferIsVisualOrder;
-    const out = flip ? visualToLogical(text) : text;
+    const out = flip ? visualToLogical(clean) : clean;
     try {
       await navigator.clipboard.writeText(out);
       // Rule #1: lengths and a route label, never the content itself.

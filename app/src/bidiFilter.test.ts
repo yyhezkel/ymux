@@ -65,3 +65,29 @@ test("toggling resets transient state", () => {
   f.setEnabled(true);
   assert.equal(f.process("DEV"), "DEV"); // no stale escape, no RTL context
 });
+
+test("an escape with intermediates is consumed: B is not text", () => {
+  assert.equal(on().process("שלום \x1b(BDEV"), `שלום \x1b(B${FSI}DEV${PDI}`);
+  const f = on();
+  assert.equal(f.process("שלום \x1b(") + f.process("BDEV"), `שלום \x1b(B${FSI}DEV${PDI}`);
+  for (const s of ["שלום \x1b#8", "שלום \x1b F", "שלום \x1b$(B"]) {
+    assert.equal(on().process(s), s);
+  }
+});
+
+test("a malformed intermediate escape keeps the next character", () => {
+  assert.equal(on().process("שלום \x1b(\nDEV"), "שלום \x1b(\nDEV");
+  assert.equal(on().process("\x1b(ש"), "\x1b(ש");
+});
+
+test("CR and cursor-positioning CSI reset the RTL context", () => {
+  for (const s of ["שלום\rDEV", "שלום \x1b[1;1HDEV", "שלום \x1b[1;1fDEV", "שלום \x1b[1GDEV"]) {
+    assert.equal(on().process(s), s);
+  }
+  const f = on();
+  assert.equal(f.process("שלום \x1b[1;") + f.process("1HDEV"), "שלום \x1b[1;1HDEV");
+});
+
+test("other CSI keeps the RTL context", () => {
+  assert.ok(on().process("שלום \x1b[2CDEV").includes(`${FSI}DEV${PDI}`));
+});

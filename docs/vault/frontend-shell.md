@@ -426,7 +426,7 @@ a flag on `Workspace`, not a `LayoutNode` variant; `crates.md` has the reasoning
 
 **Phase 93 — the pane header in tabs mode is two buttons.** `PaneView`'s `actions()` memo
 returns early on `p.tabsMode` with at most `popout` (connected only); everything else
-(annotation, edit-meta, the power/detach split-button, the smart-bidi toggle, maximize,
+(annotation, edit-meta, the power/detach split-button, maximize,
 both splits) exists only in split mode. The strip already owns close / new / switch, bidi
 is a Settings matter (`terminal.rtl.*`), and the power button folds into the X because
 `workspace_close_pane` is a detach, not a kill — so in tabs mode the X *is* disconnect +
@@ -666,3 +666,8 @@ vault file — a test edit should not trip the freshness gate.
 `pane_connect` (restore + persisted true → signal on, so a reattach starts right). `syncClaudeRunning(paneId, on)`
 writes `pane_set_claude_running` only on a transition (`claudeRunningWrite`), called from `connectPane` (non-restoring)
 and the `feed:item-added` listener (`session-end` → false). A failed invoke is logged, never thrown.
+
+**Smart bidi at connect.** The header button is gone; the setting is `terminal.rtl.*.smart_bidi`. The filter runs in the
+backend, which does not read `terminal.rtl`, so `connectPane` passes `smartBidi` to `pane_connect`:
+`getRtlProfile(profileFor(pane.connection ?? ws.connection)).smartBidi`. It does not use `ti.profile`, because `ensureTerm`
+builds the instance with the default `local` there. A settings change applies at the next connect.

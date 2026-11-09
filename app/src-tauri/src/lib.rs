@@ -206,8 +206,8 @@ pub(crate) struct AppState {
     /// Phase 52 (BiDi 33B): per-pane PTY-stream bidi filter state. The
     /// filter type lives in `app` (not ymux-core) since it's a
     /// feature concern, not core russh/sessions. Seeded by `pane_connect`
-    /// from the persisted `smart_bidi`, lazy-created (off) on first chunk
-    /// otherwise; toggled via `pane_set_smart_bidi`.
+    /// from the value the frontend resolved from the RTL profile,
+    /// lazy-created (off) on first chunk otherwise.
     pub(crate) bidi_filters: bidi_filter::BidiFilterMap,
     /// Phase 53 (rebased): per-workspace child Webview for the
     /// floating Browser window. At most one Webview per workspace
@@ -2733,7 +2733,7 @@ fn emit_data(
     pane_id: &str,
     osc: &mut osc_notify::OscNotifyParser,
     // Phase 52 (BiDi 33B): per-pane bidi filter map. When the pane's
-    // smart_bidi toggle is on, the DECODED text passes through
+    // smart_bidi filter is on, the DECODED text passes through
     // `apply_to_pane` before being emitted, so the filter only ever sees
     // whole characters. When off, the text moves through unchanged.
     bidi_filters: &bidi_filter::BidiFilterMap,
@@ -2785,7 +2785,7 @@ fn emit_data(
     // Note: unlike `stream` and `osc`, this state is keyed by pane and so
     // is still SHARED across an SSH channel's stdout and stderr. Giving
     // stderr its own entry would need a synthetic key, which would miss
-    // the per-pane smart_bidi toggle and silently leave stderr unfiltered
+    // the per-pane smart_bidi filter and silently leave stderr unfiltered
     // — worse than the rare escape-splice it would prevent. Left shared
     // deliberately; see FOLLOWUPS.
     let text = bidi_filter::apply_to_pane(bidi_filters, pane_id, decoded.text);
@@ -8927,43 +8927,6 @@ fn workspace_distribute_evenly(
 
 // ─── Pane metadata (title / annotation) ─────────────────────────────────────
 
-// Phase 52 (BiDi 33B): toggle the opt-in PTY-stream bidi filter on the
-// given pane. Persists the bool onto the pane node (so the toggle
-// survives reloads) AND updates the runtime filter map so the very
-// next chunk is filtered (or not).
-fn set_pane_smart_bidi_in_layout(node: &mut LayoutNode, target: &str, enabled: bool) -> bool {
-    match node {
-        LayoutNode::Pane {
-            pane_id,
-            smart_bidi,
-            ..
-        } if pane_id == target => {
-            *smart_bidi = Some(enabled);
-            true
-        }
-        LayoutNode::Pane { .. } => false,
-        LayoutNode::Split { first, second, .. } => {
-            set_pane_smart_bidi_in_layout(first, target, enabled)
-                || set_pane_smart_bidi_in_layout(second, target, enabled)
-        }
-    }
-}
-
-/// Persisted `smart_bidi` of a pane; absent or unknown pane reads as off.
-fn find_pane_smart_bidi(node: &LayoutNode, target: &str) -> bool {
-    match node {
-        LayoutNode::Pane {
-            pane_id,
-            smart_bidi,
-            ..
-        } if pane_id == target => smart_bidi.unwrap_or(false),
-        LayoutNode::Pane { .. } => false,
-        LayoutNode::Split { first, second, .. } => {
-            find_pane_smart_bidi(first, target) || find_pane_smart_bidi(second, target)
-        }
-    }
-}
-
 // Not `pub(crate)`: a command at the crate root with a visibility makes
 // `#[tauri::command]` re-export its `__cmd__` macro beside the macro itself
 // (E0255, "defined multiple times").
@@ -9022,41 +8985,6 @@ mod pane_set_active_tests {
         assert_eq!(set_active_pane(&map, "w1".to_string(), "p2".to_string()), Ok(()));
         assert_eq!(map.lock().unwrap().get("w1").map(String::as_str), Some("p2"));
     }
-}
-
-#[tauri::command]
-fn pane_set_smart_bidi(
-    state: State<'_, AppState>,
-    app: AppHandle,
-    workspace_id: String,
-    pane_id: String,
-    enabled: bool,
-) -> Result<WorkspacesFile, String> {
-    {
-        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
-        let ws = file
-            .workspaces
-            .iter_mut()
-            .find(|w| w.id == workspace_id)
-            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
-        let layout = ws
-            .layout
-            .as_mut()
-            .ok_or_else(|| format!("workspace {workspace_id} has no layout"))?;
-        if !set_pane_smart_bidi_in_layout(layout, &pane_id, enabled) {
-            return Err(format!("no pane {pane_id} in workspace {workspace_id}"));
-        }
-    }
-    persist(&state)?;
-    // Flip the runtime filter for this pane right now so the next PTY
-    // chunk takes the new state.
-    bidi_filter::set_pane_enabled(&state.bidi_filters, &pane_id, enabled);
-    let _ = app.emit("workspaces:changed", ());
-    log_debug("PTY", &format!(
-        "[bidi] pane_set_smart_bidi: ws={} pane={} enabled={}",
-        workspace_id, pane_id, enabled
-    ));
-    Ok(state.workspaces.lock().map_err(|e| e.to_string())?.clone())
 }
 
 // Persist "Claude is running in this pane" so a reattach to a persistent
@@ -9438,12 +9366,15 @@ async fn pane_connect(
     // the auto-derived tmux session name. Lets the user attach to a
     // previously-orphaned session whose original pane was closed.
     tmux_session_name: Option<String>,
+    // The pane's RTL profile `smart_bidi`, resolved by the frontend: Rust
+    // does not read `terminal.rtl`. A saved per-leaf value is ignored.
+    smart_bidi: Option<bool>,
 ) -> Result<String, String> {
     // Look up connection from workspaces state. Phase 7.C: also lift `env` and
     // `setup_command` from the workspace so we can inject them after the shell is up.
     // Phase 23.I: also lift the pane's title so the persistent (tmux) flow can
     // derive a session name from it instead of the opaque pane-id default.
-    let (conn, cwd, ws_env, ws_setup, pane_title, pane_smart_bidi) = {
+    let (conn, cwd, ws_env, ws_setup, pane_title) = {
         let file = state.workspaces.lock().map_err(|e| e.to_string())?;
         let ws = file
             .workspaces
@@ -9478,19 +9409,17 @@ async fn pane_connect(
                 }
             })?;
         let title = find_pane_title(layout, &pane_id);
-        let smart_bidi = find_pane_smart_bidi(layout, &pane_id);
         (
             conn,
             ws.cwd.clone(),
             ws.env.clone(),
             ws.setup_command.clone(),
             title,
-            smart_bidi,
         )
     };
 
-    // Re-apply the persisted toggle to the runtime filter before any spawn,
-    // so the first chunk is filtered as the pane header shows.
+    // Set the runtime filter before any spawn, so the first chunk is filtered.
+    let pane_smart_bidi = smart_bidi.unwrap_or(false);
     bidi_filter::set_pane_enabled(&state.bidi_filters, &pane_id, pane_smart_bidi);
     log_debug(
         "PTY",
@@ -13124,7 +13053,6 @@ pub fn run() {
             read_log_tail,
             clear_debug_log_cmd,
             pane_set_identity,
-            pane_set_smart_bidi,
             pane_set_claude_running,
             workspace_browser::workspace_browser_show,
             workspace_browser::workspace_browser_hide,
@@ -16281,108 +16209,6 @@ mod attach_guard_tests {
     fn prefix_is_not_a_match() {
         // pins: exact-name match; "work2" running must not mark "work" live
         assert!(!attach_guard_verdict(Ok(&listed(&["work2"])), "work"));
-    }
-}
-
-#[cfg(test)]
-mod smart_bidi_seed_tests {
-    // pane_connect seeds the runtime bidi filter from this lookup; a wrong
-    // answer re-opens the "header on, filter off after restart" bug.
-    use super::{find_pane_smart_bidi, LayoutNode, PaneKind, SplitDirection};
-
-    fn pane(id: &str, smart_bidi: Option<bool>) -> LayoutNode {
-        LayoutNode::Pane {
-            pane_id: id.to_string(),
-            pane_kind: PaneKind::Terminal,
-            connection: None,
-            browser: None,
-            title: None,
-            auto_title: None,
-            annotation: None,
-            color: None,
-            emoji: None,
-            help_topic: None,
-            diff_source: None,
-            smart_bidi,
-            diff_cwd: None,
-            claude_running: None,
-        }
-    }
-
-    fn split(a: LayoutNode, b: LayoutNode) -> LayoutNode {
-        LayoutNode::Split {
-            split_id: "s".to_string(),
-            direction: SplitDirection::Horizontal,
-            ratio: 0.5,
-            first: Box::new(a),
-            second: Box::new(b),
-        }
-    }
-
-    #[test]
-    fn nested_some_true_is_true() {
-        let t = split(pane("a", None), split(pane("b", Some(true)), pane("c", None)));
-        assert!(find_pane_smart_bidi(&t, "b"));
-    }
-
-    #[test]
-    fn none_is_false() {
-        assert!(!find_pane_smart_bidi(&pane("a", None), "a"));
-    }
-
-    #[test]
-    fn some_false_is_false() {
-        assert!(!find_pane_smart_bidi(&pane("a", Some(false)), "a"));
-    }
-
-    #[test]
-    fn unknown_id_is_false() {
-        let t = split(pane("a", Some(true)), pane("b", Some(true)));
-        assert!(!find_pane_smart_bidi(&t, "zzz"));
-    }
-
-    // Pins the persisted-shape lookup on full Pane literals: Some(true) → on, None → off.
-    #[test]
-    fn struct_literal_some_true_and_none() {
-        let t = LayoutNode::Split {
-            split_id: "s".to_string(),
-            direction: SplitDirection::Horizontal,
-            ratio: 0.5,
-            first: Box::new(LayoutNode::Pane {
-                pane_id: "on".to_string(),
-                pane_kind: PaneKind::Terminal,
-                connection: None,
-                browser: None,
-                title: None,
-                auto_title: None,
-                annotation: None,
-                color: None,
-                emoji: None,
-                help_topic: None,
-                diff_source: None,
-                smart_bidi: Some(true),
-                diff_cwd: None,
-                claude_running: None,
-            }),
-            second: Box::new(LayoutNode::Pane {
-                pane_id: "off".to_string(),
-                pane_kind: PaneKind::Terminal,
-                connection: None,
-                browser: None,
-                title: None,
-                auto_title: None,
-                annotation: None,
-                color: None,
-                emoji: None,
-                help_topic: None,
-                diff_source: None,
-                smart_bidi: None,
-                diff_cwd: None,
-                claude_running: None,
-            }),
-        };
-        assert!(find_pane_smart_bidi(&t, "on"));
-        assert!(!find_pane_smart_bidi(&t, "off"));
     }
 }
 

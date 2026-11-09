@@ -605,9 +605,8 @@ export class WebBackend implements Backend {
     this.paneSession.set(paneId, name);
     const sid = await this.pty.open(name, num(a.cols, 80), num(a.rows, 24));
     this.paneSid.set(paneId, sid);
-    // Seed smart bidi from the leaf (lib.rs seeds the filter at pane_connect).
-    const leaf = findLeaf(w.layout ?? null, paneId);
-    if (leaf && "smart_bidi" in leaf && leaf.smart_bidi) this.pty.setBidi(sid, true);
+    // The value connectPane resolved from the RTL profile (as in lib.rs).
+    this.pty.setBidi(sid, a.smartBidi === true);
     return sid;
   }
 
@@ -874,13 +873,6 @@ export class WebBackend implements Backend {
       checkIdentity(color, emoji);
       await this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { color, emoji }));
       return { pane_id: str(a.paneId), color, emoji };
-    },
-    pane_set_smart_bidi: async (a) => {
-      const on = a.enabled === true;
-      const f = await this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { smart_bidi: on }));
-      const sid = this.paneSid.get(str(a.paneId));
-      if (sid) this.pty.setBidi(sid, on);
-      return f;
     },
     pane_set_claude_running: (a) =>
       this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { claude_running: a.running === true })),

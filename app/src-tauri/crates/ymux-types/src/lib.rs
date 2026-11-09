@@ -261,9 +261,9 @@ pub enum LayoutNode {
         // treated as DiffSource::Working by the backend watcher.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         diff_source: Option<DiffSource>,
-        // Phase 52 (BiDi 33B): opt-in PTY-stream bidi filter. None or
-        // Some(false) = passthrough; Some(true) = inject FSI/PDI around
-        // Latin runs near RTL context. Persists across reloads.
+        // Phase 52 (BiDi 33B): retired. The setting moved to the RTL profiles
+        // (`terminal.rtl.*.smart_bidi`), and nothing reads this field. It
+        // stays so an existing workspaces.json keeps its shape.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         smart_bidi: Option<bool>,
         // Phase 91.F: the worktree the Diff pane is looking at, when it is

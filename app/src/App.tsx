@@ -70,6 +70,7 @@ import { closeOtherDrawers, type PanelId, type Surface, type PanelSurfaces } fro
 import {
   TerminalInstance,
   copyTerminalSelection,
+  getRtlProfile,
   pasteIntoActiveTerminal,
   readClipboardText,
   setCtrlCCopyOnSelect,
@@ -114,6 +115,7 @@ import {
   isRemoteConn,
   isRemoteWorkspace,
   paneCaps,
+  profileFor,
   wsCaps,
   paneKindOf,
   pruneLayout,
@@ -2460,6 +2462,11 @@ function App() {
         cmd: opts.cmd ?? null,
         claudeArgs: opts.claudeArgs ?? null,
         tmuxSessionName: opts.tmuxSession ?? sessionForPane,
+        // The backend does not read `terminal.rtl`. Same precedence as
+        // pane_connect's own connection lookup: pane first, then workspace.
+        smartBidi: getRtlProfile(
+          profileFor((ws.layout ? findPane(ws.layout, paneId)?.connection : null) ?? ws.connection),
+        ).smartBidi,
         cols: ti.term.cols || 80,
         rows: ti.term.rows || 24,
       });
