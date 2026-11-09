@@ -106,7 +106,7 @@ test("keys keep distinct anchors and targets distinct", () => {
 
 test("sanitizing removes terminal controls and bidi overrides", () => {
   assert.equal(sanitizeInline("a\x1b[201~b\x07\x9bc‮d\te\r\nf"), "a[201~bcd  e f");
-  assert.equal(sanitizeNote("  one\r\ntwo three\x00  "), "one\ntwo\nthree");
+  assert.equal(sanitizeNote("  one\r\ntwo\u2028three\x00  "), "one\ntwo\nthree");
   assert.equal(sanitizeNote("הערה בעברית"), "הערה בעברית");
   assert.equal(Array.from(sanitizeNote("x".repeat(NOTE_MAX_CHARS + 5))).length, NOTE_MAX_CHARS);
   assert.equal(sanitizeNote("\x1b\x07"), "");

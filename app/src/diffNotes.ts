@@ -69,7 +69,7 @@ const CONTROLS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/g;
 // Directional marks, embeddings, overrides and isolates: they can make the
 // preview show text in a different order from the bytes that are sent.
 const BIDI_CONTROLS = /[؜‎‏‪-‮⁦-⁩]/g;
-const LINE_BREAKS = /\r\n?|\u0085| | /g;
+const LINE_BREAKS = /\r\n?|\u0085|\u2028|\u2029/g;
 
 /** Remove every control character. LF is the only one that can stay. */
 export function stripControls(s: string): string {

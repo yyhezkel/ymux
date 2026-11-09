@@ -201,7 +201,7 @@
     "app/src/components/PopoutBrowser.tsx": "4f05bbbbbc0ec26226df2d2ecbd6a3e2076fb1c246ae40ae6dca5e6b835e6d80",
     "app/src/components/PopoutTerminal.tsx": "f29ec43dc1d1a8ad71513e0e099c6150cab9056eb66aaf92b985930cb856917d",
     "app/src/diffModel.ts": "81186f81eec25c0c8c03a23b36e22461f8e49d89f7ad9e67bc4dcbc7635b74dc",
-    "app/src/diffNotes.ts": "50839ca806577cb6dd1731fc003e0b9c2d42a287ef6e8c2007e29e52b97da743",
+    "app/src/diffNotes.ts": "d5bd370d47723eebd852d7b2b7042d2800e447452ce26d508e62b650d1843565",
     "app/src/fmPaths.ts": "844d90d27cbb5c0c25a2bf82a8881ff76c356328757c7df67857749e2b853e82",
     "app/src/mdViewerStore.ts": "59cbf5cbc3eb038f37165d299c1052957a6262e7dbd1126b9b4639cfd6761555",
     "app/src/popoutWheelArm.ts": "8b7559b9500f4a0f27c60fd95ba5fe4c9d7fb94480f5bc97ceeb67de4ba36544",
