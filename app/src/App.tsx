@@ -2148,8 +2148,8 @@ function App() {
   // Writes by session id, so a popped-out pane works too: its grid instance
   // is detached for input but still parses the output, so its mode is live.
   // A paste without brackets turns each line break into Enter, so refuse it.
-  // The check reads xterm's mode. Zellij keeps that mode on for its own use
-  // and strips the brackets for an inner shell that did not ask for them.
+  // The check reads xterm's mode. Unverified: zellij is believed to keep that
+  // mode on itself and to strip the brackets for an inner shell without it.
   const sendDiffPrompt = async (paneId: string, text: string): Promise<DiffSendResult> => {
     const sessionId = paneToSession.get(paneId);
     const ti = terms.get(paneId);

@@ -348,8 +348,8 @@ is held by anchor: Shift+arrows move it, N opens a note, and the gutter buttons 
 preview shows the exact text. `sendDiffPrompt` in App writes to `pty_write` by session id
 (so a popped-out pane works), one bracketed paste and no Enter, and **refuses when xterm's
 `bracketedPasteMode` is off**, because an unbracketed paste turns each line break into Enter.
-Limit: zellij keeps that mode on for itself and strips the brackets for an inner shell that
-did not ask for them, so the check cannot see that case. All text is stripped of C0, C1, DEL
+Unverified limit: zellij is believed to keep that mode on for itself and to strip the brackets
+for an inner shell that did not ask for them; if so, the check cannot see that case. All text is stripped of C0, C1, DEL
 and bidi controls twice: when the prompt is built and at the last step before the PTY. Rule
 #1: the prompt is pane input and is never logged. `pty_write` exists on both hosts, so
 there is no capability gate beyond `diffPane`.
