@@ -208,7 +208,7 @@
   },
   "frontend-shell": {
     "app/src/AgentLight.tsx": "cd906a7ddce5e29388fe52001a27d63fe54d4e0b2329b2a1c84f4ca5b4713b8e",
-    "app/src/App.tsx": "c3e02e563f5a81ef0aeefda86aebe9d31d7b5fe859fdacc7901f63b13948d406",
+    "app/src/App.tsx": "7c1501a11489c77f574bd60ed9a8d36a431dcc84906992c1e3ca5909b30b7475",
     "app/src/BriefingCard.tsx": "74ddaa2fe32a3d7904eb3db62ecf77184ca4f4871d4d6d28168241d376f8523a",
     "app/src/CommandPalette.tsx": "da5b1c23c3329d8a394016a05068a539332cf52481c96b89833a37f22bd2aaaf",
     "app/src/ContextRail.tsx": "557fc478d37c7f0a4d39d2e5ec581fed7140666b63817f24153f60115b7d6694",
