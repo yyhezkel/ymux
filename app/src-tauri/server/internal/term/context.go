@@ -15,7 +15,7 @@ package term
 // 30 days are pruned at load. Every write announces `context:changed`
 // {session_id, ws_id}. Prompts and briefs are user content (Rule #1): they
 // live in the files and the API only — logs carry ids and counts.
-// Not ported: injection back into the agent (context.inject, 105.C).
+// Injection back into the agent (context.inject, 105.C) is inject.go.
 
 import (
 	"encoding/json"
@@ -239,6 +239,22 @@ func (s *contextStore) apply(ev contextEvent) (*SessionContext, error) {
 	s.sessions[ev.sessionID] = &next
 	out := next
 	return &out, nil
+}
+
+// get returns a copy of one session's record, nil when there is none (an
+// invalid or unreadable id included).
+func (s *contextStore) get(id string) *SessionContext {
+	if !validSessionID(id) {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cur := s.sessions[id]
+	if cur == nil {
+		return nil
+	}
+	out := *cur
+	return &out
 }
 
 // list returns one workspace's sessions, most recent activity first.

@@ -52,6 +52,9 @@ const (
 // runClaude runs claude with args, stdin piped; swapped in tests.
 var runClaude = func(ctx context.Context, bin string, args []string, stdin string) (string, error) {
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// The CLI hooks do nothing for this run: last.env would lend it a pane,
+	// and a [ymux-brief] block must not end up in a parsed answer.
+	cmd.Env = append(os.Environ(), "YMUX_HEADLESS=1")
 	cmd.Stdin = strings.NewReader(stdin)
 	out, err := cmd.Output()
 	if ctx.Err() != nil {

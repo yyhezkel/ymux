@@ -234,9 +234,9 @@ user's decision (for blocking subcommands) or returns immediately
 | Subcommand | Behavior |
 |---|---|
 | `tool-permission` | **Blocks** until Allow / Deny / timeout. |
-| `pre-tool-use` | **Blocks** until Allow / Deny / timeout. |
+| `pre-tool-use` | **Blocks** until Allow / Deny / timeout. In `auto` mode it prints nothing and exits 0, so Claude Code's own classifier decides. |
 | `session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end` | Passive: emits a feed card + toast; returns immediately. |
-| `session-start` | Phase 105.C. Makes no feed card. It asks the app for this session's context over `context.inject`, waiting `YMUX_CONTEXT_TIMEOUT_MS` (default 300 ms). If the answer is non-empty, it prints one `hookSpecificOutput.additionalContext` JSON line on stdout. On any error it fails open: prints nothing and exits 0. |
+| `session-start` | Phase 105.C. Makes no feed card. It asks the app for this session's context over `context.inject`, waiting `YMUX_CONTEXT_TIMEOUT_MS` (default 1000 ms). If the answer is non-empty, it prints one `hookSpecificOutput.additionalContext` JSON line on stdout. On any error it fails open: prints nothing and exits 0. |
 | Any other name | Treated as passive. |
 
 #### stdin payload (suggested fields — all optional)

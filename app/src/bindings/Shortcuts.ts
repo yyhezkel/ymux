@@ -36,6 +36,10 @@ show_briefing: string,
 toggle_context_rail: string,
 open_diff: string,
 /**
+ * Open the jump palette over live sessions, needs-you first.
+ */
+jump_palette: string,
+/**
  * When true and the terminal has a selection, plain Ctrl+C copies
  * to clipboard instead of sending SIGINT. Matches Windows Terminal
  * + most modern terminal apps. Set to false to always send SIGINT.

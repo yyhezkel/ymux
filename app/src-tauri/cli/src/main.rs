@@ -1311,15 +1311,39 @@ fn render_dev_state_text(v: &Value) -> String {
 }
 
 /// Phase 105.C: how long `claude-hook session-start` waits for the
-/// desktop's `context.inject`. ~300 ms by default, so a session start never
-/// stalls; `YMUX_CONTEXT_TIMEOUT_MS` overrides it (clamped 100..=3000) for a
-/// remote whose tunnel round trips are slower than that.
+/// desktop's `context.inject`. 1000 ms by default: the call costs 3 tunnel
+/// round trips (channel open + challenge, HMAC verdict, request), and 300 ms
+/// was below that on a 125-175 ms link. The budget is a bound, so a session
+/// start never stalls for longer. `YMUX_CONTEXT_TIMEOUT_MS` overrides it
+/// (clamped 100..=3000).
 fn context_timeout_ms() -> u64 {
     std::env::var("YMUX_CONTEXT_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.trim().parse::<u64>().ok())
         .map(|v| v.clamp(100, 3000))
-        .unwrap_or(300)
+        .unwrap_or(1000)
+}
+
+/// Tell the desktop a tool is starting, without making Claude Code wait: a
+/// detached copy of this binary runs the `notification` branch. In `auto`
+/// mode this is what takes a pane out of NeedsInput after an approval.
+/// stdout and stderr are null so the hook's own pipes close when we exit.
+fn report_tool_running() {
+    use std::io::Write as _;
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    let child = std::process::Command::new(exe)
+        .args(["claude-hook", "notification"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    if let Ok(mut child) = child {
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(br#"{"notification_type":"tool_running"}"#);
+        }
+    }
 }
 
 /// Phase 105.C: the one stdout line a SessionStart hook prints — Claude
@@ -1337,6 +1361,33 @@ fn session_start_output(context: &str) -> Option<String> {
         }
     });
     serde_json::to_string(&out).ok()
+}
+
+/// Phase durations of this process's latest `rpc_via`, in ms, for the hook
+/// log lines. Process-global because `session-start` drops the RPC future at
+/// its budget, and the phases that finished before that are what its log
+/// line needs. A hook process runs one RPC at a time. A phase that did not
+/// finish stays 0. Over a tunnel, `connect` is only the local dial, so the
+/// channel open shows in `handshake`. For a blocking `pre-tool-use`, `reply`
+/// includes the wait for the human.
+static RPC_CONNECT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RPC_HANDSHAKE_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static RPC_REPLY_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn record_rpc_phase(phase: &std::sync::atomic::AtomicU64, started: std::time::Instant) {
+    let ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
+    phase.store(ms, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The hook-log suffix for the latest RPC. Rule #1: durations only.
+fn rpc_timing_log() -> String {
+    use std::sync::atomic::Ordering::Relaxed;
+    format!(
+        "connect_ms={} handshake_ms={} reply_ms={}",
+        RPC_CONNECT_MS.load(Relaxed),
+        RPC_HANDSHAKE_MS.load(Relaxed),
+        RPC_REPLY_MS.load(Relaxed),
+    )
 }
 
 async fn rpc_call(method: &str, params: Value) -> Result<Value, String> {
@@ -1357,13 +1408,14 @@ async fn rpc_call_with(
     refresh_on_stale: bool,
 ) -> Result<Value, String> {
     load_fallback_env_file();
+    let started = std::time::Instant::now();
 
     // Prefer TCP if YMUX_SOCKET_ADDR is set (works on any OS, including remote tunnels).
     if let Ok(addr) = std::env::var("YMUX_SOCKET_ADDR") {
         match tokio::net::TcpStream::connect(&addr).await {
             Ok(stream) => {
                 let token = std::env::var("YMUX_TUNNEL_TOKEN").ok();
-                return rpc_via(stream, method, params, token.as_deref()).await;
+                return rpc_via(stream, method, params, token.as_deref(), started).await;
             }
             Err(e) if !refresh_on_stale => return Err(format!("connect tcp {addr}: {e}")),
             Err(e) => {
@@ -1395,7 +1447,7 @@ async fn rpc_call_with(
                                 "rpc: {addr} was stale, reconnected on {fresh_addr} from last.env"
                             ),
                         );
-                        return rpc_via(stream, method, params, Some(&fresh_token)).await;
+                        return rpc_via(stream, method, params, Some(&fresh_token), started).await;
                     }
                     None => return Err(format!("connect tcp {addr}: {e}")),
                 }
@@ -1427,7 +1479,7 @@ async fn rpc_call_with(
                 ))
             }
         };
-        return rpc_via(pipe, method, params, None).await;
+        return rpc_via(pipe, method, params, None, started).await;
     }
 
     // Otherwise on unix, dial the local Unix-domain socket. Without this the
@@ -1448,7 +1500,7 @@ async fn rpc_call_with(
         let mut errors: Vec<String> = Vec::new();
         for name in &names {
             match tokio::net::UnixStream::connect(name).await {
-                Ok(sock) => return rpc_via(sock, method, params, None).await,
+                Ok(sock) => return rpc_via(sock, method, params, None, started).await,
                 Err(e) => errors.push(format!("{name}: {e}")),
             }
         }
@@ -1588,10 +1640,12 @@ async fn rpc_via<S>(
     method: &str,
     params: Value,
     token: Option<&str>,
+    started: std::time::Instant,
 ) -> Result<Value, String>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
 {
+    record_rpc_phase(&RPC_CONNECT_MS, started);
     let (reader, mut writer) = tokio::io::split(stream);
     let mut buf = BufReader::new(reader);
 
@@ -1599,9 +1653,12 @@ where
     // appears on the wire. Pipe transport (Windows) skips this — the pipe's per-user
     // ACL is the auth.
     if let Some(t) = token {
+        let handshake_started = std::time::Instant::now();
         perform_handshake(&mut buf, &mut writer, t).await?;
+        record_rpc_phase(&RPC_HANDSHAKE_MS, handshake_started);
     }
 
+    let reply_started = std::time::Instant::now();
     let req = json!({
         "jsonrpc": "2.0",
         "id": 1,
@@ -1618,6 +1675,7 @@ where
     buf.read_line(&mut response)
         .await
         .map_err(|e| e.to_string())?;
+    record_rpc_phase(&RPC_REPLY_MS, reply_started);
     // Rule #1: a reply can carry pane text, so the error gets its size only.
     let resp: Value = serde_json::from_str(response.trim())
         .map_err(|e| format!("bad response: {e} ({} bytes)", response.len()))?;
@@ -2517,6 +2575,12 @@ async fn real_main() -> ExitCode {
             load_fallback_env_file();
             let mut buf = String::new();
             let _ = std::io::stdin().read_to_string(&mut buf);
+            // ymux's own one-shot `claude -p` calls set this. Such a run has
+            // no pane, but `last.env` would lend it one, and its output must
+            // stay free of the `[ymux-brief]` block.
+            if std::env::var_os("YMUX_HEADLESS").is_some() {
+                return ExitCode::SUCCESS;
+            }
             let payload: Value = if buf.trim().is_empty() {
                 json!({})
             } else {
@@ -2613,6 +2677,17 @@ async fn real_main() -> ExitCode {
                     .get("permission_mode")
                     .and_then(|v| v.as_str())
                     .unwrap_or("default");
+                // In `auto` mode Claude Code's own classifier decides. Print
+                // nothing: an explicit `allow` would skip that classifier,
+                // and a trip to the desktop would run the ymux policy on
+                // top of it, which gated and denied commands in this mode.
+                if permission_mode == "auto" {
+                    hook_dlog(&format!(
+                        "defer tool={tool_name_log} mode=auto session={session_id_log}"
+                    ));
+                    report_tool_running();
+                    return ExitCode::SUCCESS;
+                }
                 if matches!(
                     permission_mode,
                     "acceptEdits" | "bypassPermissions" | "skip"
@@ -2646,9 +2721,9 @@ async fn real_main() -> ExitCode {
             // feed: no feed.push, no card, no toast. Phase 105.C gives it one
             // job instead — ask the desktop for this session's context
             // (`context.inject`) and hand it to Claude Code as
-            // `additionalContext`. Budget ~300 ms, FAIL-OPEN: any error,
-            // timeout or empty answer prints nothing and exits 0, so a
-            // missing desktop never slows or breaks a session start.
+            // `additionalContext`. Budget `context_timeout_ms()`, FAIL-OPEN:
+            // any error, timeout or empty answer prints nothing and exits 0,
+            // so a missing desktop never breaks a session start.
             //
             // stdout is the protocol here: the ONLY thing this branch ever
             // writes to it is the single JSON line from
@@ -2671,32 +2746,35 @@ async fn real_main() -> ExitCode {
                 let budget = std::time::Duration::from_millis(context_timeout_ms());
                 let answer =
                     tokio::time::timeout(budget, rpc_call("context.inject", req)).await;
-                let text = match answer {
-                    Ok(Ok(v)) => v
-                        .get("additional_context")
-                        .and_then(|x| x.as_str())
-                        .unwrap_or("")
-                        .to_string(),
+                let (text, failure) = match answer {
+                    Ok(Ok(v)) => (
+                        v.get("additional_context")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        None,
+                    ),
                     Ok(Err(e)) => {
                         hook_vlog(&format!("session-start context.inject failed: {e}"));
-                        String::new()
+                        (String::new(), Some("error"))
                     }
-                    Err(_) => {
-                        hook_vlog(&format!(
-                            "session-start context.inject timed out after {} ms",
-                            budget.as_millis()
-                        ));
-                        String::new()
-                    }
+                    Err(_) => (String::new(), Some("timed_out")),
                 };
-                // Rule #1: the byte count, never the text.
+                let output = session_start_output(&text);
+                let outcome =
+                    failure.unwrap_or(if output.is_some() { "injected" } else { "empty" });
+                // Rule #1: the byte count, never the text. The error text
+                // stays on the Debug line above: a malformed reply is quoted
+                // in it, and that reply can hold the user's context.
                 hook_dlog(&format!(
-                    "session-start pane={pane_id_log} session={session_id_log} \
-                     source={} context_bytes={}",
+                    "session-start outcome={outcome} pane={pane_id_log} \
+                     session={session_id_log} source={} context_bytes={} budget_ms={} {}",
                     payload.get("source").and_then(|v| v.as_str()).unwrap_or("(absent)"),
-                    text.len()
+                    text.len(),
+                    budget.as_millis(),
+                    rpc_timing_log()
                 ));
-                if let Some(line) = session_start_output(&text) {
+                if let Some(line) = output {
                     println!("{line}");
                 }
                 return ExitCode::SUCCESS;
@@ -2736,6 +2814,7 @@ async fn real_main() -> ExitCode {
                     "elicitation_url_dialog",
                     "elicitation_complete",
                     "elicitation_response",
+                    "tool_running",
                 ];
                 if !RELEVANT.contains(&ntype) {
                     // auth_success, or a type Claude Code added after this
@@ -2755,12 +2834,6 @@ async fn real_main() -> ExitCode {
                         .unwrap_or(0)
                 );
                 let pane_id = std::env::var("YMUX_PANE_ID").ok();
-                // Rule #1: the type is a fixed enum value from Claude Code.
-                // notification_text never appears here or in the push.
-                hook_dlog(&format!(
-                    "notification type={ntype} pane={} req_id={request_id}",
-                    pane_id.as_deref().unwrap_or("(none)")
-                ));
                 let mut push = json!({
                     "request_id": request_id,
                     "kind": "passive",
@@ -2781,6 +2854,13 @@ async fn real_main() -> ExitCode {
                     push["tmux_session"] = json!(s);
                 }
                 let _ = rpc_call("feed.push", push).await;
+                // Rule #1: the type is a fixed enum value from Claude Code.
+                // notification_text never appears here or in the push.
+                hook_dlog(&format!(
+                    "notification type={ntype} pane={} req_id={request_id} {}",
+                    pane_id.as_deref().unwrap_or("(none)"),
+                    rpc_timing_log()
+                ));
                 return ExitCode::SUCCESS;
             }
 
@@ -2805,10 +2885,6 @@ async fn real_main() -> ExitCode {
                         .unwrap_or(0)
                 );
                 let pane_id = std::env::var("YMUX_PANE_ID").ok();
-                hook_dlog(&format!(
-                    "stop-failure type={error} pane={} req_id={request_id}",
-                    pane_id.as_deref().unwrap_or("(none)")
-                ));
                 let mut push = json!({
                     "request_id": request_id,
                     "kind": "passive",
@@ -2824,6 +2900,11 @@ async fn real_main() -> ExitCode {
                     push["tmux_session"] = json!(s);
                 }
                 let _ = rpc_call("feed.push", push).await;
+                hook_dlog(&format!(
+                    "stop-failure type={error} pane={} req_id={request_id} {}",
+                    pane_id.as_deref().unwrap_or("(none)"),
+                    rpc_timing_log()
+                ));
                 return ExitCode::SUCCESS;
             }
 
@@ -2881,16 +2962,11 @@ async fn real_main() -> ExitCode {
             // v0.4.4: concise always-on summary — one line per request.
             // Blocking permission requests get a REQ line (paired with the
             // ACK line at rpc-ok); passive lifecycle hooks (stop / session-*
-            // / notification) get a single line and nothing more.
+            // / notification) get a single line after the RPC, with its timing.
             if blocking {
                 hook_dlog(&format!(
                     "REQ {subcommand} tool={tool_name_log} pane={pane_id_log} \
                      req_id={request_id} mode={perm_mode_log}"
-                ));
-            } else {
-                hook_dlog(&format!(
-                    "{subcommand} pane={pane_id_log} session={session_id_log} \
-                     req_id={request_id}"
                 ));
             }
             hook_vlog(&format!(
@@ -2950,6 +3026,14 @@ async fn real_main() -> ExitCode {
                 rpc_call("feed.push", push_params).await
             };
 
+            if !blocking {
+                hook_dlog(&format!(
+                    "{subcommand} pane={pane_id_log} session={session_id_log} \
+                     req_id={request_id} {}",
+                    rpc_timing_log()
+                ));
+            }
+
             match result {
                 Ok(v) => {
                     let decision = v
@@ -2958,11 +3042,14 @@ async fn real_main() -> ExitCode {
                         .unwrap_or("unknown");
                     // v0.4.4: concise ACK line for blocking requests (pairs
                     // with the REQ line). Passive hooks already logged their
-                    // single line at dispatch — no ACK for them. The decision
+                    // single line above — no ACK for them. The decision
                     // (allow/deny/timeout) is captured here; the full branch
                     // trace is verbose-only.
                     if blocking {
-                        hook_dlog(&format!("ACK {decision} req_id={request_id}"));
+                        hook_dlog(&format!(
+                            "ACK {decision} req_id={request_id} {}",
+                            rpc_timing_log()
+                        ));
                     }
                     hook_vlog(&format!(
                         "claude-hook BRANCH=rpc-ok decision={decision} \

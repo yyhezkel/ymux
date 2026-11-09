@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { t } from "./i18n";
 import { IconClose, IconFolder, IconGitBranch, IconWarning } from "./icons";
 import type { Connection, Workspace, WorktreeEntry } from "./types";
+import { WorktreeRecipeDialog } from "./WorktreeRecipeDialog";
 
 // Two small dialogs over the same chrome:
 //
@@ -41,6 +42,7 @@ export function ProjectFolderModal(p: Props) {
   const [target, setTarget] = createSignal("");
   const [busy, setBusy] = createSignal(false);
   const [error, setError] = createSignal<string | null>(null);
+  const [recipeBranch, setRecipeBranch] = createSignal<string | null>(null);
 
   const isPin = () => p.mode.kind === "pin";
   const isLocal = () =>
@@ -125,10 +127,10 @@ export function ProjectFolderModal(p: Props) {
         targetPath: target().trim() || null,
       });
       p.onDone();
-      p.onClose();
+      // `busy` stays true: the recipe dialog owns the screen until it finishes.
+      setRecipeBranch(b);
     } catch (e) {
       setError(String(e));
-    } finally {
       setBusy(false);
     }
   };
@@ -260,6 +262,15 @@ export function ProjectFolderModal(p: Props) {
           </button>
         </div>
       </div>
+      <Show when={p.mode.kind === "worktree" && recipeBranch()}>
+        {(b) => (
+          <WorktreeRecipeDialog
+            workspaceId={p.mode.kind === "worktree" ? p.mode.workspace.id : ""}
+            branch={b()}
+            onFinished={p.onClose}
+          />
+        )}
+      </Show>
     </div>
   );
 }

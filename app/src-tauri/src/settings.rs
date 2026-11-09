@@ -413,6 +413,11 @@ pub(crate) struct RtlProfile {
     /// cannot silently move a pane onto the newer rule.
     #[serde(default = "default_direction_policy")]
     pub direction_policy: String,
+    /// Wrap Latin runs near Hebrew/Arabic in bidi isolates. Opt-in, off when
+    /// absent, so an existing settings.json loads unchanged. Rust does not
+    /// read this: the frontend resolves it and passes it to `pane_connect`.
+    #[serde(default)]
+    pub smart_bidi: bool,
 }
 
 /// See `RtlProfile::direction_policy`. The pre-2026-08-19 rule is the default
@@ -429,6 +434,7 @@ impl Default for RtlProfile {
             mirror_arrows_rtl: true,
             tui_owns_bidi: false,
             direction_policy: default_direction_policy(),
+            smart_bidi: false,
         }
     }
 }
@@ -658,6 +664,8 @@ pub(crate) fn migrate_rtl_profiles(t: &mut TerminalSettings) -> bool {
         // lands on the pre-2026-08-19 rule, which is what it was already
         // running.
         direction_policy: default_direction_policy(),
+        // Also postdates the split: a migrating install stays off.
+        smart_bidi: d.smart_bidi,
     };
     t.rtl = Some(RtlProfiles {
         local: carry(defaults.local),
@@ -857,6 +865,8 @@ pub(crate) struct Shortcuts {
     pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,
+    /// Open the jump palette over live sessions, needs-you first.
+    pub jump_palette: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -907,6 +917,10 @@ pub(crate) struct BriefOptions {
     /// ON by default — unlike the card triggers above it is invisible
     /// until an agent compacts or resumes.
     pub inject_context: bool,
+    /// Append the fixed `[ymux-brief]` instructions to every SessionStart
+    /// answer. ON by default. A separate switch from `inject_context`
+    /// because it changes what the agent writes in its answers.
+    pub inject_protocol: bool,
 }
 
 impl Default for BriefOptions {
@@ -917,6 +931,7 @@ impl Default for BriefOptions {
             absence_minutes: 30,
             idle_minutes: 15,
             inject_context: true,
+            inject_protocol: true,
         }
     }
 }
@@ -1010,6 +1025,7 @@ impl Default for Shortcuts {
             show_briefing: "Ctrl+Alt+Q".into(),
             toggle_context_rail: "Ctrl+Shift+K".into(),
             open_diff: "Ctrl+Shift+G".into(),
+            jump_palette: "Ctrl+Shift+O".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }
@@ -2754,8 +2770,8 @@ mod font_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate_rtl_profiles, migrate_settings, HookType, MigrationFlags, RtlProfile, RtlProfiles,
-        Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
+        migrate_rtl_profiles, migrate_settings, BriefOptions, HookType, MigrationFlags, RtlProfile,
+        RtlProfiles, Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
     };
 
     #[test]
@@ -2812,6 +2828,18 @@ mod tests {
             s.auto_connect_on_workspace_select,
             "missing auto_connect_on_workspace_select must default to true"
         );
+    }
+
+    #[test]
+    fn inject_protocol_defaults_on_and_is_independent_of_inject_context() {
+        let old: BriefOptions =
+            serde_json::from_str(r#"{"inject_context":false}"#).expect("parse");
+        assert!(old.inject_protocol, "a settings file without the key reads as on");
+        assert!(!old.inject_context);
+        let off: BriefOptions =
+            serde_json::from_str(r#"{"inject_protocol":false}"#).expect("parse");
+        assert!(!off.inject_protocol);
+        assert!(off.inject_context);
     }
 
     #[test]
@@ -3010,6 +3038,18 @@ mod tests {
         let p: RtlProfile = serde_json::from_str(r#"{"rtl_mode":"auto_per_line"}"#)
             .expect("partial RtlProfile deserializes");
         assert_eq!(p.direction_policy, "any_rtl");
+    }
+
+    #[test]
+    fn smart_bidi_is_off_by_default_and_when_absent() {
+        // An existing settings.json has no `smart_bidi`: it must still load,
+        // and no pane may start filtering because of an upgrade.
+        let p: RtlProfile = serde_json::from_str(r#"{"rtl_mode":"auto_per_line"}"#)
+            .expect("partial RtlProfile deserializes");
+        assert!(!p.smart_bidi);
+        let d = RtlProfiles::default();
+        assert!(!d.local.smart_bidi);
+        assert!(!d.remote.smart_bidi);
     }
 
     #[test]

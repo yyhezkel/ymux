@@ -20,7 +20,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, State};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-use crate::{AppState, Session, SshClient};
+use crate::{AppState, SshClient};
+use ymux_core::ssh_exec::{exec, open_sftp, ExecOpts, StderrMode};
 
 // ─── Phase 81: transfer progress + cancel ──────────────────────────────────
 //
@@ -538,42 +539,6 @@ fn sort_entries(out: &mut Vec<FileEntry>) {
 
 // ─── remote SFTP-side ──────────────────────────────────────────────────────
 
-/// Find an active SSH handle for the workspace by scanning the session
-/// map for the first Session::Ssh whose workspace_id matches.
-///
-/// `pub(crate)` so `tickets` can reach the SAME session the browser's
-/// port-forward already rides on (`open_auto_forward` in lib.rs resolves
-/// its handle the same way). SSH multiplexes, so an SFTP or exec channel
-/// costs no extra connection and no extra authentication.
-pub(crate) fn pick_ssh_handle_for_workspace(
-    state: &AppState,
-    workspace_id: &str,
-) -> Option<Arc<SshHandle<SshClient>>> {
-    let sessions = state.core.sessions.lock().ok()?;
-    for sess in sessions.values() {
-        if let Session::Ssh(s) = sess {
-            if s.workspace_id == workspace_id {
-                return Some(s.handle.clone());
-            }
-        }
-    }
-    None
-}
-
-pub(crate) async fn open_sftp(handle: &SshHandle<SshClient>) -> Result<SftpSession, String> {
-    let chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.request_subsystem(true, "sftp")
-        .await
-        .map_err(|e| format!("request sftp: {e}"))?;
-    let stream = chan.into_stream();
-    SftpSession::new(stream)
-        .await
-        .map_err(|e| format!("sftp init: {e}"))
-}
-
 fn unix_perms_octal(perms: u32) -> String {
     format!("{:04o}", perms & 0o7777)
 }
@@ -593,7 +558,7 @@ pub(crate) async fn file_list_remote(
     path: String,
     show_hidden: bool,
 ) -> Result<Vec<FileEntry>, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace — connect a terminal pane first".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let path = normalize_remote_path(&path);
@@ -635,26 +600,20 @@ pub(crate) async fn file_home_remote(
     state: State<'_, AppState>,
     workspace_id: String,
 ) -> Result<String, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
     // `echo $HOME` over an exec channel — cheaper than SFTP for a one-off.
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.exec(true, "printf '%s' \"$HOME\"")
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    use russh::ChannelMsg;
-    let mut out = Vec::new();
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => break,
-            _ => {}
-        }
+    // stderr dropped so a noisy rc file cannot end up in the path.
+    let outcome = exec(
+        &handle,
+        "printf '%s' \"$HOME\"",
+        ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) },
+    )
+    .await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout.trim().to_string()),
+        code => Err(format!("reading $HOME failed (exit {code})")),
     }
-    Ok(String::from_utf8_lossy(&out).trim().to_string())
 }
 
 #[tauri::command]
@@ -663,7 +622,7 @@ pub(crate) async fn file_delete_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     // Try as file first; if that fails because it's a directory, recurse.
@@ -716,7 +675,7 @@ pub(crate) async fn file_rename_remote(
     old_path: String,
     new_path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let r = sftp
@@ -737,7 +696,7 @@ pub(crate) async fn file_copy_remote(
     src: String,
     dest: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let res = async {
@@ -762,7 +721,7 @@ pub(crate) async fn file_mkdir_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     let r = sftp
@@ -784,7 +743,7 @@ pub(crate) async fn file_create_remote(
     workspace_id: String,
     path: String,
 ) -> Result<(), String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let sftp = open_sftp(&handle).await?;
     if sftp.metadata(&path).await.is_ok() {
@@ -842,7 +801,7 @@ pub(crate) async fn pane_upload_dropped(
     if safe.is_empty() || safe.starts_with('.') && safe.len() <= 2 {
         return Err("invalid file name".to_string());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let local = PathBuf::from(expand_path(&local_path));
     let sftp = open_sftp(&handle).await?;
@@ -879,7 +838,7 @@ pub(crate) async fn file_upload(
     let detail = format!("local={local_path} → remote={remote_path}");
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session".to_string())?;
         let local = PathBuf::from(expand_path(&local_path));
         let sftp = open_sftp(&handle).await?;
@@ -904,7 +863,7 @@ pub(crate) async fn file_download(
     let detail = format!("remote={remote_path} → local={local_path}");
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session".to_string())?;
         let local = PathBuf::from(expand_path(&local_path));
         if let Some(parent) = local.parent() {
@@ -939,7 +898,7 @@ pub(crate) async fn download_remote_file_via_osc(
 ) -> Result<String, String> {
     let (id, cancel) = transfer_begin();
     let res = async {
-        let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+        let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
             .ok_or_else(|| "no active SSH session for this workspace".to_string())?;
         // Basename of a POSIX remote path; fall back to a generic name.
         let base = remote_path
@@ -1218,7 +1177,7 @@ pub(crate) async fn file_read_remote(
     workspace_id: String,
     path: String,
 ) -> Result<FileContents, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let bytes = remote_read_bytes(&handle, &path).await?;
     let size = bytes.len() as u64;
@@ -1232,7 +1191,7 @@ pub(crate) async fn file_write_remote(
     path: String,
     text: String,
 ) -> Result<u64, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let bytes = text.into_bytes();
     remote_write_bytes(&handle, &path, &bytes).await?;
@@ -1252,7 +1211,7 @@ pub(crate) async fn file_open_remote(
     workspace_id: String,
     remote_path: String,
 ) -> Result<String, String> {
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| "no active SSH session".to_string())?;
     let dest = remote_temp_path(&workspace_id, &remote_path);
     if let Some(parent) = dest.parent() {
@@ -1436,7 +1395,7 @@ pub(crate) async fn file_manager_unzip_remote_check(
     } else {
         format!("{parent_dir}/{stem}")
     };
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1477,7 +1436,10 @@ pub(crate) async fn file_manager_unzip_local(
                 .map_err(|e| format!("zip entry {i}: {e}"))?;
             // Defense-in-depth against zip-slip: refuse any entry whose
             // normalized path tries to escape the destination dir.
-            let raw_name = entry.name().to_string();
+            let raw_name = entry
+                .name()
+                .map_err(|e| format!("zip entry {i} name: {e}"))?
+                .to_string();
             let safe = match entry.enclosed_name() {
                 Some(p) => p.to_path_buf(),
                 None => {
@@ -1514,45 +1476,22 @@ pub(crate) async fn file_manager_unzip_local(
     Ok(dest.to_string_lossy().to_string())
 }
 
-/// Shared helper for the two remote subcommand-style entrypoints —
-/// runs a `bash -lc <command>` on the workspace's existing SSH handle
-/// and waits for it to exit. Returns the joined stdout+stderr text
-/// and the exit code. Caller decides how to surface non-zero codes.
 /// Run a command over a fresh exec channel; returns (merged stdout+stderr, exit code).
 ///
 /// NOTE: no timeout. Every caller here is a user-initiated long operation
 /// (zip / targz / unzip) where that is correct. Callers on a latency-
 /// sensitive path must wrap this themselves rather than change the
 /// signature under the existing ones.
+///
+/// A signal or a missing exit status is `Err`: every caller reads code 0 as
+/// "it worked" (`mv` into place, `test -e`).
 pub(crate) async fn remote_exec(
     handle: &SshHandle<SshClient>,
     command: &str,
 ) -> Result<(String, i32), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open channel: {e}"))?;
-    chan.exec(true, command)
-        .await
-        .map_err(|e| format!("exec: {e}"))?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    Ok((String::from_utf8_lossy(&out_buf).to_string(), exit_code))
+    let outcome = exec(handle, command, ExecOpts::default()).await?;
+    let code = outcome.require_code()?;
+    Ok((outcome.stdout, code))
 }
 
 /// Phase 57: zip on the remote side. Requires the standard `zip`
@@ -1574,7 +1513,7 @@ pub(crate) async fn file_manager_zip_remote(
     if output_name.contains('/') || output_name.contains('\\') {
         return Err("zip: output_name must be a basename, not a path".into());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1622,7 +1561,7 @@ pub(crate) async fn file_manager_targz_remote(
     if output_name.contains('/') || output_name.contains('\\') {
         return Err("tar: output_name must be a basename, not a path".into());
     }
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()
@@ -1637,7 +1576,15 @@ pub(crate) async fn file_manager_targz_remote(
     }
     let cmd = parts.join(" ");
     let (out, code) = remote_exec(&handle, &cmd).await?;
-    if code != 0 {
+    // GNU tar exit 1 = a file changed while it was read. The archive exists
+    // and is usable, and this path always reported success before the exit
+    // status stopped getting lost. Exit 2 and up are real failures.
+    if code == 1 {
+        crate::log_warn("FM", &format!(
+            "file_manager_targz_remote ws={workspace_id} out={output_name}: tar exit 1 (a file changed while read)"
+        ));
+    }
+    if code != 0 && code != 1 {
         crate::log_error("FM", &format!(
             "file_manager_targz_remote FAILED ws={workspace_id} out={output_name} exit={code}: {out}"
         ));
@@ -1671,7 +1618,7 @@ pub(crate) async fn file_manager_unzip_remote(
     } else {
         format!("{parent_dir}/{stem}")
     };
-    let handle = pick_ssh_handle_for_workspace(&state, &workspace_id)
+    let handle = crate::ssh_handle_for_machine(&state, &workspace_id)
         .ok_or_else(|| {
             "no active SSH session for this workspace — connect a terminal pane first"
                 .to_string()

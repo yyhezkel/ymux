@@ -309,13 +309,13 @@ and the summary is the JSON-stringified payload (truncated to ~280 chars).
 |---|---|---|
 | `tool-permission`, `pre-tool-use` | `permission_request` | yes |
 | anything else (`session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
-| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
+| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈1 s, fail-open) and prints the hook JSON below | no |
 
 `session-start`'s stdout is either nothing or exactly one line:
 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`.
 That line is built with serde, so the text cannot break out of the JSON. Nothing
 else in that branch writes to stdout. The budget is
-`YMUX_CONTEXT_TIMEOUT_MS` (default 300, clamped 100–3000).
+`YMUX_CONTEXT_TIMEOUT_MS` (default 1000, clamped 100–3000).
 
 ### Decisions and exit codes
 

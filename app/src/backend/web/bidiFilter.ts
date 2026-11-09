@@ -1,12 +1,13 @@
 // Smart bidi for browser panes (Phase 117, WEB-DESIGN F3) — a port of
 // app/src-tauri/src/bidi_filter.rs, which the desktop runs in the PTY read
-// path. Opt-in per pane (`smart_bidi` on the layout leaf): Latin runs near
+// path. Opt-in per RTL profile (`terminal.rtl.*.smart_bidi`, resolved by the
+// frontend and passed to pane_connect): Latin runs near
 // Hebrew/Arabic are wrapped in FSI (U+2068) / PDI (U+2069) isolates so the
 // renderer cannot reorder them against the RTL text around them.
 //
 // What it must not break, as in Rust: escape sequences (CSI / OSC / DCS)
-// pass through verbatim and may straddle chunks; a newline resets the RTL
-// context; a text run dominated by box-drawing is left alone (Claude Code's
+// pass through verbatim and may straddle chunks; LF, CR and cursor-positioning
+// CSI (H, f, G) reset the RTL context; a text run dominated by box-drawing is left alone (Claude Code's
 // borders). Input is decoded text (web/pty.ts runs a streaming TextDecoder
 // first), so a chunk never splits a character — the Rust contract.
 // The tests in bidiFilter.test.ts are the Rust tests, carried over.
@@ -18,7 +19,7 @@ const OSC_BUF_MAX = 512;
 /** A Latin run is isolated only if Hebrew/Arabic appeared this recently. */
 const RTL_CONTEXT_WINDOW = 200;
 
-type State = "normal" | "esc" | "csi" | "osc" | "oscEsc" | "dcs" | "dcsEsc";
+type State = "normal" | "esc" | "escIntermediate" | "csi" | "osc" | "oscEsc" | "dcs" | "dcsEsc";
 
 const isLatinRunChar = (c: string): boolean => /^[A-Za-z0-9_/.\-\\:+@~]$/.test(c);
 
@@ -53,35 +54,57 @@ export class BidiFilter {
       this.escapeBuf = "";
       this.state = "normal";
     };
+    const onNormal = (c: string, b: number) => {
+      if (b === 0x1b) {
+        out += this.flushText(text);
+        text = "";
+        this.escapeBuf = c;
+        this.state = "esc";
+      } else if (b < 0x20) {
+        // Control bytes flush the run; LF and CR reset the RTL context.
+        out += this.flushText(text);
+        text = "";
+        out += c;
+        if (c === "\n" || c === "\r") this.charsSinceRtl = RTL_CONTEXT_WINDOW;
+      } else {
+        text += c;
+      }
+    };
     for (const c of input) {
       const b = c.codePointAt(0) ?? 0;
       switch (this.state) {
         case "normal":
-          if (b === 0x1b) {
-            out += this.flushText(text);
-            text = "";
-            this.escapeBuf = c;
-            this.state = "esc";
-          } else if (b < 0x20) {
-            // Control bytes flush the run; LF resets the RTL context.
-            out += this.flushText(text);
-            text = "";
-            out += c;
-            if (c === "\n") this.charsSinceRtl = RTL_CONTEXT_WINDOW;
-          } else {
-            text += c;
-          }
+          onNormal(c, b);
           break;
         case "esc":
           this.escapeBuf += c;
           if (c === "[") this.state = "csi";
           else if (c === "]") this.state = "osc";
           else if (c === "P") this.state = "dcs";
+          else if (b >= 0x20 && b <= 0x2f) this.state = "escIntermediate"; // ESC ( B
           else flushEscape(); // a single-byte escape, or an unknown intro
+          break;
+        case "escIntermediate":
+          if (b >= 0x20 && b <= 0x2f && this.escapeBuf.length < ESCAPE_BUF_MAX) {
+            this.escapeBuf += c;
+          } else if (b >= 0x30 && b <= 0x7e) {
+            this.escapeBuf += c;
+            flushEscape();
+          } else {
+            // Malformed: emit what we held; this character is normal input.
+            flushEscape();
+            onNormal(c, b);
+          }
           break;
         case "csi":
           this.escapeBuf += c;
-          if ((b >= 0x40 && b <= 0x7e) || this.escapeBuf.length > ESCAPE_BUF_MAX) flushEscape();
+          if (b >= 0x40 && b <= 0x7e) {
+            // CUP, HVP, CHA: the text that follows may be at column 0.
+            if (c === "H" || c === "f" || c === "G") this.charsSinceRtl = RTL_CONTEXT_WINDOW;
+            flushEscape();
+          } else if (this.escapeBuf.length > ESCAPE_BUF_MAX) {
+            flushEscape();
+          }
           break;
         case "osc":
           this.escapeBuf += c;

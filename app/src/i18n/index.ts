@@ -52,6 +52,11 @@ export function t(key: string, vars?: Record<string, string | number>): string {
   );
 }
 
+/** English text of a key, whatever the active language. Not reactive. */
+export function tEn(key: string): string {
+  return DICTS.en[key] ?? key;
+}
+
 /** Set both language + direction preference and apply to <html>. */
 export function setLanguage(next: Language, dir?: Direction): void {
   setLanguageInternal(next);

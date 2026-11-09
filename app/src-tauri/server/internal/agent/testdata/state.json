@@ -1,0 +1,275 @@
+[
+ {
+  "name": "a turn",
+  "steps": [
+   {
+    "subkind": "user-prompt-submit",
+    "changed": true,
+    "state": "running",
+    "seq": 1
+   },
+   {
+    "subkind": "pre-tool-use",
+    "changed": false,
+    "state": "running",
+    "seq": 2
+   },
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 3
+   },
+   {
+    "subkind": "stop",
+    "changed": false,
+    "state": "done",
+    "seq": 4
+   }
+  ]
+ },
+ {
+  "name": "pre-tool-use alone starts running",
+  "steps": [
+   {
+    "subkind": "pre-tool-use",
+    "changed": true,
+    "state": "running",
+    "seq": 1
+   }
+  ]
+ },
+ {
+  "name": "needs input: permission_prompt",
+  "steps": [
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "permission_prompt",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 2
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "permission_prompt",
+    "changed": false,
+    "state": "needs-input",
+    "seq": 3
+   }
+  ]
+ },
+ {
+  "name": "needs input: idle_prompt",
+  "steps": [
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "idle_prompt",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 2
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "idle_prompt",
+    "changed": false,
+    "state": "needs-input",
+    "seq": 3
+   }
+  ]
+ },
+ {
+  "name": "needs input: agent_needs_input",
+  "steps": [
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "agent_needs_input",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 2
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "agent_needs_input",
+    "changed": false,
+    "state": "needs-input",
+    "seq": 3
+   }
+  ]
+ },
+ {
+  "name": "needs input: elicitation_dialog",
+  "steps": [
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_dialog",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 2
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_dialog",
+    "changed": false,
+    "state": "needs-input",
+    "seq": 3
+   }
+  ]
+ },
+ {
+  "name": "needs input: elicitation_url_dialog",
+  "steps": [
+   {
+    "subkind": "stop",
+    "changed": true,
+    "state": "done",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_url_dialog",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 2
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_url_dialog",
+    "changed": false,
+    "state": "needs-input",
+    "seq": 3
+   }
+  ]
+ },
+ {
+  "name": "resumed: elicitation_complete",
+  "steps": [
+   {
+    "subkind": "notification",
+    "notification_type": "permission_prompt",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_complete",
+    "changed": true,
+    "state": "running",
+    "seq": 2
+   }
+  ]
+ },
+ {
+  "name": "resumed: elicitation_response",
+  "steps": [
+   {
+    "subkind": "notification",
+    "notification_type": "permission_prompt",
+    "changed": true,
+    "state": "needs-input",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "elicitation_response",
+    "changed": true,
+    "state": "running",
+    "seq": 2
+   }
+  ]
+ },
+ {
+  "name": "an unmapped notification is a full no-op",
+  "steps": [
+   {
+    "subkind": "user-prompt-submit",
+    "changed": true,
+    "state": "running",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "notification_type": "brand_new",
+    "changed": false,
+    "state": "running",
+    "seq": 1
+   },
+   {
+    "subkind": "notification",
+    "changed": false,
+    "state": "running",
+    "seq": 1
+   }
+  ]
+ },
+ {
+  "name": "an unmapped subkind is a full no-op",
+  "steps": [
+   {
+    "subkind": "session-start",
+    "changed": false,
+    "state": "unknown",
+    "seq": 0
+   },
+   {
+    "subkind": "post-tool-use",
+    "changed": false,
+    "state": "unknown",
+    "seq": 0
+   },
+   {
+    "subkind": "session-end",
+    "changed": false,
+    "state": "unknown",
+    "seq": 0
+   }
+  ]
+ },
+ {
+  "name": "a failed turn",
+  "steps": [
+   {
+    "subkind": "user-prompt-submit",
+    "changed": true,
+    "state": "running",
+    "seq": 1
+   },
+   {
+    "subkind": "stop-failure",
+    "changed": true,
+    "state": "failed",
+    "seq": 2
+   },
+   {
+    "subkind": "user-prompt-submit",
+    "changed": true,
+    "state": "running",
+    "seq": 3
+   }
+  ]
+ }
+]

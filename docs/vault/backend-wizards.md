@@ -47,17 +47,20 @@ Tauri.
 (`entry_card_on_return` / `entry_card_on_idle`, both default-false opt-ins, plus
 `absence_minutes`=30 / `idle_minutes`=15) and Phase 105.C's `inject_context`
 (default **true**: answer SessionStart with context — `docs/CONTEXT.md`; the
-container default makes a missing key read as on), container-level `#[serde(default)]`,
+container default makes a missing key read as on) and `inject_protocol`
+(default **true**, same missing-key reading: append the `[ymux-brief]` instructions
+— `docs/BRIEF.md`), container-level `#[serde(default)]`,
 hung off `Settings.brief`. Mirrored in `app/src/settings.ts` (`BriefSettings`)
 and round-tripped by SettingsModal's General tab — the settings_save
 whole-document replace makes that mirror mandatory, per the `terminal.rtl`
 incident.
 
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
-32 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
+33 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
-Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, and Phase 105's
-`toggle_context_rail` Ctrl+Shift+K; `find` is deprecated — nothing dispatches it, it stays
+Ctrl+Alt+Q, Phase 91.F's `open_diff` Ctrl+Shift+G, Phase 105's
+`toggle_context_rail` Ctrl+Shift+K, and the jump palette's `jump_palette`
+Ctrl+Shift+O; `find` is deprecated — nothing dispatches it, it stays
 for old files), and per-field
 `#[serde(default = "...")]` would have meant twenty
 near-identical helper fns. The container attribute makes `impl Default for Shortcuts`
@@ -76,15 +79,15 @@ line — i.e. the Phase 91.B lock: mouse off, no status bar, prefix table = `[` 
 ### `RtlProfiles` — the one schema here with a real invariant
 
 `TerminalSettings.rtl` is a `RtlProfiles { local, remote }`, each an `RtlProfile`
-carrying `rtl_mode`, `auto_direction`, `mirror_arrows_rtl`, `tui_owns_bidi` and
-`direction_policy`. The split is not cosmetic and not a local-vs-remote *geography*
+carrying `rtl_mode`, `auto_direction`, `mirror_arrows_rtl`, `tui_owns_bidi`,
+`direction_policy` and `smart_bidi`. The split is not cosmetic and not a local-vs-remote *geography*
 test: it is keyed on `ConnCaps.posixExec`, so **WSL counts as remote**. It exists
 because the two classes were measured to need OPPOSITE modes — a Windows ConPTY
 pane hands over Hebrew already in VISUAL order, while SSH to Linux delivers
 LOGICAL order — so one global setting could only ever satisfy one of them. Yossi's
 report was "ההגדרה הזו עובדת או למקומי או למרוחק".
 
-Three things here are load-bearing:
+Four things here are load-bearing:
 
 - **`rtl: Option<RtlProfiles>` is an `Option` on purpose.** Absent is the migration
   signal that `migrate_rtl_profiles` reads to lift the four deprecated flat fields
@@ -95,6 +98,9 @@ Three things here are load-bearing:
   first shipped keyed on whether Claude held the pane, and because the OSC title
   propagates over SSH it fired on remote panes and broke a working path. The test
   `remote_direction_policy_is_the_pre_2026_08_19_rule` pins the separation.
+- **`smart_bidi` defaults to off when absent**, so an old settings file loads and no
+  pane starts filtering on upgrade. Rust never reads it: the frontend resolves it and
+  passes it to `pane_connect`.
 - **`rtl_mode` is a `String`, not an enum** (the `sidebar_mode` pattern), so adding
   a mode costs nothing here and an unknown value from an older or newer
   settings.json degrades in the frontend rather than failing the whole
@@ -145,12 +151,19 @@ seconds:
 3. **Check/fix Windows permissions** via `icacls` — sshd-style "too open" private keys,
    with one-click remediation.
 4. **Test connect** — opens a real russh session and runs the same auth ladder the app
-   uses, so a green test means the workspace will connect.
+   uses, so a green test means the workspace will connect. Its `TestClient` handler
+   accepts every host key and does not touch `known_hosts.json`: host-key enforcement is
+   the real connect's job, not this probe's.
 
 ## `updater.rs` — check, install (Windows NSIS / macOS dmg), version manager
 
 **Check path** fetches a remote `manifest.json`, compares versions, emits
 `update:available`. It never downloads.
+
+`ssh_exec_in_workspace` (the hooks banner's Update button; session via
+`ssh_handle_for_machine`) has 120 s because it hits
+GitHub from the server. It and `ssh_exec_simple` (6 s, hooks check and session labels)
+return `Err` on anything but a clean exit, so the toast and the logs tell the truth.
 
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.
