@@ -7,7 +7,6 @@ covers:
   - app/src/BrowserPane.tsx
   - app/src/browserDevMode.ts
   - app/scripts/devmode-snapshot-check.mjs
-  - app/src/FileManagerWindow.tsx
   - app/src/FileManagerPane.tsx
   - app/src/FileEditor.tsx
   - app/src/fmPaths.ts
@@ -158,15 +157,13 @@ and paint an error), and "paste to local" / "upload the selected local file" are
 rendered; download stays. Names render inside `<bdi>` (direction isolated, cell alignment kept — `dir="auto"` on the span pushed LTR names to the far edge) and the path input is
 `dir="ltr"` — in a Hebrew UI a name starting with a dot (`.bun`, no TechText match) showed
 as `bun.`, on the desktop too.
-**`FileManagerWindow.tsx` (151)** is its pre-PanelSurface floating wrapper and is **not
-imported anywhere** — dead, kept until someone deletes it (BACKLOG).
 
 **`fmPaths.ts` (112)** remembers the last directory each column showed, per workspace, in
 localStorage — so re-opening lands where the user left off instead of snapping to
 `$HOME`. localStorage for the same reason as `sessionRestore.ts`: per-machine state that
 changes on every navigation click, where loss costs one click.
 
-**`FileEditor.tsx` (552)** — a modal with a monospace `<textarea>`, Save / Cancel /
+**`FileEditor.tsx` (547)** — a modal with a monospace `<textarea>`, Save / Cancel /
 Reload, and an unsaved-changes guard. **Syntax highlighting is deliberately out of
 scope**: this is "view the file, fix a typo, save", not a code editor.
 
@@ -175,7 +172,7 @@ in the File Manager opens it here instead of the OS app. **Security:** `html: fa
 makes markdown-it drop raw HTML at parse time, and DOMPurify scrubs the rendered output
 as a second layer.
 
-**`TransferBar.tsx` (149)** + **`transferStore.ts` (207)** — in-flight SFTP transfers.
+**`TransferBar.tsx` (149)** + **`transferStore.ts` (196)** — in-flight SFTP transfers.
 A module signal rather than prop-threading, because transfers start from several places
 (the File Manager, terminal drag-drop, OSC 8 link downloads) and one listener at the App
 root feeds them all into a single list.

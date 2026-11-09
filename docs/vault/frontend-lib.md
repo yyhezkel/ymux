@@ -427,7 +427,7 @@ on "did the transform move the point", not on the row being rtl.
 
 ## Typed mirrors
 
-**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (621)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -555,9 +555,12 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   token.** Everything here is the API-*equivalent* cost — right for "where is my quota
   going, in money terms", wrong for "what will my card be charged". **The UI must never
   label it a bill.**
-- **`insightsFmt.ts` (34)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
+- **`insightsFmt.ts` (33)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
   `InsightsWindow.tsx` so the Analytics tab can use them without importing its own parent
-  (that import would be a cycle).
+  (that import would be a cycle). `fmtBytes` is the app's one spaced byte formatter: zero
+  is `0 B`, so `fmtBps` shows `0 B/s`. `transferStore.ts` re-exports it, and `FileEditor.tsx`
+  and `SettingsModal.tsx` import it. `FileManagerPane.tsx` keeps its own compact `fmtSize`
+  (`1.5K`) for the size column.
 - **`insightsReport.ts` (428)** — the wire types for `/analytics` and `/claude-usage`,
   plus the one thing you can do with them outside the panel: flatten the screen into a
   plain-text report to paste into Claude, an email, or an incident ticket. Column
