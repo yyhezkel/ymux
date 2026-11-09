@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use russh::client::Handle;
-use russh::ChannelMsg;
+use ymux_core::ssh_exec::{exec, ExecOpts, StderrMode};
 use serde::Deserialize;
 
 use ymux_core::{log_debug, log_error, log_info, log_warn, shell_quote, SshClient};
@@ -93,41 +93,18 @@ fn cmd_summary(cmd: &str) -> String {
     }
 }
 
+/// Stdout and exit code of `cmd`. Stderr dropped, as it always was here.
+/// A signal or a missing status is `Err`, so a dead channel cannot pass as
+/// exit 0. The output never goes in the log (Rule #1).
 async fn ssh_exec(
-    handle: &mut Handle<SshClient>,
+    handle: &Handle<SshClient>,
     cmd: &str,
 ) -> Result<(String, i32), String> {
     log_debug("BOOT", &format!("bootstrap: exec '{}'", cmd_summary(cmd)));
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| format!("open exec channel: {e}"))?;
-    chan.exec(true, cmd).await.map_err(|e| format!("exec: {e}"))?;
-    let mut stdout = Vec::new();
-    let mut stderr = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => stdout.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExtendedData { data, ext: _ }) => {
-                stderr.extend_from_slice(&data[..])
-            }
-            Some(ChannelMsg::ExitStatus { exit_status }) => exit_code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
-    }
-    let _ = chan.close().await;
-    let stdout_str = String::from_utf8_lossy(&stdout).to_string();
-    let stderr_str = String::from_utf8_lossy(&stderr).to_string();
-    log_debug("BOOT", &format!(
-        "bootstrap: exec '{}' exit={} stdout={:?} stderr={:?}",
-        cmd_summary(cmd),
-        exit_code,
-        stdout_str.trim(),
-        stderr_str.trim()
-    ));
-    Ok((stdout_str, exit_code))
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::default() };
+    let outcome = exec(handle, cmd, opts).await?;
+    let code = outcome.require_code()?;
+    Ok((outcome.stdout, code))
 }
 
 fn detect_triple(uname_output: &str) -> Option<&'static str> {

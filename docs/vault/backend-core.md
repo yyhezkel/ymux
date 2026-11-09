@@ -538,6 +538,10 @@ list command. The module owns what the picker never needed:
 
 ## Gotchas
 
+- `install_authorized_key` is the one copy of the `authorized_keys` append, used by
+  `ssh_key_generate_and_install` and `provision_existing_install_key`. Its failure must
+  stop the caller: both persist key auth on the strength of it. The key goes through
+  `shell_quote`.
 - `run()` installs a **panic hook before anything else** and forces `RUST_BACKTRACE=1`,
   then calls `ymux_core::flush_log()` from inside the hook — log writes are queued, and
   a panic on its way to an abort loses them otherwise. This exists because a Hebrew-title

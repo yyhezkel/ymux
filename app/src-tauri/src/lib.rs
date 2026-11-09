@@ -65,6 +65,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use russh::client;
 use russh::ChannelMsg;
+use ymux_core::ssh_exec::{ExecOpts, StderrMode};
 // Phase 51.H: russh-keys imports removed (now used only inside ymux-ssh).
 
 static SESSION_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -4148,42 +4149,7 @@ async fn ssh_key_generate_and_install(
     // 3) Append the public key to ~/.ssh/authorized_keys. No sudo —
     //    writes only to the user's own home, so this works even for
     //    a non-root user with no sudo at all.
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
 
     // 4) Update the workspace's stored Connection — switch from
     //    password to key. The next pane_connect will use the key path
@@ -4338,42 +4304,7 @@ async fn provision_existing_install_key(
     }
 
     // 3) Append pubkey to ~/.ssh/authorized_keys. Idempotent (grep -qxF).
-    let install_cmd = format!(
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
-         (grep -qxF '{key}' ~/.ssh/authorized_keys || echo '{key}' >> ~/.ssh/authorized_keys)",
-        key = pub_line_trim.replace('\'', "'\\''"),
-    );
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, install_cmd.as_str())
-        .await
-        .map_err(|e| e.to_string())?;
-    let mut out_buf = Vec::new();
-    let mut exit_code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(russh::ChannelMsg::Data { data }) => out_buf.extend_from_slice(&data[..]),
-            Some(russh::ChannelMsg::ExtendedData { data, .. }) => {
-                out_buf.extend_from_slice(&data[..])
-            }
-            Some(russh::ChannelMsg::ExitStatus { exit_status }) => {
-                exit_code = exit_status as i32
-            }
-            Some(russh::ChannelMsg::Close)
-            | Some(russh::ChannelMsg::Eof)
-            | None => break,
-            _ => {}
-        }
-    }
-    if exit_code != 0 {
-        let stderr = String::from_utf8_lossy(&out_buf).to_string();
-        return Err(format!(
-            "install pubkey failed (exit {exit_code}): {stderr}"
-        ));
-    }
+    install_authorized_key(&handle, &pub_line_trim).await?;
     // Drop the password-authenticated handle.
     drop(handle);
 
@@ -4432,27 +4363,35 @@ async fn provision_existing_install_key(
     Ok(workspace_id)
 }
 
-/// Run `echo $HOME` over a fresh exec channel. Returns (stdout, exit_code).
-async fn remote_get_home(
-    handle: &mut client::Handle<SshClient>,
-) -> Result<(String, i32), String> {
-    let mut chan = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| e.to_string())?;
-    chan.exec(true, "echo $HOME").await.map_err(|e| e.to_string())?;
-    let mut out = Vec::new();
-    let mut code: i32 = 0;
-    loop {
-        match chan.wait().await {
-            Some(ChannelMsg::Data { data }) => out.extend_from_slice(&data[..]),
-            Some(ChannelMsg::ExitStatus { exit_status }) => code = exit_status as i32,
-            Some(ChannelMsg::Close) | Some(ChannelMsg::Eof) | None => break,
-            _ => {}
-        }
+/// Append a public key to the login user's `authorized_keys`. Idempotent
+/// (`grep -qxF`). A failure must stop the caller: it goes on to persist key
+/// auth on the strength of this call.
+async fn install_authorized_key(
+    handle: &client::Handle<SshClient>,
+    pub_line: &str,
+) -> Result<(), String> {
+    let key = shell_quote(pub_line);
+    let install_cmd = format!(
+        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
+         touch ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys && \
+         (grep -qxF {key} ~/.ssh/authorized_keys || echo {key} >> ~/.ssh/authorized_keys)",
+    );
+    let outcome = ymux_core::ssh_exec::exec(handle, &install_cmd, ExecOpts::timeout_secs(30)).await?;
+    match outcome.require_code()? {
+        0 => Ok(()),
+        code => Err(format!("install pubkey failed (exit {code}): {}", outcome.stdout)),
     }
-    let _ = chan.close().await;
-    Ok((String::from_utf8_lossy(&out).to_string(), code))
+}
+
+/// Read `$HOME` on the remote. stderr dropped so rc-file noise cannot end up
+/// in the path.
+async fn remote_get_home(handle: &client::Handle<SshClient>) -> Result<String, String> {
+    let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(15) };
+    let outcome = ymux_core::ssh_exec::exec(handle, "echo $HOME", opts).await?;
+    match outcome.require_code()? {
+        0 => Ok(outcome.stdout),
+        code => Err(format!("reading $HOME failed (exit {code})")),
+    }
 }
 
 /// Phase 41: result of the connect→host-key→authenticate handshake,
@@ -5487,7 +5426,7 @@ async fn setup_workspace_reverse_tunnel(
     // conclude ymux is not in this session and stop gating altogether.
     let socket_addr = format!("127.0.0.1:{remote_port}");
     match remote_get_home(handle).await {
-        Ok((home_out, _)) => {
+        Ok(home_out) => {
             let home = home_out.trim();
             if home.is_empty() {
                 log_warn("TUNNEL", "tunnel: skip env-file write - $HOME came back empty");

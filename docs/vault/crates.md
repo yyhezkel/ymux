@@ -169,7 +169,9 @@ in cleartext.
 **`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
 ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
-together or not at all.** Rule #8: the token never reaches a log.
+together or not at all.** Rule #8: the token never reaches a log. That includes
+`exec_simple`'s error text: it names the exit code and never the command, because the
+`last.env` script holds the token and callers log that error.
 
 `render_env_file` (the `~/.ymux/run/last.env` body) writes `YMUX_*` lines only; the `WINMUX_*`
 dual-write was dropped, the CLI still reads the legacy names as a fallback. So the file is
@@ -227,7 +229,8 @@ commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy
 
-Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
+Remote commands go through `ymux_core::ssh_exec` (stderr dropped, output never logged; a
+signal or a missing status is `Err`). Detect the remote arch, hash any existing binary, upload via SFTP when it does not match
 the manifest, maintain the `~/.ymux/bin/ymux` symlink. Best-effort, called after auth
 succeeds and before the user's shell channel opens. `ensure_tmux_conf` uploads
 `ymux-tmux.conf` to `~/.ymux/tmux.conf` on the same hash gate (remote `sha256sum` vs the
