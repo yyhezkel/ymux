@@ -857,6 +857,8 @@ pub(crate) struct Shortcuts {
     pub toggle_context_rail: String,
     /// Phase 91.F: open (or focus) the Diff pane for the active workspace.
     pub open_diff: String,
+    /// Open the jump palette over live sessions, needs-you first.
+    pub jump_palette: String,
     /// When true and the terminal has a selection, plain Ctrl+C copies
     /// to clipboard instead of sending SIGINT. Matches Windows Terminal
     /// + most modern terminal apps. Set to false to always send SIGINT.
@@ -1015,6 +1017,7 @@ impl Default for Shortcuts {
             show_briefing: "Ctrl+Alt+Q".into(),
             toggle_context_rail: "Ctrl+Shift+K".into(),
             open_diff: "Ctrl+Shift+G".into(),
+            jump_palette: "Ctrl+Shift+O".into(),
             copy_on_select_with_ctrl_c: true,
         }
     }
