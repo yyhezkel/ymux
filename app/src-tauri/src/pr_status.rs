@@ -281,7 +281,8 @@ async fn run_gh_over(state: &AppState, conn: &Option<Connection>, cwd: &str) -> 
     match conn {
         None | Some(Connection::Local { .. }) => Ok(run_gh_local(cwd).await),
         Some(Connection::Wsl { distro }) => {
-            let fut = local_setup::wsl_exec(distro.as_deref(), None, &gh_script(cwd));
+            let script = gh_script(cwd);
+            let fut = local_setup::wsl_exec(distro.as_deref(), None, &script);
             Ok(match tokio::time::timeout(Duration::from_secs(GH_TIMEOUT_SECS), fut).await {
                 Err(_) => GhRun::TimedOut,
                 Ok(Err(e)) => GhRun::Exited { code: -1, text: e },
