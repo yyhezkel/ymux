@@ -73,8 +73,11 @@ The only crate `app` cannot function without. Four files:
 Rotation is safe across two processes sharing a config dir: `rotate` closes its handle,
 takes `File::lock` on `debug.log.lock` around stat + rename only, and renames only if
 `debug.log` is still over the cap (fail-open unlocked if the lock can't be taken);
-`write_to_current` compares handle length to path length once per batch and reopens on a
+`write_to_current` compares its handle to the path once per batch and reopens on a
 mismatch, so a process whose file another rotated aside stops appending to `debug.log.1`.
+The comparison is length plus `file_identity` — device + inode on unix, `None` on Windows,
+where std's `file_index` is unstable. So on Windows a new `debug.log` that has grown to
+exactly the rotated file's length is missed until the two lengths differ.
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
