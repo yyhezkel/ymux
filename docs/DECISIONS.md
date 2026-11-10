@@ -25,6 +25,36 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-11-10 — SSH auth: an explicit key that cannot be read or decoded ends the ladder (D20)
+- **Context:** found by the 2026-11-10 implicit-state-machine inventory. `authenticate` in
+  `crates/ymux-ssh/src/lib.rs` tries agent → explicit key file → default `~/.ssh/id_*` →
+  password. In step 2 a file that cannot be read, or decoded for a reason other than a
+  passphrase, returns `Err("load key <path>: …")`, so steps 3 and 4 never run. A key that
+  decodes but the server rejects DOES fall through. Read in code, not reproduced.
+- **Options:** A) keep: the user named that key, a silent fall-through to another key or a
+  password box hides a typo in the path. B) fall through with a WARN and a pane status, so a
+  deleted key file still connects on a default key. C) fall through to default keys only,
+  never to the password prompt. Whatever is chosen, the two `KEY_PASSPHRASE_REQUIRED:` /
+  `KEY_PASSPHRASE_BAD:` returns must stay `Err`: the frontend's prompt ladder
+  (`App.tsx`, `connectPane` catch) is driven by those prefixes.
+- **Status / Decision:** open, behaviour unchanged. Needs Yossi's call between A and B.
+- **Outcome / Commit:** —
+
+### 2026-11-10 — CLI session-meta store is read-modify-write with no lock (D21)
+- **Context:** same inventory. `cli/src/session_meta.rs` loads the whole store, changes one
+  row and saves atomically, with no lock, so hooks from several panes finishing together
+  can drop each other's rows. The file's header already says this is deliberate ("No flock —
+  home dirs are sometimes NFS where flock lies") and relies on the next turn rewriting the
+  row. The one field that did not self-heal, `auto_name`, was lost live on 2026-08-18 and
+  got its own recovery from the transcript.
+- **Options:** A) keep, and treat any future write-once field the way `auto_name` was
+  treated. B) a lock file created with `O_EXCL` plus a stale timeout, which works on NFS
+  where `flock` does not, at the cost of a hook that can now wait. C) one file per session
+  instead of one store, so there is nothing to race on.
+- **Status / Decision:** open, behaviour unchanged. A is the standing decision in the code;
+  logged because the inventory raised it again and C would remove the class of bug.
+- **Outcome / Commit:** —
+
 ### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
 - **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
   access, in the same place the mobile pairing lives, on the same logic. Checked against
