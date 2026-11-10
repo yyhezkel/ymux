@@ -257,7 +257,10 @@ falls back to `last.env` (the desktop) exactly as before.
   browser session's hooks (`auth denied: unknown-session`). A test pins "no control byte
   but TAB in `listFormat`"; `ValidName` rejects control characters, so a name cannot hold
   a tab, and `SplitN(…, 5)` keeps a tab inside the path.
-- `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` once.
+- `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` and caches
+  the answer for the run — **a real answer only**. A `tmux -V` that fails (timeout, fork
+  error) reads as unsupported for that one call and is asked again on the next, so a
+  transient failure no longer switches hooks off until restart.
   Older, or no listener address → the session is created exactly as before, no hooks.
 - `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
