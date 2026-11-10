@@ -13,7 +13,10 @@ package term
 // family} and `port-undetected` {remote_port} — the desktop's names, minus
 // workspace_id, which has no meaning on the box — and `hello` carries the
 // current set. A port.opened / port.closed RPC from a hand-started watcher
-// lands in the same set, so it is idempotent with this loop.
+// lands in the same set, so it is idempotent with this loop. The scan stays
+// the truth: an RPC entry it does not see goes at the next diff (a watcher
+// that dies never sends port.closed), and an RPC for a port the scan filters
+// out is not recorded at all.
 
 import (
 	"context"
@@ -192,27 +195,53 @@ func (w *portWatch) apply(scan []ListenPort) {
 		w.opened(p)
 	}
 	w.mu.Lock()
-	var gone []ListenPort
+	dropped := map[uint16]bool{}
 	for k, p := range w.current {
 		if !seen[k] {
-			gone = append(gone, p)
+			dropped[p.RemotePort] = true
 			delete(w.current, k)
 		}
 	}
-	w.mu.Unlock()
-	for _, p := range gone {
-		logger.Info("port gone", "port", p.RemotePort)
-		w.hub.publish("port-undetected", same(map[string]uint16{"remote_port": p.RemotePort}))
+	// The set is keyed per family and address, but port-undetected names only
+	// the port number and clients key on it. So a port is gone only when its
+	// LAST record goes: a v4 listener closing while the v6 one on the same
+	// port is still up announces nothing.
+	for _, p := range w.current {
+		delete(dropped, p.RemotePort)
 	}
+	w.mu.Unlock()
+	gone := make([]uint16, 0, len(dropped))
+	for port := range dropped {
+		gone = append(gone, port)
+	}
+	sort.Slice(gone, func(i, j int) bool { return gone[i] < gone[j] })
+	for _, port := range gone {
+		logger.Info("port gone", "port", port)
+		w.hub.publish("port-undetected", same(map[string]uint16{"remote_port": port}))
+	}
+}
+
+// excluded is the set of ports never reported: YMUX_PORTFORWARD_EXCLUDE plus
+// the daemon's own.
+func (w *portWatch) excluded() map[uint16]bool {
+	exclude := excludeEnv()
+	for _, p := range w.ownPorts() {
+		exclude[p] = true
+	}
+	return exclude
+}
+
+// reportable applies the scan's filter to one port number. A port.opened RPC
+// goes through it too, so the set never holds a port the scan would refuse —
+// one the next scan diff would only take out again.
+func (w *portWatch) reportable(port uint16) bool {
+	return shouldReport(port, w.excluded())
 }
 
 // scan reads both files and returns the reportable set. A missing file (a
 // non-Linux dev box, or no IPv6) reads as empty.
 func (w *portWatch) scan(v4, v6 string) []ListenPort {
-	exclude := excludeEnv()
-	for _, p := range w.ownPorts() {
-		exclude[p] = true
-	}
+	exclude := w.excluded()
 	var out []ListenPort
 	for _, body := range []struct {
 		s  string

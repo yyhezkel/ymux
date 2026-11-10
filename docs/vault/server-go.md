@@ -121,6 +121,26 @@ chosen because kotlinx `@JsonClassDiscriminator`, TS tagged unions, and
 AsyncAPI/JSON-Schema all default to it. Locked in S4.3 and canonical — no client is
 pinned to anything else yet.
 
+**`workspace/manager.go` — subscribers.** `Subscribe` registers the client's channel
+**before** it reads the replay, so an event published in between is on the channel (and
+maybe in the replay too) — `ws.go` already drops a live frame whose `seq` is ≤ the last
+replayed one. `Manager.betweenSubscribeSteps` is a test seam (nil in production) that runs
+exactly between those two steps; `TestEventBetweenSubscribeStepsIsNotLost` publishes there.
+A `client_id` that is already subscribed is **replaced**: the old channel is
+closed (that connection's write loop ends) and the newest connection owns the id. `cancel`
+compares channel identity, so the old connection going away cannot remove the new one or
+its `subscribers` row. The last subscriber leaving deletes the session's `liveSession`
+(register and cancel both take `m.mu` → `ls.mu`, so a joiner never lands on an unlinked
+entry). `fanout` still drops a frame for a full 256-buffer (the log is durable; the client
+re-syncs by cursor on reconnect) but now logs it — session, client id, seq and a running
+count, on the first drop and every 100th.
+
+**Pending hook requests expire (`workspace/store.go`).** `pending_requests.timeout_at` is
+a **unix-seconds deadline; 0 means none** (chat's bridge passes 0, the CLI's
+`hooks/forward` passes now + its wait). `ListPending` leaves out a row past its deadline
+and `ResolvePending` refuses it (`notExpired`), so a late phone answer gets `won:false`,
+no `hook_resolved` is broadcast and `hooks-status` stays unresolved. Rows are not deleted.
+
 **`chat/bridge.go`** — the engine↔substrate bridge. The Claude runner was built for the
 retired `/api/claude/*` WebSocket; the new workspace API is a **pure pub/sub substrate**.
 For a `claude_chat` session the bridge lazily spawns a Claude process on the first
@@ -133,6 +153,17 @@ mobile session whose token signed the nonce, `dispatchHook` answers its `feed.pu
 lives in `hooks` (below); `hooks.ChallengeTag` emits
 `YMUX-CHALLENGE` (WINMUX responses still accepted); the Rust half is `CHALLENGE_TAG` in
 `ymux-tunnel`. **Flip both together.**
+
+**Chat session status has one writer (`chat/chat_session.go` `transition(to, from)`).**
+`killed` / `stopped` / `error` are terminal (`isTerminal`) and never left: a late stdout
+line after `stop`, a `user_input`, or a hook waiter woken by `failPendingHooks` cannot
+mark a dead process `active` again. `setStatus(st)` is `transition(st, "")`;
+`awaitHookDecision` restores the pre-hook status with `transition(prev, stWaitingHook)`,
+so only while the status is still `waiting_hook`. Memory and the `sessions` row are
+written together under `s.mu`, and `create` inserts the row with the status the session
+has after `spawn` (`active`, not a `starting` nothing updated). `DELETE` writes the row
+directly only when no live session exists. `stInterrupted` and `spawn`'s `resumeID` are
+declared but unused (no caller) — left as they are.
 
 **`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
 package that lets a browser have a shell, and the two rules that shape it are worth
@@ -228,7 +259,10 @@ falls back to `last.env` (the desktop) exactly as before.
   browser session's hooks (`auth denied: unknown-session`). A test pins "no control byte
   but TAB in `listFormat`"; `ValidName` rejects control characters, so a name cannot hold
   a tab, and `SplitN(…, 5)` keeps a tab inside the path.
-- `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` once.
+- `new-session -e` needs **tmux ≥ 3.2**; `SupportsSessionEnv` asks `tmux -V` and caches
+  the answer for the run — **a real answer only**. A `tmux -V` that fails (timeout, fork
+  error) reads as unsupported for that one call and is asked again on the next, so a
+  transient failure no longer switches hooks off until restart.
   Older, or no listener address → the session is created exactly as before, no hooks.
 - `hookdispatch.go` is the daemon's counterpart of the desktop's `feed.push` arms,
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
@@ -259,7 +293,8 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
   `POST /api/v2/term/sessions/{name}/policy` — answers a permission request `allow` at
   once and makes **no card**, as the desktop's Auto does. `gate` makes a blocking card and
   waits for a decision: `wait_timeout_seconds` default 120, clamped 1–600; timeout →
-  `"timeout"` (the CLI denies); killing or losing the session → `deny`. The wait runs
+  `"timeout"` (the CLI denies); killing or losing the session → `deny` (that session's own
+  gates only, see `replace_pane` below). The wait runs
   with **no lock held** — `feedPush` copies what it needs under `r.mu` and releases it.
 - **Cards** follow the desktop's rules: `user-prompt-submit` and `notification` never make
   one; the lifecycle subkinds (`stop`, `session-*`, `post-tool-use`, `subagent-stop`,
@@ -267,7 +302,20 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
   (else `delta`), clipped to 160. Text is rendered in **both languages at creation** and
   each subscriber gets its own (`?lang=he`), because there is no settings store to read
   one language from. `feedStore` keeps the last 50 in memory; the browser keeps history
-  (IndexedDB, Phase C). First decision wins; a second `decide` returns false.
+  (IndexedDB, Phase C). The cap **never evicts a card that is still pending** (it skips
+  them, so the list can exceed 50 by the number of open gates) — an evicted one could not
+  be denied when its session died.
+- **`feedStore.decide` is the single transition out of `pending`** — the twin of the
+  desktop's `decide_feed`, keep them the same. (1) The decision must be `allow`, `deny`
+  or `timeout`; anything else changes nothing (`decideInvalid`). (2) It applies only
+  while the card's `State` is `pending` → `allowed` / `denied` / `timedout`, and hands the
+  waiter the decision. (3) A later decision is a no-op (`decideNotPending`): the state is
+  not rewritten, the waiter hears nothing more, no `feed:item-resolved` goes out. (4) No
+  card with that id → `decideUnknown`. The card's `State` is the only record — the
+  decision channel lives on the card (`feedEntry.ch`), there is no separate pending map.
+  **Clients may send only `allow` / `deny`** (`clientDecision`), on the events socket and
+  REST alike; `timeout` is the daemon's own timer. REST answers 200, **409 already
+  decided**, 404 unknown id, 400 bad decision; the socket ignores a bad frame (one Warn).
 - **`GET /api/v2/events`** — one WebSocket for the box, same gate as the terminal
   (owner token or explicit `shell:attach`). First frame `hello` = the hydration the
   desktop does with `pane_agent_states` / `pane_briefs` / the feed list, plus each pane's
@@ -305,8 +353,14 @@ announcing the desktop's event on the events socket:
   changed, LISTEN + loopback/bind-any only, ≥1024, not 22, not `YMUX_PORTFORWARD_EXCLUDE`,
   and never the daemon's own API or hook-listener port. Events `port-detected` {addr,
   remote_port, family} / `port-undetected` {remote_port} — the desktop's, minus
-  workspace_id; `hello.ports` is the current set. A `port.opened`/`port.closed` RPC lands
-  in the same set. Detection only — v1 forwards nothing.
+  workspace_id; `hello.ports` is the current set. The set is keyed per family + address
+  but `port-undetected` names only the number (and clients key on it), so it is sent
+  **only when the port's last record goes** — a v4 close with the v6 listener still up
+  announces nothing. A `port.opened`/`port.closed` RPC lands in the same set, through the
+  scan's own filter (`reportable`: a privileged, excluded or daemon-own port answers
+  `{ok, detected:false}` and is not recorded). The scan stays the truth: an RPC entry it
+  does not see goes at the next diff, since a watcher that dies never sends
+  `port.closed`. Detection only — v1 forwards nothing.
 - Wiring: `main.go` calls `SetDataDir` and `StartPortWatch` after `hooks.Start`, so the
   listener's port is known before the first scan.
 
@@ -610,6 +664,12 @@ Three things about it are load-bearing:
   and "may it run commands on my machine?" are different questions and do not share a
   button; the second is a separate act in the device list.
 
+**`pruneRequests` drops dead one-shots of both kinds**: `requested` rows nobody answered
+and `pending` rows (an issued QR, an approved request) nobody redeemed before
+`expires_at` — the one-shot's deadline, past which `redeemDevice` refuses the row anyway.
+Never `active`: a redeemed device keeps its one-shot's old `expires_at`. It runs on the
+two browser-pairing routes and on `GET /api/pairing/devices`, so a QR-only box prunes too.
+
 The request endpoint cannot require a credential, so it is rate-limited per IP with a
 global cap on outstanding requests, and it **fails closed with a message** when no
 desktop is reachable — a browser left polling a request no human will ever see is
@@ -657,8 +717,15 @@ assistant line via `extractTextField`, 80 chars + …); the scope is the transcr
 session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
 With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
 hooks get a quiet `passive` (no card, light or context — the CLI falls back to Claude's
-own), and `byPane` / `Snapshot` / the hello skip it. A daemon restart's `RecoverHooks`
-does not know `released` (both sessions carry the pane id again) — a known edge.
+own), and `byPane` / `Snapshot` / the hello skip it. Two sessions then carry one pane
+id, so **a pane id is not a session identity**: a card remembers the `hookEntry` that
+made it (`feedEntry.owner`) and `Remove` / `Retain` deny only the gates the dead session
+itself left pending (`pendingFor(owner)`) — killing the released one no longer denies the
+new owner's. `releasePane` also writes `YMUX_RELEASED=1` into the released session's tmux
+environment (best-effort, like `YMUX_POLICY`), and `RecoverHooks` brings such a session
+back **released**, so after a restart the pane goes to the new session whatever order
+tmux lists them in. A session released before this change has no marker and can still be
+adopted first.
 
 **`term/gitdiff.go` (Phase 118, WEB-DESIGN F4) — the Diff pane and worktree creation.**
 `POST /api/v2/git/diff {cwd, source}` is ONE snapshot, a port of `diff_pane.rs`
@@ -764,7 +831,27 @@ regression alarm.
 **`push/push.go`** — no Firebase, no FCM, no APNs. A paired device holds a long-lived
 WebSocket (`GET /api/v2/push/subscribe`) from an Android foreground service; the server
 delivers events over it and **queues per-device while the socket is down**, replaying on
-reconnect. Wire contract: `docs/PUSH-PROTOCOL.md`.
+reconnect. Wire contract: `docs/PUSH-PROTOCOL.md`. **Order is part of that contract**:
+the client drops any envelope whose `push_seq` is ≤ the highest it processed (§5) and its
+ack is cumulative (§3.4), so an envelope written out of order is lost for good. Every
+event envelope is therefore written by one function, `flush(c)` — "everything queued
+after `c.sent`, in `push_seq` order", under the connection's `flushMu`. The reconnect
+replay is a flush (`sent` starts at the cursor), and `Notify` enqueues and then flushes
+instead of writing its own event, so a live event cannot overtake a replay in progress
+or another `Notify`'s lower seq. The handler writes `hello` **before** it registers the
+connection, so no event can precede it.
+
+**`config/migrate.go` — the data-dir migration** (`MigrateDataDir`, called from `main.go`
+for each legacy base; load-bearing, see CLAUDE.md). The `token` file is the "already
+migrated" test: legacy has one and current does not, or nothing happens. Fast path: one
+atomic rename of the whole directory. Slow path (current already has content, e.g. the
+installer made it): entries move one by one, **and a failed entry does not stop the
+loop** — every entry is attempted and the failures come back joined (`migrated=true`
+with an error; `main.go` logs it and boots on). It used to return at the first failure,
+which stranded everything sorting after it: with `token` across no later boot returns,
+and with `token` not across the daemon mints a fresh one and no later boot returns
+either. That is also why `token` is not simply moved last. An entry that cannot move
+stays in the legacy dir and is not retried.
 
 **`logging/logging.go`** — one line format across every subsystem: local time with UTC
 offset, LEVEL padded to 5, component like `[SRV:CHAT]`, then slog attrs as trailing

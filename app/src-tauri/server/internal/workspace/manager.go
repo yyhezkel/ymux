@@ -21,8 +21,9 @@ var logger = logging.New("SRV:WS")
 
 // liveSession holds the in-memory fan-out channels for a session's subscribers.
 type liveSession struct {
-	mu   sync.Mutex
-	subs map[string]chan []byte // client_id → buffered frame channel
+	mu      sync.Mutex
+	subs    map[string]chan []byte // client_id → buffered frame channel
+	dropped int64                  // live frames dropped for full buffers (log rate-limit)
 }
 
 // PushLister yields the paired-device IDs eligible for an out-of-band push
@@ -41,6 +42,11 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*liveSession // session_id → live subscribers
+
+	// Test seam, nil in production: runs between the two steps of Subscribe
+	// (register the channel, read the replay) so a test can publish exactly
+	// there and prove the order loses nothing.
+	betweenSubscribeSteps func()
 }
 
 // SetPushLister wires the device store used to find out-of-band push targets.
@@ -256,47 +262,83 @@ func (m *Manager) fanout(ev Event) {
 	frame := eventFrame(ev)
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
-	for _, ch := range ls.subs {
+	for clientID, ch := range ls.subs {
 		select {
 		case ch <- frame:
 		default:
 			// Slow subscriber: drop the live frame. It's durable in the log, so
-			// the client re-syncs via cursor replay on reconnect.
+			// the client re-syncs via cursor replay on reconnect. Logged as
+			// metadata only, the first drop and then every 100th.
+			ls.dropped++
+			if ls.dropped%100 == 1 {
+				logger.Warn("dropped live frame for slow subscriber",
+					"session", ev.SessionID, "client", clientID, "seq", ev.Seq, "dropped_total", ls.dropped)
+			}
 		}
 	}
 }
 
 // Subscribe registers a client on a session and returns the replay (events
-// after cursor) plus a live channel + a cancel func. The caller dedups live
-// frames by seq (any frame with seq <= the last replayed seq is a repeat of a
-// just-replayed event and is skipped).
+// after cursor) plus a live channel + a cancel func. The channel is registered
+// BEFORE the replay is read, so an event published in between is in the
+// channel (and possibly in the replay too) rather than in neither. The caller
+// dedups live frames by seq (any frame with seq <= the last replayed seq is a
+// repeat of a just-replayed event and is skipped).
+//
+// A client_id that is already subscribed is replaced: the old channel is
+// closed (its reader ends) and the newest connection owns the id. cancel only
+// ever removes the channel this call created.
 func (m *Manager) Subscribe(sessionID, clientID, deviceName string, cursor int64) ([]Event, <-chan []byte, func(), error) {
 	if _, err := m.store.GetSession(sessionID); err != nil {
 		return nil, nil, nil, ErrNotFound
 	}
-	replay, err := m.store.ReplayEvents(sessionID, cursor, 0)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	ch := make(chan []byte, 256)
-	ls := m.liveOf(sessionID, true)
+	// m.mu → ls.mu, held together: a concurrent cancel that empties the
+	// session must not unlink the liveSession this subscriber is joining.
+	m.mu.Lock()
+	ls := m.live[sessionID]
+	if ls == nil {
+		ls = &liveSession{subs: map[string]chan []byte{}}
+		m.live[sessionID] = ls
+	}
 	ls.mu.Lock()
+	if old, ok := ls.subs[clientID]; ok {
+		close(old)
+	}
 	ls.subs[clientID] = ch
 	ls.mu.Unlock()
+	m.mu.Unlock()
+
+	cancel := func() {
+		m.mu.Lock()
+		ls.mu.Lock()
+		mine := ls.subs[clientID] == ch // false once replaced or dropLive'd
+		if mine {
+			delete(ls.subs, clientID)
+			close(ch)
+			if len(ls.subs) == 0 && m.live[sessionID] == ls {
+				delete(m.live, sessionID)
+			}
+		}
+		ls.mu.Unlock()
+		m.mu.Unlock()
+		if mine {
+			_, _ = m.store.db.Exec(`DELETE FROM subscribers WHERE session_id=? AND client_id=?`, sessionID, clientID)
+		}
+	}
+
+	if m.betweenSubscribeSteps != nil {
+		m.betweenSubscribeSteps()
+	}
+	replay, err := m.store.ReplayEvents(sessionID, cursor, 0)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, err
+	}
 	t := now()
 	_, _ = m.store.db.Exec(
 		`INSERT OR REPLACE INTO subscribers(session_id,client_id,device_name,connected_at,last_seen) VALUES(?,?,?,?,?)`,
 		sessionID, clientID, deviceName, t, t)
-
-	cancel := func() {
-		ls.mu.Lock()
-		if c, ok := ls.subs[clientID]; ok {
-			delete(ls.subs, clientID)
-			close(c)
-		}
-		ls.mu.Unlock()
-		_, _ = m.store.db.Exec(`DELETE FROM subscribers WHERE session_id=? AND client_id=?`, sessionID, clientID)
-	}
 	return replay, ch, cancel, nil
 }
 

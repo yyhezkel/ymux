@@ -12336,6 +12336,32 @@ fn pane_status_get(state: State<'_, AppState>) -> HashMap<String, String> {
 /// Phase 6.5: shared decision logic for feed items. Used both by the Tauri command
 /// `feed_decide` (called by the frontend's Allow/Deny buttons) and by the RPC handler
 /// when the timeout expires or sender drops.
+/// The one transition of a feed item out of `Pending`. Returns whether the
+/// decision applied, plus the waiting hook's sender when there is one.
+///
+/// A decision applies when a hook is still waiting for it (its sender is in
+/// `pending`, which also covers an item already trimmed out of `items`) or
+/// when the item itself is still `Pending` (a waiter that went away without
+/// an answer). Anything else was decided before: the first decision is the
+/// one the hook received, so a later one (a second device, a double click, a
+/// timeout that lost the race) changes nothing. `Passive` items are never
+/// decided.
+fn resolve_feed(
+    store: &mut FeedStore,
+    request_id: &str,
+    new_state: FeedItemState,
+) -> (bool, Option<tokio::sync::oneshot::Sender<String>>) {
+    let tx = store.pending.remove(request_id);
+    let mut applied = tx.is_some();
+    for item in store.items.iter_mut() {
+        if item.request_id == request_id && item.state == FeedItemState::Pending {
+            item.state = new_state.clone();
+            applied = true;
+        }
+    }
+    (applied, tx)
+}
+
 pub(crate) fn decide_feed(
     state: &AppState,
     app: &AppHandle,
@@ -12348,15 +12374,19 @@ pub(crate) fn decide_feed(
         "timeout" => FeedItemState::Timedout,
         other => return Err(format!("unknown decision: {other}")),
     };
-    let tx = {
+    let (applied, tx) = {
         let mut store = state.feed.lock().map_err(|e| e.to_string())?;
-        for item in store.items.iter_mut() {
-            if item.request_id == request_id {
-                item.state = new_state.clone();
-            }
-        }
-        store.pending.remove(request_id)
+        resolve_feed(&mut store, request_id, new_state)
     };
+    if !applied {
+        // Already decided (or never blocking): the hook got its answer from
+        // the first decision, so do not repaint the card or re-announce it.
+        log_debug(
+            "FEED",
+            &format!("decide ignored: request_id={request_id} is not pending (decision={decision})"),
+        );
+        return Ok(());
+    }
     let _ = app.emit(
         "feed:item-resolved",
         serde_json::json!({ "request_id": request_id, "decision": decision }),
@@ -16613,5 +16643,106 @@ mod agent_run_golden_tests {
                 assert_eq!(u64::from(r.seq), s["seq"].as_u64().expect("seq"), "{name}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod feed_decide_tests {
+    use super::*;
+
+    fn item(id: &str, state: FeedItemState) -> FeedItem {
+        FeedItem {
+            request_id: id.to_string(),
+            kind: "hook".to_string(),
+            subkind: "pre-tool-use".to_string(),
+            pane_id: None,
+            workspace_id: None,
+            title: String::new(),
+            summary: String::new(),
+            payload: serde_json::Value::Null,
+            state,
+            created_ms: 0,
+            blocking: true,
+        }
+    }
+
+    fn state_of(store: &FeedStore, id: &str) -> FeedItemState {
+        store
+            .items
+            .iter()
+            .find(|i| i.request_id == id)
+            .map(|i| i.state.clone())
+            .expect("item present")
+    }
+
+    #[test]
+    fn the_first_decision_applies_and_hands_back_the_waiter() {
+        let mut store = FeedStore::default();
+        let (tx, mut rx) = tokio::sync::oneshot::channel::<String>();
+        store.items.push_back(item("r1", FeedItemState::Pending));
+        store.pending.insert("r1".to_string(), tx);
+
+        let (applied, waiter) = resolve_feed(&mut store, "r1", FeedItemState::Allowed);
+        assert!(applied);
+        assert!(waiter.is_some());
+        assert_eq!(state_of(&store, "r1"), FeedItemState::Allowed);
+        assert!(store.pending.is_empty());
+        drop(waiter);
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn a_second_decision_does_not_repaint_a_decided_item() {
+        let mut store = FeedStore::default();
+        let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+        store.items.push_back(item("r1", FeedItemState::Pending));
+        store.pending.insert("r1".to_string(), tx);
+        let _ = resolve_feed(&mut store, "r1", FeedItemState::Allowed);
+
+        for late in [FeedItemState::Denied, FeedItemState::Timedout] {
+            let (applied, waiter) = resolve_feed(&mut store, "r1", late);
+            assert!(!applied);
+            assert!(waiter.is_none());
+            assert_eq!(state_of(&store, "r1"), FeedItemState::Allowed);
+        }
+    }
+
+    #[test]
+    fn a_passive_item_is_never_decided() {
+        let mut store = FeedStore::default();
+        store.items.push_back(item("p1", FeedItemState::Passive));
+        let (applied, waiter) = resolve_feed(&mut store, "p1", FeedItemState::Allowed);
+        assert!(!applied);
+        assert!(waiter.is_none());
+        assert_eq!(state_of(&store, "p1"), FeedItemState::Passive);
+    }
+
+    #[test]
+    fn a_waiter_whose_item_was_trimmed_still_gets_its_answer() {
+        let mut store = FeedStore::default();
+        let (tx, _rx) = tokio::sync::oneshot::channel::<String>();
+        store.pending.insert("gone".to_string(), tx);
+        let (applied, waiter) = resolve_feed(&mut store, "gone", FeedItemState::Denied);
+        assert!(applied);
+        assert!(waiter.is_some());
+    }
+
+    #[test]
+    fn a_pending_item_with_no_waiter_can_still_be_closed() {
+        let mut store = FeedStore::default();
+        store.items.push_back(item("orphan", FeedItemState::Pending));
+        let (applied, waiter) = resolve_feed(&mut store, "orphan", FeedItemState::Denied);
+        assert!(applied);
+        assert!(waiter.is_none());
+        assert_eq!(state_of(&store, "orphan"), FeedItemState::Denied);
+    }
+
+    #[test]
+    fn an_unknown_request_changes_nothing() {
+        let mut store = FeedStore::default();
+        store.items.push_back(item("r1", FeedItemState::Pending));
+        let (applied, _) = resolve_feed(&mut store, "nope", FeedItemState::Allowed);
+        assert!(!applied);
+        assert_eq!(state_of(&store, "r1"), FeedItemState::Pending);
     }
 }

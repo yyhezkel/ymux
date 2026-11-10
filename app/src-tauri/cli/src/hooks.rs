@@ -12,7 +12,9 @@
 //!
 //! Designed to be idempotent and additive: existing entries unrelated to ymux are
 //! preserved, and our entries are detected by a `ymux ... claude-hook` substring
-//! match so we replace ourselves instead of accumulating duplicates.
+//! match so we replace ourselves instead of accumulating duplicates. The one
+//! removal: a ymux hook under an event the spec no longer names
+//! (`prune_dropped_events`).
 
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -32,11 +34,15 @@ pub enum AgentStatus {
         /// settings.json — used by the calling print code so the user
         /// sees which version we installed.
         hooks_version: Option<String>,
+        /// Events the spec no longer names, whose ymux hooks were removed.
+        removed: Vec<String>,
     },
     DryRun {
         would_register: Vec<String>,
         path: PathBuf,
         already_present: Vec<String>,
+        /// Events the spec no longer names, whose ymux hooks would go.
+        would_remove: Vec<String>,
     },
     Error(String),
 }
@@ -400,6 +406,12 @@ fn apply_to_settings(
         root["hooks"] = json!({});
     }
 
+    // In memory only until the write below; a dry run reports it and stops.
+    let dropped = match root.get_mut("hooks").and_then(Value::as_object_mut) {
+        Some(hooks) => prune_dropped_events(hooks, spec),
+        None => Vec::new(),
+    };
+
     let mut would_register: Vec<String> = Vec::new();
     let mut already_present: Vec<String> = Vec::new();
     let mut to_apply: Vec<(String, String, String, Option<u64>)> = Vec::new();
@@ -432,10 +444,11 @@ fn apply_to_settings(
             would_register,
             path: path.to_path_buf(),
             already_present,
+            would_remove: dropped,
         };
     }
 
-    if to_apply.is_empty() {
+    if to_apply.is_empty() && dropped.is_empty() {
         // Even when no event entries change, refresh the meta tag so
         // the desktop's outdated-check picks up a version bump that's
         // purely a no-op (e.g. a spec rebuild with identical events).
@@ -448,8 +461,9 @@ fn apply_to_settings(
                 "hooks_version": spec.ymux_hooks_version,
                 "agent": spec.agent,
             });
-            let text = serde_json::to_string_pretty(&root).unwrap_or_default();
-            let _ = fs::write(path, text);
+            if let Err(e) = write_settings_atomic(claude_dir, path, &root) {
+                return AgentStatus::Error(e);
+            }
         }
         return AgentStatus::Done {
             registered: vec![],
@@ -457,6 +471,7 @@ fn apply_to_settings(
             path: path.to_path_buf(),
             unchanged: true,
             hooks_version: Some(spec.ymux_hooks_version.clone()),
+            removed: vec![],
         };
     }
 
@@ -495,17 +510,8 @@ fn apply_to_settings(
         obj.remove("winmux_meta");
     }
 
-    let tmp = claude_dir.join(format!("settings.json.ymux-tmp.{}", std::process::id()));
-    let text = match serde_json::to_string_pretty(&root) {
-        Ok(t) => t,
-        Err(e) => return AgentStatus::Error(format!("serialize: {e}")),
-    };
-    if let Err(e) = fs::write(&tmp, &text) {
-        return AgentStatus::Error(format!("write tmp: {e}"));
-    }
-    if let Err(e) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return AgentStatus::Error(format!("rename: {e}"));
+    if let Err(e) = write_settings_atomic(claude_dir, path, &root) {
+        return AgentStatus::Error(e);
     }
 
     AgentStatus::Done {
@@ -514,7 +520,86 @@ fn apply_to_settings(
         path: path.to_path_buf(),
         unchanged: false,
         hooks_version: Some(spec.ymux_hooks_version.clone()),
+        removed: dropped,
     }
+}
+
+/// The one writer of `settings.json`: a tmp file in the same directory, then
+/// a rename (Rule #7). Claude Code reads this file, and a write cut short
+/// would leave it truncated.
+fn write_settings_atomic(
+    claude_dir: &std::path::Path,
+    path: &std::path::Path,
+    root: &Value,
+) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(root).map_err(|e| format!("serialize: {e}"))?;
+    let tmp = claude_dir.join(format!("settings.json.ymux-tmp.{}", std::process::id()));
+    fs::write(&tmp, &text).map_err(|e| format!("write tmp: {e}"))?;
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("rename: {e}"));
+    }
+    Ok(())
+}
+
+/// Remove ymux hook commands from the events `spec` does not name, and
+/// return those events. The install loop visits spec events only, so an
+/// event dropped from the spec kept its entry for good and ran the CLI on
+/// every firing.
+///
+/// Only a hook object whose own command is ours goes. An entry is dropped
+/// only when that leaves its `hooks` array empty, and an event key only
+/// when that leaves it with no entries, so a user's hook that shares the
+/// event or the entry stays. A spec with no events prunes nothing: it is
+/// the empty fallback or a broken fetch, not a decision to drop them all.
+fn prune_dropped_events(
+    hooks: &mut serde_json::Map<String, Value>,
+    spec: &HookSpec,
+) -> Vec<String> {
+    if spec.events.is_empty() {
+        return Vec::new();
+    }
+    let mut removed: Vec<String> = Vec::new();
+    let mut emptied_events: Vec<String> = Vec::new();
+    for (event, entries) in hooks.iter_mut() {
+        if spec.events.contains_key(event) {
+            continue;
+        }
+        let Some(list) = entries.as_array_mut() else {
+            continue;
+        };
+        let mut touched = false;
+        let mut kept: Vec<Value> = Vec::with_capacity(list.len());
+        for mut entry in std::mem::take(list) {
+            let mut emptied = false;
+            if let Some(cmds) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+                let before = cmds.len();
+                cmds.retain(|h| {
+                    !h.get("command")
+                        .and_then(|c| c.as_str())
+                        .is_some_and(is_ymux_command)
+                });
+                if cmds.len() != before {
+                    touched = true;
+                    emptied = cmds.is_empty();
+                }
+            }
+            if !emptied {
+                kept.push(entry);
+            }
+        }
+        if touched {
+            removed.push(event.clone());
+            if kept.is_empty() {
+                emptied_events.push(event.clone());
+            }
+        }
+        *list = kept;
+    }
+    for event in &emptied_events {
+        hooks.remove(event);
+    }
+    removed
 }
 
 fn apply_to_legacy(
@@ -554,6 +639,7 @@ fn apply_to_legacy(
             path: path.to_path_buf(),
             unchanged: true,
             hooks_version: Some(spec.ymux_hooks_version.clone()),
+            removed: vec![],
         };
     }
 
@@ -585,6 +671,7 @@ fn apply_to_legacy(
         path: path.to_path_buf(),
         unchanged: false,
         hooks_version: Some(spec.ymux_hooks_version.clone()),
+        removed: vec![],
     }
 }
 
@@ -607,18 +694,19 @@ fn is_ymux_entry(entry: &Value) -> bool {
             hooks.iter().any(|h| {
                 h.get("command")
                     .and_then(|c| c.as_str())
-                    // Both spellings. "winmux" does NOT contain "ymux" as a
-                    // substring, so matching only the new name would leave
-                    // every pre-rename entry in place and then push a second
-                    // one beside it — two hooks firing per event.
-                    .map(|c| {
-                        (c.contains("ymux") || c.contains("winmux"))
-                            && c.contains("claude-hook")
-                    })
-                    .unwrap_or(false)
+                    .is_some_and(is_ymux_command)
             })
         })
         .unwrap_or(false)
+}
+
+/// Is this hook command one of ours?
+///
+/// Both spellings. "winmux" does NOT contain "ymux" as a substring, so
+/// matching only the new name would leave every pre-rename entry in place
+/// and then push a second one beside it — two hooks firing per event.
+fn is_ymux_command(c: &str) -> bool {
+    (c.contains("ymux") || c.contains("winmux")) && c.contains("claude-hook")
 }
 
 /// Phase 84.B: is the ymux entry for this event actually runnable?
@@ -777,8 +865,15 @@ fn print_status(label: &str, status: &AgentStatus) {
             would_register,
             path,
             already_present,
+            would_remove,
         } => {
             println!("✓ {} detected", label);
+            if !would_remove.is_empty() {
+                println!(
+                    "  → would remove ymux hooks no longer in the spec: {}",
+                    would_remove.join(", ")
+                );
+            }
             if !already_present.is_empty() {
                 println!(
                     "  → already present (would skip): {}",
@@ -802,16 +897,26 @@ fn print_status(label: &str, status: &AgentStatus) {
             path,
             unchanged,
             hooks_version,
+            removed,
         } => {
             println!("✓ {} detected", label);
             if *unchanged {
                 println!("  → all hooks already present, nothing to do ({})", path.display());
             } else {
-                println!(
-                    "  → registered: {} (target: {})",
-                    registered.join(", "),
-                    path.display()
-                );
+                if !registered.is_empty() {
+                    println!(
+                        "  → registered: {} (target: {})",
+                        registered.join(", "),
+                        path.display()
+                    );
+                }
+                if !removed.is_empty() {
+                    println!(
+                        "  → removed ymux hooks no longer in the spec: {} (target: {})",
+                        removed.join(", "),
+                        path.display()
+                    );
+                }
                 if let Some(bk) = backup {
                     println!("  → backed up previous to {}", bk.display());
                 }
@@ -1004,6 +1109,176 @@ mod tests {
         for ev in ["Stop", "PreToolUse", "UserPromptSubmit"] {
             assert!(would_register.iter().any(|e| e == ev), "{ev} must be rewritten");
         }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // ── D17: events dropped from the spec ────────────────────────────
+
+    fn theirs() -> Value {
+        json!({ "type": "command", "command": "/usr/local/bin/lint --fast" })
+    }
+
+    // Pins D17(a): the install loop only visited spec events, so a ymux
+    // entry under an event the spec dropped stayed for good.
+    #[test]
+    fn a_dropped_event_loses_our_hooks_and_nothing_else() {
+        let spec = bundled_claude_spec();
+        assert!(!spec.events.contains_key("PreCompact"), "precondition");
+        assert!(!spec.events.contains_key("SubagentStop"), "precondition");
+        let mut root = json!({
+            // Ours alone, in the pre-rename spelling: the key goes.
+            "PreCompact": [entry("/home/y/.winmux/bin/winmux claude-hook pre-compact")],
+            // Ours beside a user's hook in ONE entry, plus a user's own entry.
+            "SubagentStop": [
+                {
+                    "matcher": "",
+                    "hooks": [
+                        { "type": "command", "command": "/home/y/.ymux/bin/ymux claude-hook subagent-stop" },
+                        theirs(),
+                    ]
+                },
+                { "matcher": "", "hooks": [theirs()] },
+            ],
+            // A dropped event that is all the user's: untouched.
+            "PostToolUse": [{ "matcher": "", "hooks": [theirs()] }],
+            // Still in the spec: not this function's business.
+            "Stop": [entry("/home/y/.winmux/bin/winmux claude-hook stop")],
+        });
+        let hooks = root.as_object_mut().expect("object");
+        let mut removed = prune_dropped_events(hooks, &spec);
+        removed.sort();
+        assert_eq!(removed, vec!["PreCompact".to_string(), "SubagentStop".to_string()]);
+        assert!(root.get("PreCompact").is_none(), "an emptied event key is removed");
+        assert_eq!(
+            root["SubagentStop"],
+            json!([
+                { "matcher": "", "hooks": [theirs()] },
+                { "matcher": "", "hooks": [theirs()] },
+            ])
+        );
+        assert_eq!(root["PostToolUse"], json!([{ "matcher": "", "hooks": [theirs()] }]));
+        assert_eq!(root["Stop"].as_array().map(Vec::len), Some(1));
+    }
+
+    #[test]
+    fn a_spec_without_events_prunes_nothing() {
+        // The empty fallback spec (or a fetched file with no `events`) must
+        // not read as "every event was dropped".
+        let spec = bundled_spec_for("codex");
+        assert!(spec.events.is_empty(), "precondition");
+        let mut root = json!({ "Stop": [entry("/home/y/.ymux/bin/ymux claude-hook stop")] });
+        let before = root.clone();
+        let removed = prune_dropped_events(root.as_object_mut().expect("object"), &spec);
+        assert!(removed.is_empty());
+        assert_eq!(root, before);
+    }
+
+    fn settings_dir(name: &str) -> (PathBuf, PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!("ymux-hooks-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).expect("tmp dir");
+        let exe = dir.join("ymux");
+        fs::write(&exe, b"").expect("exe");
+        (dir.clone(), dir.join("settings.json"), exe.display().to_string())
+    }
+
+    fn read_json(path: &std::path::Path) -> Value {
+        serde_json::from_str(&fs::read_to_string(path).expect("read settings")).expect("json")
+    }
+
+    fn no_tmp_left(dir: &std::path::Path) -> bool {
+        fs::read_dir(dir)
+            .expect("read dir")
+            .filter_map(Result::ok)
+            .all(|e| !e.file_name().to_string_lossy().contains("ymux-tmp"))
+    }
+
+    // Pins D17(a) end to end: with every spec event already installed the
+    // run took the "nothing to do" path and never looked at other events.
+    #[test]
+    fn a_rerun_removes_our_entry_under_a_dropped_event() {
+        let (dir, settings, exe) = settings_dir("dropped-event");
+        let spec = bundled_claude_spec();
+        let first = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        assert!(matches!(first, AgentStatus::Done { unchanged: false, .. }), "got {first:?}");
+
+        let mut root = read_json(&settings);
+        root["hooks"]["PreCompact"] = json!([entry(&format!("{exe} claude-hook pre-compact"))]);
+        root["hooks"]["PostToolUse"] = json!([{ "matcher": "", "hooks": [theirs()] }]);
+        fs::write(&settings, serde_json::to_string(&root).expect("json")).expect("write");
+
+        let dry = apply_to_settings(&dir, &settings, &exe, &spec, true, false);
+        let AgentStatus::DryRun { would_register, would_remove, .. } = dry else {
+            panic!("expected DryRun, got {dry:?}");
+        };
+        assert!(would_register.is_empty(), "got {would_register:?}");
+        assert_eq!(would_remove, vec!["PreCompact".to_string()]);
+        assert!(read_json(&settings)["hooks"].get("PreCompact").is_some(), "a dry run writes nothing");
+
+        let second = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        let AgentStatus::Done { registered, removed, unchanged, .. } = second else {
+            panic!("expected Done, got {second:?}");
+        };
+        assert!(!unchanged);
+        assert!(registered.is_empty(), "got {registered:?}");
+        assert_eq!(removed, vec!["PreCompact".to_string()]);
+        let after = read_json(&settings);
+        assert!(after["hooks"].get("PreCompact").is_none());
+        assert_eq!(after["hooks"]["PostToolUse"], json!([{ "matcher": "", "hooks": [theirs()] }]));
+        for ev in spec.events.keys() {
+            assert_eq!(after["hooks"][ev].as_array().map(Vec::len), Some(1), "{ev}");
+        }
+        assert!(no_tmp_left(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // Covers the D17(b) path: a stale stamp with nothing else to change is
+    // rewritten through the tmp + rename writer. Atomicity itself is not
+    // observable from a unit test; this pins the result and the cleanup.
+    #[test]
+    fn a_stamp_only_refresh_rewrites_the_version_and_leaves_no_tmp() {
+        let (dir, settings, exe) = settings_dir("stamp-only");
+        let spec = bundled_claude_spec();
+        let _ = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        let mut root = read_json(&settings);
+        root["ymux_meta"]["hooks_version"] = json!("0.0.1");
+        root["theme"] = json!("dark");
+        fs::write(&settings, serde_json::to_string(&root).expect("json")).expect("write");
+
+        let status = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        assert!(matches!(status, AgentStatus::Done { unchanged: true, .. }), "got {status:?}");
+        let after = read_json(&settings);
+        assert_eq!(after["ymux_meta"]["hooks_version"], json!(spec.ymux_hooks_version));
+        assert_eq!(after["theme"], json!("dark"), "the rest of the file survives");
+        assert!(no_tmp_left(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    // This one fails on the old plain `fs::write`, which writes THROUGH a
+    // symlink: tmp + rename replaces the link and leaves its target alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_stamp_only_refresh_renames_over_the_file_instead_of_writing_into_it() {
+        let (dir, settings, exe) = settings_dir("stamp-rename");
+        let spec = bundled_claude_spec();
+        let _ = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        let mut root = read_json(&settings);
+        root["ymux_meta"]["hooks_version"] = json!("0.0.1");
+        let stale = serde_json::to_string(&root).expect("json");
+        let target = dir.join("real-settings.json");
+        fs::write(&target, &stale).expect("write target");
+        fs::remove_file(&settings).expect("remove settings");
+        std::os::unix::fs::symlink(&target, &settings).expect("symlink");
+
+        let status = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        assert!(matches!(status, AgentStatus::Done { unchanged: true, .. }), "got {status:?}");
+        let meta = fs::symlink_metadata(&settings).expect("metadata");
+        assert!(!meta.file_type().is_symlink(), "the rename replaces the link");
+        assert_eq!(fs::read_to_string(&target).expect("read target"), stale);
+        assert_eq!(
+            read_json(&settings)["ymux_meta"]["hooks_version"],
+            json!(spec.ymux_hooks_version)
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

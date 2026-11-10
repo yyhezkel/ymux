@@ -37,6 +37,14 @@ reaches an already-running process**, which is the whole reason sticky ports exi
 one-shot `claude -p` calls, which have no pane of their own. A plain `claude` started by hand on the same
 host does not set it, so `last.env` still lends that run a pane.
 
+**Reply deadline (`reply_deadline`, main.rs).** `rpc_via` waits for the reply line under a
+`tokio::time::timeout`: 300 s (`RPC_REPLY_FLOOR_SECS`), or the wait the request carries
+(`wait_timeout_seconds`, or `timeout_ms` rounded up) plus 30 s when that is longer, so the
+desktop's own timeout answer always arrives first. On expiry the error is
+`no reply from the ymux app within <n>s`. It starts with neither `connect ` nor `rpc error`.
+The handshake keeps its own 10 s reads. `wait` polls with short calls, so one poll against a
+silent desktop can outlast `--timeout` by up to this deadline.
+
 ## Verb families
 
 Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this is the map:
@@ -69,6 +77,19 @@ decides and the ymux policy does not run. It also spawns a detached copy of the 
 (`report_tool_running`) that pushes notification type `tool_running`, so the pane light
 leaves NeedsInput without Claude Code waiting. `acceptEdits`, `bypassPermissions` and `skip`
 print an explicit `allow`. Every other mode goes to the desktop policy engine.
+
+**When the push fails (`feed_push_with_retry`, `static_fallback_decision`, main.rs).** The
+pure `desktop_answered(err)` splits an `rpc_call` error in two. A transport failure
+(connect, handshake, write, read, or a 0-byte reply) means the desktop is not there: the
+push retries once and then the CLI's static policy decides, Block → deny, Auto → allow,
+Gate → allow, because nobody can approve a card. An error the desktop itself replied with
+(`rpc error: …`, or a non-empty reply that is not JSON) means it WAS reached: no retry,
+and a Gate verdict becomes `ask`, which hands the question to Claude Code's own prompt.
+A reply deadline that ran out (`no reply from the ymux app within …`, `reply_timed_out`)
+is a hung app: no retry either, since a second push would wait the whole deadline again,
+and the static policy decides as for an unreachable desktop.
+Until 2026-11-10 every error took the first path, so a reachable desktop that answered
+with an error turned a gated call into an allow.
 
 ## `wait`, `read`, `worktree create`
 
@@ -147,6 +168,21 @@ Because the bootstrap runs `setup-hooks --source bundled` on **every connect**, 
 what makes every migrated install converge on the current CLI with no user action. The
 same rule rewrites an entry missing the spec's `timeout` (`ymux_entry_has_timeout`).
 
+**Events dropped from the spec are pruned (`prune_dropped_events`).** The install loop visits
+spec events only, so `apply_to_settings` first removes our hook commands (`is_ymux_command`,
+both spellings) from every other event in `settings.json`. A hook object goes only if its own
+command is ours; an entry goes only if that empties its `hooks` array, an event key only if
+that empties it, so a user's hook in the same event or entry stays. A spec with no events
+prunes nothing. The last spec applied wins: a `--source bundled` run removes an event only a
+newer github spec has. `Done.removed` / `DryRun.would_remove` report it; a prune alone takes
+the full write path (backup, then write). The legacy `hooks.json` is not pruned.
+
+**One writer for `settings.json`: `write_settings_atomic`** (tmp in `~/.claude`, then rename).
+The stamp-only refresh of `ymux_meta.hooks_version` uses it too and now returns `Error` when
+the write fails; it used to `fs::write` in place and ignore the result. A rename replaces a
+symlinked `settings.json` with a regular file and leaves the link's target untouched, which
+is what the unix-only test observes.
+
 The hook spec used to be a hardcoded `&[(event, subcmd, matcher)]` slice. It now ships as
 JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
 `hooks/gemini.json` — which the CLI fetches from raw.githubusercontent.com at install
@@ -156,11 +192,15 @@ fallback. So a hook change reaches existing installs without a CLI rebuild.
 ## `port_watch.rs` — the LISTEN watcher
 
 Runs on the remote. Every **3s** it reads `/proc/net/tcp` + `/proc/net/tcp6`, extracts
-LISTEN sockets and diffs against the previous set. There is no raw-bytes skip any more:
+LISTEN sockets and diffs against the set the desktop knows. There is no raw-bytes skip any more:
 the timer columns of established sockets change between reads, so a byte compare matched
 on 0 of 59 measured ticks (2026-11-09), and the read costs more than the parse. A new
 port sends `port.opened`, a vanished
-one `port.closed`. **Both are detection-only on the desktop** — `rpc_server.rs` records
+one `port.closed`. The set it diffs against is what the desktop has answered for, not the
+last read (`advance`): an event counts as delivered on a result or an `rpc error` answer, and
+any other failure leaves it out, so the next tick sends it again. Only a dial failure
+(`connect …`) counts toward the exit below; a tick that still has an undelivered event
+dials again, so three failed ticks (about 9 s) end the watcher. **Both are detection-only on the desktop** — `rpc_server.rs` records
 the port in `detected_ports` and emits `port-detected`; the SSH local-forward is opened
 only when the user clicks (`forward_port_start`).
 

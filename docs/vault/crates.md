@@ -73,8 +73,11 @@ The only crate `app` cannot function without. Four files:
 Rotation is safe across two processes sharing a config dir: `rotate` closes its handle,
 takes `File::lock` on `debug.log.lock` around stat + rename only, and renames only if
 `debug.log` is still over the cap (fail-open unlocked if the lock can't be taken);
-`write_to_current` compares handle length to path length once per batch and reopens on a
+`write_to_current` compares its handle to the path once per batch and reopens on a
 mismatch, so a process whose file another rotated aside stops appending to `debug.log.1`.
+The comparison is length plus `file_identity` — device + inode on unix, `None` on Windows,
+where std's `file_index` is unstable. So on Windows a new `debug.log` that has grown to
+exactly the rotated file's length is missed until the two lengths differ.
 
 **`http.rs` (236)** — shared HTTP retry helper, added for the updater path on
 restricted networks.
@@ -190,7 +193,10 @@ in cleartext.
 **`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
 ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
-together or not at all.** Rule #8: the token never reaches a log. That includes
+together or not at all.** Every rejection after the response line is read writes a verdict
+first: `<peer's tag>-DENIED bad-mac`, and `<peer's tag>-DENIED bad-format` for hex that does
+not decode (that arm used to return with no verdict line). A line with neither RESPONSE tag
+gets `YMUX-DENIED bad-format`. Rule #8: the token never reaches a log. That includes
 `exec_simple`'s error text: it names the exit code and never the command, because the
 `last.env` script holds the token and callers log that error.
 

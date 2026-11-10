@@ -244,7 +244,13 @@ fn hook_vlog(msg: &str) {
 /// allow; Gate → allow (there's nobody to approve a card here — the
 /// desktop path is what actually gates). Returns (permissionDecision,
 /// reason).
-fn static_fallback_decision(payload: &Value) -> (&'static str, String) {
+///
+/// `desktop_answered`: the push REACHED the desktop and it replied with an
+/// error (see [`desktop_answered`]). Then "nobody to approve a card" is
+/// false, so a Gate verdict must not become an allow: it becomes `ask`,
+/// which hands the question to Claude Code's own permission prompt. Block
+/// and Auto do not depend on the desktop and stay as they are.
+fn static_fallback_decision(payload: &Value, desktop_answered: bool) -> (&'static str, String) {
     let tool_name = payload
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -256,6 +262,13 @@ fn static_fallback_decision(payload: &Value) -> (&'static str, String) {
     let verdict = ymux_policy::evaluate(tool_name, bash_cmd);
     match verdict.decision {
         ymux_policy::Decision::Block => ("deny", verdict.reason),
+        ymux_policy::Decision::Gate if desktop_answered => (
+            "ask",
+            format!(
+                "{} [ymux answered with an error, asking in Claude Code]",
+                verdict.reason
+            ),
+        ),
         ymux_policy::Decision::Gate => (
             "allow",
             format!(
@@ -281,15 +294,52 @@ fn print_pre_tool_use(decision: &str, reason: Option<&str>) {
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
 }
 
+/// Did this `rpc_call` error come from a desktop that received the request
+/// and replied? `rpc_via` produces exactly two such shapes: `rpc error: …`
+/// (a JSON-RPC error object) and `bad response: … (N bytes)` with N > 0
+/// (a reply that is not JSON). Everything else (connect, handshake, write,
+/// read, and the 0-byte reply of a connection closed before answering) is
+/// a transport failure: the desktop is, as far as we can tell, not there.
+fn desktop_answered(err: &str) -> bool {
+    err.starts_with("rpc error: ")
+        || (err.starts_with("bad response: ") && !err.ends_with("(0 bytes)"))
+}
+
+/// `rpc_via_within` gave up waiting for the reply line. The app took the
+/// connection and never answered, so it is not a connection failure and
+/// not an answer either.
+fn reply_timed_out(err: &str) -> bool {
+    err.starts_with("no reply from the ymux app")
+}
+
 /// Phase 66 (66.D.2): feed.push with a small retry on *connection* failure.
 /// Only connection errors retry — a returned `timeout` verdict means we DID
 /// reach the desktop, so it's surfaced as-is (retrying would double the
-/// user's wait).
+/// user's wait). An error the desktop itself replied with does not retry
+/// either: it was reached, and a second push of the same request_id would
+/// only repeat the error or raise a second card.
 async fn feed_push_with_retry(params: &Value, max_attempts: u32) -> Result<Value, String> {
     let mut last = String::from("no attempts");
     for attempt in 0..max_attempts {
         match rpc_call("feed.push", params.clone()).await {
             Ok(v) => return Ok(v),
+            Err(e) if desktop_answered(&e) => {
+                hook_log(
+                    HookLevel::Warn,
+                    &format!("claude-hook feed.push attempt={attempt} desktop replied with an error, not retrying"),
+                );
+                return Err(e);
+            }
+            // The reply deadline already outlasted the card's own timeout:
+            // the app accepted the push and hung. A second push would only
+            // wait that long again.
+            Err(e) if reply_timed_out(&e) => {
+                hook_log(
+                    HookLevel::Warn,
+                    &format!("claude-hook feed.push attempt={attempt} no reply within the deadline, not retrying"),
+                );
+                return Err(e);
+            }
             Err(e) => {
                 hook_log(
                     HookLevel::Warn,
@@ -1635,12 +1685,57 @@ fn hex_nibble(c: u8) -> Result<u8, String> {
     }
 }
 
+/// Floor for the reply wait. The desktop runs some verbs for minutes
+/// (an SSH connect, `worktree create`), so the floor is generous: its job
+/// is to end a wait on a desktop that accepted and will never answer.
+const RPC_REPLY_FLOOR_SECS: u64 = 300;
+/// Added to a wait the request itself carries, so the desktop's own
+/// timeout answer always arrives before the CLI gives up.
+const RPC_REPLY_MARGIN_SECS: u64 = 30;
+
+/// How long `rpc_via` waits for the reply line. A request that tells the
+/// desktop how long to wait (`wait_timeout_seconds` on a blocking
+/// `feed.push`, `timeout_ms` on the browser verbs) gets that wait plus
+/// `RPC_REPLY_MARGIN_SECS`, never less than the floor.
+fn reply_deadline(params: &Value) -> std::time::Duration {
+    let carried_secs = params
+        .get("wait_timeout_seconds")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            params
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .map(|ms| ms.div_ceil(1000))
+        });
+    let secs = carried_secs.map_or(RPC_REPLY_FLOOR_SECS, |s| {
+        s.saturating_add(RPC_REPLY_MARGIN_SECS).max(RPC_REPLY_FLOOR_SECS)
+    });
+    std::time::Duration::from_secs(secs)
+}
+
 async fn rpc_via<S>(
     stream: S,
     method: &str,
     params: Value,
     token: Option<&str>,
     started: std::time::Instant,
+) -> Result<Value, String>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    let deadline = reply_deadline(&params);
+    rpc_via_within(stream, method, params, token, started, deadline).await
+}
+
+/// `rpc_via` with the reply deadline as an argument, so a test can pass a
+/// short one.
+async fn rpc_via_within<S>(
+    stream: S,
+    method: &str,
+    params: Value,
+    token: Option<&str>,
+    started: std::time::Instant,
+    limit: std::time::Duration,
 ) -> Result<Value, String>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -1672,9 +1767,17 @@ where
         .map_err(|e| e.to_string())?;
     writer.flush().await.ok();
     let mut response = String::new();
-    buf.read_line(&mut response)
-        .await
-        .map_err(|e| e.to_string())?;
+    // A desktop that accepted the connection and never answers must not
+    // hold the CLI forever.
+    match tokio::time::timeout(limit, buf.read_line(&mut response)).await {
+        Ok(r) => r.map_err(|e| e.to_string())?,
+        Err(_) => {
+            return Err(format!(
+                "no reply from the ymux app within {}s",
+                limit.as_secs()
+            ))
+        }
+    };
     record_rpc_phase(&RPC_REPLY_MS, reply_started);
     // Rule #1: a reply can carry pane text, so the error gets its size only.
     let resp: Value = serde_json::from_str(response.trim())
@@ -3147,7 +3250,11 @@ async fn real_main() -> ExitCode {
                             // after the connect retry — decide with the
                             // CLI's static policy so Claude keeps moving on
                             // safe defaults rather than denying everything.
-                            let (decision, reason) = static_fallback_decision(&payload);
+                            // A desktop that ANSWERED with an error is not
+                            // unreachable: a Gate verdict then asks instead
+                            // of allowing.
+                            let (decision, reason) =
+                                static_fallback_decision(&payload, desktop_answered(&e));
                             // Rule #1: never log `reason` (can embed command
                             // text). Metadata only — the error kind is safe.
                             hook_log(
@@ -3334,6 +3441,49 @@ async fn real_main() -> ExitCode {
             eprintln!("error: {}", e);
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod rpc_reply_deadline_tests {
+    use super::*;
+    use serde_json::json;
+
+    // Pins D15: a peer that accepts and never answers ends in an error.
+    // Before the deadline this read never returned.
+    #[tokio::test]
+    async fn a_silent_peer_ends_in_a_timeout_error() {
+        // `_peer` stays open for the whole call: no reply and no EOF.
+        let (client, _peer) = tokio::io::duplex(1024);
+        let call = rpc_via_within(
+            client,
+            "list-workspaces",
+            json!({}),
+            None,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(50),
+        );
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), call)
+            .await
+            .expect("rpc_via must give up by itself");
+        let err = got.expect_err("a silent peer is an error");
+        assert!(err.starts_with("no reply from the ymux app"), "got: {err}");
+        // port_watch reads "connect " as a dial failure and "rpc error" as an
+        // answer; a timeout is neither.
+        assert!(!err.starts_with("connect ") && !err.starts_with("rpc error"));
+    }
+
+    // Pins D15: the deadline is never shorter than a wait the caller asked
+    // the desktop for (a gate card, a browser wait).
+    #[test]
+    fn the_deadline_outlasts_the_callers_own_wait() {
+        let secs = |v: Value| reply_deadline(&v).as_secs();
+        assert_eq!(secs(json!({})), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "wait_timeout_seconds": 5 })), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "wait_timeout_seconds": 600 })), 630);
+        assert_eq!(secs(json!({ "timeout_ms": 10_000 })), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "timeout_ms": 900_001 })), 931);
+        assert_eq!(secs(json!({ "timeout_ms": u64::MAX })), u64::MAX / 1000 + 1 + 30);
     }
 }
 
@@ -3556,5 +3706,51 @@ mod env_file_tests {
         // handshake; the server would reject it anyway.
         let m = map(&[("YMUX_SOCKET_ADDR", "127.0.0.1:44495")]);
         assert!(refreshed_endpoint_from(&m, "127.0.0.1:1").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hook_fallback_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn bash(cmd: &str) -> Value {
+        json!({ "tool_name": "Bash", "tool_input": { "command": cmd } })
+    }
+
+    #[test]
+    fn only_a_reply_from_the_desktop_counts_as_answered() {
+        assert!(desktop_answered("rpc error: {\"code\":-32000,\"message\":\"x\"}"));
+        assert!(desktop_answered("bad response: expected value at line 1 column 1 (7 bytes)"));
+        // A connection closed before any reply is a transport failure.
+        assert!(!desktop_answered("bad response: EOF while parsing a value at line 1 column 0 (0 bytes)"));
+        assert!(!desktop_answered("connect tcp 127.0.0.1:1: connection refused"));
+        assert!(!desktop_answered("no attempts"));
+        // A hung app is neither an answer nor a reason to push again.
+        let hung = "no reply from the ymux app within 630s";
+        assert!(!desktop_answered(hung));
+        assert!(reply_timed_out(hung));
+        assert!(!reply_timed_out("connect tcp 127.0.0.1:1: connection refused"));
+        assert!(!desktop_answered(""));
+    }
+
+    #[test]
+    fn a_gate_verdict_asks_when_the_desktop_answered_with_an_error() {
+        let (decision, _) = static_fallback_decision(&bash("git push --force origin main"), true);
+        assert_eq!(decision, "ask");
+    }
+
+    #[test]
+    fn a_gate_verdict_still_allows_when_the_desktop_is_unreachable() {
+        let (decision, _) = static_fallback_decision(&bash("git push --force origin main"), false);
+        assert_eq!(decision, "allow");
+    }
+
+    #[test]
+    fn block_and_auto_do_not_depend_on_the_desktop() {
+        for answered in [true, false] {
+            assert_eq!(static_fallback_decision(&bash("rm -rf /"), answered).0, "deny");
+            assert_eq!(static_fallback_decision(&bash("ls -la"), answered).0, "allow");
+        }
     }
 }

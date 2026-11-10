@@ -224,6 +224,12 @@ func (s *Service) handleEvents(w http.ResponseWriter, r *http.Request) {
 			if json.Unmarshal(data, &ev) != nil || ev.Type != "feed.decide" {
 				continue // a frame we don't understand is not fatal
 			}
+			// The same rule as the REST route: a client answers allow or
+			// deny. "timeout" is the daemon's own timer, never a client's.
+			if !clientDecision(ev.Decision) {
+				logger.Warn("feed.decide ignored: decision is not allow or deny", "request", ev.RequestID)
+				continue
+			}
 			s.hooks.decide(ev.RequestID, ev.Decision, "events")
 		}
 	}()
@@ -253,8 +259,13 @@ func (s *Service) handleEvents(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// clientDecision reports whether d is a decision a client may send, over the
+// events socket or REST alike.
+func clientDecision(d string) bool { return d == "allow" || d == "deny" }
+
 // handleDecide is POST /api/v2/feed/{request_id}/decide — the same decision
-// as the events frame, for a client that is not holding the socket.
+// as the events frame, for a client that is not holding the socket. 404 when
+// no card has that id, 409 when it was already decided (the first answer won).
 func (s *Service) handleDecide(w http.ResponseWriter, r *http.Request) {
 	if s.hooks == nil {
 		http.Error(w, "feed unavailable", http.StatusServiceUnavailable)
@@ -264,13 +275,18 @@ func (s *Service) handleDecide(w http.ResponseWriter, r *http.Request) {
 		Decision string `json:"decision"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
-	if body.Decision != "allow" && body.Decision != "deny" {
+	if !clientDecision(body.Decision) {
 		http.Error(w, `decision must be "allow" or "deny"`, http.StatusBadRequest)
 		return
 	}
 	id := r.PathValue("request_id")
-	if !s.hooks.decide(id, body.Decision, "rest") {
-		// Unknown, already decided, or timed out — the first answer won.
+	switch s.hooks.decideFeed(id, body.Decision, "rest") {
+	case decideApplied:
+	case decideNotPending:
+		// Decided elsewhere or timed out — the first answer won.
+		http.Error(w, "request already decided", http.StatusConflict)
+		return
+	default:
 		http.Error(w, "no pending request with that id", http.StatusNotFound)
 		return
 	}
