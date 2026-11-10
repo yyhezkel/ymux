@@ -348,8 +348,14 @@ announcing the desktop's event on the events socket:
   changed, LISTEN + loopback/bind-any only, ≥1024, not 22, not `YMUX_PORTFORWARD_EXCLUDE`,
   and never the daemon's own API or hook-listener port. Events `port-detected` {addr,
   remote_port, family} / `port-undetected` {remote_port} — the desktop's, minus
-  workspace_id; `hello.ports` is the current set. A `port.opened`/`port.closed` RPC lands
-  in the same set. Detection only — v1 forwards nothing.
+  workspace_id; `hello.ports` is the current set. The set is keyed per family + address
+  but `port-undetected` names only the number (and clients key on it), so it is sent
+  **only when the port's last record goes** — a v4 close with the v6 listener still up
+  announces nothing. A `port.opened`/`port.closed` RPC lands in the same set, through the
+  scan's own filter (`reportable`: a privileged, excluded or daemon-own port answers
+  `{ok, detected:false}` and is not recorded). The scan stays the truth: an RPC entry it
+  does not see goes at the next diff, since a watcher that dies never sends
+  `port.closed`. Detection only — v1 forwards nothing.
 - Wiring: `main.go` calls `SetDataDir` and `StartPortWatch` after `hooks.Start`, so the
   listener's port is known before the first scan.
 

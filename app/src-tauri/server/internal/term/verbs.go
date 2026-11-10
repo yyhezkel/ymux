@@ -236,6 +236,11 @@ func (t termHookTarget) verb(method string, raw json.RawMessage) (res any, err *
 			family = "v4"
 		}
 		if r.ports != nil {
+			// The scan's own filter (privileged, SSH, excluded, the daemon's
+			// own ports): what it would never report, an RPC may not add.
+			if !r.ports.reportable(p.Port) {
+				return map[string]any{"ok": true, "detected": false}, nil, true
+			}
 			r.ports.opened(ListenPort{Addr: addr, RemotePort: p.Port, Family: family})
 		}
 		return map[string]any{"ok": true, "detected": true}, nil, true
