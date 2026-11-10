@@ -6995,6 +6995,24 @@ body.ymux-dragging .pane-conn {
   border-radius: 4px;
   padding: 6px 8px;
 }
+.wt-recipe-code {
+  display: block;
+  margin: 0;
+  font-family: var(--w-font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wt-recipe-output {
+  max-height: 200px;
+  overflow: auto;
+}
+.wt-recipe-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .ticket-modal-footer {
   flex: 0 0 auto;
   display: flex;

@@ -164,6 +164,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `set_cwd` patch the leaf and restart the poll; `refresh` emits once; `workspace_close_pane`
   stops it; a pane gone from every layout stops itself. `diff_pane_worktrees` reuses the F1
   git endpoint; `workspace_create_project_worktree` → `/api/v2/git/worktree-add`;
+  `worktree_recipe_preview` → `null` (the browser runs no recipes, so the prompt never opens);
   `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
   path, or the existing one activated). The legacy local-only worktree block in
   `CreateWorkspaceModal` is hidden without `localPanes`.

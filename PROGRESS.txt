@@ -8025,3 +8025,20 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   PRs (all draft, not merged): #84 port-watch 3 s + hook timing + 1000 ms inject budget; #85 brief protocol at SessionStart; #86 fmtBytes + dead code; #87 palette token search + hints; #88 overview prefers the Queue verdict; #89 smart-bidi fixes + profile setting; #90 tauri 2.11.6, zip 9.5, npm advisories, Dependabot; #91 workspaces merge base + single-instance gate; #92 shared SSH exec core (fixes the EOF exit-status race); #93 daemon 2.20.0 context.inject + Block rules in the browser + golden fixtures; #94 jump palette; #95 diff line notes; #96 worktree recipe; #97 ymux wait/read/worktree; #99 macOS arm64 runner to macos-15; #100 russh 0.65.1.
   Orca idea #1 (usage-limit auto-continue) closed at the gate: Claude Code has it natively.
   Result: compiles on CI, untested live (Rule #14).
+
+2026-11-10 | Monthly cargo bump (Dependabot PR #103) made to compile
+  Cause: russh-sftp 2.1.2 made SftpSession::set_timeout synchronous; ssh_exec.rs open_sftp awaited it (E0277), so #103 was red on rust and both macOS legs.
+  Files: Cargo.lock (Dependabot's commit, cherry-picked onto current main), crates/ymux-core/src/ssh_exec.rs, three Cargo.toml (russh-sftp "2" -> "~2.1.2", which also encodes the documented hold below 2.4), docs/vault/build-glue.md, docs/vault/crates.md.
+  Result: compiles-untested until CI.
+
+2026-11-10 | Dependabot alerts: 19 open on main, and why they stayed open
+  Cause: (1) "Dependabot security updates" was disabled in the repo settings, so the *-security groups in dependabot.yml never opened a PR; (2) sdk-gen/ and sdk/typescript/ were not in dependabot.yml and held 12 of the 19 alerts; (3) the monthly cargo PR #103 is red: russh-sftp 2.1.2 made set_timeout sync and ssh_exec.rs:327 still awaits it.
+  Files: sdk-gen/package-lock.json (lock refresh: quicktype was a stale entry, not in package.json; 154 -> 47 packages), sdk/typescript/package-lock.json (ws 8.21+), .github/dependabot.yml (npm entry now covers the three dirs), FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md.
+  Result: `npm audit` reports 0 in both SDK dirs. No vault-covered file changed. Generated-SDK drift is checked by CI (go job), not run locally.
+
+2026-11-09 | Backlog run merged
+  Task: merge the 2026-11-09 backlog and Orca PRs to main, in order, each with green CI.
+  Merged: #99 #91 #92 #101 #100 #93 #84 #85 #86 #87 #94 #88 #89 #90 #95 #96 #97.
+  Left open: #83 (not this run). Dependabot PRs and alerts were handled in a separate session (#105-#109).
+  #101 merged with `rust` cancelled during the GitHub Actions outage; docs only. The gate script was fixed after it.
+  Result: compiles on CI, untested live (Rule #14). No release cut. Steps: knowledge/research/ymux-2026-11-09-live-checks.md.

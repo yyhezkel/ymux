@@ -393,6 +393,123 @@ async fn capture_zellij(names: &[String]) -> Vec<String> {
     out
 }
 
+// ─── Pane read (`pane.scrollback`) ───────────────────────────────────────────
+
+pub(crate) const SCROLLBACK_DEFAULT_LINES: usize = 200;
+pub(crate) const SCROLLBACK_MAX_LINES: usize = 10_000;
+/// Hang guard for one capture. `--full` on a large zellij buffer is slower
+/// than the viewport dump the overview does.
+const SCROLLBACK_TIMEOUT_SECS: u64 = 20;
+
+/// Absent, zero or too large never reaches a shell: the value is always one
+/// of the integers in range.
+pub(crate) fn clamp_scrollback_lines(requested: Option<u64>) -> usize {
+    match requested {
+        None | Some(0) => SCROLLBACK_DEFAULT_LINES,
+        Some(n) => usize::try_from(n)
+            .unwrap_or(SCROLLBACK_MAX_LINES)
+            .min(SCROLLBACK_MAX_LINES),
+    }
+}
+
+/// The exec string for the SSH and WSL paths (both accept only a script).
+/// `=name:`, colon included: see `build_ssh_summary_script`. `2>/dev/null`
+/// keeps tmux's message out of the text; the exit code reports the failure.
+fn tmux_capture_script(name: &str, lines: usize) -> String {
+    format!(
+        "tmux capture-pane -p -t {} -S -{lines} 2>/dev/null",
+        shell_quote(&format!("={name}:"))
+    )
+}
+
+/// Plain text, the last `lines` lines. tmux pads a pane to its full height
+/// and `-S -N` adds the screen to the N history lines, so the tail is cut
+/// here and not by the capture.
+fn tail_capture(raw: &str, lines: usize) -> String {
+    let clean = strip_ansi(raw);
+    let mut all: Vec<&str> = clean.lines().map(|l| l.trim_end_matches('\r')).collect();
+    while all.last().is_some_and(|l| l.trim().is_empty()) {
+        all.pop();
+    }
+    all[all.len().saturating_sub(lines)..].join("\n")
+}
+
+/// Read a pane through its multiplexer. The backend keeps no PTY buffer
+/// (Rule #1), so a pane without a multiplexer session has nothing to read
+/// and that is an error, never an empty success.
+///
+/// Rule #1: the text goes to the caller only. Errors and logs carry the exit
+/// code at most.
+pub(crate) async fn pane_scrollback(
+    state: &AppState,
+    pane_id: &str,
+    lines: usize,
+) -> Result<String, String> {
+    let sid = crate::lock_or_recover(&state.core.pane_sessions)
+        .get(pane_id)
+        .cloned()
+        .ok_or_else(|| format!("pane {pane_id} not connected"))?;
+    let exited = |code: String| format!("pane.scrollback: capture exited {code}");
+    let raw = match crate::mux_target_for_session(state, &sid) {
+        KillTarget::None => {
+            return Err(format!(
+                "pane {pane_id} has no multiplexer session; there is no scrollback to read"
+            ))
+        }
+        KillTarget::Ssh(handle, name) => {
+            let (code, out) = crate::worktrees::ssh_exec_capture(
+                &handle,
+                &tmux_capture_script(&name, lines),
+                SCROLLBACK_TIMEOUT_SECS,
+            )
+            .await?;
+            if code != 0 {
+                return Err(exited(code.to_string()));
+            }
+            out
+        }
+        KillTarget::Wsl(distro, name) => {
+            let (code, out) = crate::local_setup::wsl_exec(
+                distro.as_deref(),
+                None,
+                &tmux_capture_script(&name, lines),
+            )
+            .await?;
+            if code != 0 {
+                return Err(exited(code.to_string()));
+            }
+            out
+        }
+        #[cfg(not(windows))]
+        KillTarget::LocalUnix(name) => {
+            let target = format!("={name}:");
+            let history = format!("-{lines}");
+            match crate::local_tmux_output(&["capture-pane", "-p", "-t", &target, "-S", &history])
+                .await?
+            {
+                (Some(0), out) => out,
+                (code, _) => return Err(exited(format!("{code:?}"))),
+            }
+        }
+        #[cfg(windows)]
+        KillTarget::Zellij(name) => {
+            let mut c = crate::local_setup::hidden_cmd(&crate::zellij_exe());
+            for a in crate::zellij_args_dump_scrollback(&name) {
+                c.arg(a);
+            }
+            let out = tokio::time::timeout(Duration::from_secs(SCROLLBACK_TIMEOUT_SECS), c.output())
+                .await
+                .map_err(|_| "pane.scrollback: zellij timed out".to_string())?
+                .map_err(|e| format!("pane.scrollback: spawn zellij: {e}"))?;
+            if !out.status.success() {
+                return Err(exited(format!("{:?}", out.status.code())));
+            }
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        }
+    };
+    Ok(tail_capture(&raw, lines))
+}
+
 // ─── Commands ────────────────────────────────────────────────────────────────
 
 fn workspace_connection(state: &AppState, workspace_id: &str) -> Result<Option<Connection>, String> {
@@ -641,6 +758,34 @@ pub(crate) async fn sessions_kill_by_name(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Pins: the requested count is bounded before it reaches a capture.
+    #[test]
+    fn scrollback_lines_are_clamped() {
+        assert_eq!(clamp_scrollback_lines(None), SCROLLBACK_DEFAULT_LINES);
+        assert_eq!(clamp_scrollback_lines(Some(0)), SCROLLBACK_DEFAULT_LINES);
+        assert_eq!(clamp_scrollback_lines(Some(7)), 7);
+        assert_eq!(clamp_scrollback_lines(Some(u64::MAX)), SCROLLBACK_MAX_LINES);
+    }
+
+    // Pins: `=name:` keeps its colon and the name is shell-quoted.
+    #[test]
+    fn tmux_capture_script_quotes_exact_target() {
+        assert_eq!(
+            tmux_capture_script("ymux-a", 50),
+            format!("tmux capture-pane -p -t {} -S -50 2>/dev/null", shell_quote("=ymux-a:"))
+        );
+        let hostile = tmux_capture_script("a'; rm -rf ~; '", 1);
+        assert!(hostile.contains(&shell_quote("=a'; rm -rf ~; ':")));
+    }
+
+    // Pins: blank padding goes, the tail is exact, ANSI is stripped.
+    #[test]
+    fn tail_capture_returns_last_lines() {
+        assert_eq!(tail_capture("a\nb\nc\n\n  \n", 2), "b\nc");
+        assert_eq!(tail_capture("\x1b[31ma\x1b[0m\r\n", 5), "a");
+        assert_eq!(tail_capture("", 5), "");
+    }
 
     fn names(n: &[&str]) -> Vec<String> {
         n.iter().map(|s| s.to_string()).collect()

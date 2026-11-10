@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/src/workspace_browser.rs
   - app/src-tauri/src/browser_diag.js
   - app/src-tauri/src/worktrees.rs
+  - app/src-tauri/src/worktree_recipe.rs
   - app/src-tauri/src/workspaces_merge.rs
   - app/src-tauri/src/notes.rs
   - app/src-tauri/src/tickets.rs
@@ -190,8 +191,12 @@ messages apart instead would break on localization) or when no SSH session is li
 A directory git rejects probes to `Ok(false)` and pins as a plain demoted folder —
 "Check for a git repository" promotes it after `git init`, and THAT re-check still
 uses `git_probe_worktrees`, the older always-fatal variant, because there the user
-asked "is this a repo?" and git's verbatim message is the answer. Every git call
-dispatches on that workspace's connection:
+asked "is this a repo?" and git's verbatim message is the answer.
+`create_project_worktree` is the body of `workspace_create_project_worktree` and also
+serves RPC `worktree.create`; `reject_git_option` stops a base or target that git would
+parse as an option. `validate_branch_name` is the strict ref check for the RPC caller
+only (the GUI keeps `sanitize_branch_name`). Every git call dispatches on that
+workspace's connection:
 
 | connection | transport |
 |---|---|
@@ -207,6 +212,24 @@ read the output instead of an error; `run_git_over` still folds a non-zero code 
 `git_error`. **`exec_script_over`** runs one arbitrary `sh` script on the host (WSL/SSH
 only — the SSH arm wraps it in `sh -c` so a fish login shell can't choke on it), which is
 how the Diff pane fetches status + diff + untracked-file diffs in a single round trip.
+
+**`worktree_recipe.rs`** — the repo-committed `.ymux/worktree.json` (format and user rules:
+`docs/CONFIG.md`). `ProjectFolderModal` calls it after `workspace_create_project_worktree`
+succeeds. `worktree_recipe_preview` finds the worktree **by branch in git's own list** (the
+frontend never names a path) and reads the blob `HEAD:.ymux/worktree.json` through
+`run_git_raw`, so every transport works and a symlink or a dirty edit changes nothing.
+`worktree_recipe_run` re-reads it, refuses a sha256 that differs from the prompt's, and needs
+an approval for host + main checkout + sha256 (`worktree-recipe-approvals.json`, Rule #7, a
+corrupt file reads as nothing approved). The Local arm copies natively
+(`copy_one_local`: `symlink_metadata` on each component on both sides, `create_new`). SSH/WSL
+run the POSIX twin (`copy_script`) through `exec_script_over`, because **`exec_script_over`
+has no Local arm**. Paths are validated as strings, not with `std::path`, because the app's
+OS is not the host's. The setup runs through `sh -lc` with its exit code as a marker on the
+last line and the output cut by `tail -c` on the host, so a noisy command cannot fill memory
+and `ssh_exec_capture`'s unbounded buffer stays small. **Local Windows copies but does not run
+the setup**: a recipe is `sh` syntax, and `cmd.exe` would change its meaning after approval.
+A failing setup is `Ok(result)`, not `Err`, and nothing is deleted. Output goes to the dialog
+only (Rule #1); logs get counts and the exit code.
 
 **`workspaces_merge.rs` (415)** — the three-way merge `save_to_disk` calls. A save is not
 "dump what I have": it re-reads the file and, if it changed since we last touched it,
