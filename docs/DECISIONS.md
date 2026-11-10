@@ -25,6 +25,37 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-11-10 — log writer on Windows still tells a rotated debug.log apart by length (D18, Windows half)
+- **Context:** D18 of the implicit-state-machine inventory. `write_to_current` in
+  `crates/ymux-core/src/log_writer.rs` must notice that another process rotated
+  `debug.log` away from under its open handle. PR #110 fixed it on unix by comparing
+  `(dev, ino)`. On Windows it still compares file length, so a new `debug.log` that happens
+  to reach the same length keeps this writer appending to `debug.log.1`.
+- **Options:** A) add `windows-sys` to `ymux-core` (the app crate already depends on it)
+  and compare the volume serial + file index from `GetFileInformationByHandle`. B) wait for
+  std's `MetadataExt::file_index` / `volume_serial_number` to stabilise. C) leave it: the
+  window is two instances on one config dir plus an equal-length coincidence, and the cost
+  is lines landing in `.1`, not lost. Creation time is NOT an option: NTFS tunnelling hands
+  the old creation time to a new file of the same name.
+- **Status / Decision:** open, Windows behaviour unchanged. A is a new dependency in a leaf
+  crate, which is why it was not done in the fix PR. Needs Yossi's call.
+- **Outcome / Commit:** unix half in PR #110 (1b6d76c0).
+
+### 2026-11-10 — chat sessions: `stInterrupted` and the resume path are dead code (D4 c, e)
+- **Context:** D4 of the same inventory, verified in code. In
+  `server/internal/chat/chat_session.go` the status `stInterrupted` is declared and never
+  assigned, and `spawn` is only ever called with `resumeID=""`, so its resume branch never
+  runs. PR #110 gave the status one guarded transition function and left these two alone,
+  because removing them deletes a planned feature and wiring them is a feature.
+- **Options:** A) remove both, so the status set is exactly what the code can reach.
+  B) wire them: an interrupt verb for the phone that sets `stInterrupted`, and resume of a
+  stopped chat session through `spawn(resumeID)`. C) keep as placeholders with a comment
+  saying they are unreachable.
+- **Status / Decision:** open, nothing changed. Needs Yossi's call; B is product scope.
+  Related and also open: two concurrent hooks on one chat session, where the second sees
+  `prev=waiting_hook` and restores nothing.
+- **Outcome / Commit:** —
+
 ### 2026-11-10 — SSH auth: an explicit key that cannot be read or decoded ends the ladder (D20)
 - **Context:** found by the 2026-11-10 implicit-state-machine inventory. `authenticate` in
   `crates/ymux-ssh/src/lib.rs` tries agent → explicit key file → default `~/.ssh/id_*` →
