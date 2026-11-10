@@ -836,6 +836,18 @@ instead of writing its own event, so a live event cannot overtake a replay in pr
 or another `Notify`'s lower seq. The handler writes `hello` **before** it registers the
 connection, so no event can precede it.
 
+**`config/migrate.go` — the data-dir migration** (`MigrateDataDir`, called from `main.go`
+for each legacy base; load-bearing, see CLAUDE.md). The `token` file is the "already
+migrated" test: legacy has one and current does not, or nothing happens. Fast path: one
+atomic rename of the whole directory. Slow path (current already has content, e.g. the
+installer made it): entries move one by one, **and a failed entry does not stop the
+loop** — every entry is attempted and the failures come back joined (`migrated=true`
+with an error; `main.go` logs it and boots on). It used to return at the first failure,
+which stranded everything sorting after it: with `token` across no later boot returns,
+and with `token` not across the daemon mints a fresh one and no later boot returns
+either. That is also why `token` is not simply moved last. An entry that cannot move
+stays in the legacy dir and is not retried.
+
 **`logging/logging.go`** — one line format across every subsystem: local time with UTC
 offset, LEVEL padded to 5, component like `[SRV:CHAT]`, then slog attrs as trailing
 `key=val` (quoted when the value holds spaces, quotes, or `=`). The process minimum level
