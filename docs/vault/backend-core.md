@@ -589,6 +589,14 @@ list command. The module owns what the picker never needed:
   returns `Err` when the script did not finish (the attach guard reads a short list as
   "session gone"); `pane_kill_session` keeps its 800 ms and reports no status as
   `attempted`, never `killed`; the Claude session listing ignores the exit on purpose.
+- **`ClaudeSessionInfo` carries `title`, `git_branch` and `model` (history search, Orca
+  idea #9).** The local arm reads them in `peek_claude_jsonl` from the lines its head and
+  tail windows read anyway: the latest `summary` / `ai-title` / `custom-title` line, the
+  latest `gitBranch`, and `message.model` of the assistant lines up to the one with text
+  (`<synthetic>` is dropped). It mirrors `peekClaudeJSONL` in the daemon. The SSH arm does
+  not change its shell script: `extract_json_str_field` takes branch and model out of the
+  600-byte fragments it already prints, best effort, and it sends no title. The desktop
+  does not filter; the picker filters the rows it gets (`frontend-shell.md`).
 - **`ssh_handle_for_machine` is the one session picker** for a workspace: its own session
   first, else a sibling workspace's on the same user@host:port. It takes the workspaces
   lock, so never call it while holding that guard.

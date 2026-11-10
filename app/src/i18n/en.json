@@ -1117,6 +1117,8 @@
   "claude_picker.title": "Resume Claude Code session",
   "claude_picker.loading": "Loading…",
   "claude_picker.empty": "No Claude Code sessions found on this host.",
+  "claude_picker.noMatch": "No sessions match this search.",
+  "claude_picker.searchLabel": "Search sessions by title, folder, branch, model or text",
   "claude_picker.user_prefix": "U:",
   "claude_picker.assistant_prefix": "A:",
   "_phase24d_note": "Phase 24.D removed ws_header.add_chat / .add_claudelog and the chat.* / cl.* key namespaces with the ClaudeChat (Phase 22) + ClaudeLog (Phase 24.B) panes.",

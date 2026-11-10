@@ -877,9 +877,11 @@ export class WebBackend implements Backend {
     pane_set_claude_running: (a) =>
       this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { claude_running: a.running === true })),
     // The resume picker: the daemon reads ~/.claude/projects on its own box.
+    // `query` is the history search; the daemon filters before the limit.
     pane_list_claude_sessions: (a) => {
       const q = new URLSearchParams({ limit: String(num(a.limit, 30)) });
       if (str(a.projectPath)) q.set("project_path", str(a.projectPath));
+      if (str(a.query).trim()) q.set("q", str(a.query).trim());
       return api("GET", `/api/v2/claude/sessions?${q}`);
     },
     // The Context Rail: the daemon's per-session records (term/context.go);
