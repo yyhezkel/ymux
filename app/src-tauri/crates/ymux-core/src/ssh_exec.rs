@@ -324,7 +324,7 @@ pub async fn open_sftp(handle: &Handle<SshClient>) -> Result<SftpSession, String
     let sftp = SftpSession::new(chan.into_stream())
         .await
         .map_err(|e| format!("sftp init: {e}"))?;
-    sftp.set_timeout(SFTP_REQUEST_TIMEOUT_SECS).await;
+    sftp.set_timeout(SFTP_REQUEST_TIMEOUT_SECS);
     Ok(sftp)
 }
 

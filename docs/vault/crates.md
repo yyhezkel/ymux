@@ -101,7 +101,8 @@ Rules that matter:
 `Drain` is the pure state machine (no I/O, no clock of its own); the tests drive every
 message ordering through it. `open_sftp` is here too: the one SFTP open, with the 60 s
 per-request deadline (russh-sftp's default is 10 s per 255 KiB chunk), used by the app
-crate and by `ymux-bootstrap`.
+crate and by `ymux-bootstrap`. `set_timeout` is a plain call, not awaited: it is
+synchronous from russh-sftp 2.1.2, the floor the manifests set.
 
 ## `ymux-types` (1,019) — pure persistence/wire types
 
