@@ -143,3 +143,36 @@ func TestSessionScopingByDevice(t *testing.T) {
 		t.Fatal("admin must own any session")
 	}
 }
+
+// An issued-but-never-redeemed one-shot is dead once it expires (redeem
+// refuses it), so prune removes the row. A redeemed device keeps that same
+// old expires_at and must survive, as must an unexpired pending row.
+func TestPruneDropsExpiredPendingButNeverActive(t *testing.T) {
+	c, _ := newTestChatAPI(t)
+	expiredID, _ := issueTestDevice(t, c, 1500)
+	liveID, _ := issueTestDevice(t, c, 9_999_999_999)
+	activeID, oneShot := issueTestDevice(t, c, 1500)
+	if _, ok := c.store.redeemDevice(hashToken(oneShot), hashToken(randHex(32)), 1400); !ok {
+		t.Fatal("redeem before expiry failed")
+	}
+
+	c.store.pruneRequests(2000)
+
+	devs, err := c.store.listDevices()
+	if err != nil {
+		t.Fatalf("listDevices: %v", err)
+	}
+	status := map[string]string{}
+	for _, d := range devs {
+		status[d.ID] = d.Status
+	}
+	if _, ok := status[expiredID]; ok {
+		t.Errorf("an expired, never-redeemed pending row survived the prune")
+	}
+	if status[liveID] != "pending" {
+		t.Errorf("an unexpired pending row = %q, want pending", status[liveID])
+	}
+	if status[activeID] != "active" {
+		t.Errorf("a redeemed device with an old expires_at = %q, want active", status[activeID])
+	}
+}

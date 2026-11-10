@@ -199,7 +199,7 @@ func (t termHookTarget) feedPush(raw json.RawMessage) map[string]any {
 		return map[string]any{"request_id": p.RequestID, "decision": "allow", "policy": policyNone}
 	}
 
-	item, ch := r.addCard(p, pane, session, stopBrief, blocking)
+	item, ch := r.addCard(p, e, pane, session, stopBrief, blocking)
 	if ch == nil {
 		return passive
 	}
@@ -215,14 +215,16 @@ func (r *HookRegistry) denyByPolicy(reqID, tool, pattern, pane, session string) 
 		RequestID: reqID, Kind: "passive", Subkind: "policy-block",
 		Title: "⛔ Blocked: " + tool, Summary: "blocked: command contains `" + pattern + "`",
 		Payload: json.RawMessage(`{}`),
-	}, pane, session, nil, false)
+	}, nil, pane, session, nil, false)
 	logger.Info("tool call denied by a block rule", "pane", pane, "tool", tool)
 	return map[string]any{"request_id": item.RequestID, "decision": "deny", "policy": "block"}
 }
 
 // addCard builds the desktop's card for a hook, stores it and announces it.
-// A blocking card comes back with the channel its decision arrives on.
-func (r *HookRegistry) addCard(p feedPushParams, pane, session string, stopBrief *agent.Brief, blocking bool) (FeedItem, chan string) {
+// A blocking card comes back with the channel its decision arrives on. owner
+// is the session the hook came from (nil for a card nobody waits on); pane and
+// session are the copies of its fields taken under r.mu.
+func (r *HookRegistry) addCard(p feedPushParams, owner *hookEntry, pane, session string, stopBrief *agent.Brief, blocking bool) (FeedItem, chan string) {
 	reqID := p.RequestID
 	if reqID == "" {
 		h, _ := randHex(8)
@@ -252,7 +254,7 @@ func (r *HookRegistry) addCard(p feedPushParams, pane, session string, stopBrief
 			Title: tEn, Summary: sEn, Payload: p.Payload, State: state,
 			CreatedMs: r.now().UnixMilli(), Blocking: blocking,
 		},
-		titleHe: tHe, summaryHe: sHe,
+		titleHe: tHe, summaryHe: sHe, owner: owner,
 	}
 	ch := r.feed.add(entry)
 	logger.Info("feed item added", "request", reqID, "pane", pane, "subkind", p.Subkind, "blocking", blocking)

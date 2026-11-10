@@ -179,17 +179,29 @@ func (r *HookRegistry) paneInUse(paneID string) bool {
 
 // releasePane hands paneID over: whatever live session carried it stops
 // speaking for it (see hookEntry.released). Returns how many were released.
+//
+// The release is also written into the session's own tmux environment
+// (YMUX_RELEASED=1, like YMUX_POLICY), so RecoverHooks after a daemon restart
+// does not hand the pane back to the stale session. Best-effort.
 func (r *HookRegistry) releasePane(paneID string) int {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	n := 0
+	var names []string
 	for _, e := range r.byName {
 		if e.paneID == paneID && !e.released {
 			e.released = true
-			n++
+			names = append(names, e.name)
 		}
 	}
-	return n
+	tm := r.tmux
+	r.mu.Unlock()
+	if tm != nil {
+		for _, name := range names {
+			if err := tm.SetEnv(name, "YMUX_RELEASED", "1"); err != nil {
+				logger.Warn("could not record the release in the session", "pane", paneID, "err", err)
+			}
+		}
+	}
+	return len(names)
 }
 
 // add registers a session that tmux has just created.
@@ -216,18 +228,20 @@ func (r *HookRegistry) Rename(from, to string) {
 // until it times out for a claude that no longer exists.
 func (r *HookRegistry) Remove(name string) {
 	r.mu.Lock()
-	var gone []string
+	var gone []*hookEntry
 	if e, ok := r.byName[name]; ok {
-		gone = append(gone, e.paneID)
+		gone = append(gone, e)
 		delete(r.byName, name)
 	}
 	r.mu.Unlock()
 	r.denyPendingOf(gone)
 }
 
-func (r *HookRegistry) denyPendingOf(paneIDs []string) {
-	for _, pane := range paneIDs {
-		for _, id := range r.feed.pendingFor(pane) {
+// denyPendingOf denies the gates the given sessions left pending — theirs
+// only, matched by entry, never by pane id (see feedStore.pendingFor).
+func (r *HookRegistry) denyPendingOf(gone []*hookEntry) {
+	for _, e := range gone {
+		for _, id := range r.feed.pendingFor(e) {
 			r.decide(id, "deny", "session-gone")
 		}
 	}
@@ -257,12 +271,20 @@ func (r *HookRegistry) SetPolicy(name, policy string) bool {
 // decide resolves a pending card and tells every subscriber. by is who
 // answered, for the log only. False when there was nothing pending to decide.
 func (r *HookRegistry) decide(requestID, decision, by string) bool {
-	if !r.feed.decide(requestID, decision) {
-		return false
+	return r.decideFeed(requestID, decision, by) == decideApplied
+}
+
+// decideFeed is decide with the reason a decision was not applied. Only an
+// applied decision is logged and announced: a late or invalid one changes
+// nothing, so subscribers hear nothing.
+func (r *HookRegistry) decideFeed(requestID, decision, by string) decideOutcome {
+	out := r.feed.decide(requestID, decision)
+	if out != decideApplied {
+		return out
 	}
 	logger.Info("feed decided", "request", requestID, "decision", decision, "by", by)
 	r.hub.publish("feed:item-resolved", same(map[string]string{"request_id": requestID, "decision": decision}))
-	return true
+	return out
 }
 
 // Retain drops every entry whose session tmux no longer reports — a session
@@ -273,10 +295,10 @@ func (r *HookRegistry) Retain(live []Session) {
 		keep[s.Name] = true
 	}
 	r.mu.Lock()
-	var gone []string
+	var gone []*hookEntry
 	for name, e := range r.byName {
 		if !keep[name] {
-			gone = append(gone, e.paneID)
+			gone = append(gone, e)
 			delete(r.byName, name)
 		}
 	}
