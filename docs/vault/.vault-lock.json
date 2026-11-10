@@ -85,7 +85,7 @@
   "cli": {
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
-    "app/src-tauri/cli/src/hooks.rs": "a7f784601e203b2732dbfc0b41959999372e0649686d996498723492f033a182",
+    "app/src-tauri/cli/src/hooks.rs": "460f6940508eda9719b37c9644258a665308030f74731328f88dd2ee24690c85",
     "app/src-tauri/cli/src/main.rs": "6d46a948b54b6df4c2a2c3696a3353917849776f2797840aaf5249024f82b2dc",
     "app/src-tauri/cli/src/port_watch.rs": "d756f79e0e5532ef3e14d18bbe786f2c82886d20df42777589079c090af54fc5",
     "app/src-tauri/cli/src/session_meta.rs": "e51cfa3e0bba15ee820b02e81504431678b79373638091a742058f9814f23640"
@@ -378,12 +378,12 @@
     "app/src-tauri/server/internal/workspace/frames.go": "d554c5113cdc1f8c95473d767d987f71e555c52f1115d8c69fecde7bf162ae75",
     "app/src-tauri/server/internal/workspace/frames_test.go": "49c471bfc1075260b5ae5c8c89e25d9f753f0e0497cff64865330396a7014b3d",
     "app/src-tauri/server/internal/workspace/hook_forward_test.go": "461b88932f5e8edd247688c7679ba805fad37d398dd79b4e88b1788703971269",
-    "app/src-tauri/server/internal/workspace/manager.go": "a1dd23be72f29ac3d72f658a69774c872e08986411addf863c91672df998421e",
+    "app/src-tauri/server/internal/workspace/manager.go": "3bb5c7ce7943ecde9a769d8bc61bb267e1987fd3d9a7f2ba2c197e284c479cd2",
     "app/src-tauri/server/internal/workspace/model.go": "497bdbedbc08d3794a0c4618c189da585004d82a0333305c4ab200b0e1be6f2b",
     "app/src-tauri/server/internal/workspace/push_test.go": "a30d2d193730773b7421653a915d45b47ed380798d5fb8d6593bdda42451c1e7",
     "app/src-tauri/server/internal/workspace/service.go": "0b456671aec7081dbd5d5fd73f2e3ff87036202caf34eaa6d443276697ec705d",
     "app/src-tauri/server/internal/workspace/store.go": "491437bc43ce846847f42c42015bfbeee9b3e26c4da6f653a3d17668330e06e6",
-    "app/src-tauri/server/internal/workspace/subscribe_test.go": "d354ab9b57ea96730cca9df73e388f02d0d6e23fa1e5d2a2052256debfceeb95",
+    "app/src-tauri/server/internal/workspace/subscribe_test.go": "ced1841513263887f0e735060543d41643531f7d26c194258f65e16a6b523645",
     "app/src-tauri/server/internal/workspace/workspace_test.go": "bca63176cf1063cc04650c197e56afaa2555fc5222fa1ac858d382e25826d409",
     "app/src-tauri/server/internal/workspace/ws.go": "fb5d59e0a82314a62cee1951cdbee4023bbc0e2a19c4b7a112070339ddb39dc0",
     "app/src-tauri/server/internal/workspace/ws_test.go": "3b9cd6c7d3db94225a252f0f8b7277069e5964b657c73bf8014cae315ffbe546"
