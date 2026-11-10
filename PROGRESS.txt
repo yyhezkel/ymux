@@ -8024,3 +8024,7 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Cause: russh-sftp 2.1.2 made SftpSession::set_timeout synchronous; ssh_exec.rs open_sftp awaited it (E0277), so #103 was red on rust and both macOS legs.
   Files: Cargo.lock (Dependabot's commit, cherry-picked onto current main), crates/ymux-core/src/ssh_exec.rs, three Cargo.toml (russh-sftp "2" -> "~2.1.2", which also encodes the documented hold below 2.4), docs/vault/build-glue.md, docs/vault/crates.md.
   Result: compiles-untested until CI.
+2026-11-10 | Dependabot alerts: 19 open on main, and why they stayed open
+  Cause: (1) "Dependabot security updates" was disabled in the repo settings, so the *-security groups in dependabot.yml never opened a PR; (2) sdk-gen/ and sdk/typescript/ were not in dependabot.yml and held 12 of the 19 alerts; (3) the monthly cargo PR #103 is red: russh-sftp 2.1.2 made set_timeout sync and ssh_exec.rs:327 still awaits it.
+  Files: sdk-gen/package-lock.json (lock refresh: quicktype was a stale entry, not in package.json; 154 -> 47 packages), sdk/typescript/package-lock.json (ws 8.21+), .github/dependabot.yml (npm entry now covers the three dirs), FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md.
+  Result: `npm audit` reports 0 in both SDK dirs. No vault-covered file changed. Generated-SDK drift is checked by CI (go job), not run locally.
