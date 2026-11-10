@@ -330,6 +330,16 @@ async fn feed_push_with_retry(params: &Value, max_attempts: u32) -> Result<Value
                 );
                 return Err(e);
             }
+            // The reply deadline already outlasted the card's own timeout:
+            // the app accepted the push and hung. A second push would only
+            // wait that long again.
+            Err(e) if reply_timed_out(&e) => {
+                hook_log(
+                    HookLevel::Warn,
+                    &format!("claude-hook feed.push attempt={attempt} no reply within the deadline, not retrying"),
+                );
+                return Err(e);
+            }
             Err(e) => {
                 hook_log(
                     HookLevel::Warn,

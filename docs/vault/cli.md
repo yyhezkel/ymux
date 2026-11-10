@@ -85,6 +85,9 @@ push retries once and then the CLI's static policy decides, Block → deny, Auto
 Gate → allow, because nobody can approve a card. An error the desktop itself replied with
 (`rpc error: …`, or a non-empty reply that is not JSON) means it WAS reached: no retry,
 and a Gate verdict becomes `ask`, which hands the question to Claude Code's own prompt.
+A reply deadline that ran out (`no reply from the ymux app within …`, `reply_timed_out`)
+is a hung app: no retry either, since a second push would wait the whole deadline again,
+and the static policy decides as for an unreachable desktop.
 Until 2026-11-10 every error took the first path, so a reachable desktop that answered
 with an error turned a gated call into an allow.
 
