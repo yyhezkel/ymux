@@ -155,6 +155,19 @@ Because the bootstrap runs `setup-hooks --source bundled` on **every connect**, 
 what makes every migrated install converge on the current CLI with no user action. The
 same rule rewrites an entry missing the spec's `timeout` (`ymux_entry_has_timeout`).
 
+**Events dropped from the spec are pruned (`prune_dropped_events`).** The install loop visits
+spec events only, so `apply_to_settings` first removes our hook commands (`is_ymux_command`,
+both spellings) from every other event in `settings.json`. A hook object goes only if its own
+command is ours; an entry goes only if that empties its `hooks` array, an event key only if
+that empties it, so a user's hook in the same event or entry stays. A spec with no events
+prunes nothing. The last spec applied wins: a `--source bundled` run removes an event only a
+newer github spec has. `Done.removed` / `DryRun.would_remove` report it; a prune alone takes
+the full write path (backup, then write). The legacy `hooks.json` is not pruned.
+
+**One writer for `settings.json`: `write_settings_atomic`** (tmp in `~/.claude`, then rename).
+The stamp-only refresh of `ymux_meta.hooks_version` uses it too and now returns `Error` when
+the write fails; it used to `fs::write` in place and ignore the result.
+
 The hook spec used to be a hardcoded `&[(event, subcmd, matcher)]` slice. It now ships as
 JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
 `hooks/gemini.json` — which the CLI fetches from raw.githubusercontent.com at install
