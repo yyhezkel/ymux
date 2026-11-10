@@ -149,7 +149,12 @@ and emits with `started_at` null. It shares the post-block early return with
 the policy, the Block branch and Stop separately). With `blocking: true` it parks the caller on a
 `tokio::sync::oneshot::Sender` held in `FeedStore.pending`, and `decide_feed` (shared
 with the Tauri `feed_decide` command, defined in `lib.rs`) is what wakes it. That is the
-allow/deny prompt loop. `FEED_MAX_ITEMS_LIMIT = 50` — `lib.rs` has its own copy of the
+allow/deny prompt loop. `decide_feed` goes through the pure `resolve_feed`, the one
+transition out of `Pending`: a decision applies when a hook is still waiting (its sender is
+in `pending`, which covers an item already trimmed out of `items`) or the item is still
+`Pending`; a later decision for the same request is a no-op (no repaint, no
+`feed:item-resolved`, a debug line), and a `Passive` item is never decided. The Go daemon's
+`feedStore.decide` follows the same rule. `FEED_MAX_ITEMS_LIMIT = 50` — `lib.rs` has its own copy of the
 constant.
 
 ## Briefs (`brief.rs`)
