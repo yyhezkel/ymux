@@ -85,9 +85,9 @@
   "cli": {
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
-    "app/src-tauri/cli/src/hooks.rs": "797d32d03f9f610dfca9438674964999117f38e5f1fa190aa670eebf557e0240",
-    "app/src-tauri/cli/src/main.rs": "313733700b35c0f7737a28212009573d6386495e2b783e289a930e2e70ac2e76",
-    "app/src-tauri/cli/src/port_watch.rs": "2cbe1c091f5f4b7ae79c54bee7dff231f0bb528e162e4ad9c8673b1711fe286c",
+    "app/src-tauri/cli/src/hooks.rs": "a7f784601e203b2732dbfc0b41959999372e0649686d996498723492f033a182",
+    "app/src-tauri/cli/src/main.rs": "6d46a948b54b6df4c2a2c3696a3353917849776f2797840aaf5249024f82b2dc",
+    "app/src-tauri/cli/src/port_watch.rs": "d756f79e0e5532ef3e14d18bbe786f2c82886d20df42777589079c090af54fc5",
     "app/src-tauri/cli/src/session_meta.rs": "e51cfa3e0bba15ee820b02e81504431678b79373638091a742058f9814f23640"
   },
   "crates": {
@@ -95,12 +95,12 @@
     "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "4665e48d31d2986a8c22702db4c729bcce47d29ff9e86f37d165acaee4c280bd",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "cdeb70c2428ae65eed65142169b4fa5f1e971671e528b2b9117fde495df1474c",
-    "app/src-tauri/crates/ymux-core/src/log_writer.rs": "f664cf8098b2310c9068551f8381d441cbed774b1065f7144485843b841855a6",
+    "app/src-tauri/crates/ymux-core/src/log_writer.rs": "24e1930dd5a3161f2b402fcdac5906b04b2c495a9898baba988bc583eacb8bda",
     "app/src-tauri/crates/ymux-core/src/ssh_exec.rs": "2cb225125a6366385e4fb05ebe9d6ca78f1c943094dedd94ebcef9a2e7c1a65f",
     "app/src-tauri/crates/ymux-policy/src/lib.rs": "2176c18ab6c9cb515cbe10ab84179af8b7b93049e56cc5b873434c525c07fa9f",
     "app/src-tauri/crates/ymux-protocol/src/lib.rs": "48c14d3ed87410097ffb2d28fdf6d301b1ccf8cd230018bda88e90e8329574c8",
     "app/src-tauri/crates/ymux-ssh/src/lib.rs": "0f73f8678f866be603b74dc9fc02d23ea1a9d22cb99ef33e917395c6a0912d36",
-    "app/src-tauri/crates/ymux-tunnel/src/lib.rs": "896dcb6c513d00140d537518d2693ca6cba8c7405997b3375c8ce426435d9176",
+    "app/src-tauri/crates/ymux-tunnel/src/lib.rs": "aeb647a40da932d521fd5377b10e50dcac0625639c96f72c0ef17723e8bf1915",
     "app/src-tauri/crates/ymux-types/src/lib.rs": "a9c0cd343fc3448a62f9ff77ea7e4ba1c43ab57f0c7c59d31549dc2c3e19e306"
   },
   "frontend-flows": {
