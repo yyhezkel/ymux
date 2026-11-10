@@ -212,12 +212,19 @@ func (s *Store) CreatePending(p PendingRequest) error {
 	return err
 }
 
+// notExpired is the SQL test for a pending row that can still be answered:
+// timeout_at is a unix-seconds deadline, and 0 means "no deadline" (chat's
+// bridge and the tests pass 0; the CLI's forward passes now + its wait).
+const notExpired = `(timeout_at=0 OR timeout_at>?)`
+
 // ResolvePending atomically records the FIRST answer: the UPDATE only matches
 // while resolved_by is still empty, so exactly one caller wins (idempotent).
+// A row past its timeout_at is refused — whoever asked has stopped waiting,
+// so a late answer must not be recorded as the decision.
 func (s *Store) ResolvePending(reqID, clientID, resolution string) (bool, error) {
 	res, err := s.db.Exec(
-		`UPDATE pending_requests SET resolved_by=?, resolution=? WHERE req_id=? AND resolved_by=''`,
-		clientID, resolution, reqID)
+		`UPDATE pending_requests SET resolved_by=?, resolution=? WHERE req_id=? AND resolved_by='' AND `+notExpired,
+		clientID, resolution, reqID, time.Now().Unix())
 	if err != nil {
 		return false, err
 	}
@@ -233,9 +240,12 @@ func (s *Store) GetPending(reqID string) (PendingRequest, bool) {
 	return p, err == nil
 }
 
+// ListPending returns the session's unanswered requests that can still be
+// answered (an expired one is left out, see notExpired).
 func (s *Store) ListPending(sessionID string) ([]PendingRequest, error) {
 	rows, err := s.db.Query(
-		`SELECT req_id,session_id,type,created_at,timeout_at,resolved_by,resolution FROM pending_requests WHERE session_id=? AND resolved_by='' ORDER BY created_at`, sessionID)
+		`SELECT req_id,session_id,type,created_at,timeout_at,resolved_by,resolution FROM pending_requests WHERE session_id=? AND resolved_by='' AND `+notExpired+` ORDER BY created_at`,
+		sessionID, time.Now().Unix())
 	if err != nil {
 		return nil, err
 	}

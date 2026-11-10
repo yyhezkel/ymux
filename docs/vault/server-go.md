@@ -133,6 +133,12 @@ entry). `fanout` still drops a frame for a full 256-buffer (the log is durable; 
 re-syncs by cursor on reconnect) but now logs it — session, client id, seq and a running
 count, on the first drop and every 100th.
 
+**Pending hook requests expire (`workspace/store.go`).** `pending_requests.timeout_at` is
+a **unix-seconds deadline; 0 means none** (chat's bridge passes 0, the CLI's
+`hooks/forward` passes now + its wait). `ListPending` leaves out a row past its deadline
+and `ResolvePending` refuses it (`notExpired`), so a late phone answer gets `won:false`,
+no `hook_resolved` is broadcast and `hooks-status` stays unresolved. Rows are not deleted.
+
 **`chat/bridge.go`** — the engine↔substrate bridge. The Claude runner was built for the
 retired `/api/claude/*` WebSocket; the new workspace API is a **pure pub/sub substrate**.
 For a `claude_chat` session the bridge lazily spawns a Claude process on the first
