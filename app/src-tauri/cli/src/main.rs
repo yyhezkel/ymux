@@ -305,6 +305,13 @@ fn desktop_answered(err: &str) -> bool {
         || (err.starts_with("bad response: ") && !err.ends_with("(0 bytes)"))
 }
 
+/// `rpc_via_within` gave up waiting for the reply line. The app took the
+/// connection and never answered, so it is not a connection failure and
+/// not an answer either.
+fn reply_timed_out(err: &str) -> bool {
+    err.starts_with("no reply from the ymux app")
+}
+
 /// Phase 66 (66.D.2): feed.push with a small retry on *connection* failure.
 /// Only connection errors retry — a returned `timeout` verdict means we DID
 /// reach the desktop, so it's surfaced as-is (retrying would double the
@@ -3709,6 +3716,11 @@ mod hook_fallback_tests {
         assert!(!desktop_answered("bad response: EOF while parsing a value at line 1 column 0 (0 bytes)"));
         assert!(!desktop_answered("connect tcp 127.0.0.1:1: connection refused"));
         assert!(!desktop_answered("no attempts"));
+        // A hung app is neither an answer nor a reason to push again.
+        let hung = "no reply from the ymux app within 630s";
+        assert!(!desktop_answered(hung));
+        assert!(reply_timed_out(hung));
+        assert!(!reply_timed_out("connect tcp 127.0.0.1:1: connection refused"));
         assert!(!desktop_answered(""));
     }
 
