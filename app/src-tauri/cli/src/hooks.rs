@@ -1254,6 +1254,34 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    // This one fails on the old plain `fs::write`, which writes THROUGH a
+    // symlink: tmp + rename replaces the link and leaves its target alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_stamp_only_refresh_renames_over_the_file_instead_of_writing_into_it() {
+        let (dir, settings, exe) = settings_dir("stamp-rename");
+        let spec = bundled_claude_spec();
+        let _ = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        let mut root = read_json(&settings);
+        root["ymux_meta"]["hooks_version"] = json!("0.0.1");
+        let stale = serde_json::to_string(&root).expect("json");
+        let target = dir.join("real-settings.json");
+        fs::write(&target, &stale).expect("write target");
+        fs::remove_file(&settings).expect("remove settings");
+        std::os::unix::fs::symlink(&target, &settings).expect("symlink");
+
+        let status = apply_to_settings(&dir, &settings, &exe, &spec, false, false);
+        assert!(matches!(status, AgentStatus::Done { unchanged: true, .. }), "got {status:?}");
+        let meta = fs::symlink_metadata(&settings).expect("metadata");
+        assert!(!meta.file_type().is_symlink(), "the rename replaces the link");
+        assert_eq!(fs::read_to_string(&target).expect("read target"), stale);
+        assert_eq!(
+            read_json(&settings)["ymux_meta"]["hooks_version"],
+            json!(spec.ymux_hooks_version)
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn entry_pointing_at_another_binary_is_stale() {
         let exe = "/home/u/.ymux/bin/ymux";

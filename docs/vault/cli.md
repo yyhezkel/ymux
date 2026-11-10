@@ -179,7 +179,9 @@ the full write path (backup, then write). The legacy `hooks.json` is not pruned.
 
 **One writer for `settings.json`: `write_settings_atomic`** (tmp in `~/.claude`, then rename).
 The stamp-only refresh of `ymux_meta.hooks_version` uses it too and now returns `Error` when
-the write fails; it used to `fs::write` in place and ignore the result.
+the write fails; it used to `fs::write` in place and ignore the result. A rename replaces a
+symlinked `settings.json` with a regular file and leaves the link's target untouched, which
+is what the unix-only test observes.
 
 The hook spec used to be a hardcoded `&[(event, subcmd, matcher)]` slice. It now ships as
 JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
