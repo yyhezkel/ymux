@@ -60,6 +60,10 @@ type FeedItem struct {
 type feedEntry struct {
 	item               FeedItem
 	titleHe, summaryHe string
+	// owner is the session whose hook made the card (nil for a card no
+	// session owns). A pane id is not an identity: after replace_pane two
+	// sessions carry the same one.
+	owner *hookEntry
 }
 
 // view renders the card for one subscriber's language.
@@ -129,14 +133,16 @@ func (s *feedStore) decide(requestID, decision string) bool {
 	return ok
 }
 
-// pendingFor lists the pending request ids of one pane — a killed session's
-// approvals are denied rather than left to time out.
-func (s *feedStore) pendingFor(paneID string) []string {
+// pendingFor lists the pending request ids one session's hooks made — a
+// killed session's approvals are denied rather than left to time out. By
+// owner, not pane id: a released session shares its pane id with the session
+// that took the pane over, and must not take that one's gates down with it.
+func (s *feedStore) pendingFor(owner *hookEntry) []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var out []string
 	for _, e := range s.items {
-		if e.item.PaneID == paneID && e.item.State == statePending {
+		if owner != nil && e.owner == owner && e.item.State == statePending {
 			out = append(out, e.item.RequestID)
 		}
 	}

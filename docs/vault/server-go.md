@@ -288,7 +288,8 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
   `POST /api/v2/term/sessions/{name}/policy` — answers a permission request `allow` at
   once and makes **no card**, as the desktop's Auto does. `gate` makes a blocking card and
   waits for a decision: `wait_timeout_seconds` default 120, clamped 1–600; timeout →
-  `"timeout"` (the CLI denies); killing or losing the session → `deny`. The wait runs
+  `"timeout"` (the CLI denies); killing or losing the session → `deny` (that session's own
+  gates only, see `replace_pane` below). The wait runs
   with **no lock held** — `feedPush` copies what it needs under `r.mu` and releases it.
 - **Cards** follow the desktop's rules: `user-prompt-submit` and `notification` never make
   one; the lifecycle subkinds (`stop`, `session-*`, `post-tool-use`, `subagent-stop`,
@@ -686,8 +687,15 @@ assistant line via `extractTextField`, 80 chars + …); the scope is the transcr
 session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
 With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
 hooks get a quiet `passive` (no card, light or context — the CLI falls back to Claude's
-own), and `byPane` / `Snapshot` / the hello skip it. A daemon restart's `RecoverHooks`
-does not know `released` (both sessions carry the pane id again) — a known edge.
+own), and `byPane` / `Snapshot` / the hello skip it. Two sessions then carry one pane
+id, so **a pane id is not a session identity**: a card remembers the `hookEntry` that
+made it (`feedEntry.owner`) and `Remove` / `Retain` deny only the gates the dead session
+itself left pending (`pendingFor(owner)`) — killing the released one no longer denies the
+new owner's. `releasePane` also writes `YMUX_RELEASED=1` into the released session's tmux
+environment (best-effort, like `YMUX_POLICY`), and `RecoverHooks` brings such a session
+back **released**, so after a restart the pane goes to the new session whatever order
+tmux lists them in. A session released before this change has no marker and can still be
+adopted first.
 
 **`term/gitdiff.go` (Phase 118, WEB-DESIGN F4) — the Diff pane and worktree creation.**
 `POST /api/v2/git/diff {cwd, source}` is ONE snapshot, a port of `diff_pane.rs`

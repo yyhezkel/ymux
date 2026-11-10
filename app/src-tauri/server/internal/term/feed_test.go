@@ -294,7 +294,7 @@ func TestDecideRoute(t *testing.T) {
 	got := make(chan map[string]any, 1)
 	go func() { got <- pushAsync(tg, permission(e, "g9", nil)) }()
 	deadline := time.Now().Add(time.Second)
-	for len(s.hooks.feed.pendingFor(e.paneID)) == 0 && time.Now().Before(deadline) {
+	for len(s.hooks.feed.pendingFor(e)) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
 	if w := do(s, "POST", "/api/v2/feed/g9/decide", "owner-token", `{"decision":"deny"}`); w.Code != http.StatusOK {
@@ -427,5 +427,47 @@ func TestGateCardJSONSummaryIsReplaced(t *testing.T) {
 	_, summary = cardText("pre-tool-use", "Allow `x` ?", `{"cwd":"/x"}`, nil, nil, "en")
 	if summary != "" {
 		t.Errorf("nil payload summary %q", summary)
+	}
+}
+
+// replace_pane leaves two sessions carrying one pane id: the released old one
+// and the new owner. Killing the old one must not deny the new one's gate.
+func TestKillingAReleasedSessionKeepsTheNewOwnersGate(t *testing.T) {
+	r := NewHookRegistry()
+	old, _, _ := r.mint("old", "127.0.0.1:1", "p1")
+	r.add(old)
+	if n := r.releasePane("p1"); n != 1 {
+		t.Fatalf("released %d, want 1", n)
+	}
+	cur, _, _ := r.mint("new", "127.0.0.1:1", "p1")
+	cur.policy = policyGate
+	r.add(cur)
+	tg := matched(t, r, cur)
+	sub := r.hub.add("en")
+
+	got := make(chan map[string]any, 1)
+	go func() { got <- pushAsync(tg, permission(cur, "g-new", nil)) }()
+	nextOf(t, sub, "feed:item-added")
+
+	r.Remove("old")
+	select {
+	case res := <-got:
+		t.Fatalf("killing the released session answered the new session's gate: %v", res)
+	case <-time.After(100 * time.Millisecond):
+	}
+	r.Retain([]Session{{Name: "new"}}) // a list that no longer has `old` either
+	if ids := r.feed.pendingFor(cur); len(ids) != 1 || ids[0] != "g-new" {
+		t.Fatalf("pending of the new session = %v, want [g-new]", ids)
+	}
+
+	// Its own death still denies it.
+	r.Remove("new")
+	select {
+	case res := <-got:
+		if res["decision"] != "deny" {
+			t.Fatalf("killed session's gate → %v, want deny", res)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the pending request outlived its session")
 	}
 }
