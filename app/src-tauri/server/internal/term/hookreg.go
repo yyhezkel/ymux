@@ -60,6 +60,15 @@ type hookEntry struct {
 	// keeps running, but it no longer speaks for any pane: its hooks get a
 	// quiet passive answer and every pane-keyed lookup skips it.
 	released bool
+	// Hibernation (hibernate.go, 2.21.0). lastHook is the last hook from
+	// this session (the idle clock); hib is non-nil while claude is
+	// stopped; hibBusy marks a stop in progress; hibSkip is the last guard
+	// that failed (logged once) and hibRetryAt the next check after it.
+	lastHook   time.Time
+	hib        *hibernation
+	hibBusy    bool
+	hibSkip    string
+	hibRetryAt time.Time
 }
 
 // Hook policies (DECISIONS 2026-10-05). The desktop's auto is not offered:
@@ -107,6 +116,9 @@ type HookRegistry struct {
 
 	// F3 (Phase 117): per-Claude-session context for the rail (context.go).
 	context *contextStore
+
+	// Hibernation of idle agents (hibernate.go).
+	hib *hibernator
 }
 
 // NewHookRegistry returns an empty registry. Until SetHookAddr is called
@@ -115,7 +127,7 @@ type HookRegistry struct {
 func NewHookRegistry() *HookRegistry {
 	return &HookRegistry{byName: map[string]*hookEntry{}, now: time.Now, feed: newFeedStore(), hub: newEventHub(),
 		notes: newNoteStore(""), notifs: &notifStore{}, webws: newWebWSStore(""),
-		settings: newSettingsStore(""), context: newContextStore("")}
+		settings: newSettingsStore(""), context: newContextStore(""), hib: newHibernator()}
 }
 
 // SetHookAddr implements core.AddrSink.
@@ -217,12 +229,17 @@ func (r *HookRegistry) Rename(from, to string) {
 func (r *HookRegistry) Remove(name string) {
 	r.mu.Lock()
 	var gone []string
+	hadHib := false
 	if e, ok := r.byName[name]; ok {
 		gone = append(gone, e.paneID)
+		hadHib = e.hib != nil
 		delete(r.byName, name)
 	}
 	r.mu.Unlock()
 	r.denyPendingOf(gone)
+	if hadHib {
+		r.persistHibernated()
+	}
 }
 
 func (r *HookRegistry) denyPendingOf(paneIDs []string) {
@@ -274,14 +291,19 @@ func (r *HookRegistry) Retain(live []Session) {
 	}
 	r.mu.Lock()
 	var gone []string
+	hadHib := false
 	for name, e := range r.byName {
 		if !keep[name] {
 			gone = append(gone, e.paneID)
+			hadHib = hadHib || e.hib != nil
 			delete(r.byName, name)
 		}
 	}
 	r.mu.Unlock()
 	r.denyPendingOf(gone)
+	if hadHib {
+		r.persistHibernated()
+	}
 }
 
 // MatchHookHMAC implements core.HookResolver. O(hook-enabled sessions),
@@ -305,6 +327,8 @@ type PaneSnapshot struct {
 	Session  string              `json:"session"`
 	AgentRun agent.AgentRunEvent `json:"agent_run"`
 	Brief    agent.BriefEntry    `json:"brief"`
+	// Hibernated: claude in this pane is stopped (hibernate.go).
+	Hibernated bool `json:"hibernated"`
 }
 
 // Snapshot returns every hook-enabled pane's state, keyed by pane id. The
@@ -317,7 +341,8 @@ func (r *HookRegistry) Snapshot() map[string]PaneSnapshot {
 		if e.released {
 			continue
 		}
-		out[e.paneID] = PaneSnapshot{Session: e.name, AgentRun: e.run.Event(e.paneID), Brief: e.brief}
+		out[e.paneID] = PaneSnapshot{Session: e.name, AgentRun: e.run.Event(e.paneID), Brief: e.brief,
+			Hibernated: e.hib != nil}
 	}
 	return out
 }

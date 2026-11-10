@@ -8,8 +8,9 @@ package term
 // schema and a new setting needs no Go change. It lives in
 // <data dir>/web-settings.json behind the same optimistic version guard as the
 // web workspaces (webws.go): a PUT carrying a stale version gets 409 with the
-// current document. The daemon reads exactly two fields, for its own hooks:
-// brief.inject_context and hooks.custom_block (hookRules below).
+// current document. The daemon reads exactly three fields, for its own hooks:
+// brief.inject_context, hooks.custom_block and daemon.hibernate_idle_minutes
+// (hookRules below).
 //
 // Every write announces `settings:changed` {version, settings} on the events
 // socket; the WebBackend unwraps it into the desktop's `settings:changed`
@@ -46,9 +47,12 @@ type settingsStore struct {
 type hookRules struct {
 	injectContext bool
 	customBlock   []string
+	// hibernateMinutes is daemon.hibernate_idle_minutes (hibernate.go):
+	// 0 = off, the default. Anything but a whole number in range reads as 0.
+	hibernateMinutes int
 }
 
-// parseHookRules reads the two fields. It fails safe, field by field: encoding/json
+// parseHookRules reads the three fields. It fails safe, field by field: encoding/json
 // skips a value of the wrong type and fills the rest, so a damaged entry costs
 // only itself (a non-string list item arrives as "", which matches nothing).
 // The built-in block patterns are not in the document, so no content here can
@@ -66,15 +70,29 @@ func parseHookRules(doc json.RawMessage) hookRules {
 		Hooks struct {
 			CustomBlock []string `json:"custom_block"`
 		} `json:"hooks"`
+		Daemon struct {
+			HibernateIdleMinutes json.RawMessage `json:"hibernate_idle_minutes"`
+		} `json:"daemon"`
 	}
 	if err := json.Unmarshal(doc, &d); err != nil {
 		// The error names the field and the JSON type, never a value.
 		logger.Warn("settings document has a damaged field; using the default for it", "err", err)
 	}
 	return hookRules{
-		injectContext: string(d.Brief.InjectContext) != "false",
-		customBlock:   d.Hooks.CustomBlock,
+		injectContext:    string(d.Brief.InjectContext) != "false",
+		customBlock:      d.Hooks.CustomBlock,
+		hibernateMinutes: hibernateMinutes(d.Daemon.HibernateIdleMinutes),
 	}
+}
+
+// hibernateMinutes reads the setting. It fails to OFF: a missing value, a
+// wrong type, a fraction or a negative number is 0. A large value is clamped.
+func hibernateMinutes(raw json.RawMessage) int {
+	var n int64
+	if len(raw) == 0 || json.Unmarshal(raw, &n) != nil || n <= 0 {
+		return 0
+	}
+	return int(min(n, hibMaxMinutes))
 }
 
 func newSettingsStore(path string) *settingsStore {

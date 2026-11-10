@@ -91,7 +91,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
   payload. The first `hello` answers `pane_agent_states` / `pane_briefs` (filtered by `web/hello.ts` `touchedEntries` to hook-written `seq > 0` entries, since the daemon ships zero-value seq 0 entries for every live session) / `feed_list` /
   `notifications_list`; a reconnect's hello re-reads workspaces and emits
-  `backend:resync` (nothing listens yet).
+  `backend:resync` (nothing listens yet). `pane_hibernated` (browser only) answers
+  pane id → true from the hello's `panes[*].hibernated`; live changes arrive as
+  `pane:hibernated` (daemon 2.21.0).
 - **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
   `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
   `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
@@ -459,7 +461,9 @@ is optional here: the Rust side omits an empty list, and the web backend never s
 **`settings.ts` (801)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
 (`BriefSettings` gained `inject_context`, default true, in Phase 105.C, and
-`inject_protocol`, default true, later). Also
+`inject_protocol`, default true, later). `daemon?: DaemonSettings`
+(`hibernate_idle_minutes`) has no Rust twin: only the daemon reads it, from the browser's
+settings document. Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.

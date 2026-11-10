@@ -71,7 +71,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), and the PWA's files + Web Push notifications (114) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), the PWA's files + Web Push notifications (114), and hibernation of idle agents (2.21.0) |
 | `webpush` | 418 | Phase 114 (WEB-DESIGN E): Web Push to a browser's push service — RFC 8291 encryption, RFC 8292 VAPID, the subscriptions file. Stdlib only; the second OUTBOUND client |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
@@ -503,13 +503,49 @@ own WebSocket) is untouched.
 `{version, settings}` replaces it when `version` matches, else **409 with the current
 document** (the web-workspaces guard). The document is the desktop's `Settings` JSON
 stored **opaque** — it must be a JSON object, ≤ 256 KB, and a new setting needs no Go
-change. The daemon reads exactly two fields, for its own hooks (`parseHookRules`, once per
-write): `brief.inject_context` and `hooks.custom_block`. A value of the wrong type costs
+change. The daemon reads exactly three fields, for its own hooks (`parseHookRules`, once per
+write): `brief.inject_context`, `hooks.custom_block` and `daemon.hibernate_idle_minutes`
+(2.21.0; anything but a whole number > 0 is 0 = off, clamped to one week). A value of the wrong type costs
 only itself (encoding/json skips it and fills the rest; one Warn, field and type only);
 only a JSON `false` turns injection off. `<data dir>/web-settings.json`, compact, tmp + fsync + rename.
 Each save publishes `settings:changed` `{version, settings}` on the events socket (the
 WebBackend unwraps it into the desktop's bare-`Settings` payload). Logs carry the version
 and byte count only.
+
+**`term/hibernate.go` (2.21.0, Orca idea #8) — hibernate idle agents.** Frees RAM on a
+crowded box. OFF by default; `daemon.hibernate_idle_minutes` in the settings document
+turns it on. Only sessions in the registry (browser-created, hooks routed to the daemon)
+are candidates: the daemon sees no hooks from a desktop session, so it cannot judge it idle.
+- **The tick** (`StartHibernation`, every 10 s; no tmux call when off and nothing is
+  hibernated) lists tmux once. `hibernateScan` wakes a hibernated pane whose session has an
+  attached client, and picks a pane that passes `idleEnough`: state `done` or `needs-input`,
+  no turn in flight, the state AND the last hook (`hookEntry.lastHook`, stamped by every
+  `DispatchHook`) older than N minutes, no attached client, no pending gate card.
+- **Guards before the stop**, each logged once per reason, then a 5-minute hold: a UUID
+  `claude_session_id` (the hooks' `run.SessionID`, else session-meta); the pane's own process
+  (`pane_pid`) IS claude (comm or argv[0]) — claude under a shell is skipped, because a
+  resume would have to type into that shell; claude has no child process (`/proc/*/stat`
+  ppid scan — an MCP server or a background job blocks it).
+- **The stop**: `set-option -p remain-on-exit on` on the tmux pane (`%N`, never the session
+  name), then up to three Ctrl-C presses (`send-keys -H 03`), SIGTERM after 10 s, SIGKILL
+  after 5 more. Each signal goes to the claude pid only, and only while pid + start time
+  still name that claude. A hook during the presses aborts and unsets `remain-on-exit`. The
+  Info line carries pane, session, `rss_kb` and how it stopped.
+- **The resume** (`wake`): `respawn-pane -t %N [-c cwd] -- <claude> --resume <id>` —
+  `resumeArgv`, shared with `handleResume`. No `-k`, so tmux refuses a live pane and a
+  resume never kills anything. A pane that is gone, moved or alive drops the record and is
+  not touched. Triggers: `handleAttach` (before the upgrade), the agent `send` / `send-key`
+  verbs (the reply adds `resumed`), and the tick's attached-client check (a desktop or a
+  plain `tmux attach`). A per-pane lock serializes stop and resume.
+- **State**: `hookEntry.hib`, persisted to `<data dir>/hibernated.json` (atomic) keyed by
+  hook pane id; `LoadHibernated` (main.go, after `RecoverHooks`) keeps a record only when the
+  `%N` pane still belongs to that session and is dead. Clients see `panes[*].hibernated` +
+  `hibernated_since` in the hello, `Snapshot().Hibernated`, and the `pane:hibernated` event
+  `{pane_id, session, hibernated, since_ms, rss_kb}`.
+- Known edges: a draft typed in claude's input box is lost to the Ctrl-C; the exit fires
+  `session-end`, so the light goes dark and the context record gets a `closed` line; bytes
+  from a `send` reach the new claude through the tty buffer while it starts. Tests:
+  `term/hibernate_test.go` (fake tmux, fake `/proc`).
 
 **`term/page.go` + `page.html` (Phase 97) — the diagnostic page, and it is the only
 client this stack has.** A single embedded HTML file that walks the whole Phase 95 + 96

@@ -76,6 +76,7 @@ func NewService(token, home string) *Service {
 func (s *Service) attachHooks(r *HookRegistry) {
 	s.hooks = r
 	r.tmux = s.tmux
+	r.hib.home, r.hib.bin = s.home, s.claudeBinary
 	r.spawn = func(name, cwd, policy, workspaceID string) (hookEntry, error) {
 		e, hooks, err := s.spawnSession(name, cwd, policy, workspaceID, "")
 		if err == nil && !hooks {
@@ -100,6 +101,7 @@ func (s *Service) SetDataDir(dir string) {
 		s.hooks.webws = newWebWSStore(filepath.Join(dir, "web-workspaces.json"))
 		s.hooks.settings = newSettingsStore(filepath.Join(dir, "web-settings.json"))
 		s.hooks.context = newContextStore(filepath.Join(dir, "context", "sessions"))
+		s.hooks.hib.path = filepath.Join(dir, "hibernated.json")
 	}
 }
 

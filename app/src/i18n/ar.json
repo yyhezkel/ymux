@@ -1447,6 +1447,9 @@
   "context.prompt.original": "الرسالة الأصلية",
   "settings.brief.injectProtocol.label": "تعليم الجلسات تنسيق الموجز",
   "settings.brief.injectProtocol.hint": "تتلقى كل جلسة Claude تعليمات بإنهاء إجاباتها النهائية بكتلة [ymux-brief]، من أجل قائمة الانتظار وContext Rail. تظهر هذه الأسطر في إجابات الوكيل. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks).",
+  "settings.daemon.hibernate.label": "إسبات الوكلاء الخاملين بعد (دقائق)",
+  "settings.daemon.hibernate.hint": "يوقف الخادم Claude الخامل (انتهى أو ينتظر إدخالًا، دون أي hook لهذا العدد من الدقائق) لتحرير الذاكرة، ويستأنفه عبر claude --resume عند فتح اللوحة مرة أخرى. لا يُوقَف إلا Claude الذي هو عملية اللوحة نفسها وليس لديه عمليات فرعية. 0 = معطّل.",
+  "pane.hibernated": "💤 في وضع السبات",
   "settings.brief.injectContext.label":"حقن السياق في الجلسات",
   "settings.brief.injectContext.hint": "عند ضغط جلسة Claude أو استئنافها، تتلقى رسالتها الأولى وآخر أسطر التقدم؛ وتتلقى الجلسة الجديدة هدف مساحة العمل والجلسات الأخرى فيها. يتطلب hooks v1.7.0 (أعد تشغيل setup-hooks)."
 }

@@ -356,6 +356,17 @@ function App() {
   const [paneStatus, setPaneStatus] = createSignal<Record<string, PaneStatus>>({});
   // Live pane status text (e.g. "bootstrapping ymux…") set by backend events.
   const [paneStatusText, setPaneStatusText] = createSignal<Record<string, string>>({});
+  // Browser mode: panes whose idle claude the daemon hibernated (pane id →
+  // true). Shown as the pane's status text until the claude resumes.
+  const [hibernatedPanes, setHibernatedPanes] = createSignal<Record<string, boolean>>({});
+  const shownStatusText = (): Record<string, string> => {
+    const h = hibernatedPanes();
+    const base = paneStatusText();
+    if (Object.keys(h).length === 0) return base;
+    const out = { ...base };
+    for (const pid of Object.keys(h)) out[pid] = t("pane.hibernated");
+    return out;
+  };
   // issue #4 (ymux-tools chrome Ticker): per-pane agent turn timing. The
   // backend emits pane:agent-run only on turn start/end; the label ticks
   // locally off `pulseTick` (see agentRunLabel). startedAt=null → no live turn.
@@ -4079,6 +4090,14 @@ function App() {
       log.warn("pane_agent_states failed", e);
     }
 
+    if (backend.kind === "web") {
+      try {
+        setHibernatedPanes(await backend.call<Record<string, boolean>>("pane_hibernated"));
+      } catch (e) {
+        log.warn("pane_hibernated failed", e);
+      }
+    }
+
     // BRIEF: same reload story for the brief entries.
     try {
       setBriefs(await backend.call<Record<string, PaneBriefEntry>>("pane_briefs"));
@@ -4475,6 +4494,15 @@ function App() {
           delete next[e.payload.pane_id];
         }
         setPaneStatusText(next);
+      })
+    );
+    // Browser mode: the daemon stopped or resumed a pane's idle claude.
+    unlistens.push(
+      await backend.on<{ pane_id: string; hibernated: boolean }>("pane:hibernated", (e) => {
+        const next = { ...hibernatedPanes() };
+        if (e.payload.hibernated) next[e.payload.pane_id] = true;
+        else delete next[e.payload.pane_id];
+        setHibernatedPanes(next);
       })
     );
     // issue #4: per-pane agent turn timing for the chrome Ticker.
@@ -5268,7 +5296,7 @@ function App() {
                     pendingPassphrase={pendingPassphraseFor()}
                     pendingHostTrust={pendingHostTrust()}
                     paneStatus={paneStatus()}
-                    paneStatusText={paneStatusText()}
+                    paneStatusText={shownStatusText()}
                     agentRuns={agentRuns()}
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}

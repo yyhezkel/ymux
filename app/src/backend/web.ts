@@ -1118,6 +1118,13 @@ export class WebBackend implements Backend {
     // hydration (from the events socket's hello) + the ymux surfaces
     pane_agent_states: async () => touchedEntries(this.hello?.pane_agent_states),
     pane_briefs: async () => touchedEntries(this.hello?.pane_briefs),
+    // Browser only: pane id → true for each pane whose claude the daemon
+    // hibernated. The desktop has no such command.
+    pane_hibernated: async () => {
+      const out: Record<string, boolean> = {};
+      for (const [pid, p] of Object.entries(this.hello?.panes ?? {})) if (p.hibernated) out[pid] = true;
+      return out;
+    },
     feed_list: async () => this.hello?.feed ?? [],
     feed_decide: (a) =>
       api("POST", `/api/v2/feed/${encodeURIComponent(str(a.requestId))}/decide`, { decision: str(a.decision) }),
