@@ -164,11 +164,15 @@ fallback. So a hook change reaches existing installs without a CLI rebuild.
 ## `port_watch.rs` — the LISTEN watcher
 
 Runs on the remote. Every **3s** it reads `/proc/net/tcp` + `/proc/net/tcp6`, extracts
-LISTEN sockets and diffs against the previous set. There is no raw-bytes skip any more:
+LISTEN sockets and diffs against the set the desktop knows. There is no raw-bytes skip any more:
 the timer columns of established sockets change between reads, so a byte compare matched
 on 0 of 59 measured ticks (2026-11-09), and the read costs more than the parse. A new
 port sends `port.opened`, a vanished
-one `port.closed`. **Both are detection-only on the desktop** — `rpc_server.rs` records
+one `port.closed`. The set it diffs against is what the desktop has answered for, not the
+last read (`advance`): an event counts as delivered on a result or an `rpc error` answer, and
+any other failure leaves it out, so the next tick sends it again. Only a dial failure
+(`connect …`) counts toward the exit below; a tick that still has an undelivered event
+dials again, so three failed ticks (about 9 s) end the watcher. **Both are detection-only on the desktop** — `rpc_server.rs` records
 the port in `detected_ports` and emits `port-detected`; the SSH local-forward is opened
 only when the user clicks (`forward_port_start`).
 

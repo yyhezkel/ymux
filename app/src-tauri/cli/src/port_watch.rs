@@ -3,8 +3,8 @@
 //! Runs on the remote Linux box (this binary cross-compiles to
 //! `ymux-linux-x64`). Every 3s it reads `/proc/net/tcp` +
 //! `/proc/net/tcp6`, extracts sockets in the LISTEN state and diffs the
-//! set against the previous tick. New ports send a `port.opened` RPC notification to the
-//! desktop, vanished ports `port.closed`. On the desktop `port.opened` is
+//! set against what the desktop has been told. New ports send a `port.opened` RPC notification to the
+//! desktop, vanished ports `port.closed`; an event the desktop did not answer is sent again on the next tick. On the desktop `port.opened` is
 //! **detection only**: `rpc_server.rs` records the port and emits a
 //! `port-detected` event for the UI; the forward itself is opened by the
 //! user (or a rule) from there — the watcher never opens anything.
@@ -176,9 +176,31 @@ fn read_listening(exclude: &HashSet<u16>) -> HashSet<ListenPort> {
 /// Consecutive tunnel connect failures before the watcher gives up.
 const MAX_CONNECT_FAILURES: u32 = 3;
 
-/// Send one port event on the pinned tunnel. Returns false only when the
-/// tunnel could not be reached (a transport error, not an RPC error).
-async fn notify(method: &str, workspace_id: &str, lp: &ListenPort) -> bool {
+/// What became of one port event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Delivery {
+    /// The desktop answered: a result, or an RPC error.
+    Delivered,
+    /// The tunnel could not be dialled.
+    Unreachable,
+    /// Dialled, but no answer came back (handshake, read, reply deadline).
+    NoAnswer,
+}
+
+/// Both transports (`rpc_call_with`) prefix a dial failure with "connect",
+/// and `rpc_via` prefixes the desktop's own error answer with "rpc error".
+fn delivery_of_error(e: &str) -> Delivery {
+    if e.starts_with("connect ") {
+        Delivery::Unreachable
+    } else if e.starts_with("rpc error") {
+        Delivery::Delivered
+    } else {
+        Delivery::NoAnswer
+    }
+}
+
+/// Send one port event on the pinned tunnel.
+async fn notify(method: &str, workspace_id: &str, lp: &ListenPort) -> Delivery {
     match crate::rpc_call_pinned(
         method,
         json!({
@@ -190,11 +212,30 @@ async fn notify(method: &str, workspace_id: &str, lp: &ListenPort) -> bool {
     )
     .await
     {
-        Ok(_) => true,
-        // Both transports (`rpc_call_with`) prefix a dial failure with
-        // "connect"; anything else reached the desktop and got an answer.
-        Err(e) => !e.starts_with("connect "),
+        Ok(_) => Delivery::Delivered,
+        Err(e) => delivery_of_error(&e),
     }
+}
+
+/// The set the next tick diffs against: `prev` moved forward by the events
+/// the desktop answered. An event that was not delivered is left out, so
+/// the next tick's diff produces it again.
+fn advance(
+    prev: &HashSet<ListenPort>,
+    outcomes: &[(&str, ListenPort, Delivery)],
+) -> HashSet<ListenPort> {
+    let mut next = prev.clone();
+    for (method, lp, delivery) in outcomes {
+        if *delivery != Delivery::Delivered {
+            continue;
+        }
+        if *method == "port.opened" {
+            next.insert(lp.clone());
+        } else {
+            next.remove(lp);
+        }
+    }
+    next
 }
 
 /// The watch loop. Diverges: it only leaves via `std::process::exit` —
@@ -232,16 +273,18 @@ pub async fn run(workspace_id: &str) -> ! {
         // The first tick diffs against the empty set, so everything already
         // listening at connect time is reported.
         let cur = read_listening(&exclude);
-        let events: Vec<(&str, &ListenPort)> = cur
+        let events: Vec<(&'static str, ListenPort)> = cur
             .difference(&prev)
-            .map(|lp| ("port.opened", lp))
-            .chain(prev.difference(&cur).map(|lp| ("port.closed", lp)))
+            .map(|lp| ("port.opened", lp.clone()))
+            .chain(prev.difference(&cur).map(|lp| ("port.closed", lp.clone())))
             .collect();
         if !events.is_empty() {
-            let mut reached = true;
-            for (method, lp) in &events {
-                reached &= notify(method, workspace_id, lp).await;
+            let mut outcomes: Vec<(&str, ListenPort, Delivery)> = Vec::with_capacity(events.len());
+            for (method, lp) in events {
+                let delivery = notify(method, workspace_id, &lp).await;
+                outcomes.push((method, lp, delivery));
             }
+            let reached = outcomes.iter().all(|(_, _, d)| *d != Delivery::Unreachable);
             if reached {
                 connect_failures = 0;
             } else {
@@ -251,8 +294,10 @@ pub async fn run(workspace_id: &str) -> ! {
                     std::process::exit(0);
                 }
             }
+            // Not `prev = cur`: an event the desktop never got must come up
+            // again on the next tick.
+            prev = advance(&prev, &outcomes);
         }
-        prev = cur;
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
     }
 }
@@ -310,6 +355,50 @@ mod tests {
         assert_eq!(ports.len(), 1);
         assert_eq!(ports[0].port, 8080);
         assert_eq!(ports[0].addr, "0.0.0.0");
+    }
+
+    fn lp(port: u16) -> ListenPort {
+        ListenPort { port, family: "v4", addr: "127.0.0.1".into() }
+    }
+
+    // Pins D16: `prev = cur` forgot an event whose notify failed, so the
+    // desktop never learned of that port.
+    #[test]
+    fn an_undelivered_event_is_produced_again_on_the_next_tick() {
+        let prev: HashSet<ListenPort> = [lp(3000), lp(4000)].into_iter().collect();
+        let cur: HashSet<ListenPort> = [lp(3000), lp(5000), lp(6000)].into_iter().collect();
+        let next = advance(
+            &prev,
+            &[
+                ("port.opened", lp(5000), Delivery::Delivered),
+                ("port.opened", lp(6000), Delivery::Unreachable),
+                ("port.closed", lp(4000), Delivery::NoAnswer),
+            ],
+        );
+        let expect: HashSet<ListenPort> = [lp(3000), lp(4000), lp(5000)].into_iter().collect();
+        assert_eq!(next, expect);
+        // The next tick's diff is exactly the two events that were lost.
+        assert_eq!(cur.difference(&next).collect::<Vec<_>>(), vec![&lp(6000)]);
+        assert_eq!(next.difference(&cur).collect::<Vec<_>>(), vec![&lp(4000)]);
+        // Once they are delivered the two sets agree and nothing is resent.
+        let settled = advance(
+            &next,
+            &[
+                ("port.opened", lp(6000), Delivery::Delivered),
+                ("port.closed", lp(4000), Delivery::Delivered),
+            ],
+        );
+        assert_eq!(settled, cur);
+    }
+
+    // Pins: only a dial failure counts toward the watcher's exit, and only
+    // an answer from the desktop counts as delivered.
+    #[test]
+    fn errors_classify_by_prefix() {
+        assert_eq!(delivery_of_error("connect tcp 127.0.0.1:1: refused"), Delivery::Unreachable);
+        assert_eq!(delivery_of_error("rpc error: {\"code\":-32000}"), Delivery::Delivered);
+        assert_eq!(delivery_of_error("no reply from the ymux app within 300s"), Delivery::NoAnswer);
+        assert_eq!(delivery_of_error("server closed before challenge"), Delivery::NoAnswer);
     }
 
     #[test]
