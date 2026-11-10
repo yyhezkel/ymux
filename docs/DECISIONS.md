@@ -465,6 +465,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-11-09 — Three owner decisions from the backlog merge run
+- **Smart bidi:** the pane-header button is gone. The per-profile setting `terminal.rtl.{local,remote}.smart_bidi` replaces it, default off (PR #89).
+- **`hooks.policy_enabled`:** the daemon keeps ignoring it. Under `none`, off would mean allow.
+- **`last.env`:** accepted. A plain `claude` over a separate SSH session while the tunnel is up borrows the pane and shows the brief block. The user can turn the block off with `brief.inject_protocol`. ymux's own `claude -p` calls set `YMUX_HEADLESS` and skip the hooks, so their JSON stays clean.
+
 ### 2026-11-09 — Block rules apply in the browser; the Block half of `ymux-policy` is ported
 - **Decided (Yossi):** a command that matches a Block rule is denied on the daemon too.
   This reverses, for Block only, 2026-10-04 "do **not** port `ymux-policy` to Go" and the
