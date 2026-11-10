@@ -62,7 +62,7 @@ answers the same command names from the daemon's HTTP/WS API.
   `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
 - **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
   `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
-  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward, prStatus).
   `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
   host lacks the local-machine ones and the UI hides their entry points rather than
   failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
@@ -70,7 +70,7 @@ answers the same command names from the daemon's HTTP/WS API.
   App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
   pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
   Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
-  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab, the Diff pane's PR card (`prStatus`).
 - **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
   `src/backend/` imports anything from `@tauri-apps/*`.
 
