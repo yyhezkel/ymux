@@ -70,6 +70,16 @@ decides and the ymux policy does not run. It also spawns a detached copy of the 
 leaves NeedsInput without Claude Code waiting. `acceptEdits`, `bypassPermissions` and `skip`
 print an explicit `allow`. Every other mode goes to the desktop policy engine.
 
+**When the push fails (`feed_push_with_retry`, `static_fallback_decision`, main.rs).** The
+pure `desktop_answered(err)` splits an `rpc_call` error in two. A transport failure
+(connect, handshake, write, read, or a 0-byte reply) means the desktop is not there: the
+push retries once and then the CLI's static policy decides, Block → deny, Auto → allow,
+Gate → allow, because nobody can approve a card. An error the desktop itself replied with
+(`rpc error: …`, or a non-empty reply that is not JSON) means it WAS reached: no retry,
+and a Gate verdict becomes `ask`, which hands the question to Claude Code's own prompt.
+Until 2026-11-10 every error took the first path, so a reachable desktop that answered
+with an error turned a gated call into an allow.
+
 ## `wait`, `read`, `worktree create`
 
 These verbs let one agent drive others with no sleep loop. `read` and `worktree create`

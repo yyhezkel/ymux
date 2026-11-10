@@ -244,7 +244,13 @@ fn hook_vlog(msg: &str) {
 /// allow; Gate → allow (there's nobody to approve a card here — the
 /// desktop path is what actually gates). Returns (permissionDecision,
 /// reason).
-fn static_fallback_decision(payload: &Value) -> (&'static str, String) {
+///
+/// `desktop_answered`: the push REACHED the desktop and it replied with an
+/// error (see [`desktop_answered`]). Then "nobody to approve a card" is
+/// false, so a Gate verdict must not become an allow: it becomes `ask`,
+/// which hands the question to Claude Code's own permission prompt. Block
+/// and Auto do not depend on the desktop and stay as they are.
+fn static_fallback_decision(payload: &Value, desktop_answered: bool) -> (&'static str, String) {
     let tool_name = payload
         .get("tool_name")
         .and_then(|v| v.as_str())
@@ -256,6 +262,13 @@ fn static_fallback_decision(payload: &Value) -> (&'static str, String) {
     let verdict = ymux_policy::evaluate(tool_name, bash_cmd);
     match verdict.decision {
         ymux_policy::Decision::Block => ("deny", verdict.reason),
+        ymux_policy::Decision::Gate if desktop_answered => (
+            "ask",
+            format!(
+                "{} [ymux answered with an error, asking in Claude Code]",
+                verdict.reason
+            ),
+        ),
         ymux_policy::Decision::Gate => (
             "allow",
             format!(
@@ -281,15 +294,35 @@ fn print_pre_tool_use(decision: &str, reason: Option<&str>) {
     println!("{}", serde_json::to_string(&out).unwrap_or_default());
 }
 
+/// Did this `rpc_call` error come from a desktop that received the request
+/// and replied? `rpc_via` produces exactly two such shapes: `rpc error: …`
+/// (a JSON-RPC error object) and `bad response: … (N bytes)` with N > 0
+/// (a reply that is not JSON). Everything else (connect, handshake, write,
+/// read, and the 0-byte reply of a connection closed before answering) is
+/// a transport failure: the desktop is, as far as we can tell, not there.
+fn desktop_answered(err: &str) -> bool {
+    err.starts_with("rpc error: ")
+        || (err.starts_with("bad response: ") && !err.ends_with("(0 bytes)"))
+}
+
 /// Phase 66 (66.D.2): feed.push with a small retry on *connection* failure.
 /// Only connection errors retry — a returned `timeout` verdict means we DID
 /// reach the desktop, so it's surfaced as-is (retrying would double the
-/// user's wait).
+/// user's wait). An error the desktop itself replied with does not retry
+/// either: it was reached, and a second push of the same request_id would
+/// only repeat the error or raise a second card.
 async fn feed_push_with_retry(params: &Value, max_attempts: u32) -> Result<Value, String> {
     let mut last = String::from("no attempts");
     for attempt in 0..max_attempts {
         match rpc_call("feed.push", params.clone()).await {
             Ok(v) => return Ok(v),
+            Err(e) if desktop_answered(&e) => {
+                hook_log(
+                    HookLevel::Warn,
+                    &format!("claude-hook feed.push attempt={attempt} desktop replied with an error, not retrying"),
+                );
+                return Err(e);
+            }
             Err(e) => {
                 hook_log(
                     HookLevel::Warn,
@@ -3147,7 +3180,11 @@ async fn real_main() -> ExitCode {
                             // after the connect retry — decide with the
                             // CLI's static policy so Claude keeps moving on
                             // safe defaults rather than denying everything.
-                            let (decision, reason) = static_fallback_decision(&payload);
+                            // A desktop that ANSWERED with an error is not
+                            // unreachable: a Gate verdict then asks instead
+                            // of allowing.
+                            let (decision, reason) =
+                                static_fallback_decision(&payload, desktop_answered(&e));
                             // Rule #1: never log `reason` (can embed command
                             // text). Metadata only — the error kind is safe.
                             hook_log(
@@ -3556,5 +3593,46 @@ mod env_file_tests {
         // handshake; the server would reject it anyway.
         let m = map(&[("YMUX_SOCKET_ADDR", "127.0.0.1:44495")]);
         assert!(refreshed_endpoint_from(&m, "127.0.0.1:1").is_none());
+    }
+}
+
+#[cfg(test)]
+mod hook_fallback_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn bash(cmd: &str) -> Value {
+        json!({ "tool_name": "Bash", "tool_input": { "command": cmd } })
+    }
+
+    #[test]
+    fn only_a_reply_from_the_desktop_counts_as_answered() {
+        assert!(desktop_answered("rpc error: {\"code\":-32000,\"message\":\"x\"}"));
+        assert!(desktop_answered("bad response: expected value at line 1 column 1 (7 bytes)"));
+        // A connection closed before any reply is a transport failure.
+        assert!(!desktop_answered("bad response: EOF while parsing a value at line 1 column 0 (0 bytes)"));
+        assert!(!desktop_answered("connect tcp 127.0.0.1:1: connection refused"));
+        assert!(!desktop_answered("no attempts"));
+        assert!(!desktop_answered(""));
+    }
+
+    #[test]
+    fn a_gate_verdict_asks_when_the_desktop_answered_with_an_error() {
+        let (decision, _) = static_fallback_decision(&bash("git push --force origin main"), true);
+        assert_eq!(decision, "ask");
+    }
+
+    #[test]
+    fn a_gate_verdict_still_allows_when_the_desktop_is_unreachable() {
+        let (decision, _) = static_fallback_decision(&bash("git push --force origin main"), false);
+        assert_eq!(decision, "allow");
+    }
+
+    #[test]
+    fn block_and_auto_do_not_depend_on_the_desktop() {
+        for answered in [true, false] {
+            assert_eq!(static_fallback_decision(&bash("rm -rf /"), answered).0, "deny");
+            assert_eq!(static_fallback_decision(&bash("ls -la"), answered).0, "allow");
+        }
     }
 }
