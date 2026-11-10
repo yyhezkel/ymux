@@ -12,7 +12,7 @@ ymux-types = { path = "../ymux-types" }
 dirs = "5"
 # Phase 51.B2: russh handler impl + known_hosts persistence.
 russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }
-russh-sftp = "2"
+russh-sftp = "~2.1.2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

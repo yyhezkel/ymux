@@ -141,8 +141,11 @@ appears in five manifests (the app, `ymux-core`, `ymux-ssh`, `ymux-bootstrap`,
 `ymux-tunnel`) and the feature list must match. The upstream default backend is
 `aws-lc-rs`, a cmake/NASM native build, and one crate left on defaults brings it back
 through feature unification. `russh-keys` no longer exists (merged into `russh::keys`).
-`russh-sftp` has no runtime dependency on `russh` and stays on 2.1.1: from 2.4 `write_all`
-returns before the ack, and the upload sites discard `flush`/`shutdown` errors.
+`russh-sftp` has no runtime dependency on `russh` and is held at `~2.1.2` in all three
+manifests that name it (the app, `ymux-core`, `ymux-bootstrap`): from 2.4 `write_all`
+returns before the ack, and the upload sites discard `flush`/`shutdown` errors. The tilde
+is the hold. A bare `"2"` let a lockfile-only bump reach any 2.x. 2.1.2 is the floor
+because it made `SftpSession::set_timeout` synchronous, and `open_sftp` calls it that way.
 
 `mainBinaryName` is top-level in Tauri 2 and set only in `tauri.macos.conf.json` (`"ymux"`, so the macOS executable is `Contents/MacOS/ymux`, not the cargo package name `app`); `tauri.conf.json` must stay without it or Windows `app.exe` (hardcoded in `build-windows.yml`) breaks.
 
