@@ -68,7 +68,7 @@ bytes = "1"
 # cmake/NASM step. Keep this feature list the same in every crate that names
 # russh, or feature unification brings aws-lc-rs back.
 russh = { version = "0.65", default-features = false, features = ["flate2", "ring", "rsa"] }
-russh-sftp = "2"
+russh-sftp = "~2.1.2"
 rand = "0.8"
 hmac = "0.12"
 sha2 = "0.10"
