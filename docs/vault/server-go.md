@@ -653,6 +653,12 @@ Three things about it are load-bearing:
   and "may it run commands on my machine?" are different questions and do not share a
   button; the second is a separate act in the device list.
 
+**`pruneRequests` drops dead one-shots of both kinds**: `requested` rows nobody answered
+and `pending` rows (an issued QR, an approved request) nobody redeemed before
+`expires_at` — the one-shot's deadline, past which `redeemDevice` refuses the row anyway.
+Never `active`: a redeemed device keeps its one-shot's old `expires_at`. It runs on the
+two browser-pairing routes and on `GET /api/pairing/devices`, so a QR-only box prunes too.
+
 The request endpoint cannot require a credential, so it is rate-limited per IP with a
 global cap on outstanding requests, and it **fails closed with a message** when no
 desktop is reachable — a browser left polling a request no human will ever see is
