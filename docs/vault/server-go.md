@@ -124,7 +124,9 @@ pinned to anything else yet.
 **`workspace/manager.go` — subscribers.** `Subscribe` registers the client's channel
 **before** it reads the replay, so an event published in between is on the channel (and
 maybe in the replay too) — `ws.go` already drops a live frame whose `seq` is ≤ the last
-replayed one. A `client_id` that is already subscribed is **replaced**: the old channel is
+replayed one. `Manager.betweenSubscribeSteps` is a test seam (nil in production) that runs
+exactly between those two steps; `TestEventBetweenSubscribeStepsIsNotLost` publishes there.
+A `client_id` that is already subscribed is **replaced**: the old channel is
 closed (that connection's write loop ends) and the newest connection owns the id. `cancel`
 compares channel identity, so the old connection going away cannot remove the new one or
 its `subscribers` row. The last subscriber leaving deletes the session's `liveSession`

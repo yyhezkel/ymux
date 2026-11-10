@@ -161,3 +161,48 @@ func TestFanoutCountsDrops(t *testing.T) {
 		t.Fatalf("dropped = %d, want %d", dropped, want)
 	}
 }
+
+// The deterministic form of the race above. The seam runs between the two
+// steps of Subscribe; with the old order (read the replay, then register the
+// channel) an event published there was in neither.
+func TestEventBetweenSubscribeStepsIsNotLost(t *testing.T) {
+	m := newMgr(t)
+	w, _ := m.CreateWorkspace("p")
+	se, _ := m.CreateSession(w.ID, "")
+
+	var mid int64
+	m.betweenSubscribeSteps = func() {
+		ev, err := m.Publish(se.ID, "tool_use", json.RawMessage(`{}`))
+		if err != nil {
+			t.Errorf("publish between the steps: %v", err)
+			return
+		}
+		mid = ev.Seq
+	}
+	replay, ch, cancel, err := m.Subscribe(se.ID, "A", "a", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cancel()
+
+	found := false
+	for _, ev := range replay {
+		if ev.Seq == mid {
+			found = true
+		}
+	}
+	select {
+	case f := <-ch:
+		var probe struct {
+			Seq int64 `json:"seq"`
+		}
+		_ = json.Unmarshal(f, &probe)
+		if probe.Seq == mid {
+			found = true
+		}
+	default:
+	}
+	if !found {
+		t.Fatalf("event seq=%d published between the steps reached neither the replay nor the channel", mid)
+	}
+}

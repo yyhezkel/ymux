@@ -42,6 +42,11 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*liveSession // session_id → live subscribers
+
+	// Test seam, nil in production: runs between the two steps of Subscribe
+	// (register the channel, read the replay) so a test can publish exactly
+	// there and prove the order loses nothing.
+	betweenSubscribeSteps func()
 }
 
 // SetPushLister wires the device store used to find out-of-band push targets.
@@ -322,6 +327,9 @@ func (m *Manager) Subscribe(sessionID, clientID, deviceName string, cursor int64
 		}
 	}
 
+	if m.betweenSubscribeSteps != nil {
+		m.betweenSubscribeSteps()
+	}
 	replay, err := m.store.ReplayEvents(sessionID, cursor, 0)
 	if err != nil {
 		cancel()
