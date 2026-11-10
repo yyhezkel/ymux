@@ -121,6 +121,18 @@ chosen because kotlinx `@JsonClassDiscriminator`, TS tagged unions, and
 AsyncAPI/JSON-Schema all default to it. Locked in S4.3 and canonical — no client is
 pinned to anything else yet.
 
+**`workspace/manager.go` — subscribers.** `Subscribe` registers the client's channel
+**before** it reads the replay, so an event published in between is on the channel (and
+maybe in the replay too) — `ws.go` already drops a live frame whose `seq` is ≤ the last
+replayed one. A `client_id` that is already subscribed is **replaced**: the old channel is
+closed (that connection's write loop ends) and the newest connection owns the id. `cancel`
+compares channel identity, so the old connection going away cannot remove the new one or
+its `subscribers` row. The last subscriber leaving deletes the session's `liveSession`
+(register and cancel both take `m.mu` → `ls.mu`, so a joiner never lands on an unlinked
+entry). `fanout` still drops a frame for a full 256-buffer (the log is durable; the client
+re-syncs by cursor on reconnect) but now logs it — session, client id, seq and a running
+count, on the first drop and every 100th.
+
 **`chat/bridge.go`** — the engine↔substrate bridge. The Claude runner was built for the
 retired `/api/claude/*` WebSocket; the new workspace API is a **pure pub/sub substrate**.
 For a `claude_chat` session the bridge lazily spawns a Claude process on the first
