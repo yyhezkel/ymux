@@ -193,7 +193,10 @@ in cleartext.
 **`CHALLENGE_TAG` emits `YMUX-CHALLENGE`** (flipped from the legacy tag after 0.5.0). Both
 ends still read *and mirror* either dialect, so `WINMUX-RESPONSE` is accepted; the Go
 counterpart is `ChallengeTag` in `server/internal/hooks/hooks.go`. **Flip both
-together or not at all.** Rule #8: the token never reaches a log. That includes
+together or not at all.** Every rejection after the response line is read writes a verdict
+first: `<peer's tag>-DENIED bad-mac`, and `<peer's tag>-DENIED bad-format` for hex that does
+not decode (that arm used to return with no verdict line). A line with neither RESPONSE tag
+gets `YMUX-DENIED bad-format`. Rule #8: the token never reaches a log. That includes
 `exec_simple`'s error text: it names the exit code and never the command, because the
 `last.env` script holds the token and callers log that error.
 
