@@ -13,6 +13,7 @@ All under `%APPDATA%\ymux\`:
 | `notes.json` | `notes.rs::save_notes_to_disk` | `notes.rs::load_notes_from_disk` at `setup()` |
 | `settings.json` | `settings.rs::save_to_disk` (Phase 9.A) | `settings.rs::load_from_disk` at `setup()` |
 | `known_hosts.json` | `lib.rs::save_known_hosts` after host key match/replace | `lib.rs::load_known_hosts` per SSH connect |
+| `worktree-recipe-approvals.json` | `worktree_recipe.rs::store_approval_in` (atomic temp+rename, `fsync`) | `worktree_recipe.rs::is_approved_in` per recipe |
 | `debug.log` | `lib.rs::dlog` (append-only, all modules) | humans |
 
 Plus, on each SSH-connected remote:
@@ -330,6 +331,35 @@ The frontend reads `settings.theme` on startup and writes the colors as CSS cust
 
 `settings.updates.manifest_url` (default `https://raw.githubusercontent.com/yyhezkel/ymux/main/manifest.json`) is polled by `updater.rs` on startup (after a 3-second grace period). The manifest is a static JSON file in the repo root — see [docs/RELEASING.md](RELEASING.md) for the full release flow and the manifest schema. The file lives on `main`, so it's globally cached + served fast by GitHub's CDN, with no API rate limits.
 
+## `.ymux/worktree.json` (repo)
+
+A file committed in the repository. After ymux creates a worktree from a project folder, it copies the listed files from the main checkout and runs the setup command in the new worktree.
+
+```json
+{ "copy": [".env", "config/local.json"], "setup": "npm ci" }
+```
+
+| Key | Type | Notes |
+|---|---|---|
+| `copy` | array of strings | Literal repo-relative file paths with `/` separators. No patterns, no directories. At most 200. |
+| `setup` | string | One line of `sh`. At most 4096 characters. Runs through `sh -lc`, with a 20-minute limit. |
+
+ymux reads the recipe from `HEAD` of the new worktree. An unknown key or one bad path refuses the whole recipe.
+
+**Trust.** Before the first run, a prompt shows the host, the repository, the exact file list, the exact command and the sha256. The approval is for that host + repository + sha256, so a changed recipe prompts again. Approvals are in `%APPDATA%\ymux\worktree-recipe-approvals.json`.
+
+**Copy rules.** ymux rejects absolute paths, `..`, backslashes, colons, `.git` and Windows device names. A symlink in any path component, on the source or on the destination, stops the recipe before the setup command. An existing file in the worktree is never overwritten.
+
+**Failure.** A failing setup leaves the worktree in place and shows the exit code and the last 8 KiB of output. ymux does not delete anything. Logs hold counts and the exit code only.
+
+| Host | Copy | Setup command |
+|---|---|---|
+| SSH (and existing WSL workspaces) | POSIX `sh` on the host | `sh -lc`, on the workspace's connection |
+| Local macOS / Linux | native | `/bin/sh -lc` |
+| Local Windows | native | **Not run.** Windows has no `sh`, and `cmd.exe` would give the command a different meaning from the one you approved. The prompt says this before you approve. |
+
+The browser client does not run recipes. The older local-only worktree button in the workspace editor also does not run them.
+
 ## Environment variables
 
 ### Read by the CLI
@@ -338,7 +368,7 @@ The frontend reads `settings.theme` on startup and writes the colors as CSS cust
 |---|---|---|
 | `YMUX_SOCKET_ADDR` | unset | If set (anywhere), CLI uses TCP transport with this `host:port`. Required on Linux. |
 | `YMUX_TUNNEL_TOKEN` | unset | If TCP transport is selected, used as the HMAC key for the challenge-response handshake. Required on Linux. |
-| `YMUX_PIPE_PATH` | `\\.\pipe\ymux-<USER>` | Override the default named-pipe path (Windows only). |
+| `YMUX_PIPE_PATH` | `\\.\pipe\ymux-<USER>` (Unix: a socket path list) | Override the default pipe or socket path. The app exports it to local panes when `YMUX_CONFIG_DIR` is set. |
 | `YMUX_PANE_ID` | unset | Stamped on `feed.push` so the agent feed card knows which pane it belongs to. |
 | `HOME` | OS-provided | Used to find `~/.ymux/run/last.env` for the fallback env load. |
 | `USERNAME` | OS-provided | Used in the default Windows pipe name if `YMUX_PIPE_PATH` is unset. |

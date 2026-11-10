@@ -58,7 +58,7 @@ dependency arrow points one way, so there is no cycle to break later.
 
 | Package | Lines | What |
 |---|---|---|
-| `agent` | 608 | Phase 99 (WEB-DESIGN B1): pure Go ports of the desktop's per-pane agent logic — traffic light, `[ymux-brief]` parser, hook copy, send-key table. Stdlib only, nothing imports it yet (see below) |
+| `agent` | 678 | Phase 99 (WEB-DESIGN B1): pure Go ports of the desktop's per-pane agent logic — traffic light, `[ymux-brief]` parser, hook copy, send-key table, block rules. Stdlib only (see below) |
 | `api` | 838 | HTTP front door: the mux, unauthenticated liveness + version negotiation, and each subsystem mounted behind auth middleware. `huma.go` holds the typed client-SDK surface |
 | `auth` | 195 | `Bearer` middleware plus per-device scope grants (`scopes.go`) — a leaf, imports no sibling |
 | `chat` | 2,953 | the biggest: Claude session runner, the engine↔substrate bridge, hook RPC, pairing, transcript parser, push, scopes, store |
@@ -96,11 +96,21 @@ with the Rust tests translated under the same names.
   cross-check). `session_duration_seconds` must be a whole non-negative number, as
   serde's `as_u64` demands; `json.Number` is accepted.
 - `keys.go` ← `translate_key`; an unknown name passes through **lowercased**, as in Rust.
+- `policy.go` ← the Block half of `ymux-policy` (`BLOCK_PATTERNS` + `evaluate_with`):
+  `BlockedBy(tool, command, custom)` returns the matched pattern. Only `Bash` is evaluated.
+  Auto and Gate are not ported, because the session's own policy decides those. The Rust's
+  per-segment pass is left out: a segment is a substring of the command, so the whole-command
+  scan (normalized, and with spaces removed) has already found anything it could find.
 
-Nothing imports the package in B1 — that is deliberate: B2 (the hook listener for
-browser-created tmux sessions) and B3 (`feed.push`/`feed.decide` + events) build on
-tested logic. Until the desktop drops its own copy, **a change to either side must be
-made to both**; the Rust functions carry the same note pointing here.
+Until the desktop drops its own copy, **a change to either side must be made to both**.
+**The check is `testdata/*.json`** (`parser`, `brief_json`, `state`, `humanize`, `keys`,
+`policy`, `injection`): `golden_test.go` and `term/inject_test.go` read them, and the Rust
+tests read the same files through `include_str!` (`src/brief.rs`, `lib.rs`, `rpc_server.rs`,
+`context_store.rs`), so a behavior change on one side fails on that side. A `.json` or
+`_test.go` change needs no rebake. `state_since` is not in `state.json`: Rust stamps the
+wall clock inside `apply_hook`, Go takes `now` as a parameter, so they cannot be compared.
+Known and not pinned: a `session_duration_seconds` of `120.0` (Go accepts, serde's `as_u64`
+does not); `feed.push`'s arms inline on `AppHandle` stay uncovered on the Rust side.
 
 ## Things worth knowing before you edit
 
@@ -224,9 +234,12 @@ falls back to `last.env` (the desktop) exactly as before.
   folding each hook into the pane's `agent.Run` + `agent.BriefEntry` (the Phase-99 port):
   `pre-tool-use`/`notification` → `ApplyHook`; `user-prompt-submit` → turn start + clipped
   prompt; `stop` → `RecordTurn` + `BriefFromStop`; `stop-failure` → `StateFailed` (timer cleared, NO `RecordTurn`, state-only: early passive return like `notification`); `session-end` → run reset (seq+1) +
-  `session_ended`. A hook whose `pane_id` or `tmux_session` is not the matched session's
-  is denied. A permission request follows the session's **policy** (Phase 101, below).
-  `ping` answers; any other method is a JSON-RPC error.
+  `session_ended`. A `session-end` naming another Claude session (`agent.SessionEndIsOurs`,
+  the same rule as `session_end_is_ours` in `lib.rs`) returns `passive` and changes nothing.
+  Notification type `tool_running` never sends a web notification. A hook whose `pane_id` or `tmux_session` is not the matched session's
+  is denied. A permission request meets the **Block rules** first, then the session's
+  **policy** (Phase 101, below).
+  `ping` and `context.inject` (below) answer; any other method is a JSON-RPC error.
 - `Snapshot()` is the test-facing form of the state; the events socket's `hello` is the
   served one.
 - Rule #8: tokens never logged. Rule #1: hook logs carry pane id, subkind, state and
@@ -234,6 +247,13 @@ falls back to `last.env` (the desktop) exactly as before.
 
 **`term/feed.go` + `events.go` (Phase 101, WEB-DESIGN B3) — the feed, the gate, the
 live channel.** `feedPush` now does what the desktop's `feed.push` does after folding:
+- **Block rules first (2.20.0, DECISIONS 2026-11-09).** A `permission_request` +
+  `pre-tool-use` for `Bash` that matches `agent.BlockedBy` (the built-ins + the settings
+  document's `hooks.custom_block`) is denied under **every** policy: `{"decision":"deny",
+  "policy":"block"}`, no wait, and a passive `policy-block` audit card (`⛔ Blocked: Bash`,
+  the desktop's `push_policy_audit`). Fail-safe: the built-ins live in the binary, and
+  `hooks.policy_enabled` is deliberately not read, because off would mean allow under
+  `none`. The desktop's `custom_block` is a separate document and does not reach here.
 - **Policy per session** (`hookEntry.policy`, DECISIONS 2026-10-05): `none` — the default,
   set at create (`{"policy":"gate"}` to change it) or later with
   `POST /api/v2/term/sessions/{name}/policy` — answers a permission request `allow` at
@@ -482,8 +502,11 @@ own WebSocket) is untouched.
 `{version, settings}` (`settings` is `null` before the first save); `PUT` with
 `{version, settings}` replaces it when `version` matches, else **409 with the current
 document** (the web-workspaces guard). The document is the desktop's `Settings` JSON
-stored **opaque** — it must be a JSON object, ≤ 256 KB, and no field is parsed, so a new
-setting needs no Go change. `<data dir>/web-settings.json`, compact, tmp + fsync + rename.
+stored **opaque** — it must be a JSON object, ≤ 256 KB, and a new setting needs no Go
+change. The daemon reads exactly two fields, for its own hooks (`parseHookRules`, once per
+write): `brief.inject_context` and `hooks.custom_block`. A value of the wrong type costs
+only itself (encoding/json skips it and fills the rest; one Warn, field and type only);
+only a JSON `false` turns injection off. `<data dir>/web-settings.json`, compact, tmp + fsync + rename.
 Each save publishes `settings:changed` `{version, settings}` on the events socket (the
 WebBackend unwraps it into the desktop's bare-`Settings` payload). Logs carry the version
 and byte count only.
@@ -614,9 +637,17 @@ workspace, `cwd` the payload's; an empty value never erases a known one. Files
 `<data>/context/sessions/<id>.json` (atomic, id `[A-Za-z0-9_-]{1,128}`, a corrupt file is
 never overwritten and its session refused, > 30 days pruned at load), log capped at 200,
 `version` bumps per write, `context:changed {session_id, ws_id}` on the hub,
-`GET /api/v2/context/sessions?ws_id=` newest activity first. Injection back into the agent
-(105.C, `context.inject`) is NOT ported. `agent/brief.go` gained the sticky `goal` /
-`done` keys (`done-when`, `done_when`, `done when` too) — parity with brief.rs.
+`GET /api/v2/context/sessions?ws_id=` newest activity first. `agent/brief.go` gained the
+sticky `goal` / `done` keys (`done-when`, `done_when`, `done when` too) — parity with
+brief.rs; both are `null` when absent (2.20.0; before, they were left out of the JSON).
+**`term/inject.go` (2.20.0) is the injection back into the agent (105.C):** RPC
+`context.inject` → `{additional_context}`, a port of `build_injection` /
+`injection_for_hook` (`docs/CONTEXT.md`; `testdata/injection.json` pins the text on both
+sides). Memory only, inside the CLI's ~300 ms budget. The workspace is the hook entry's
+(falling back to the record's `ws_id`), its `Intent` comes from `r.webws`; `pane_id` /
+`tmux_session` in the params are not read, because the HMAC already named the session. A
+`released` session, `brief.inject_context: false` or any error answers `""` and the hook
+fails open. The store is the daemon's own, so a desktop-created session has no record here.
 `claudesessions.go` ports `pane_list_claude_sessions`' local path: `GET
 /api/v2/claude/sessions?limit=&project_path=` over `~/.claude/projects/*/*.jsonl`, newest
 first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
@@ -643,6 +674,8 @@ this endpoint itself, so the daemon keeps no per-pane state. `POST /api/v2/git/w
 the directory only (`sanitizeBranch`, `defaultWorktreeTarget` = `<parent>/<base>-<safe>`),
 base / branch refused when option-shaped, `git worktree add -b <branch> -- <target>
 <base>` (the `--` the Rust lacks), then the parsed list. `runGit` is the test seam.
+
+`runClaude` sets `YMUX_HEADLESS=1` on every call, so the CLI hooks do nothing for these one-shot runs.
 
 **`term/claudetools.go` (Phase 119, WEB-DESIGN F5) — the desktop's `claude -p` tools for a
 browser.** `GET /api/v2/claude/usage?force=1` ports `claude_usage.rs` (`claude -p /usage

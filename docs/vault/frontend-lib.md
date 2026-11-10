@@ -142,7 +142,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   into the pane) swap the token back. `fm_transfer_cancel` is a no-op — an upload here is
   one request, not a tracked transfer. The notifications banner (`.web-push-prompt`) sits at
   z-index 30, under panels and their confirm toasts, which it used to cover.
-- **Panes, F3** (Phase 117) — `pane_set_identity` / `pane_set_smart_bidi` /
+- **Panes, F3** (Phase 117) — `pane_set_identity` /
   `pane_set_claude_running` patch the layout leaf (the daemon keeps leaf fields opaque);
   `pane_set_active` is a no-op (the desktop's only reader is the SSH ticket lookup);
   `sessions_kill_by_name` kills through a holding pane or the DELETE route;
@@ -151,8 +151,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
   `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
-  decode → filter order; `connect` seeds it from the leaf's `smart_bidi`, the toggle flips
-  it live. A popout's own attach starts with it off.
+  decode → filter order; `connect` sets it from `a.smartBidi`, the value `connectPane`
+  resolved from the RTL profile (a saved leaf `smart_bidi` is ignored). A popout's own
+  attach starts with it off.
   Every session create sends `replace_pane: true` (the leaf shows what it was last
   connected to), and `api()` shows a problem+json error's `detail`, never the raw document.
 - **The Diff pane, F4** (Phase 118) — `caps` gains `diffPane` and `worktrees`. The desktop's
@@ -163,6 +164,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `set_cwd` patch the leaf and restart the poll; `refresh` emits once; `workspace_close_pane`
   stops it; a pane gone from every layout stops itself. `diff_pane_worktrees` reuses the F1
   git endpoint; `workspace_create_project_worktree` → `/api/v2/git/worktree-add`;
+  `worktree_recipe_preview` → `null` (the browser runs no recipes, so the prompt never opens);
   `workspace_open_worktree` is the lib.rs tree op (a child of the project folder at that
   path, or the existing one activated). The legacy local-only worktree block in
   `CreateWorkspaceModal` is hidden without `localPanes`.
@@ -246,9 +248,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
 - The singleton is picked synchronously at module load, so any module may call it from
   its first line.
 
-## `terminalInstance.ts` (1,958) — the xterm.js wrapper
+## `terminalInstance.ts` (1,983) — the xterm.js wrapper
 
-**Unicode width:** right after `new Terminal({...})` the constructor calls `term.unicode.register(isolateAwareV6)` then sets `activeVersion = ISOLATE_AWARE_UNICODE_VERSION` (register first; activating an unregistered version throws). Effect: the FSI/PDI the smart-bidi filter inserts take no cell, so cursor-addressed TUIs stop shifting. Residual: an isolate at column 0 still gets its own cell; in the DOM renderer each cell is an inline-block span, so the isolate's span stays but is zero-width.
+**Unicode width:** right after `new Terminal({...})` the constructor calls `term.unicode.register(isolateAwareV6)` then sets `activeVersion = ISOLATE_AWARE_UNICODE_VERSION` (register first; activating an unregistered version throws). Effect: the FSI/PDI the smart-bidi filter inserts take no cell, so cursor-addressed TUIs stop shifting. Residual: at column 0 the join is skipped (`shouldJoin && x`), so the isolate is written as its own width-0 cell and the cursor still advances. The DOM renderer skips width-0 cells (`if (width === 0) continue`), so that cell has no span, and the rest of the row paints one cell left of its buffer columns. The filter resets its RTL context on LF, CR and CSI `H` / `f` / `G`, which removes the common way an FSI reaches column 0.
 
 **Logging:** every diagnostic goes through the module-level `termLog = createLogger("TERM")` (Rule #9), never raw `console.*`; messages carry labels and error objects only, never PTY or clipboard content (Rule #1).
 
@@ -315,7 +317,8 @@ Things it does that are easy to get wrong:
 
 `RtlProfileSettings` mirrors `RtlProfile` in `settings.rs`: `rtlMode`
 (`auto_per_line | force_rtl | bidi_reorder | off`), `autoDirection`,
-`mirrorArrowsRtl`, `tuiOwnsBidi`, and `directionPolicy`.
+`mirrorArrowsRtl`, `tuiOwnsBidi`, `directionPolicy`, and `smartBidi` (the backend filter;
+`connectPane` passes it to `pane_connect`, so it does not change a live pane).
 
 Two of those modes paint rows with a `dir` attribute and therefore need the DOM
 renderer; the other two run WebGL. `usesRowDir(mode)` is the single predicate
@@ -411,7 +414,9 @@ one definition of "what an escape looks like".
 
 **Known limit (DEFERRED):** `bidi_reorder` has the terminal-wg "cursed cursor" — caret stays pinned right and a partial repaint can leave a line half-reordered, because the transform runs per rAF chunk while the TUI addresses untransformed columns. Fix needs whole-line reassembly + cursor tracking; see `docs/DECISIONS.md` and `docs/RTL-TEST.md` § `bidi_reorder` — known limits.
 
-**`copyBidi.ts` (185)** — visual→logical for text on its way to the **clipboard**.
+**`copyBidi.ts` (195)** — visual→logical for text on its way to the **clipboard**, and
+`stripIsolates` (U+2066-2069), which `copyToClipboard` applies first on every copy route, so
+copying `main.rs` does not add a trailing PDI.
 Measured on Yossi's machine, 2026-08-20: plain PowerShell renders reversed on screen but
 pastes correctly, while Claude Code renders correctly and pastes reversed — exactly
 inverted, because the two panes hold opposite orders in the buffer.
@@ -427,7 +432,7 @@ on "did the transform move the point", not on the row being rtl.
 
 ## Typed mirrors
 
-**`types.ts` (618)** — the data-model types are **generated from the Rust structs by
+**`types.ts` (621)** — the data-model types are **generated from the Rust structs by
 ts-rs** and re-exported here so `from "./types"` keeps working. Regenerate after a Rust
 struct change with `cd app/src-tauri && cargo test`. **Do not hand-edit
 `src/bindings/*.ts`.** Note ts-rs renders `Option<T>` as `T | null` — a required,
@@ -448,11 +453,13 @@ side is silently missing here until someone types it — update both in the same
 Phase 90 added two more of these: `TmuxSessionInfo.owner_cwd` (the claim-time cwd from
 `session-owners.json`, a grouping key only) and `SessionSummary`, the row shape of
 `sessions_overview_summarize` (`status` is a closed union ending in `unknown`, which is
-what the backend emits for anything the model did not say cleanly).
+what the backend emits for anything the model did not say cleanly). `TmuxSessionInfo.pane_ids`
+is optional here: the Rust side omits an empty list, and the web backend never sends it.
 
-**`settings.ts` (751)** — the typed settings mirror plus load/save and the CSS-variable
+**`settings.ts` (801)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
-(`BriefSettings` gained `inject_context`, default true, in Phase 105.C). Also
+(`BriefSettings` gained `inject_context`, default true, in Phase 105.C, and
+`inject_protocol`, default true, later). Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.
@@ -464,7 +471,7 @@ past installs), `fontInstall`, and `fontUninstall`.
   `ISOLATE_AWARE_UNICODE_VERSION = "6-isolates"`. Only U+2066-2069 (LRI/RLI/FSI/PDI, which
   the smart-bidi filter inserts) differ: width 0 and `charProperties` always joins the
   preceding cell, keeping its width, so an isolate after an SGR (join state reset) costs no
-  cell. Residual: at column 0 xterm still writes it into its own cell. Registered and activated in the
+  cell. Residual: at column 0 xterm still writes it into its own width-0 cell, which the DOM renderer does not paint. Registered and activated in the
   `TerminalInstance` constructor. `unicodeIsolates.test.ts` pins this and diffs the tables
   against `node_modules/@xterm/xterm/.../UnicodeV6.ts` when present.
 - **`logger.ts` (~115)** — `createLogger(tag)`. Lines reach both devtools and the single
@@ -479,9 +486,10 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`popoutProfile.ts` (12)** — pure `popoutProfileKey(sid)` (`ymux.popout.profile.<sid>`) and
   `parsePopoutProfile(raw)` (only exact `"remote"` is remote, else local): the localStorage
   hand-off of the origin pane's RTL profile to its popout window.
-- **`i18n/index.ts` (86)** — dictionaries statically imported (~30 KB total, no async
+- **`i18n/index.ts` (91)** — dictionaries statically imported (~30 KB total, no async
   loader). Active language and direction are two signals, so `t(key)` and the document
-  `dir` react together. A missing key returns the key itself.
+  `dir` react together. A missing key returns the key itself. `tEn(key)` returns the
+  English text whatever the active language; the command palette searches it.
 - **`platform.ts` (50)** — host OS resolved **once** from Rust (`host_platform`,
   `std::env::consts::OS`). Exists because two Windows-only assumptions were baked in as
   literals and both broke on mac: local paths joined with a hardcoded `\`, and drag-drop
@@ -496,12 +504,15 @@ past installs), `fontInstall`, and `fontUninstall`.
   purpose**: per-machine, high-churn session state, the same class as window rects and
   sidebar width. Losing it costs one click, never data, and it keeps Rule #7's
   atomic-write surface small.
-- **`shortcuts.ts` (380)** — the accelerator registry, not just a parser. It owns
+- **`shortcuts.ts` (414)** — the accelerator registry, not just a parser. `formatAccel`
+  is the display form of a parsed binding (`canonicalAccel` and the palette hints use
+  it). It owns
   `ShortcutsSettings`, `DEFAULT_SHORTCUTS`, `SHORTCUT_ACTION_IDS` and
   `SHORTCUT_GROUPS` (the Settings tab's row order; BRIEF added `toggle_queue`
   Ctrl+Shift+Q and `show_briefing` Ctrl+Alt+Q in the general group, Phase 105 added
   `toggle_context_rail` Ctrl+Shift+K there too, Phase 91.F added
-  `open_diff` Ctrl+Shift+G in the panes group), `DEPRECATED_SHORTCUT_IDS` (`find`:
+  `open_diff` Ctrl+Shift+G in the panes group, the jump palette added `jump_palette`
+  Ctrl+Shift+O in the general group), `DEPRECATED_SHORTCUT_IDS` (`find`:
   kept in the schema and defaults so old `settings.json` loads, but filtered out of
   `SHORTCUT_ACTION_IDS`, `ShortcutActionId` and the groups, so it has no row, table
   entry or conflict check), parses
@@ -554,9 +565,12 @@ already-translated strings in — which is what makes `insightsReport.test.ts` a
   token.** Everything here is the API-*equivalent* cost — right for "where is my quota
   going, in money terms", wrong for "what will my card be charged". **The UI must never
   label it a bill.**
-- **`insightsFmt.ts` (34)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
+- **`insightsFmt.ts` (33)** — `fmtBytes` / `fmtBps` / `fmtPct` / `fmtSpan`, lifted out of
   `InsightsWindow.tsx` so the Analytics tab can use them without importing its own parent
-  (that import would be a cycle).
+  (that import would be a cycle). `fmtBytes` is the app's one spaced byte formatter: zero
+  is `0 B`, so `fmtBps` shows `0 B/s`. `transferStore.ts` re-exports it, and `FileEditor.tsx`
+  and `SettingsModal.tsx` import it. `FileManagerPane.tsx` keeps its own compact `fmtSize`
+  (`1.5K`) for the size column.
 - **`insightsReport.ts` (428)** — the wire types for `/analytics` and `/claude-usage`,
   plus the one thing you can do with them outside the panel: flatten the screen into a
   plain-text report to paste into Claude, an email, or an incident ticket. Column

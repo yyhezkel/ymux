@@ -16,12 +16,27 @@ export interface Hunk {
   lineSpan: [number, number]; // [start, endExclusive) in `lines`
 }
 
+export type DiffSide = "old" | "new";
+
+/** Where a content line lives in a file. A deleted line is on the old side;
+ *  an added or context line is on the new side. */
+export interface LineRef {
+  file: string;
+  side: DiffSide;
+  line: number;
+}
+
 export interface ParsedDiff {
   lines: DiffLine[];
   hunks: Hunk[];
   /** path → index into `lines` of that file's `diff --git` line. */
   anchors: Record<string, number>;
+  /** Parallel to `lines`. Null for a header or for a line outside a hunk's
+   *  declared count (combined `@@@` hunks have no count, so no refs). */
+  refs: (LineRef | null)[];
 }
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
 /** Pull the destination path out of a `diff --git a/<p> b/<p>` header.
  *  The naive `/ b\/(\S+)/` broke on paths with spaces and on renames; this
@@ -48,11 +63,23 @@ export function parseDiff(text: string): ParsedDiff {
   const out: DiffLine[] = [];
   const hunks: Hunk[] = [];
   const anchors: Record<string, number> = {};
-  if (!text) return { lines: out, hunks, anchors };
+  const refs: (LineRef | null)[] = [];
+  if (!text) return { lines: out, hunks, anchors, refs };
   const src = text.split("\n");
   let currentFile = "";
   let inHunk = false;
   let hunkStart = -1;
+  // Line numbers, and how many lines the current @@ header still promises.
+  let oldNo = 0;
+  let newNo = 0;
+  let oldLeft = 0;
+  let newLeft = 0;
+  const push = (line: DiffLine, ref: LineRef | null = null) => {
+    out.push(line);
+    refs.push(ref);
+  };
+  const ref = (side: DiffSide, line: number): LineRef | null =>
+    currentFile ? { file: currentFile, side, line } : null;
   const closeHunk = (endExclusive: number) => {
     if (hunkStart >= 0) {
       hunks.push({ fileLabel: currentFile, headerIdx: hunkStart, lineSpan: [hunkStart, endExclusive] });
@@ -69,46 +96,61 @@ export function parseDiff(text: string): ParsedDiff {
       closeHunk(out.length);
       currentFile = fileFromGitHeader(raw);
       anchors[currentFile] = out.length;
-      out.push({ kind: "file", text: raw });
+      oldLeft = newLeft = 0;
+      push({ kind: "file", text: raw });
       continue;
     }
+    // Inside a hunk's declared count, a deleted `-- x` is the raw line
+    // `--- x` and an added `++ x` is `+++ x`: content, not a file header.
     if (
+      oldLeft === 0 && newLeft === 0 && (
       raw.startsWith("--- ") || raw.startsWith("+++ ") ||
       raw.startsWith("index ") || raw.startsWith("new file mode") ||
       raw.startsWith("deleted file mode") || raw.startsWith("similarity index") ||
       raw.startsWith("rename from ") || raw.startsWith("rename to ") ||
       raw.startsWith("old mode ") || raw.startsWith("new mode ") ||
-      raw.startsWith("Binary files ")
+      raw.startsWith("Binary files "))
     ) {
-      out.push({ kind: "file", text: raw });
+      push({ kind: "file", text: raw });
       continue;
     }
     if (raw.startsWith("@@")) {
       closeHunk(out.length);
       hunkStart = out.length;
       inHunk = true;
-      out.push({ kind: "hunk", text: raw });
+      const m = HUNK_HEADER.exec(raw);
+      oldNo = m ? Number(m[1]) : 0;
+      oldLeft = m ? Number(m[2] ?? "1") : 0;
+      newNo = m ? Number(m[3]) : 0;
+      newLeft = m ? Number(m[4] ?? "1") : 0;
+      push({ kind: "hunk", text: raw });
       continue;
     }
     if (!inHunk) {
       if (raw.length === 0) continue; // blank line between files
-      out.push({ kind: "file", text: raw });
+      push({ kind: "file", text: raw });
       continue;
     }
     if (raw.startsWith("+")) {
-      out.push({ kind: "add", text: raw.slice(1) });
+      const r = newLeft > 0 ? ref("new", newNo) : null;
+      if (newLeft > 0) { newNo++; newLeft--; }
+      push({ kind: "add", text: raw.slice(1) }, r);
     } else if (raw.startsWith("-")) {
-      out.push({ kind: "del", text: raw.slice(1) });
+      const r = oldLeft > 0 ? ref("old", oldNo) : null;
+      if (oldLeft > 0) { oldNo++; oldLeft--; }
+      push({ kind: "del", text: raw.slice(1) }, r);
     } else if (raw.startsWith(" ") || raw.length === 0) {
-      out.push({ kind: "context", text: raw.length === 0 ? "" : raw.slice(1) });
-    } else if (raw === "\\ No newline at end of file") {
-      out.push({ kind: "context", text: raw });
+      const counted = oldLeft > 0 && newLeft > 0;
+      const r = counted ? ref("new", newNo) : null;
+      if (counted) { oldNo++; newNo++; oldLeft--; newLeft--; }
+      push({ kind: "context", text: raw.length === 0 ? "" : raw.slice(1) }, r);
     } else {
-      out.push({ kind: "context", text: raw });
+      // Includes "\ No newline at end of file": no file line behind it.
+      push({ kind: "context", text: raw });
     }
   }
   closeHunk(out.length);
-  return { lines: out, hunks, anchors };
+  return { lines: out, hunks, anchors, refs };
 }
 
 /** The single letter the file list shows for a porcelain XY status.

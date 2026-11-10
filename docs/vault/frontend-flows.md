@@ -12,6 +12,7 @@ covers:
   - app/src/SshKeyOfferModal.tsx
   - app/src/WorkspaceExtrasFields.tsx
   - app/src/ProjectFolderModal.tsx
+  - app/src/WorktreeRecipeDialog.tsx
   - app/src/ConfirmDeleteWorkspace.tsx
   - app/src/NotesModal.tsx
   - app/src/DirPicker.tsx
@@ -89,7 +90,12 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
 - **`ProjectFolderModal.tsx` (266)** — two dialogs over one chrome: `pin` (type a folder
   path — usually a repo, but a directory without git pins too, demoted, via
   `project_folder_probe`'s verdict) and `worktree` (create a worktree inside a pinned
-  folder).
+  folder). After a create it keeps `busy` and mounts `WorktreeRecipeDialog`.
+- **`WorktreeRecipeDialog.tsx`** — the trust prompt for `.ymux/worktree.json`, in a `Portal`
+  over the parent modal. It renders nothing until `worktree_recipe_preview` answers, so no
+  recipe means no dialog. An approved recipe runs with no prompt. Focus starts on Skip, and
+  Escape skips. The backend enforces the approval; the dialog only collects it. It closes by
+  itself on a clean run and stays open for anything else, with the output for that run only.
 - **`ConfirmDeleteWorkspace.tsx` (123)** — deleting a workspace takes its **whole
   subtree**: pinned project folders, the worktree workspaces under them, and any live
   remote sessions. `window.confirm` was carrying that danger in an unstyled grey OS box
@@ -107,7 +113,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
   itself in `choose`; the inline consumer (`PaneView.chooseDir`) owns them.
 - **`NotesModal.tsx` (273)** — notes CRUD against `notes.rs`.
 
-## `SettingsModal.tsx` (1,869)
+## `SettingsModal.tsx` (1,971)
 
 The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hooks,
 notifications, logs, Claude, updates, shortcuts. Reads and writes through
@@ -115,14 +121,16 @@ notifications, logs, Claude, updates, shortcuts. Reads and writes through
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
 modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"
 checkbox (`sessions_as_rows`, the `restore_sessions_on_start` row's shape). The General tab carries BRIEF's "Briefing card" section (two opt-in trigger
-toggles + two minute thresholds + Phase 105.C's "Inject context into sessions",
-checked unless explicitly `false` since it defaults on); its writes always spread the COMPLETE `brief`
+toggles + two minute thresholds + Phase 105.C's "Inject context into sessions"
+and "Teach sessions the brief format" (`inject_protocol`), both
+checked unless explicitly `false` since they default on); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
 group.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the
-`auto_direction` / `mirror_arrows_rtl` / `tui_owns_bidi` / `direction_policy` knobs.
+`auto_direction` / `mirror_arrows_rtl` / `tui_owns_bidi` / `direction_policy` /
+`smart_bidi` knobs. `smart_bidi` applies when a pane connects, and the hint says so.
 `setRtlField` writes a **complete** profile object rather than a partial: Rust's
 per-field `serde(default)` would otherwise resurrect type-defaults instead of
 profile-defaults. `RTL_FIELD_DEFAULTS` holds `auto_per_line` for both profiles and

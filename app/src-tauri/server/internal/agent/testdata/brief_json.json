@@ -1,0 +1,137 @@
+{
+ "briefs": [
+  {
+   "name": "every key",
+   "message": "[ymux-brief]\ntask: T\nstatus: stuck\nask: A\nrec: R\nnext: N\ndelta: D\ngoal: G\ndone: W",
+   "title": "ignored",
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": "T",
+    "status": "stuck",
+    "ask": "A",
+    "rec": "R",
+    "next": "N",
+    "delta": "D",
+    "goal": "G",
+    "done": "W",
+    "degraded": false,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "an absent goal and done are null, not missing",
+   "message": "[ymux-brief]\ndelta: D",
+   "title": null,
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": null,
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": null,
+    "delta": "D",
+    "goal": null,
+    "done": null,
+    "degraded": false,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "the title fills a missing task",
+   "message": "[ymux-brief]\nnext: N",
+   "title": "  the title  ",
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": "the title",
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": "N",
+    "delta": null,
+    "goal": null,
+    "done": null,
+    "degraded": false,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "degraded takes the first non-blank line",
+   "message": "\n\n  first line  \nsecond",
+   "title": "T",
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": "T",
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": null,
+    "delta": "first line",
+    "goal": null,
+    "done": null,
+    "degraded": true,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "degraded delta is clipped at 160",
+   "message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "title": null,
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": null,
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": null,
+    "delta": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx…",
+    "goal": null,
+    "done": null,
+    "degraded": true,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "no message at all",
+   "message": null,
+   "title": null,
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": null,
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": null,
+    "delta": null,
+    "goal": null,
+    "done": null,
+    "degraded": true,
+    "updated_ms": 1700000000000
+   }
+  },
+  {
+   "name": "an empty title stays an empty string",
+   "message": null,
+   "title": "",
+   "updated_ms": 1700000000000,
+   "expect": {
+    "task": "",
+    "status": "done",
+    "ask": null,
+    "rec": null,
+    "next": null,
+    "delta": null,
+    "goal": null,
+    "done": null,
+    "degraded": true,
+    "updated_ms": 1700000000000
+   }
+  }
+ ],
+ "empty_entry": {
+  "brief": null,
+  "last_prompt": null,
+  "prompt_ms": null,
+  "session_ended": false,
+  "seq": 0
+ }
+}

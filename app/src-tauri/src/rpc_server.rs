@@ -186,7 +186,8 @@ pub async fn run(state: AppState, app: AppHandle) {
 #[cfg(not(windows))]
 fn spawn_unix_listener(name: String, state: AppState, app: AppHandle) -> Result<(), String> {
     // Stale socket file from a previous crash blocks bind — remove it.
-    // A second live instance is prevented upstream (single-instance app).
+    // config_lock::gate_for_process stops a second live instance on this dir
+    // before the server starts. A build older than the gate can still unlink.
     let _ = std::fs::remove_file(&name);
     let listener = tokio::net::UnixListener::bind(&name).map_err(|e| {
         crate::log_warn("RPC", &format!("rpc_server: bind {name} failed: {e}"));
@@ -336,6 +337,14 @@ where
     let _ = writer.write_all(format!("{resp}\n").as_bytes()).await;
     let _ = writer.flush().await;
     // Return → `stream` (split halves) drop → pipe instance freed immediately.
+}
+
+/// The pane's hook counter, 0 before the first hook. Carried on the `send`
+/// replies so a driver can tell the next turn from the previous one.
+fn pane_agent_seq(state: &AppState, pane_id: &str) -> u32 {
+    crate::lock_or_recover(&state.agent_runs)
+        .get(pane_id)
+        .map_or(0, |r| r.seq)
 }
 
 // Phase 99: ported to Go (`server/internal/agent/keys.go`) — change both.
@@ -644,6 +653,15 @@ async fn dispatch(
         // can fall back to its static policy fast when the desktop is
         // unreachable, instead of stalling the agent on the full timeout.
         "ping" => Ok(json!({ "ok": true })),
+        // A second launch on this config dir asks us to come forward, then
+        // exits (config_lock::gate_for_process).
+        "app.focus" => {
+            let app = app.clone();
+            tokio::task::spawn_blocking(move || crate::tray::focus_main(&app))
+                .await
+                .map_err(|e| format!("app.focus: {e}"))??;
+            Ok(json!({ "ok": true }))
+        }
         "list-workspaces" => {
             let mut file = state.workspaces.lock().unwrap().clone();
             // AI-NOTE: second layer — persist() already blanks secret values,
@@ -829,8 +847,11 @@ async fn dispatch(
                 .get(pane_id)
                 .cloned()
                 .ok_or_else(|| format!("pane {pane_id} not connected"))?;
+            // Read BEFORE the write: `wait --after-seq` needs a value from
+            // before the turn this input starts.
+            let agent_seq = pane_agent_seq(state, pane_id);
             write_to_session(state, &sid, data.as_bytes())?;
-            Ok(json!({ "ok": true, "bytes": data.len() }))
+            Ok(json!({ "ok": true, "bytes": data.len(), "agent_seq": agent_seq }))
         }
 
         "send-key" => {
@@ -851,8 +872,9 @@ async fn dispatch(
                 .get(pane_id)
                 .cloned()
                 .ok_or_else(|| format!("pane {pane_id} not connected"))?;
+            let agent_seq = pane_agent_seq(state, pane_id);
             write_to_session(state, &sid, &bytes)?;
-            Ok(json!({ "ok": true, "bytes": bytes.len() }))
+            Ok(json!({ "ok": true, "bytes": bytes.len(), "agent_seq": agent_seq }))
         }
 
         "notify" => {
@@ -1089,22 +1111,93 @@ async fn dispatch(
             Ok(json!({ "ok": true, "bytes": bytes.len() }))
         }
 
-        // B1: scrollback. The backend does NOT buffer PTY output —
-        // Absolute Rule #1 ("Never log PTY input or output content")
-        // pushes the scrollback ring into the FRONTEND xterm.js, not
-        // into Rust state. Returning the buffer to an RPC caller
-        // would require a frontend round-trip we haven't built yet.
-        // For tmux sessions there's a clean workaround: send
-        // `tmux capture-pane -p -S -<lines>` to the pane via `send`
-        // and read its output from the next pty:data event. Document
-        // that in the error so agents have a path forward.
+        // The backend keeps no PTY buffer (Rule #1); the text comes from
+        // the pane's multiplexer. A pane without one is an error. Same
+        // reach as `send`: this endpoint has one trust level and no
+        // per-pane or per-method check. Rule #1: log the count, never the
+        // text. `lines` is a string when it comes through the MCP schema.
         "pane.scrollback" => {
-            Err(
-                "pane.scrollback: backend does not buffer PTY content (Absolute Rule #1). \
-                 Workaround for tmux: rpc `send` with data \
-                 `\\u001btmux capture-pane -p -S -<N>\\n` then read the next pty:data event."
-                    .to_string(),
-            )
+            let pane_id = params
+                .get("pane_id")
+                .or_else(|| params.get("pane"))
+                .and_then(|v| v.as_str())
+                .ok_or("missing pane_id")?;
+            let requested = params.get("lines").and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+            });
+            let lines = crate::sessions_overview::clamp_scrollback_lines(requested);
+            let text = crate::sessions_overview::pane_scrollback(state, pane_id, lines).await?;
+            crate::log_debug(
+                "RPC",
+                &format!("pane.scrollback pane={pane_id} lines={lines} bytes={}", text.len()),
+            );
+            Ok(json!({ "pane_id": pane_id, "lines": lines, "text": text }))
+        }
+
+        // One pane's traffic-light state, for `ymux wait`. A pane that no
+        // layout holds is `known: false`; a known pane no hook has reached
+        // is `state: "unknown"`. Those two are different answers.
+        "pane.agent-state" => {
+            let pane_id = params
+                .get("pane_id")
+                .or_else(|| params.get("pane"))
+                .and_then(|v| v.as_str())
+                .ok_or("missing pane_id")?;
+            let known = {
+                let file = crate::lock_or_recover(&state.workspaces);
+                crate::find_workspace_for_pane(&file, pane_id).is_some()
+            };
+            let runs = crate::lock_or_recover(&state.agent_runs);
+            let run = runs.get(pane_id);
+            Ok(json!({
+                "pane_id": pane_id,
+                "known": known,
+                "state": run.map_or("unknown", |r| r.state.as_str()),
+                "state_since": run.and_then(|r| r.state_since_ms()),
+                "seq": run.map_or(0, |r| r.seq),
+            }))
+        }
+
+        // `ymux worktree create`. The workspace is explicit or the
+        // caller's own pane, and never the active one: that is whatever
+        // the person is looking at, and a branch in the wrong repo is a
+        // side effect nobody asked for.
+        "worktree.create" => {
+            let name = params
+                .get("name")
+                .and_then(|v| v.as_str())
+                .ok_or("missing name")?;
+            crate::worktrees::validate_branch_name(name)?;
+            let explicit = params
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let workspace_id = match explicit {
+                Some(id) => id.to_string(),
+                None => {
+                    let pane_id = params
+                        .get("pane_id")
+                        .and_then(|v| v.as_str())
+                        .ok_or("missing workspace_id (or pane_id)")?;
+                    let file = crate::lock_or_recover(&state.workspaces);
+                    crate::find_workspace_for_pane(&file, pane_id)
+                        .ok_or_else(|| format!("pane {pane_id} is in no workspace"))?
+                }
+            };
+            let base = params.get("base").and_then(|v| v.as_str()).unwrap_or("HEAD");
+            let target = params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            let list =
+                crate::worktrees::create_project_worktree(state, &workspace_id, name, base, target)
+                    .await?;
+            let path = list
+                .iter()
+                .find(|e| e.branch.as_deref() == Some(name))
+                .map(|e| e.path.clone());
+            Ok(json!({ "ok": true, "branch": name, "path": path, "worktrees": list }))
         }
 
         // Same story for screenshots: xterm.js's canvas lives on the
@@ -1401,6 +1494,42 @@ async fn dispatch(
                 state,
                 pane_id.as_deref(),
                 params.get("tmux_session").and_then(|v| v.as_str()),
+            );
+            let hook_session = params
+                .get("payload")
+                .and_then(|p| p.get("session_id"))
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            if let Some(pane) = resolved_pane.as_deref() {
+                // A SessionEnd from a `claude -p` that borrowed this pane
+                // must touch nothing: no light, no brief, no context record,
+                // no feed card. See `session_end_is_ours`.
+                if subkind == "session-end" {
+                    let current = state
+                        .agent_runs
+                        .lock()
+                        .ok()
+                        .and_then(|runs| runs.get(pane).and_then(|e| e.session_id.clone()));
+                    if !crate::session_end_is_ours(current.as_deref(), hook_session) {
+                        crate::log_debug(
+                            "RPC",
+                            &format!("feed.push: foreign session-end ignored pane={pane} req_id={req_id}"),
+                        );
+                        return Ok(json!({ "request_id": req_id, "decision": "passive" }));
+                    }
+                }
+                if let (true, Some(id), Ok(mut runs)) = (
+                    matches!(subkind.as_str(), "user-prompt-submit" | "stop"),
+                    hook_session,
+                    state.agent_runs.lock(),
+                ) {
+                    runs.entry(pane.to_string()).or_default().session_id = Some(id.to_string());
+                }
+            }
+            crate::sessions_overview::note_hook_attribution(
+                state,
+                pane_id.as_deref(),
+                resolved_pane.as_deref(),
             );
             // Notification type, read here so the state machine below and
             // the early return share one source. The CLI sends nothing but
@@ -2200,17 +2329,7 @@ async fn dispatch(
             // — but to keep changes small, we duplicate the workspace SSH
             // lookup here. NOTE: pane_list_claude_sessions(_impl)? helper
             // could be factored later.
-            let handle_opt = {
-                let sessions = state.core.sessions.lock().unwrap();
-                sessions
-                    .iter()
-                    .find_map(|(_sid, sess)| match sess {
-                        crate::Session::Ssh(s) if s.workspace_id == workspace_id => {
-                            Some(s.handle.clone())
-                        }
-                        _ => None,
-                    })
-            };
+            let handle_opt = crate::ssh_handle_for_machine(state, &workspace_id);
             let lim = limit.unwrap_or(30).min(200);
             let script = format!(
                 "find \"$HOME/.claude/projects\" -maxdepth 4 -name '*.jsonl' \
@@ -2223,28 +2342,14 @@ async fn dispatch(
                 lim
             );
             if let Some(handle) = handle_opt {
-                let mut ch = handle
-                    .channel_open_session()
-                    .await
-                    .map_err(|e| format!("channel_open: {e}"))?;
-                ch.exec(true, script.as_bytes())
-                    .await
-                    .map_err(|e| format!("exec: {e}"))?;
-                let mut out_bytes = Vec::new();
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(8), async {
-                    while let Some(msg) = ch.wait().await {
-                        match msg {
-                            russh::ChannelMsg::Data { ref data } => out_bytes.extend_from_slice(data),
-                            russh::ChannelMsg::Eof
-                            | russh::ChannelMsg::Close
-                            | russh::ChannelMsg::ExitStatus { .. } => break,
-                            _ => {}
-                        }
-                    }
-                })
-                .await;
-                let _ = ch.close().await;
-                let raw = String::from_utf8_lossy(&out_bytes).to_string();
+                // Exit and timeout ignored on purpose, `Unknown` included:
+                // `find` exits non-zero on any unreadable directory, and a
+                // partial listing is still a useful listing.
+                let opts = ymux_core::ssh_exec::ExecOpts {
+                    stderr: ymux_core::ssh_exec::StderrMode::Drop,
+                    ..ymux_core::ssh_exec::ExecOpts::timeout_secs(8)
+                };
+                let raw = ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout;
                 let mut out = serde_json::Map::new();
                 let mut arr: Vec<Value> = Vec::new();
                 for line in raw.lines() {
@@ -2854,6 +2959,63 @@ mod tests {
                 .await
                 .unwrap_or_else(|e| panic!("client {i} read failed: {e}"));
             assert_eq!(&buf, b"OK\n", "client {i} got wrong reply");
+        }
+    }
+}
+
+// The fixtures are shared with server/internal/agent/golden_test.go, so a
+// drift between these functions and their Go ports fails here or there.
+#[cfg(test)]
+mod golden_tests {
+    use super::{humanize_notification, translate_key};
+    use serde_json::Value;
+
+    fn fixture(text: &str) -> Vec<Value> {
+        serde_json::from_str(text).expect("fixture")
+    }
+
+    #[test]
+    fn humanize_matches_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/humanize.json")) {
+            let (subkind, lang) = (c["subkind"].as_str().expect("subkind"), c["lang"].as_str().expect("lang"));
+            let got = humanize_notification(subkind, &c["payload"], c["ws_name"].as_str().unwrap_or(""), lang);
+            let want = (
+                c["title"].as_str().expect("title").to_string(),
+                c["body"].as_str().expect("body").to_string(),
+            );
+            assert_eq!(got, want, "{subkind}/{lang}");
+        }
+    }
+
+    #[test]
+    fn keys_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/keys.json")) {
+            let name = c["name"].as_str().expect("name");
+            let want: Vec<u8> = c["bytes"]
+                .as_array()
+                .expect("bytes")
+                .iter()
+                .map(|b| u8::try_from(b.as_u64().expect("byte")).expect("u8"))
+                .collect();
+            assert_eq!(translate_key(name), want, "{name:?}");
+        }
+    }
+
+    #[test]
+    fn block_rules_match_the_go_port() {
+        for c in fixture(include_str!("../server/internal/agent/testdata/policy.json")) {
+            let name = c["name"].as_str().expect("name");
+            let custom: Vec<String> = c["custom_block"]
+                .as_array()
+                .map(|a| a.iter().map(|v| v.as_str().expect("pattern").to_string()).collect())
+                .unwrap_or_default();
+            let v = ymux_policy::evaluate_with(
+                c["tool"].as_str().expect("tool"),
+                c["command"].as_str(),
+                &custom,
+                &[],
+            );
+            assert_eq!(v.decision == ymux_policy::Decision::Block, c["blocked"].as_bool().expect("blocked"), "{name}");
         }
     }
 }

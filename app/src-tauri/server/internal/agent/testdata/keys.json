@@ -1,0 +1,235 @@
+[
+ {
+  "name": "enter",
+  "bytes": [
+   13
+  ]
+ },
+ {
+  "name": "return",
+  "bytes": [
+   13
+  ]
+ },
+ {
+  "name": "cr",
+  "bytes": [
+   13
+  ]
+ },
+ {
+  "name": "tab",
+  "bytes": [
+   9
+  ]
+ },
+ {
+  "name": "ctrl-c",
+  "bytes": [
+   3
+  ]
+ },
+ {
+  "name": "ctrl+c",
+  "bytes": [
+   3
+  ]
+ },
+ {
+  "name": "^c",
+  "bytes": [
+   3
+  ]
+ },
+ {
+  "name": "ctrl-d",
+  "bytes": [
+   4
+  ]
+ },
+ {
+  "name": "ctrl+d",
+  "bytes": [
+   4
+  ]
+ },
+ {
+  "name": "^d",
+  "bytes": [
+   4
+  ]
+ },
+ {
+  "name": "ctrl-z",
+  "bytes": [
+   26
+  ]
+ },
+ {
+  "name": "ctrl+z",
+  "bytes": [
+   26
+  ]
+ },
+ {
+  "name": "^z",
+  "bytes": [
+   26
+  ]
+ },
+ {
+  "name": "ctrl-l",
+  "bytes": [
+   12
+  ]
+ },
+ {
+  "name": "ctrl+l",
+  "bytes": [
+   12
+  ]
+ },
+ {
+  "name": "^l",
+  "bytes": [
+   12
+  ]
+ },
+ {
+  "name": "esc",
+  "bytes": [
+   27
+  ]
+ },
+ {
+  "name": "escape",
+  "bytes": [
+   27
+  ]
+ },
+ {
+  "name": "backspace",
+  "bytes": [
+   127
+  ]
+ },
+ {
+  "name": "bs",
+  "bytes": [
+   127
+  ]
+ },
+ {
+  "name": "up",
+  "bytes": [
+   27,
+   91,
+   65
+  ]
+ },
+ {
+  "name": "arrow-up",
+  "bytes": [
+   27,
+   91,
+   65
+  ]
+ },
+ {
+  "name": "down",
+  "bytes": [
+   27,
+   91,
+   66
+  ]
+ },
+ {
+  "name": "arrow-down",
+  "bytes": [
+   27,
+   91,
+   66
+  ]
+ },
+ {
+  "name": "right",
+  "bytes": [
+   27,
+   91,
+   67
+  ]
+ },
+ {
+  "name": "arrow-right",
+  "bytes": [
+   27,
+   91,
+   67
+  ]
+ },
+ {
+  "name": "left",
+  "bytes": [
+   27,
+   91,
+   68
+  ]
+ },
+ {
+  "name": "arrow-left",
+  "bytes": [
+   27,
+   91,
+   68
+  ]
+ },
+ {
+  "name": "home",
+  "bytes": [
+   27,
+   91,
+   72
+  ]
+ },
+ {
+  "name": "end",
+  "bytes": [
+   27,
+   91,
+   70
+  ]
+ },
+ {
+  "name": "ENTER",
+  "bytes": [
+   13
+  ]
+ },
+ {
+  "name": "Ctrl-C",
+  "bytes": [
+   3
+  ]
+ },
+ {
+  "name": "FooBar",
+  "bytes": [
+   102,
+   111,
+   111,
+   98,
+   97,
+   114
+  ]
+ },
+ {
+  "name": "a",
+  "bytes": [
+   97
+  ]
+ },
+ {
+  "name": "",
+  "bytes": []
+ }
+]

@@ -72,8 +72,8 @@ type Brief struct {
 	Delta     *string     `json:"delta"`
 	// Phase 117 (F3): the sticky goal / finish criterion (brief.rs, Phase
 	// 105) — usually absent; the Context Rail keeps the last non-empty one.
-	Goal      *string     `json:"goal,omitempty"`
-	Done      *string     `json:"done,omitempty"`
+	Goal      *string     `json:"goal"`
+	Done      *string     `json:"done"`
 	Degraded  bool        `json:"degraded"`
 	UpdatedMs int64       `json:"updated_ms"`
 }

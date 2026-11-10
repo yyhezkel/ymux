@@ -772,6 +772,143 @@ body {
   opacity: 0.55;
   user-select: none;
 }
+/* Diff line notes. The slot is inside the LTR `.diff-pane-pre`, so the add
+   button stays on the left in every UI language. */
+.dl-note-slot {
+  flex: 0 0 14px;
+  display: inline-flex;
+  justify-content: center;
+}
+.dl-note-add {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--w-accent, #7aa2f7);
+  cursor: pointer;
+  line-height: 1;
+  opacity: 0;
+}
+.dl:hover .dl-note-add,
+.dl-cursor .dl-note-add,
+.dl-note-add:focus-visible {
+  opacity: 1;
+}
+@media (hover: none) {
+  .dl-note-add { opacity: 0.6; }
+}
+.dl-cursor {
+  outline: 1px solid var(--w-accent, #7aa2f7);
+  outline-offset: -1px;
+}
+.dl-notes {
+  /* Lines up with `.dl-text`: padding + slot + gap + gutter + gap. */
+  padding: 2px 8px 4px 48px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.dl-note {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--w-surface);
+  color: var(--w-text);
+  /* The pre pins LTR and left; a note follows its own text. */
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.diff-notes {
+  flex: 0 0 auto;
+  max-height: 45%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--w-surface);
+  border-top: 1px solid var(--w-border);
+  font-size: var(--w-fs-sm);
+}
+.diff-note-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.diff-note-editor textarea {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+}
+.diff-notes-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.diff-notes-title {
+  margin: 0;
+  font-size: inherit;
+}
+.diff-notes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.diff-note-item {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 2px 0;
+}
+.diff-note-ref {
+  flex: 0 1 auto;
+  max-width: 45%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--w-accent, #7aa2f7);
+  font-family: var(--w-font-mono);
+  overflow-wrap: anywhere;
+  unicode-bidi: isolate;
+}
+button.diff-note-ref:not(:disabled) { cursor: pointer; }
+.diff-note-outdated {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: rgba(210, 153, 34, 0.2);
+  color: #d29922;
+}
+.diff-note-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.diff-note-btn {
+  flex: 0 0 auto;
+  padding: 2px;
+  border: 0;
+  background: none;
+  color: var(--w-text-dim, #888);
+  cursor: pointer;
+}
+.diff-note-btn:hover { color: var(--w-text); }
+.diff-notes-label { color: var(--w-text-dim, #888); }
+.diff-notes-preview {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--w-border);
+  font-family: var(--w-font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  unicode-bidi: plaintext;
+  text-align: start;
+}
+.diff-notes-hint { margin: 0; color: var(--w-text-dim, #888); }
+.diff-notes-err { margin: 0; color: var(--w-error); }
 .dl-text {
   flex: 1 1 auto;
   min-width: 0;
@@ -5107,13 +5244,56 @@ button.big { padding: 10px 24px; font-size: var(--w-fs-xl); }
   cursor: pointer;
   font-size: 13px;
   color: var(--w-text, #e6edf3);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.command-palette-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.command-palette-label {
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.command-palette-status {
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
+.command-palette-detail > span {
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.command-palette-hint {
+  flex: none;
+  font-family: var(--w-font-mono);
+  font-size: 11px;
+  color: var(--w-text-dim, #7d8590);
+}
 .command-palette-item.selected {
   background: var(--w-accent, #3b82f6);
   color: #fff;
+}
+.command-palette-item.selected .command-palette-hint,
+.command-palette-item.selected .command-palette-status,
+.command-palette-item.selected .command-palette-detail {
+  color: inherit;
 }
 .command-palette-empty {
   padding: 14px 16px;
@@ -6815,6 +6995,24 @@ body.ymux-dragging .pane-conn {
   border-radius: 4px;
   padding: 6px 8px;
 }
+.wt-recipe-code {
+  display: block;
+  margin: 0;
+  font-family: var(--w-font-mono, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wt-recipe-output {
+  max-height: 200px;
+  overflow: auto;
+}
+.wt-recipe-list {
+  margin: 0;
+  padding-inline-start: 18px;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
 .ticket-modal-footer {
   flex: 0 0 auto;
   display: flex;
@@ -7324,6 +7522,7 @@ body.ymux-dragging .pane-conn {
 .sessions-status.waiting_input { background: rgba(224, 175, 104, 0.18); color: var(--w-warn, #e0af68); border-color: transparent; }
 .sessions-status.error { background: rgba(247, 118, 142, 0.16); color: var(--w-danger, #f7768e); border-color: transparent; }
 .sessions-status.unknown { color: var(--w-text-faint); border-style: dashed; }
+.sessions-source { display: block; font-size: var(--w-fs-xs); color: var(--w-text-faint); white-space: nowrap; }
 .sessions-actions { margin-inline-start: 0; flex-wrap: nowrap; }
 /* Outline, not filled: the row's Open must not outshout the table. The
    explicit transparent background is what keeps `button.primary`'s accent

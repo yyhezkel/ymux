@@ -6,6 +6,7 @@ covers:
   - app/src-tauri/src/workspace_browser.rs
   - app/src-tauri/src/browser_diag.js
   - app/src-tauri/src/worktrees.rs
+  - app/src-tauri/src/worktree_recipe.rs
   - app/src-tauri/src/workspaces_merge.rs
   - app/src-tauri/src/notes.rs
   - app/src-tauri/src/tickets.rs
@@ -43,16 +44,17 @@ strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_s
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
 
-**`file_manager.rs` (1,741)** — dual-column file manager: lists, transfers, mutations on
-both sides. Local ops use `std::fs`; remote ops piggy-back on the workspace's
+**`file_manager.rs` (1,688)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
+both sides. Local ops use `std::fs`; zip 9's `ZipFile::name` returns a `Result`, so a bad
+entry name stops the local unzip with an error. Remote ops piggy-back on the workspace's
 already-authenticated SSH session and open **a fresh SFTP channel per call**. Sessions
 are deliberately *not* cached: a new SFTP subsystem on an existing handle is cheap, and
 caching would mean chasing teardown semantics when the terminal pane disconnects.
 
 **`workspace_browser.rs` (1,249)** — **at most one child Webview per workspace**, attached
-to the main window via `Window::add_child` (this is what pins `tauri = "=2.10.3"` with
+to the main window via `Window::add_child` (this is what pins `tauri = "=2.11.6"` with
 `features = ["unstable"]`). `workspace_browser_show(workspace_id, url, x, y, w, h)`
-creates or reveals it. All browser webviews share the **process-default WebView2
+creates, reveals or repositions it; there is no separate resize command. All browser webviews share the **process-default WebView2
 environment**; a per-workspace `--user-data-dir` forces a separate environment per
 workspace and WebView2 does not support multiple environments in one process — that
 surfaced as `0x8007139F`. Creation is serialized by `AppState.browser_create_lock` for
@@ -121,10 +123,11 @@ the child, and that was wrong; Phase 82.E corrected it in place. `tauri::manager
 prepends `__TAURI_INTERNALS__` and the invoke bootstrap to **every** webview's init
 scripts, external URLs included, so an `invoke` function does reach the tunneled page.
 The capability layer does **not** deny it: ymux has no app ACL manifest (`build.rs` is a
-bare `tauri_build::build()`, no `permissions/`), and Tauri 2.10.3 `Webview::on_message`
-ACL-checks app (non-plugin) commands only when one exists. Capabilities gate plugin
-commands only, so every app command was reachable from the tunneled page. What denies it
-now is `ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
+bare `tauri_build::build()`, no `permissions/`), and up to Tauri 2.11.0 `Webview::on_message`
+ACL-checked app (non-plugin) commands only when one existed, so every app command was
+reachable from the tunneled page. Tauri 2.11.1 (GHSA-7gmj-67g7-phm9) also ACL-checks remote
+origins, so a remote page is now refused before the handler. What denies every origin is
+`ipc_guard::guarded` (outermost in `invoke_handler`): any invoke whose webview label
 starts with `WEBVIEW_LABEL_PREFIX` (`workspace-browser-`) is rejected with
 `ymux: command <cmd> is not available to the workspace Browser webview`, warn-logged once
 per label (names only). It reads the label, never capabilities, so editing
@@ -133,7 +136,7 @@ per label (names only). It reads the label, never capabilities, so editing
 
 The Dev-Mode inspect script still talks back through navigation
 (`location.href = "ymux-ticket:<base64url>"`, decoded by `handle_ticket_navigation`,
-re-emitted as `browser:ticket-captured`) because `WebviewBuilder` has no `on_ipc` in 2.10.
+re-emitted as `browser:ticket-captured`) because `WebviewBuilder` has no `on_ipc` in 2.11.
 
 **Phase 82.E — the macOS "site JS is dead" probe.** On macOS a page renders in this
 webview but the site's own JavaScript never runs; the identical code path is fine on
@@ -180,7 +183,7 @@ other arm returns a clean error.
 
 ## Git
 
-**`worktrees.rs` (715)** — enumerate and create git worktrees for a workspace flagged
+**`worktrees.rs` (733)** — enumerate and create git worktrees for a workspace flagged
 `is_project_root` whose cwd is a repo, plus the pin flow's validation step,
 **`project_folder_probe`**: `Err` only when the directory does not exist on the host
 (`dir_exists_over` — `tokio::fs` locally, `test -d` over WSL/SSH; parsing git's fatal
@@ -188,14 +191,18 @@ messages apart instead would break on localization) or when no SSH session is li
 A directory git rejects probes to `Ok(false)` and pins as a plain demoted folder —
 "Check for a git repository" promotes it after `git init`, and THAT re-check still
 uses `git_probe_worktrees`, the older always-fatal variant, because there the user
-asked "is this a repo?" and git's verbatim message is the answer. Every git call
-dispatches on that workspace's connection:
+asked "is this a repo?" and git's verbatim message is the answer.
+`create_project_worktree` is the body of `workspace_create_project_worktree` and also
+serves RPC `worktree.create`; `reject_git_option` stops a base or target that git would
+parse as an option. `validate_branch_name` is the strict ref check for the RPC caller
+only (the GUI keeps `sanitize_branch_name`). Every git call dispatches on that
+workspace's connection:
 
 | connection | transport |
 |---|---|
 | `Local` / none | `tokio::process::Command`, arg array |
 | `Wsl` | `local_setup::wsl_exec` (an `sh -ls` script) |
-| `Ssh` | an exec channel on a **live** handle to that host |
+| `Ssh` | `ymux_core::ssh_exec::exec` on a **live** handle to that host; a signal or a missing status is `Err`, never code 0 |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
 from any session to the same host. The dispatch is `run_git_over` on top of
@@ -206,6 +213,24 @@ read the output instead of an error; `run_git_over` still folds a non-zero code 
 only — the SSH arm wraps it in `sh -c` so a fish login shell can't choke on it), which is
 how the Diff pane fetches status + diff + untracked-file diffs in a single round trip.
 
+**`worktree_recipe.rs`** — the repo-committed `.ymux/worktree.json` (format and user rules:
+`docs/CONFIG.md`). `ProjectFolderModal` calls it after `workspace_create_project_worktree`
+succeeds. `worktree_recipe_preview` finds the worktree **by branch in git's own list** (the
+frontend never names a path) and reads the blob `HEAD:.ymux/worktree.json` through
+`run_git_raw`, so every transport works and a symlink or a dirty edit changes nothing.
+`worktree_recipe_run` re-reads it, refuses a sha256 that differs from the prompt's, and needs
+an approval for host + main checkout + sha256 (`worktree-recipe-approvals.json`, Rule #7, a
+corrupt file reads as nothing approved). The Local arm copies natively
+(`copy_one_local`: `symlink_metadata` on each component on both sides, `create_new`). SSH/WSL
+run the POSIX twin (`copy_script`) through `exec_script_over`, because **`exec_script_over`
+has no Local arm**. Paths are validated as strings, not with `std::path`, because the app's
+OS is not the host's. The setup runs through `sh -lc` with its exit code as a marker on the
+last line and the output cut by `tail -c` on the host, so a noisy command cannot fill memory
+and `ssh_exec_capture`'s unbounded buffer stays small. **Local Windows copies but does not run
+the setup**: a recipe is `sh` syntax, and `cmd.exe` would change its meaning after approval.
+A failing setup is `Ok(result)`, not `Err`, and nothing is deleted. Output goes to the dialog
+only (Rule #1); logs get counts and the exit code.
+
 **`workspaces_merge.rs` (415)** — the three-way merge `save_to_disk` calls. A save is not
 "dump what I have": it re-reads the file and, if it changed since we last touched it,
 applies only *our* delta onto *theirs*. Needed because a stable build and a dev build
@@ -215,9 +240,10 @@ can land on the same directory from either side of the rename. `reconcile(ours, 
 theirs)` is a **pure function with unit tests**, which is the point: an idle app never
 saves, so the interesting path cannot be reached by launching one and waiting. Beyond the
 `reconcile` seam, `two_instance_save_tests` in `lib.rs` drive `write_workspaces_text` with two
-merge bases over one tempdir (two instances' edits both survive; an older build's rewrite does
-not strip `parent_id`; a newer on-disk schema refuses the write byte-identically). A second
-instance is named in the log by `config_lock.rs` (see backend-core § Persistence step 7).
+merge bases over one tempdir (two instances' edits both survive, also across a second save; our
+delete sticks after a merge; an older build's rewrite does not strip `parent_id`; a newer on-disk
+schema refuses the write byte-identically). `reconcile` always writes our schema version. A second
+instance is stopped at boot by `config_lock.rs` (see backend-core § Persistence step 7).
 
 ## Capture and content
 
@@ -283,7 +309,7 @@ that is the everyday Windows case, and the rest of the family still comes out. A
 and written down: a user's own hand-installed copy of the same family, in the same
 per-user directory, also matches.
 
-**`tray.rs` (91)** — tray icon, quick menu, taskbar badge. **Best-effort**: a failed
+**`tray.rs` (104)** — tray icon, quick menu, taskbar badge, and `focus_main` for the `app.focus` RPC. **Best-effort**: a failed
 build logs and carries on. `TRAY_ACTIVE` gates close-to-tray so a failed tray can never
 trap the user with a hidden window and no way back.
 

@@ -33,6 +33,10 @@ channel, `tmux set-environment -g`, and `~/.ymux/run/last.env` — and **none of
 reaches an already-running process**, which is the whole reason sticky ports exist (see
 `backend-sessions.md` § tunnel_registry).
 
+`claude-hook` exits 0 right after it reads stdin when `YMUX_HEADLESS` is set. ymux sets it on its own
+one-shot `claude -p` calls, which have no pane of their own. A plain `claude` started by hand on the same
+host does not set it, so `last.env` still lends that run a pane.
+
 ## Verb families
 
 Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this is the map:
@@ -47,6 +51,7 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
   `-click`, `-find`, `-snapshot`, `-type`. This is how an agent drives the workspace
   browser.
 - **Agent** — `claude-hook`, `setup-hooks`, `claude-sessions-list`
+- **Driving other agents** — `wait`, `read`, `worktree create` (below)
 - **Notes / settings** — `note`, `settings` (`show` / `set` / `preset`)
 - **Ops** — `port-watch`, `session-meta`, `doctor`, `check-updates`
 - **Dev** — `dev get-state`, `console-tail`, `debug-log-tail`, `report-bug`
@@ -57,6 +62,38 @@ For `pre-tool-use` with `tool_name`, the summary is the first of `tool_input.com
 file_path | path | pattern | url`, clipped to 100 bytes on a char boundary, else empty
 (never a JSON dump). Without `tool_name` the old chain (command / tool / title /
 `agent: <sub>`, JSON-dump summary) is unchanged, as are all other subcommands.
+
+**`pre-tool-use` and `permission_mode` (main.rs).** The CLI reads the mode before it
+dials the desktop. `auto` prints nothing and exits 0, so Claude Code's own classifier
+decides and the ymux policy does not run. It also spawns a detached copy of the CLI
+(`report_tool_running`) that pushes notification type `tool_running`, so the pane light
+leaves NeedsInput without Claude Code waiting. `acceptEdits`, `bypassPermissions` and `skip`
+print an explicit `allow`. Every other mode goes to the desktop policy engine.
+
+## `wait`, `read`, `worktree create`
+
+These verbs let one agent drive others with no sleep loop. `read` and `worktree create`
+go through the generic RPC path. `wait` returns its own `ExitCode` from its arm.
+
+**`run_wait`** polls `pane.agent-state` every 2 s (`WAIT_POLL_SECS`), because the
+endpoint has no subscribe path. The pure `wait_step` decides each reply. Idle is
+`done | needs-input | failed`, and needs-input is included because `idle_prompt` moves
+a finished agent from Done to NeedsInput. The JSON carries the actual state. Exit codes:
+0 reached, 2 error, 3 timeout, 4 unknown pane (`known: false`, at once), 5 timeout with
+`state: unknown`. **A pane with no hooks never reports idle**: it waits, because a hook
+can still arrive, and exits 5. Three RPC failures in sequence exit 2, so a tunnel
+reconnect does not end a long wait.
+
+**`--after-seq`**: Done is sticky, so `wait` right after `send` can see the previous
+turn. `send` and `send-key` return `agent_seq`, read before the write, and the wait then
+requires `seq > after_seq`.
+
+**`read`** prints the `pane.scrollback` JSON. `rpc_via`'s "bad response" error carries
+the byte count only, because a reply can hold pane text (Rule #1).
+
+**`worktree create`** sends the name to `worktree.create`, which validates it. It passes
+`$YMUX_PANE_ID` so the desktop can find the workspace; it never falls back to the active
+workspace.
 
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
@@ -80,13 +117,24 @@ agent state (see `backend-rpc.md`). Bumping `manifest.json`'s
 **`SessionStart` is registered again as of hooks v1.7.0 (Phase 105.C)** — also with a
 new job, and still never a feed card. The `session-start` branch (after the env gate)
 sends RPC `context.inject` `{pane_id, tmux_session, session_id, source}` under a
-`tokio::time::timeout` of `context_timeout_ms()` (300 ms, `YMUX_CONTEXT_TIMEOUT_MS`
+`tokio::time::timeout` of `context_timeout_ms()` (1000 ms, `YMUX_CONTEXT_TIMEOUT_MS`
 clamped 100–3000) and **fails open**: an error, a timeout or an empty answer prints
-nothing and exits 0. A non-empty answer goes through `session_start_output`, the only
-stdout write in that branch — one serde-built `{"hookSpecificOutput":{"hookEventName":
-"SessionStart","additionalContext":…}}` line, so the text cannot break the JSON. The log
-line carries the source and the byte count, never the text. `manifest.json` is bumped at
+nothing and exits 0. The call costs 3 tunnel round trips, so the first default of 300 ms
+was below the real cost on a 125–175 ms link. A non-empty answer goes through
+`session_start_output`, the only stdout write in that branch — one serde-built
+`{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":…}}` line, so
+the text cannot break the JSON. One Info line records `outcome=injected|empty|timed_out|error`,
+the source, the byte count, the budget and the RPC timing, never the text; the error text
+stays at Debug because a malformed reply is quoted in it. `manifest.json` is bumped at
 release time, not with the spec.
+
+**Hook timing in the log.** `rpc_via` records `connect_ms`, `handshake_ms` and `reply_ms`
+in process-global atomics, so the phases that finished are still readable after
+`session-start` drops the future at its budget. `rpc_timing_log()` appends them to the ACK
+line, the `session-start` line and every passive line (which now logs after the RPC, not
+before). A phase that did not finish stays 0. Over a tunnel, `connect` is only the local
+dial, so the channel open shows in `handshake`. For a blocking `pre-tool-use`, `reply`
+includes the wait for the human. Durations only (Rule #1).
 
 `setup-hooks` also carries a **dead-hook check** (`ymux_entry_is_runnable`): a hook entry
 pointing at a binary that no longer exists is repaired rather than skipped forever. That
@@ -107,9 +155,11 @@ fallback. So a hook change reaches existing installs without a CLI rebuild.
 
 ## `port_watch.rs` — the LISTEN watcher
 
-Runs on the remote. Every **1s** it reads `/proc/net/tcp` + `/proc/net/tcp6`; if the raw
-bytes are identical to the previous tick it does nothing, otherwise it extracts LISTEN
-sockets and diffs against the previous set. A new port sends `port.opened`, a vanished
+Runs on the remote. Every **3s** it reads `/proc/net/tcp` + `/proc/net/tcp6`, extracts
+LISTEN sockets and diffs against the previous set. There is no raw-bytes skip any more:
+the timer columns of established sockets change between reads, so a byte compare matched
+on 0 of 59 measured ticks (2026-11-09), and the read costs more than the parse. A new
+port sends `port.opened`, a vanished
 one `port.closed`. **Both are detection-only on the desktop** — `rpc_server.rs` records
 the port in `detected_ports` and emits `port-detected`; the SSH local-forward is opened
 only when the user clicks (`forward_port_start`).

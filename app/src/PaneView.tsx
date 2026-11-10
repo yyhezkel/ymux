@@ -22,7 +22,6 @@ import {
   IconPencil,
   IconPower,
   IconChevronDown,
-  IconArrowLeftRight,
   IconMaximize,
   IconMinimize,
   IconColumns,
@@ -1045,23 +1044,6 @@ export function PaneView(p: Props) {
         ],
       });
     }
-    list.push({
-      id: "bidi",
-      title:
-        t(p.pane.smart_bidi === true ? "pane.smartBidi.on" : "pane.smartBidi.off")
-        + " — " + t("pane.smartBidi.hint"),
-      label: t(p.pane.smart_bidi === true ? "pane.smartBidi.on" : "pane.smartBidi.off"),
-      icon: () => <IconArrowLeftRight size={14} />,
-      active: p.pane.smart_bidi === true,
-      run: () => {
-        const next = !(p.pane.smart_bidi === true);
-        void backend.call("pane_set_smart_bidi", {
-          workspaceId: p.workspaceId,
-          paneId: p.pane.pane_id,
-          enabled: next,
-        }).catch((err) => log.error("pane_set_smart_bidi failed", err));
-      },
-    });
     // Phase 84.A: maximize exists only in split mode (tabs mode returned
     // above — the pane already fills the workspace there).
     list.push({

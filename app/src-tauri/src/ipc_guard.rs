@@ -1,11 +1,11 @@
 //! 2026-10-06: label-based invoke guard for the workspace Browser webview.
 //!
-//! Tauri 2.10.3 ACL-checks app (non-plugin) commands only when an app ACL
-//! manifest exists; ymux has none (bare `tauri_build::build()`), so app
-//! commands reach every origin, including the tunneled page in the
-//! `workspace-browser-*` child webview. Capabilities gate plugin commands
-//! only. This guard denies ALL app commands to that webview by label, at
-//! the one choke point (`invoke_handler`), independent of capabilities.
+//! Up to 2.11.0, Tauri ACL-checked app (non-plugin) commands only when an
+//! app ACL manifest existed; ymux has none (bare `tauri_build::build()`), so
+//! app commands reached every origin, including the tunneled page in the
+//! `workspace-browser-*` child webview. 2.11.1 also ACL-checks remote origins.
+//! This guard stays: it denies ALL app commands to that webview by label, at
+//! the one choke point (`invoke_handler`), for local and remote origins.
 //!
 //! Metadata only (Rule #1): webview label and command NAME, never arguments.
 

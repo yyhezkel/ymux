@@ -91,7 +91,40 @@ Write raw text to a connected pane's session (no key translation, just bytes).
 
 **Params:** `{ "pane_id": "<pid>", "data": "<utf-8 string>" }` (alias `"pane"` for `"pane_id"`)
 **Result:** `{ "ok": true, "bytes": <count> }`
+**Result:** `{ "ok": true, "bytes": <n>, "agent_seq": <n> }`. `agent_seq` is the
+pane's hook counter before the write (`send-key` returns it too).
+
 **Errors:** `"pane <id> not connected"`, `"no such session <sid>"`.
+
+### `pane.scrollback`
+
+The last lines of a pane, read from its multiplexer (`tmux capture-pane`,
+`zellij dump-screen --full`).
+
+**Params:** `{ "pane_id": "<pid>", "lines"?: <n> }` (default 200, clamped to 10000).
+
+**Result:** `{ "pane_id": "<pid>", "lines": <n>, "text": "<plain text>" }`.
+
+**Errors:** `"pane <id> not connected"`, `"pane <id> has no multiplexer session; …"`.
+
+### `pane.agent-state`
+
+**Params:** `{ "pane_id": "<pid>" }`.
+
+**Result:** `{ "pane_id", "known": <bool>, "state": "unknown" | "running" | "done" |
+"needs-input" | "failed", "state_since": <ms> | null, "seq": <n> }`. `known` is
+false when no workspace layout holds the pane. `state` is `unknown` when no hook
+has reached it.
+
+### `worktree.create`
+
+**Params:** `{ "name": "<branch>", "workspace_id"?: "<id>", "pane_id"?: "<pid>",
+"base"?: "<rev>", "path"?: "<dir>" }`. One of `workspace_id` or `pane_id` is
+required. `base` defaults to `HEAD`.
+
+**Result:** `{ "ok": true, "branch": "<name>", "path": "<dir>" | null, "worktrees": [ ... ] }`.
+
+**Errors:** `"invalid branch name: …"`, git's first error line.
 
 ### `send-key`
 
@@ -276,13 +309,13 @@ and the summary is the JSON-stringified payload (truncated to ~280 chars).
 |---|---|---|
 | `tool-permission`, `pre-tool-use` | `permission_request` | yes |
 | anything else (`session-active`, `session-stop`, `session-idle`, `notification`, `prompt-submit`, `session-end`) | `passive` | no |
-| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈300 ms, fail-open) and prints the hook JSON below | no |
+| `session-start` (Phase 105.C) | — no `feed.push`; calls `context.inject` instead (≈1 s, fail-open) and prints the hook JSON below | no |
 
 `session-start`'s stdout is either nothing or exactly one line:
 `{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"…"}}`.
 That line is built with serde, so the text cannot break out of the JSON. Nothing
 else in that branch writes to stdout. The budget is
-`YMUX_CONTEXT_TIMEOUT_MS` (default 300, clamped 100–3000).
+`YMUX_CONTEXT_TIMEOUT_MS` (default 1000, clamped 100–3000).
 
 ### Decisions and exit codes
 
