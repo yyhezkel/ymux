@@ -367,6 +367,130 @@ async fn forward_hook_to_server(
     let _ = tokio::time::timeout(dur, s.read(&mut buf)).await;
 }
 
+/// The local ymux-server API port. Same as `forward_hook_to_server`.
+const SERVER_ADDR: &str = "127.0.0.1:7879";
+
+/// A schedule id goes into a URL path, so it is checked first.
+fn valid_schedule_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 64
+        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+/// `ymux schedule ...`: one REST call to the local ymux-server.
+async fn schedule_call(op: &ScheduleOp) -> Result<Value, String> {
+    let id_path = |id: &str, tail: &str| -> Result<String, String> {
+        if !valid_schedule_id(id) {
+            return Err(format!("invalid schedule id: {id:?}"));
+        }
+        Ok(format!("/api/v2/schedules/{id}{tail}"))
+    };
+    match op {
+        ScheduleOp::Add {
+            name,
+            cron,
+            prompt,
+            cwd,
+            max_per_day,
+            precheck_timeout,
+            disabled,
+            precheck,
+        } => {
+            // The daemon runs on this host, so a relative cwd resolves here.
+            let base = std::env::current_dir().map_err(|e| format!("current directory: {e}"))?;
+            let dir = match cwd {
+                Some(c) if c == "~" || c.starts_with("~/") => std::path::PathBuf::from(c),
+                Some(c) => base.join(c),
+                None => base,
+            };
+            let mut body = json!({
+                "name": name,
+                "cron": cron,
+                "prompt": prompt,
+                "cwd": dir.to_string_lossy(),
+                "enabled": !disabled,
+            });
+            if !precheck.is_empty() {
+                body["precheck"] = json!(precheck);
+            }
+            if let Some(n) = max_per_day {
+                body["max_runs_per_day"] = json!(n);
+            }
+            if let Some(n) = precheck_timeout {
+                body["precheck_timeout_seconds"] = json!(n);
+            }
+            server_request("POST", "/api/v2/schedules", Some(&body)).await
+        }
+        ScheduleOp::List => server_request("GET", "/api/v2/schedules", None).await,
+        ScheduleOp::Rm { id } => server_request("DELETE", &id_path(id.as_str(), "")?, None).await,
+        ScheduleOp::Enable { id } => {
+            server_request("POST", &id_path(id.as_str(), "/enable")?, None).await
+        }
+        ScheduleOp::Disable { id } => {
+            server_request("POST", &id_path(id.as_str(), "/disable")?, None).await
+        }
+        ScheduleOp::History { id } => {
+            server_request("GET", &id_path(id.as_str(), "/history")?, None).await
+        }
+    }
+}
+
+/// One request to the local ymux-server with its own token. HTTP/1.0 keeps
+/// the answer unchunked and closes the socket at its end, so a plain read to
+/// EOF is the whole response. No new dependency. The token is never logged
+/// or printed (Rule #8).
+async fn server_request(method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+    let token = read_server_token().ok_or_else(|| {
+        "no local ymux-server (~/.ymux/server/token not found). Run this on the remote host."
+            .to_string()
+    })?;
+    let body = body.map(|b| b.to_string()).unwrap_or_default();
+    let req = format!(
+        "{method} {path} HTTP/1.0\r\nHost: 127.0.0.1\r\n\
+         Authorization: Bearer {token}\r\nContent-Type: application/json\r\n\
+         Content-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+    let dur = std::time::Duration::from_secs(10);
+    let mut s = match tokio::time::timeout(dur, tokio::net::TcpStream::connect(SERVER_ADDR)).await {
+        Ok(Ok(s)) => s,
+        _ => return Err(format!("ymux-server not reachable on {SERVER_ADDR}")),
+    };
+    s.write_all(req.as_bytes())
+        .await
+        .map_err(|e| format!("ymux-server write: {e}"))?;
+    let mut raw = Vec::new();
+    match tokio::time::timeout(dur, s.read_to_end(&mut raw)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(e)) => return Err(format!("ymux-server read: {e}")),
+        Err(_) => return Err("ymux-server did not answer in time".to_string()),
+    }
+    parse_http_response(&raw)
+}
+
+/// Splits a raw HTTP/1.x response. 2xx → the JSON body (empty → `{}`);
+/// anything else → an error with the status and the first line of the body.
+fn parse_http_response(raw: &[u8]) -> Result<Value, String> {
+    let text = String::from_utf8_lossy(raw);
+    let (head, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| "ymux-server: malformed response".to_string())?;
+    let status: u16 = head
+        .lines()
+        .next()
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|c| c.parse().ok())
+        .ok_or_else(|| "ymux-server: malformed status line".to_string())?;
+    if !(200..300).contains(&status) {
+        let msg: String = body.lines().next().unwrap_or("").chars().take(200).collect();
+        return Err(format!("ymux-server {status}: {}", msg.trim()));
+    }
+    if body.trim().is_empty() {
+        return Ok(json!({}));
+    }
+    serde_json::from_str(body).map_err(|_| format!("ymux-server: bad JSON ({} bytes)", body.len()))
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "ymux",
@@ -406,6 +530,48 @@ enum WorktreeOp {
         #[arg(long)]
         path: Option<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+enum ScheduleOp {
+    /// Add a scheduled prompt. A precheck argv may follow `--`; a non-zero
+    /// exit skips that run.
+    Add {
+        /// Display name, 1 to 64 characters.
+        #[arg(long)]
+        name: String,
+        /// 5-field cron expression in the host's local time, e.g. "0 3 * * *".
+        #[arg(long)]
+        cron: String,
+        /// The prompt claude gets. Must not start with '-'.
+        #[arg(long)]
+        prompt: String,
+        /// Working directory on the host. Defaults to the current directory.
+        #[arg(long)]
+        cwd: Option<String>,
+        /// Most runs per local day (1 to 24, default 4).
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=24))]
+        max_per_day: Option<u32>,
+        /// Precheck timeout in seconds (1 to 600, default 60).
+        #[arg(long, value_parser = clap::value_parser!(u32).range(1..=600))]
+        precheck_timeout: Option<u32>,
+        /// Save the schedule disabled.
+        #[arg(long)]
+        disabled: bool,
+        /// Precheck argv, run in --cwd before each run.
+        #[arg(last = true)]
+        precheck: Vec<String>,
+    },
+    /// List the schedules with their next run.
+    List,
+    /// Remove a schedule.
+    Rm { id: String },
+    /// Enable a schedule.
+    Enable { id: String },
+    /// Disable a schedule.
+    Disable { id: String },
+    /// The last runs of a schedule, newest first.
+    History { id: String },
 }
 
 #[derive(Subcommand, Debug)]
@@ -528,6 +694,12 @@ enum Cmd {
     Worktree {
         #[command(subcommand)]
         op: WorktreeOp,
+    },
+    /// Scheduled prompts on the host's ymux-server: claude runs on a cron
+    /// schedule with the desktop off. Run it on the remote host.
+    Schedule {
+        #[command(subcommand)]
+        op: ScheduleOp,
     },
     Notify {
         #[arg(long)]
@@ -2078,6 +2250,7 @@ async fn real_main() -> ExitCode {
             )
             .await
         }
+        Cmd::Schedule { op } => schedule_call(op).await,
         Cmd::Notify {
             title,
             body,
@@ -3402,6 +3575,34 @@ mod wait_read_worktree_tests {
             Ok(Cmd::Worktree { op: WorktreeOp::Create { name, base, .. } })
                 if name == "feature/x" && base == "HEAD"
         ));
+        let c = Cli::try_parse_from([
+            "ymux", "schedule", "add", "--name", "n", "--cron", "0 3 * * *", "--prompt", "triage",
+            "--max-per-day", "2", "--", "git", "fetch", "--dry-run",
+        ]);
+        assert!(matches!(
+            c.map(|c| c.command),
+            Ok(Cmd::Schedule { op: ScheduleOp::Add { precheck, max_per_day: Some(2), disabled: false, .. } })
+                if precheck == ["git", "fetch", "--dry-run"]
+        ));
+        assert!(Cli::try_parse_from([
+            "ymux", "schedule", "add", "--name", "n", "--cron", "* * * * *", "--prompt", "p",
+            "--max-per-day", "25",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from(["ymux", "schedule", "history", "s1a2b3c4"]).is_ok());
+        assert!(Cli::try_parse_from(["ymux", "schedule", "rm"]).is_err());
+    }
+
+    #[test]
+    fn schedule_ids_and_http_responses() {
+        assert!(valid_schedule_id("s1a2b3c4"));
+        assert!(!valid_schedule_id("../x"));
+        assert!(!valid_schedule_id(""));
+        let ok = parse_http_response(b"HTTP/1.0 201 Created\r\nContent-Type: application/json\r\n\r\n{\"id\":\"s1\"}\n");
+        assert_eq!(ok, Ok(json!({"id": "s1"})));
+        let err = parse_http_response(b"HTTP/1.0 404 Not Found\r\n\r\nno such schedule\n");
+        assert_eq!(err, Err("ymux-server 404: no such schedule".to_string()));
+        assert!(parse_http_response(b"garbage").is_err());
     }
 }
 
