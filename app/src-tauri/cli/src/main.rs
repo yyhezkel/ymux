@@ -1668,12 +1668,57 @@ fn hex_nibble(c: u8) -> Result<u8, String> {
     }
 }
 
+/// Floor for the reply wait. The desktop runs some verbs for minutes
+/// (an SSH connect, `worktree create`), so the floor is generous: its job
+/// is to end a wait on a desktop that accepted and will never answer.
+const RPC_REPLY_FLOOR_SECS: u64 = 300;
+/// Added to a wait the request itself carries, so the desktop's own
+/// timeout answer always arrives before the CLI gives up.
+const RPC_REPLY_MARGIN_SECS: u64 = 30;
+
+/// How long `rpc_via` waits for the reply line. A request that tells the
+/// desktop how long to wait (`wait_timeout_seconds` on a blocking
+/// `feed.push`, `timeout_ms` on the browser verbs) gets that wait plus
+/// `RPC_REPLY_MARGIN_SECS`, never less than the floor.
+fn reply_deadline(params: &Value) -> std::time::Duration {
+    let carried_secs = params
+        .get("wait_timeout_seconds")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            params
+                .get("timeout_ms")
+                .and_then(Value::as_u64)
+                .map(|ms| ms.div_ceil(1000))
+        });
+    let secs = carried_secs.map_or(RPC_REPLY_FLOOR_SECS, |s| {
+        s.saturating_add(RPC_REPLY_MARGIN_SECS).max(RPC_REPLY_FLOOR_SECS)
+    });
+    std::time::Duration::from_secs(secs)
+}
+
 async fn rpc_via<S>(
     stream: S,
     method: &str,
     params: Value,
     token: Option<&str>,
     started: std::time::Instant,
+) -> Result<Value, String>
+where
+    S: AsyncReadExt + AsyncWriteExt + Unpin,
+{
+    let deadline = reply_deadline(&params);
+    rpc_via_within(stream, method, params, token, started, deadline).await
+}
+
+/// `rpc_via` with the reply deadline as an argument, so a test can pass a
+/// short one.
+async fn rpc_via_within<S>(
+    stream: S,
+    method: &str,
+    params: Value,
+    token: Option<&str>,
+    started: std::time::Instant,
+    limit: std::time::Duration,
 ) -> Result<Value, String>
 where
     S: AsyncReadExt + AsyncWriteExt + Unpin,
@@ -1705,9 +1750,17 @@ where
         .map_err(|e| e.to_string())?;
     writer.flush().await.ok();
     let mut response = String::new();
-    buf.read_line(&mut response)
-        .await
-        .map_err(|e| e.to_string())?;
+    // A desktop that accepted the connection and never answers must not
+    // hold the CLI forever.
+    match tokio::time::timeout(limit, buf.read_line(&mut response)).await {
+        Ok(r) => r.map_err(|e| e.to_string())?,
+        Err(_) => {
+            return Err(format!(
+                "no reply from the ymux app within {}s",
+                limit.as_secs()
+            ))
+        }
+    };
     record_rpc_phase(&RPC_REPLY_MS, reply_started);
     // Rule #1: a reply can carry pane text, so the error gets its size only.
     let resp: Value = serde_json::from_str(response.trim())
@@ -3371,6 +3424,49 @@ async fn real_main() -> ExitCode {
             eprintln!("error: {}", e);
             ExitCode::from(2)
         }
+    }
+}
+
+#[cfg(test)]
+mod rpc_reply_deadline_tests {
+    use super::*;
+    use serde_json::json;
+
+    // Pins D15: a peer that accepts and never answers ends in an error.
+    // Before the deadline this read never returned.
+    #[tokio::test]
+    async fn a_silent_peer_ends_in_a_timeout_error() {
+        // `_peer` stays open for the whole call: no reply and no EOF.
+        let (client, _peer) = tokio::io::duplex(1024);
+        let call = rpc_via_within(
+            client,
+            "list-workspaces",
+            json!({}),
+            None,
+            std::time::Instant::now(),
+            std::time::Duration::from_millis(50),
+        );
+        let got = tokio::time::timeout(std::time::Duration::from_secs(10), call)
+            .await
+            .expect("rpc_via must give up by itself");
+        let err = got.expect_err("a silent peer is an error");
+        assert!(err.starts_with("no reply from the ymux app"), "got: {err}");
+        // port_watch reads "connect " as a dial failure and "rpc error" as an
+        // answer; a timeout is neither.
+        assert!(!err.starts_with("connect ") && !err.starts_with("rpc error"));
+    }
+
+    // Pins D15: the deadline is never shorter than a wait the caller asked
+    // the desktop for (a gate card, a browser wait).
+    #[test]
+    fn the_deadline_outlasts_the_callers_own_wait() {
+        let secs = |v: Value| reply_deadline(&v).as_secs();
+        assert_eq!(secs(json!({})), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "wait_timeout_seconds": 5 })), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "wait_timeout_seconds": 600 })), 630);
+        assert_eq!(secs(json!({ "timeout_ms": 10_000 })), RPC_REPLY_FLOOR_SECS);
+        assert_eq!(secs(json!({ "timeout_ms": 900_001 })), 931);
+        assert_eq!(secs(json!({ "timeout_ms": u64::MAX })), u64::MAX / 1000 + 1 + 30);
     }
 }
 

@@ -40,9 +40,13 @@
 //! processes `rotate` takes an exclusive `File::lock` on `debug.log.lock`
 //! around stat + rename only, and re-stats `debug.log` under it, so the second
 //! process to arrive finds a fresh file and does not rename. Each batch
-//! compares the handle's length with the path's and reopens on a mismatch,
-//! which is how a process notices another one rotated under it. Two stats per
-//! batch, none per line. If the lock cannot be taken it rotates unlocked.
+//! compares the handle with the path and reopens on a mismatch, which is how
+//! a process notices another one rotated under it: by file identity (device
+//! + inode) on unix, and by length on both. Windows has length only — std's
+//! `file_index` is unstable — so there a new `debug.log` that has grown to
+//! exactly the rotated file's length goes unnoticed until the lengths part.
+//! Two stats per batch, none per line. If the lock cannot be taken it rotates
+//! unlocked.
 //!
 //! **Why a thread and not a `Mutex<File>`.** A mutex plus one `write_all`
 //! would fix the tearing, so it is worth being honest that this goes
@@ -293,17 +297,23 @@ impl LogWriter {
     /// still points at that path. Two stats per batch, never per line.
     ///
     /// A second process can rotate under us; our handle then names
-    /// `debug.log.1` and would keep appending there. The handle's length
-    /// differs from the path's (or the path is gone) exactly in that case.
+    /// `debug.log.1` and would keep appending there. Length alone misses
+    /// that once the new `debug.log` has grown to the same size, so where
+    /// the platform has one the file identity is compared too.
     fn write_to_current(&mut self, bytes: &[u8]) {
         let path = match &self.dir {
             Some(d) => d.join("debug.log"),
             None => return,
         };
         if let Some(f) = &self.file {
-            let held = f.metadata().map(|m| m.len()).ok();
-            let on_disk = std::fs::metadata(&path).map(|m| m.len()).ok();
-            if held.is_none() || held != on_disk {
+            let same = match (f.metadata(), std::fs::metadata(&path)) {
+                (Ok(held), Ok(on_disk)) => {
+                    held.len() == on_disk.len()
+                        && file_identity(&held) == file_identity(&on_disk)
+                }
+                _ => false,
+            };
+            if !same {
                 self.file = None;
             }
         }
@@ -374,6 +384,21 @@ impl LogWriter {
         }
         self.size = 0;
     }
+}
+
+/// Which file this is, where std can say: device + inode on unix. `None`
+/// elsewhere (std's Windows `file_index` / `volume_serial_number` are
+/// unstable), and two `None`s compare equal, which leaves the length check
+/// to decide.
+#[cfg(unix)]
+fn file_identity(m: &std::fs::Metadata) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt as _;
+    Some((m.dev(), m.ino()))
+}
+
+#[cfg(not(unix))]
+fn file_identity(_m: &std::fs::Metadata) -> Option<(u64, u64)> {
+    None
 }
 
 // ─── file operations shared with the fallback path ───────────────────────
@@ -591,6 +616,27 @@ mod tests {
         for tag in ["B1-", "A1-", "A2", "B2-"] {
             assert_eq!(all.lines().filter(|l| l.starts_with(tag)).count(), 1, "{tag}");
         }
+    }
+
+    // Pins D18: the stale-handle check compared lengths only, so once the
+    // other process's new debug.log reached the rotated file's length this
+    // writer went on appending to debug.log.1. Unix only: Windows has no
+    // stable file identity in std and keeps the length check alone.
+    #[cfg(unix)]
+    #[test]
+    fn a_rotation_is_noticed_even_when_the_new_log_has_the_same_length() {
+        let dir = tmpdir("same-length-rotation");
+        let mut w = LogWriter::for_dir(&dir, u64::MAX);
+        w.write_pinned(b"first-0001\n");
+        // Another process rotates, then writes exactly as many bytes.
+        std::fs::rename(dir.join("debug.log"), dir.join("debug.log.1")).expect("rotate");
+        std::fs::write(dir.join("debug.log"), b"other-0001\n").expect("new log");
+        w.write_pinned(b"second-001\n");
+        drop(w);
+        let current = read(&dir.join("debug.log"));
+        let rotated = read(&dir.join("debug.log.1"));
+        assert_eq!(current, "other-0001\nsecond-001\n");
+        assert_eq!(rotated, "first-0001\n", "nothing may follow the rotated file");
     }
 
     #[test]
