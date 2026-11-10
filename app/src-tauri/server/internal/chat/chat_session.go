@@ -227,10 +227,15 @@ func (m *SessionManager) create(spec startSpec) (*Session, error) {
 	m.paneIndex["mob_"+s.id] = s.id
 	m.mu.Unlock()
 
+	// The row carries the status the session has NOW (spawn already moved it
+	// to active, and a process that died at once is already terminal), read
+	// and written under s.mu so it cannot interleave with transition().
+	s.mu.Lock()
 	_ = m.store.insertSession(&SessionRow{
 		ID: s.id, DeviceID: s.deviceID, Cwd: s.cwd, Model: s.model,
-		Status: stStarting, Policy: s.policy, StartedAt: now, LastActivityAt: now,
+		Status: s.status, Policy: s.policy, StartedAt: now, LastActivityAt: now,
 	})
+	s.mu.Unlock()
 	return s, nil
 }
 
@@ -327,18 +332,12 @@ func (s *Session) drainStderr(r io.Reader) {
 // waitExit reaps the process and marks a terminal status.
 func (s *Session) waitExit() {
 	err := s.cmd.Wait()
-	s.mu.Lock()
-	prev := s.status
-	if prev != stKilled && prev != stStopped {
-		if err != nil {
-			s.status = stError
-		} else {
-			s.status = stStopped
-		}
+	to := stStopped
+	if err != nil {
+		to = stError
 	}
-	final := s.status
-	s.mu.Unlock()
-	s.mgr.store.updateSessionStatus(s.id, final)
+	s.transition(to, "") // a no-op after stop(): killed stays killed
+	final := s.getStatus()
 	s.emit(jsonEvent(map[string]any{"type": "status", "status": final}))
 	s.failPendingHooks() // unblock any parked hook waiters → deny
 }
@@ -349,13 +348,32 @@ func (s *Session) getStatus() string {
 	return s.status
 }
 
-func (s *Session) setStatus(st string) {
-	s.mu.Lock()
-	s.status = st
-	s.lastActivityAt = time.Now().Unix()
-	s.mu.Unlock()
-	s.mgr.store.updateSessionStatus(s.id, st)
+// isTerminal reports whether st is a status a session never leaves: its
+// process is gone (or going) and nothing may mark it alive again.
+func isTerminal(st string) bool {
+	return st == stKilled || st == stStopped || st == stError
 }
+
+// transition is the ONE writer of s.status once a session exists (spawn's
+// starting → active is the only other). It refuses to leave a terminal
+// status, and when from is non-empty it applies only if the status is still
+// exactly from. Memory and the SQLite row change together under s.mu, so two
+// writers cannot land in different orders in the two places. Reports whether
+// the status was written.
+func (s *Session) transition(to, from string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isTerminal(s.status) || (from != "" && s.status != from) {
+		return false
+	}
+	s.status = to
+	s.lastActivityAt = time.Now().Unix()
+	s.mgr.store.updateSessionStatus(s.id, to)
+	return true
+}
+
+// setStatus moves to st from any non-terminal status.
+func (s *Session) setStatus(st string) { s.transition(st, "") }
 
 // sendUserInput writes one stream-json user message to Claude's stdin.
 func (s *Session) sendUserInput(text string) error {

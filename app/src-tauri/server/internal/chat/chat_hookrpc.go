@@ -209,8 +209,10 @@ func (s *Session) awaitHookDecision(p *feedPushParams, denyOnTimeout bool) strin
 		"type": "hook_resolved", "req_id": p.RequestID,
 		"decision": decision, "reason": reason,
 	}))
+	// Restore only if nothing else moved the status meanwhile: the session may
+	// have died (terminal — failPendingHooks is what woke us) or produced output.
 	if prev == stActive || prev == stWaitingInput {
-		s.setStatus(prev)
+		s.transition(prev, stWaitingHook)
 	}
 	return decision
 }

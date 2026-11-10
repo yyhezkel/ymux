@@ -134,6 +134,17 @@ lives in `hooks` (below); `hooks.ChallengeTag` emits
 `YMUX-CHALLENGE` (WINMUX responses still accepted); the Rust half is `CHALLENGE_TAG` in
 `ymux-tunnel`. **Flip both together.**
 
+**Chat session status has one writer (`chat/chat_session.go` `transition(to, from)`).**
+`killed` / `stopped` / `error` are terminal (`isTerminal`) and never left: a late stdout
+line after `stop`, a `user_input`, or a hook waiter woken by `failPendingHooks` cannot
+mark a dead process `active` again. `setStatus(st)` is `transition(st, "")`;
+`awaitHookDecision` restores the pre-hook status with `transition(prev, stWaitingHook)`,
+so only while the status is still `waiting_hook`. Memory and the `sessions` row are
+written together under `s.mu`, and `create` inserts the row with the status the session
+has after `spawn` (`active`, not a `starting` nothing updated). `DELETE` writes the row
+directly only when no live session exists. `stInterrupted` and `spawn`'s `resumeID` are
+declared but unused (no caller) — left as they are.
+
 **`term/` (Phase 95) — the server-side terminal, and it owns no state.** This is the
 package that lets a browser have a shell, and the two rules that shape it are worth
 reading before you touch any of it:
