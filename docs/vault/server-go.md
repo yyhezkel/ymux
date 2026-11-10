@@ -820,7 +820,15 @@ regression alarm.
 **`push/push.go`** — no Firebase, no FCM, no APNs. A paired device holds a long-lived
 WebSocket (`GET /api/v2/push/subscribe`) from an Android foreground service; the server
 delivers events over it and **queues per-device while the socket is down**, replaying on
-reconnect. Wire contract: `docs/PUSH-PROTOCOL.md`.
+reconnect. Wire contract: `docs/PUSH-PROTOCOL.md`. **Order is part of that contract**:
+the client drops any envelope whose `push_seq` is ≤ the highest it processed (§5) and its
+ack is cumulative (§3.4), so an envelope written out of order is lost for good. Every
+event envelope is therefore written by one function, `flush(c)` — "everything queued
+after `c.sent`, in `push_seq` order", under the connection's `flushMu`. The reconnect
+replay is a flush (`sent` starts at the cursor), and `Notify` enqueues and then flushes
+instead of writing its own event, so a live event cannot overtake a replay in progress
+or another `Notify`'s lower seq. The handler writes `hello` **before** it registers the
+connection, so no event can precede it.
 
 **`logging/logging.go`** — one line format across every subsystem: local time with UTC
 offset, LEVEL padded to 5, component like `[SRV:CHAT]`, then slog attrs as trailing

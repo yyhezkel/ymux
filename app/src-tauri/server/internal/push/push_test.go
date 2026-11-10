@@ -173,3 +173,63 @@ func TestPushReplaysQueueOnReconnect(t *testing.T) {
 		t.Fatalf("want replayed assistant_text, got %v", env)
 	}
 }
+
+// An event that arrives while the reconnect replay is in progress must not be
+// written ahead of the queued ones: the client drops any push_seq <= the
+// highest it has processed, and its cumulative ack would then delete them.
+func TestPushLiveEventDuringReplayStaysInOrder(t *testing.T) {
+	st := newMemStore()
+	st.tokens["tok-a"] = "dev_a"
+	deps := st.deps()
+
+	var srv *Server
+	var once sync.Once
+	notified := make(chan error, 1)
+	inner := deps.PendingAfter
+	deps.PendingAfter = func(dev string, cursor int64) []QueuedEvent {
+		out := inner(dev, cursor)
+		// The first read is the replay's. Before it is written, a live event
+		// is published; wait until it is queued and has had every chance to
+		// be written first.
+		once.Do(func() {
+			go func() { notified <- srv.Notify("dev_a", map[string]any{"type": "notification", "n": 3}) }()
+			deadline := time.Now().Add(2 * time.Second)
+			for st.pending("dev_a") < 3 && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
+			time.Sleep(50 * time.Millisecond)
+		})
+		return out
+	}
+	srv = New(deps)
+	hs := httptest.NewServer(http.HandlerFunc(srv.Handler))
+	defer hs.Close()
+
+	// Two events queued while the device is offline.
+	for n := 1; n <= 2; n++ {
+		if err := srv.Notify("dev_a", map[string]any{"type": "notification", "n": n}); err != nil {
+			t.Fatalf("notify: %v", err)
+		}
+	}
+
+	c, _, err := websocket.DefaultDialer.Dial(dialURL(hs, "token=tok-a&cursor=0"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer c.Close()
+	if hello := readFrame(t, c); hello["type"] != "hello" {
+		t.Fatalf("want hello, got %v", hello)
+	}
+	for want := 1; want <= 3; want++ {
+		env := readFrame(t, c)
+		if env["type"] != "event" {
+			t.Fatalf("want event, got %v", env)
+		}
+		if got := env["push_seq"].(float64); got != float64(want) {
+			t.Fatalf("envelope %d carries push_seq %v — delivered out of order", want, got)
+		}
+	}
+	if err := <-notified; err != nil {
+		t.Fatalf("live notify: %v", err)
+	}
+}
