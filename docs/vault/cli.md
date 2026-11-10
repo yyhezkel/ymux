@@ -37,6 +37,14 @@ reaches an already-running process**, which is the whole reason sticky ports exi
 one-shot `claude -p` calls, which have no pane of their own. A plain `claude` started by hand on the same
 host does not set it, so `last.env` still lends that run a pane.
 
+**Reply deadline (`reply_deadline`, main.rs).** `rpc_via` waits for the reply line under a
+`tokio::time::timeout`: 300 s (`RPC_REPLY_FLOOR_SECS`), or the wait the request carries
+(`wait_timeout_seconds`, or `timeout_ms` rounded up) plus 30 s when that is longer, so the
+desktop's own timeout answer always arrives first. On expiry the error is
+`no reply from the ymux app within <n>s`. It starts with neither `connect ` nor `rpc error`.
+The handshake keeps its own 10 s reads. `wait` polls with short calls, so one poll against a
+silent desktop can outlast `--timeout` by up to this deadline.
+
 ## Verb families
 
 Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this is the map:
