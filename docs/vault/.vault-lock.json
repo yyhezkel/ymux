@@ -340,7 +340,7 @@
     "app/src-tauri/server/internal/term/gitdiff_test.go": "48c23a5bff7edc4b3c360e591b1007c312d9c3ede7edbd0ff437edd85bc3b9b6",
     "app/src-tauri/server/internal/term/gitprobe.go": "ecd665741c9883b8acf229dfda9cff7fb2d53e67b5710d80f37f9443293fc755",
     "app/src-tauri/server/internal/term/gitprobe_test.go": "a68735c1e70c9313bc198b68080803da8fa5fdf9563308cbe907a85f2da28c33",
-    "app/src-tauri/server/internal/term/hibernate.go": "769571ae0d759076b04efc210b3fac92953a2ee280a661bcd9d75b0b1c2e801f",
+    "app/src-tauri/server/internal/term/hibernate.go": "ccd335704c123966878f0ec3be14d2788853c70cdd60f2fdaebabf84322b0f74",
     "app/src-tauri/server/internal/term/hibernate_test.go": "09356a7db4e2773548241f29b2856f2e6eaf7d91ee7f73b24517168f3e378742",
     "app/src-tauri/server/internal/term/history.go": "34334751029cdef6a75a435956fb83435984f55746bd99b930e9f5436abeaf26",
     "app/src-tauri/server/internal/term/history_test.go": "c3770c89a35ce6278ccff224bafa432513e2303c37487e219ce00894c97f1517",
