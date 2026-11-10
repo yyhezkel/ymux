@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -469,5 +470,185 @@ func TestKillingAReleasedSessionKeepsTheNewOwnersGate(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("the pending request outlived its session")
+	}
+}
+
+// A card someone is still blocked on is never evicted by the cap: evicted, it
+// could be neither decided nor denied when its session dies.
+func TestPendingCardSurvivesEviction(t *testing.T) {
+	s := newFeedStore()
+	owner := &hookEntry{name: "web", paneID: "p1"}
+	ch := s.add(&feedEntry{item: FeedItem{RequestID: "gate", PaneID: "p1", State: statePending, Blocking: true}, owner: owner})
+	if ch == nil {
+		t.Fatal("a blocking card got no decision channel")
+	}
+	for i := 0; i < feedMaxItems+5; i++ {
+		s.add(&feedEntry{item: FeedItem{RequestID: "n" + strconv.Itoa(i), State: statePassive}})
+	}
+	items := s.list("en")
+	if len(items) != feedMaxItems {
+		t.Fatalf("feed holds %d, want %d", len(items), feedMaxItems)
+	}
+	if items[0].RequestID != "gate" || items[0].State != statePending {
+		t.Fatalf("the pending card was evicted or changed: first = %+v", items[0])
+	}
+	if last := items[len(items)-1].RequestID; last != "n"+strconv.Itoa(feedMaxItems+4) {
+		t.Fatalf("newest card = %q, the cap dropped the wrong end", last)
+	}
+	if ids := s.pendingFor(owner); len(ids) != 1 || ids[0] != "gate" {
+		t.Fatalf("pendingFor = %v, want [gate]", ids)
+	}
+	if out := s.decide("gate", "deny"); out != decideApplied {
+		t.Fatalf("decide on the old pending card = %v, want applied", out)
+	}
+	select {
+	case d := <-ch:
+		if d != "deny" {
+			t.Fatalf("waiter got %q, want deny", d)
+		}
+	default:
+		t.Fatal("the waiter was not handed the decision")
+	}
+	// Decided, it is an ordinary card again and the cap may take it.
+	s.add(&feedEntry{item: FeedItem{RequestID: "after", State: statePassive}})
+	if first := s.list("en")[0].RequestID; first == "gate" {
+		t.Fatal("a decided card was still exempt from the cap")
+	}
+}
+
+// decide is the one transition out of pending: allow / deny / timeout only,
+// applied only while pending, and a later decision changes nothing.
+func TestDecideTransitions(t *testing.T) {
+	s := newFeedStore()
+	ch := s.add(&feedEntry{item: FeedItem{RequestID: "g", State: statePending, Blocking: true}})
+	s.add(&feedEntry{item: FeedItem{RequestID: "passive", State: statePassive}})
+	state := func(id string) string {
+		for _, it := range s.list("en") {
+			if it.RequestID == id {
+				return it.State
+			}
+		}
+		return ""
+	}
+
+	if out := s.decide("g", "maybe"); out != decideInvalid || state("g") != statePending {
+		t.Fatalf("invalid decision → %v, state %q", out, state("g"))
+	}
+	if out := s.decide("nope", "allow"); out != decideUnknown {
+		t.Fatalf("unknown id → %v", out)
+	}
+	if out := s.decide("passive", "allow"); out != decideNotPending || state("passive") != statePassive {
+		t.Fatalf("passive card → %v, state %q", out, state("passive"))
+	}
+	if out := s.decide("g", "allow"); out != decideApplied || state("g") != stateAllowed {
+		t.Fatalf("first decision → %v, state %q", out, state("g"))
+	}
+	for _, late := range []string{"deny", "timeout", "allow"} {
+		if out := s.decide("g", late); out != decideNotPending {
+			t.Fatalf("late %q → %v, want not-pending", late, out)
+		}
+		if st := state("g"); st != stateAllowed {
+			t.Fatalf("late %q rewrote the state to %q", late, st)
+		}
+	}
+	if d := <-ch; d != "allow" {
+		t.Fatalf("waiter got %q, want allow", d)
+	}
+	select {
+	case d := <-ch:
+		t.Fatalf("a late decision reached the waiter: %q", d)
+	default:
+	}
+
+	for decision, want := range map[string]string{"deny": stateDenied, "timeout": stateTimedout} {
+		s.add(&feedEntry{item: FeedItem{RequestID: "g-" + decision, State: statePending, Blocking: true}})
+		if out := s.decide("g-"+decision, decision); out != decideApplied || state("g-"+decision) != want {
+			t.Fatalf("%s → %v, state %q", decision, out, state("g-"+decision))
+		}
+	}
+}
+
+// REST: the first answer is 200, a second one is 409 and changes nothing.
+func TestDecideRouteSecondAnswerIsAConflict(t *testing.T) {
+	s, _ := hookService("tmux 3.4")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "")
+	e.policy = policyGate
+	s.hooks.add(e)
+	tg := matched(t, s.hooks, e)
+	got := make(chan map[string]any, 1)
+	go func() { got <- pushAsync(tg, permission(e, "g10", nil)) }()
+	deadline := time.Now().Add(time.Second)
+	for len(s.hooks.feed.pendingFor(e)) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if w := do(s, "POST", "/api/v2/feed/g10/decide", "owner-token", `{"decision":"allow"}`); w.Code != http.StatusOK {
+		t.Fatalf("first decide → %d", w.Code)
+	}
+	if w := do(s, "POST", "/api/v2/feed/g10/decide", "owner-token", `{"decision":"deny"}`); w.Code != http.StatusConflict {
+		t.Fatalf("second decide → %d, want 409", w.Code)
+	}
+	if res := <-got; res["decision"] != "allow" {
+		t.Fatalf("gate → %v, want the first answer (allow)", res)
+	}
+	if st := s.hooks.feed.list("en")[0].State; st != stateAllowed {
+		t.Fatalf("card state = %q, want allowed", st)
+	}
+}
+
+// The events socket takes allow / deny from a client, like REST: a client
+// "timeout" (the daemon timer's own decision) or any other string is ignored.
+func TestEventsSocketIgnoresANonClientDecision(t *testing.T) {
+	s, _ := hookService("tmux 3.4")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "")
+	e.policy = policyGate
+	s.hooks.add(e)
+	tg := matched(t, s.hooks, e)
+
+	mux := http.NewServeMux()
+	s.RegisterRoutes(mux)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	url := "ws" + strings.TrimPrefix(srv.URL, "http") + "/api/v2/events?token=owner-token"
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	read := func() frame {
+		t.Helper()
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		var f frame
+		if err := conn.ReadJSON(&f); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		return f
+	}
+	if f := read(); f.Type != "hello" {
+		t.Fatalf("first frame = %q, want hello", f.Type)
+	}
+
+	got := make(chan map[string]any, 1)
+	go func() { got <- pushAsync(tg, permission(e, "g11", nil)) }()
+	for {
+		if f := read(); f.Type == "feed:item-added" {
+			break
+		}
+	}
+	// Frames are handled in order, so the allow is only seen after these.
+	for _, d := range []string{"timeout", "yes"} {
+		if err := conn.WriteJSON(map[string]string{"type": "feed.decide", "request_id": "g11", "decision": d}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := conn.WriteJSON(map[string]string{"type": "feed.decide", "request_id": "g11", "decision": "allow"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case res := <-got:
+		if res["decision"] != "allow" {
+			t.Fatalf("gate → %v, want allow (a client timeout must be ignored)", res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the gate was never answered")
 	}
 }

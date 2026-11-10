@@ -271,12 +271,20 @@ func (r *HookRegistry) SetPolicy(name, policy string) bool {
 // decide resolves a pending card and tells every subscriber. by is who
 // answered, for the log only. False when there was nothing pending to decide.
 func (r *HookRegistry) decide(requestID, decision, by string) bool {
-	if !r.feed.decide(requestID, decision) {
-		return false
+	return r.decideFeed(requestID, decision, by) == decideApplied
+}
+
+// decideFeed is decide with the reason a decision was not applied. Only an
+// applied decision is logged and announced: a late or invalid one changes
+// nothing, so subscribers hear nothing.
+func (r *HookRegistry) decideFeed(requestID, decision, by string) decideOutcome {
+	out := r.feed.decide(requestID, decision)
+	if out != decideApplied {
+		return out
 	}
 	logger.Info("feed decided", "request", requestID, "decision", decision, "by", by)
 	r.hub.publish("feed:item-resolved", same(map[string]string{"request_id": requestID, "decision": decision}))
-	return true
+	return out
 }
 
 // Retain drops every entry whose session tmux no longer reports — a session

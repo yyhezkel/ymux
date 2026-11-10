@@ -4,8 +4,8 @@ package term
 // WEB-DESIGN B3).
 //
 // The desktop's FeedStore (lib.rs) ported to what a browser needs: the last
-// feedMaxItems cards in memory, and a one-shot channel per pending approval
-// that feed.decide answers. In memory on purpose — the hook registry it hangs
+// feedMaxItems cards in memory (plus any still pending), and a one-shot
+// channel per pending approval that feed.decide answers. In memory on purpose — the hook registry it hangs
 // off is in memory too, and a card about a session whose hook token died with
 // the daemon is not actionable. The BROWSER keeps the history (IndexedDB,
 // Phase C; Yossi 2026-10-05); this store only hydrates a client that connects.
@@ -64,6 +64,9 @@ type feedEntry struct {
 	// session owns). A pane id is not an identity: after replace_pane two
 	// sessions carry the same one.
 	owner *hookEntry
+	// ch is where a blocking card's decision is delivered (nil for a passive
+	// card). Written once, by feedStore.decide.
+	ch chan string
 }
 
 // view renders the card for one subscriber's language.
@@ -78,59 +81,95 @@ func (f *feedEntry) view(lang string) FeedItem {
 	return it
 }
 
-// feedStore holds the cards and the pending approvals. Its own lock, never
-// held while the registry's is taken, so a hook folding and a browser
-// deciding never wait on each other.
+// feedStore holds the cards. A card's State is the ONE record of whether an
+// approval is still open — there is no second "pending" table to fall out of
+// step with it. Its own lock, never held while the registry's is taken, so a
+// hook folding and a browser deciding never wait on each other.
 type feedStore struct {
-	mu      sync.Mutex
-	items   []*feedEntry
-	pending map[string]chan string
+	mu    sync.Mutex
+	items []*feedEntry
 }
 
 func newFeedStore() *feedStore {
-	return &feedStore{pending: map[string]chan string{}}
+	return &feedStore{}
 }
 
 // add stores a card. A blocking card also gets the channel its decision will
 // arrive on; the caller waits on it.
+//
+// Past feedMaxItems the oldest cards go — but never one that is still
+// pending: someone is blocked on it, and an evicted card could be neither
+// decided nor denied when its session dies. Pending cards are skipped, so the
+// list can exceed the cap by however many gates are open at once.
 func (s *feedStore) add(e *feedEntry) chan string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e.item.Blocking {
+		e.ch = make(chan string, 1)
+	}
 	s.items = append(s.items, e)
 	if over := len(s.items) - feedMaxItems; over > 0 {
-		s.items = append(s.items[:0:0], s.items[over:]...)
+		kept := make([]*feedEntry, 0, len(s.items))
+		for i, old := range s.items {
+			// The card just added (the last) is never the one evicted.
+			if over > 0 && i < len(s.items)-1 && old.item.State != statePending {
+				over--
+				continue
+			}
+			kept = append(kept, old)
+		}
+		s.items = kept
 	}
-	if !e.item.Blocking {
-		return nil
-	}
-	ch := make(chan string, 1)
-	s.pending[e.item.RequestID] = ch
-	return ch
+	return e.ch
 }
 
-// decide resolves a card. Only a PENDING card can be decided, and only once —
-// the first decision wins, exactly as the desktop's decide_feed removes the
-// sender on first use. Returns false when there was nothing to decide.
-func (s *feedStore) decide(requestID, decision string) bool {
+// decideOutcome is what feedStore.decide did with a decision.
+type decideOutcome int
+
+const (
+	// decideApplied: the card was pending and now carries the decision.
+	decideApplied decideOutcome = iota
+	// decideInvalid: the decision is not allow / deny / timeout.
+	decideInvalid
+	// decideUnknown: no card with that request id.
+	decideUnknown
+	// decideNotPending: the card is there but no longer (or never was)
+	// pending — already decided. Nothing changed; the first decision stands.
+	decideNotPending
+)
+
+// decide is the single transition out of statePending, the twin of the
+// desktop's decide_feed (lib.rs):
+//
+//   - the decision must be allow, deny or timeout — anything else changes
+//     nothing (decideInvalid);
+//   - it is applied only while the card is still pending: pending → allowed /
+//     denied / timedout, and the waiter is handed the decision;
+//   - a later decision for the same card is a no-op (decideNotPending) — the
+//     first one wins and the card's state is never rewritten.
+func (s *feedStore) decide(requestID, decision string) decideOutcome {
 	st := map[string]string{"allow": stateAllowed, "deny": stateDenied, "timeout": stateTimedout}[decision]
 	if st == "" {
-		return false
+		return decideInvalid
 	}
 	s.mu.Lock()
-	ch, ok := s.pending[requestID]
-	if ok {
-		delete(s.pending, requestID)
-		for _, e := range s.items {
-			if e.item.RequestID == requestID {
-				e.item.State = st
-			}
+	defer s.mu.Unlock()
+	out := decideUnknown
+	for _, e := range s.items {
+		if e.item.RequestID != requestID {
+			continue
 		}
+		if e.item.State != statePending {
+			out = decideNotPending
+			continue // a pending card with the same id may still follow
+		}
+		e.item.State = st
+		if e.ch != nil {
+			e.ch <- decision // buffered 1 and written once: never blocks
+		}
+		return decideApplied
 	}
-	s.mu.Unlock()
-	if ok {
-		ch <- decision // buffered 1, and the entry is gone: never blocks
-	}
-	return ok
+	return out
 }
 
 // pendingFor lists the pending request ids one session's hooks made — a

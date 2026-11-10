@@ -297,7 +297,20 @@ live channel.** `feedPush` now does what the desktop's `feed.push` does after fo
   (else `delta`), clipped to 160. Text is rendered in **both languages at creation** and
   each subscriber gets its own (`?lang=he`), because there is no settings store to read
   one language from. `feedStore` keeps the last 50 in memory; the browser keeps history
-  (IndexedDB, Phase C). First decision wins; a second `decide` returns false.
+  (IndexedDB, Phase C). The cap **never evicts a card that is still pending** (it skips
+  them, so the list can exceed 50 by the number of open gates) — an evicted one could not
+  be denied when its session died.
+- **`feedStore.decide` is the single transition out of `pending`** — the twin of the
+  desktop's `decide_feed`, keep them the same. (1) The decision must be `allow`, `deny`
+  or `timeout`; anything else changes nothing (`decideInvalid`). (2) It applies only
+  while the card's `State` is `pending` → `allowed` / `denied` / `timedout`, and hands the
+  waiter the decision. (3) A later decision is a no-op (`decideNotPending`): the state is
+  not rewritten, the waiter hears nothing more, no `feed:item-resolved` goes out. (4) No
+  card with that id → `decideUnknown`. The card's `State` is the only record — the
+  decision channel lives on the card (`feedEntry.ch`), there is no separate pending map.
+  **Clients may send only `allow` / `deny`** (`clientDecision`), on the events socket and
+  REST alike; `timeout` is the daemon's own timer. REST answers 200, **409 already
+  decided**, 404 unknown id, 400 bad decision; the socket ignores a bad frame (one Warn).
 - **`GET /api/v2/events`** — one WebSocket for the box, same gate as the terminal
   (owner token or explicit `shell:attach`). First frame `hello` = the hydration the
   desktop does with `pane_agent_states` / `pane_briefs` / the feed list, plus each pane's
