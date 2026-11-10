@@ -23,8 +23,19 @@ updates:
   # any such PR would be red. Lockfile-only also freezes the `=` and `~` pins.
   # The tauri ignores cover the `^2` siblings: they move by hand, together
   # (CLAUDE.md, Pinned deps).
+  # sdk-gen and sdk/typescript are listed because 12 of the 19 alerts open on
+  # 2026-11-10 sat in their lockfiles with nothing watching them. sdk-gen pins
+  # its two generators exactly, so only transitive packages move there, and
+  # sdk-gen/ci-check.mjs (the `go` job) fails if the generated SDK changes.
+  # The *-security groups below only fire while "Dependabot security updates"
+  # is enabled in the repo settings. It was off until 2026-11-10.
+  # gomod is absent on purpose: a go.mod change needs the two server blobs
+  # rebaked, which a bot branch cannot do. Go alerts arrive without an entry.
   - package-ecosystem: npm
-    directory: "/app"
+    directories:
+      - "/app"
+      - "/sdk-gen"
+      - "/sdk/typescript"
     schedule:
       interval: monthly
     versioning-strategy: lockfile-only
