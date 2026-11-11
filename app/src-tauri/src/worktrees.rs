@@ -369,7 +369,7 @@ pub(crate) async fn ssh_exec_capture(
 /// anywhere is connected to that server there is no reason to refuse to
 /// list its worktrees. `key_path` is a credential, not an identity, so
 /// it is not part of the match.
-fn pick_ssh_handle_for_host(
+pub(crate) fn pick_ssh_handle_for_host(
     state: &AppState,
     host: &str,
     user: &str,

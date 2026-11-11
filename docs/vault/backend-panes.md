@@ -2,6 +2,7 @@
 vault: backend-panes
 covers:
   - app/src-tauri/src/diff_pane.rs
+  - app/src-tauri/src/pr_status.rs
   - app/src-tauri/src/file_manager.rs
   - app/src-tauri/src/workspace_browser.rs
   - app/src-tauri/src/browser_diag.js
@@ -19,7 +20,7 @@ covers:
 
 # Non-terminal panes and app features
 
-Twelve modules, ~8,650 lines, plus one injected JS probe. A pane in ymux is not necessarily a shell — Diff, File
+Thirteen modules, ~9,050 lines, plus one injected JS probe. A pane in ymux is not necessarily a shell — Diff, File
 Manager, and Browser are panes too, and they share the layout tree with terminals.
 
 ## Panes
@@ -43,6 +44,30 @@ covers diff + files + branch. `diff_pane_worktrees` lists the repo's worktrees f
 strip. Handles live in `CoreState.diff_pane_watchers`. All the parsing (`parse_status_z`,
 `diff_args`, `validate_ref` — which rejects a ref starting with `-`, closing the
 `--output=` hole — `bundle_script`, `split_bundle`) is pure and unit-tested.
+`lookup_pane_context` and the `conn` / `cwd` fields of `PaneCtx` are `pub(crate)`, because
+`pr_status.rs` resolves the same pane context.
+
+**`pr_status.rs`** — one command, `diff_pane_pr_status(pane_id)`, for the Diff pane's PR
+card. It runs `gh pr view --json number,title,state,isDraft,url,headRefName,statusCheckRollup`
+in the pane's cwd (the worktree-strip override included) **on the workspace's host**, so the
+desktop never holds a GitHub token. Local: `Command::new("gh")` with an arg array,
+`current_dir`, `kill_on_drop`, `CREATE_NO_WINDOW` on Windows and `unix_path_env()` on
+macOS/Linux (a Finder-launched app has no Homebrew on PATH), under a 20 s
+`tokio::time::timeout`. WSL: `wsl_exec` of `gh_script`. SSH: `ssh_exec::exec` of
+`sh -c <gh_script>` on `worktrees::pick_ssh_handle_for_host` (now `pub(crate)`), 20 s.
+`gh_script` shell-quotes the cwd, adds fixed dirs to PATH (`~/.local/bin`, Homebrew),
+exits 127 when `command -v gh` fails, and sets `GH_NO_UPDATE_NOTIFIER`, because stderr is
+merged and an update notice would corrupt the JSON. **Every failure the user fixes outside
+the app is an `Ok` state, not an `Err`:** `classify` (pure, unit-tested) maps not-found or
+exit 127 → `gh_missing`, exit 4 or "gh auth login" → `not_authenticated`, "no pull requests
+found" → `no_pr`, "not a git repository" / no GitHub remote → `not_github`, the timeout →
+`timeout`, and no live SSH handle → `no_session`. Anything else is `error` with gh's first
+line, for the UI only. `parse_pr_json` starts at the first line that opens with `{` (a login
+banner can come first), caps each text field at 500 chars and the rollup at 300 checks.
+Both rollup shapes (`CheckRun`, `StatusContext`) pass through as `PrCheck` with optional
+fields; the frontend classifies them. The TS mirror is hand-written in `prChecks.ts`, not
+ts-rs. Rule #1: the log line is debug level and holds the pane id, state kind, exit code
+and check count. The gh text is never logged.
 
 **`file_manager.rs` (1,688)** — dual-column file manager (session lookup is `ssh_handle_for_machine`, so a sibling session to the same server serves it; remote exec through `ymux_core::ssh_exec`; `remote_exec` returns `Err` on a signal or a missing status, and `tar` exit 1, a file changed while read, counts as success): lists, transfers, mutations on
 both sides. Local ops use `std::fs`; zip 9's `ZipFile::name` returns a `Result`, so a bad
@@ -205,7 +230,8 @@ workspace's connection:
 | `Ssh` | `ymux_core::ssh_exec::exec` on a **live** handle to that host; a signal or a missing status is `Err`, never code 0 |
 
 The SSH path matches on `user@host:port`, **not on workspace id** — a repo is reachable
-from any session to the same host. The dispatch is `run_git_over` on top of
+from any session to the same host (`pick_ssh_handle_for_host`, which `pr_status.rs` also
+uses). The dispatch is `run_git_over` on top of
 **`run_git_raw`** (Phase 91.F), which returns `GitRaw { code, out, err }` verbatim so a
 caller that wants a non-zero exit (`git diff --no-index` returns 1 when files differ) can
 read the output instead of an error; `run_git_over` still folds a non-zero code into

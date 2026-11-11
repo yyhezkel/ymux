@@ -8003,6 +8003,12 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   PR #51 branch: merged origin/main (conflicts lib.rs → ssh_handle_for_machine with lock_or_recover; SessionsOverviewWindow → backend.call; PROGRESS both; vault re-stamped). PR #81 (dependabot) not merged: CI red because of the same main break.
   Result: compiles-untested until CI; Go blobs still need the rebake from the PR's ci-windows artifact.
 
+[2026-11-05] Voice input (STT push-to-talk) silently dead.
+  Cause: settings had stt.push_to_talk_hotkey = Ctrl+Shift+Z, the same key Phase 87 gave focus_zoom. The key table ran first and returned, so startPushToTalk never ran, and the only STT log lines (result/failed) come after start, so nothing at all was logged.
+  Fix (app/src/App.tsx): PTT is checked BEFORE the table and wins a clash when enabled; warnShortcutConflicts logs every conflictingAccels duplicate (PTT included) as warn on load + settings:changed; debug lines for stt start / stop requested / disabled-hotkey. Vault frontend-shell.md + lock.
+  Side finding to FOLLOWUPS (P2): the app writes debug.log.1 and debug.log has been stale since 2026-10-07.
+  Result: compiles-untested until CI; not run live.
+
 [2026-11-09] pre-tool-use defers in `auto` mode; context.inject default budget 1000 ms (branch fix/hooks-auto-mode-context-timeout).
   Cause: hooks were removed from settings.json on 2026-10-26 because PreToolUse gated and denied commands in `auto` mode, which was not in the CLI's short-circuit list. SessionStart/UserPromptSubmit/Stop/SessionEnd went with them, so the Context Rail and injection stopped. Separately, context.inject takes 310-400 ms on a real tunnel, over the 300 ms budget.
   Fix: cli/src/main.rs prints nothing in `auto` mode; default budget 1000 ms. Docs: CONTEXT, CLI, PROTOCOLS, vault cli.md.
