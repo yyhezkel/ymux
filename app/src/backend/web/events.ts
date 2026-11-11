@@ -44,7 +44,10 @@ export class EventBus {
 export interface Hello {
   pane_agent_states: Record<string, unknown>;
   pane_briefs: Record<string, unknown>;
-  panes: Record<string, { session: string; policy: string }>;
+  // hibernated / hibernated_since: the daemon stopped this pane's idle
+  // claude (server/internal/term/hibernate.go); live changes arrive as
+  // `pane:hibernated`.
+  panes: Record<string, { session: string; policy: string; hibernated?: boolean; hibernated_since?: number | null }>;
   feed: unknown[] | null;
   pane_status: Record<string, string>;
   notifications: unknown[] | null;

@@ -1471,6 +1471,9 @@
   "context.prompt.original": "исходный промпт",
   "settings.brief.injectProtocol.label": "Обучать сессии формату брифа",
   "settings.brief.injectProtocol.hint": "Каждая сессия Claude получает указание завершать итоговые ответы блоком [ymux-brief] для очереди и Context Rail. Эти строки видны в ответах агента. Нужны hooks v1.7.0 (перезапустите setup-hooks).",
+  "settings.daemon.hibernate.label": "Усыплять неактивных агентов через (минут)",
+  "settings.daemon.hibernate.hint": "Сервер останавливает неактивный Claude (завершил работу или ждёт ввода, без hook столько минут), чтобы освободить память, и возобновляет его через claude --resume, когда вы снова открываете панель. Останавливается только Claude, который сам является процессом панели и не имеет дочерних процессов. 0 = выкл.",
+  "pane.hibernated": "💤 Спит",
   "settings.brief.injectContext.label":"Передавать контекст в сессии",
   "settings.brief.injectContext.hint": "При compact или resume сессия Claude получает свой первый промпт и последние строки прогресса; новая сессия — цель пространства и соседние сессии. Нужны hooks v1.7.0 (перезапустите setup-hooks)."
 }

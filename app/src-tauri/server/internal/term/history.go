@@ -298,7 +298,7 @@ func (s *Service) handleResume(w http.ResponseWriter, r *http.Request) {
 		cwd = "" // tmux falls back to its default; claude --resume still finds it by id
 	}
 	created, hooks, err := s.spawnSession(newName, cwd, body.Policy, body.WorkspaceID, "",
-		s.claudeBinary(), "--resume", e.ClaudeSessionID)
+		resumeArgv(s.claudeBinary(), e.ClaudeSessionID)...)
 	if err != nil {
 		failErr(w, err)
 		return

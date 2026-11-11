@@ -77,6 +77,11 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
 
+`hibernatedPanes` (browser mode only) holds the panes whose idle claude the daemon
+stopped. It is seeded from `pane_hibernated` at boot and kept by `pane:hibernated`.
+`shownStatusText()` puts `t("pane.hibernated")` over the pane's status text, and
+`LayoutView` gets that map instead of `paneStatusText` — that is the whole marker.
+
 A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
 (`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
 focus sends nothing. The backend uses it to pick the ticket pane-cwd tmux session.
