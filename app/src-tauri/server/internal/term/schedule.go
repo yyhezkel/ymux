@@ -5,8 +5,9 @@ package term
 //
 // A firing goes through these steps, in this order:
 //
-//  1. overlap — the previous run of this schedule is still a live tmux
-//     session, or a firing of it is still in its precheck: skip.
+//  1. overlap — the previous run of this schedule is a live tmux session
+//     whose claude has not finished (runFinished), or a firing of it is
+//     still in its precheck: skip. A finished session stays open.
 //  2. cap     — the schedule already ran max_runs_per_day times today: skip.
 //  3. cwd     — the working directory is gone: failed.
 //  4. precheck (optional) — an argv run in cwd with a timeout; a non-zero
@@ -35,6 +36,8 @@ import (
 	"os/exec"
 	"sync"
 	"time"
+
+	"ymux-server/internal/agent"
 )
 
 // Run outcomes, as the history and the logs spell them.
@@ -241,12 +244,44 @@ func runsToday(s *Schedule, at time.Time) int {
 	return s.RunsToday
 }
 
+// runFinished reports whether a previous run's claude has finished, from the
+// hook state the daemon keeps per session (hookEntry.run). turnOpen is true
+// while a turn is in flight (user-prompt-submit seen, stop not yet).
+//
+//   - done, failed: finished.
+//   - needs-input: finished only when no turn is in flight. Claude sends
+//     idle_prompt about a minute after its stop, which turns done into
+//     needs-input. A permission gate in a turn keeps the turn open.
+//   - running, unknown (no hook yet, or the daemon restarted): not finished.
+func runFinished(st agent.State, turnOpen bool) bool {
+	switch st {
+	case agent.StateDone, agent.StateFailed:
+		return true
+	case agent.StateNeedsInput:
+		return !turnOpen
+	}
+	return false
+}
+
+// unknownRunState is the runState seam's default: no hook state known.
+func unknownRunState(string) (agent.State, bool) { return agent.StateUnknown, false }
+
 // gateOutcome applies the overlap and cap rules. It returns "" when the
 // firing may go on, else the skip outcome. inflight is true while another
 // firing of this schedule is still in its precheck or its start.
-func gateOutcome(s *Schedule, at time.Time, inflight bool, alive func(string) bool) string {
-	if inflight || (s.LastSession != "" && alive(s.LastSession)) {
+//
+// The previous run blocks while its tmux session exists and its claude has
+// not finished (runFinished). A finished session is kept for the user to
+// read; the scheduler never kills it.
+func gateOutcome(s *Schedule, at time.Time, inflight bool, alive func(string) bool,
+	runState func(string) (agent.State, bool)) string {
+	if inflight {
 		return outcomeSkippedOverlap
+	}
+	if s.LastSession != "" && alive(s.LastSession) {
+		if st, turnOpen := runState(s.LastSession); !runFinished(st, turnOpen) {
+			return outcomeSkippedOverlap
+		}
 	}
 	limit := s.MaxRunsPerDay
 	if limit < 1 {
@@ -267,6 +302,9 @@ type scheduler struct {
 	now   func() time.Time
 	// alive reports whether a tmux session still exists.
 	alive func(name string) bool
+	// runState is the hook state of a session and whether a turn is in
+	// flight (HookRegistry.runState).
+	runState func(name string) (agent.State, bool)
 	// precheck runs argv in cwd until ctx ends. It returns the exit code;
 	// err is errPrecheckTimeout or a start failure.
 	precheck func(ctx context.Context, cwd string, argv []string) (int, error)
@@ -280,7 +318,8 @@ type scheduler struct {
 }
 
 func newScheduler(store *scheduleStore) *scheduler {
-	return &scheduler{store: store, now: time.Now, precheck: runPrecheck, inflight: map[string]bool{}}
+	return &scheduler{store: store, now: time.Now, runState: unknownRunState, precheck: runPrecheck,
+		inflight: map[string]bool{}}
 }
 
 // due returns the ids of the enabled schedules that fire at minute. A minute
@@ -346,7 +385,7 @@ func (sc *scheduler) fire(id string, at time.Time) RunRecord {
 		rec.Outcome = outcomeSkippedOverlap
 		return sc.finish(id, at, rec, false)
 	}
-	if o := gateOutcome(&s, at, false, sc.alive); o != "" {
+	if o := gateOutcome(&s, at, false, sc.alive, sc.runState); o != "" {
 		rec.Outcome = o
 		return sc.finish(id, at, rec, true)
 	}
@@ -415,6 +454,7 @@ func runPrecheck(ctx context.Context, cwd string, argv []string) (int, error) {
 	cmd.Dir = cwd
 	// The hooks of any claude the precheck starts must stay silent.
 	cmd.Env = append(os.Environ(), "YMUX_HEADLESS=1")
+	precheckProcGroup(cmd)
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
 		return -1, errPrecheckTimeout

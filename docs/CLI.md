@@ -188,22 +188,30 @@ ymux schedule add --name <n> --cron "<5 fields>" --prompt "<text>" [--cwd <dir>]
                   [-- <precheck argv...>]
 ymux schedule list
 ymux schedule rm|enable|disable|history <id>
+ymux schedule [--port <1-65535>] <verb> ...
 ```
 
 Scheduled prompts on the host's `ymux-server` (daemon 2.21.0 and later). The
 daemon starts `claude <prompt>` in a new tmux session on the cron schedule, also
 when the desktop is off. Run these verbs on the remote host. They call the local
-daemon on `127.0.0.1:7879` with `~/.ymux/server/token`, not the desktop.
+daemon on `127.0.0.1:<port>` with `~/.ymux/server/token`, not the desktop.
+`--port` is the daemon's `--port`, default 7879. The daemon does not write its
+port to a file, so set `--port` when the daemon runs on another port.
 
 - `--cron` is 5 fields in the host's local time. The daemon does not catch up
   firings it missed while it was down.
 - `--cwd` defaults to the current directory. The prompt must not start with `-`.
 - The precheck argv after `--` runs in `--cwd` before each run. A non-zero exit
-  or a timeout skips the run. The daemon discards its output.
+  or a timeout skips the run. The daemon discards its output. On a timeout the
+  daemon kills the precheck's whole process group.
 - A run gets policy `gate`: each permission request waits for a human, and a
   request that nobody answers is denied. The daemon never auto-approves a run.
-- The daemon skips a firing while the previous run's tmux session still exists,
-  and after `--max-per-day` runs on that local day (default 4).
+- The daemon skips a firing while the previous run is still working: its tmux
+  session exists and its claude has not finished its turn (hook state `done`,
+  `failed`, or `needs-input` after the turn). A run with no hook state yet counts
+  as working. A finished session stays open for you to read; the daemon does not
+  close it. The daemon also skips after `--max-per-day` runs on that local day
+  (default 4).
 - `history` prints the last 50 firings, newest first: `start`, `outcome`
   (`ran`, `skipped-precheck`, `skipped-overlap`, `skipped-cap`, `failed`),
   `session`, `exit_code` (of the precheck) and `reason`.

@@ -712,13 +712,24 @@ with the desktop off.
   or a precheck is stored**: the run writes to its tmux pane, the precheck to /dev/null.
 - **A firing** (`scheduler.fire`) goes overlap → cap → cwd → precheck → run, and each step
   writes one row. Outcomes: `ran`, `skipped-overlap` (the `last_session` tmux session still
-  exists, or a firing of this schedule is still in flight), `skipped-cap`, `skipped-precheck`
+  exists and its claude has not finished, or a firing of this schedule is still in flight),
+  `skipped-cap`, `skipped-precheck`
   (non-zero exit, or `precheck-timeout`), `failed` (`cwd-missing`, `precheck-start-failed`,
   `spawn-failed`, `no-hook-routing`). `reason` is a fixed word, never tool output. The
   precheck is `exec.CommandContext` in cwd, argv only (Rule #3), timeout default 60 s, max
-  600, `YMUX_HEADLESS=1`. The cap defaults to 4 per local day, 1–24. `gateOutcome` is the
-  pure overlap + cap rule; `alive`, `precheck` and `start` are fields, so the tests never
-  exec. The minute tick (`run`) hands each minute out once (`due`) and fires each schedule
+  600, `YMUX_HEADLESS=1`. On Linux `precheckProcGroup` (`precheck_linux.go`) starts it with
+  `Setpgid` and its `Cancel` sends SIGKILL to `-pid`, so a timeout kills the whole process
+  group, children included; `precheck_other.go` is a no-op. The cap defaults to 4 per local
+  day, 1–24. `gateOutcome` is the pure overlap + cap rule; `alive`, `runState`, `precheck`
+  and `start` are fields, so the tests never exec.
+- **"Finished" (owner decision, option a).** `runState` is `HookRegistry.runState`: the
+  session's `hookEntry.run` state, plus whether a turn is in flight (`TurnStartedAt` set).
+  `runFinished`: `done` and `failed` are finished; `needs-input` is finished only with no turn
+  in flight, because claude sends `idle_prompt` about a minute after `stop`, which turns
+  `done` into `needs-input`, while a gate inside a turn keeps the turn open; `running` and
+  `unknown` (no hook yet, a released session, or a daemon restart that emptied the
+  registry) block. A gone tmux session never blocks. The scheduler never kills a finished
+  session: it stays for the user to read. The minute tick (`run`) hands each minute out once (`due`) and fires each schedule
   in its own goroutine. Missed firings are not caught up.
 - **The run is policy `gate`, always.** `startScheduledRun` → `spawnSession(name, cwd,
   policyGate, "", "", claude, prompt)`: hooks, the feed, the Queue and the session list as

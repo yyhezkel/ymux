@@ -28,6 +28,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"ymux-server/internal/agent"
 )
 
 var errTooManySchedules = errors.New("too many schedules (64 at most)")
@@ -161,6 +163,13 @@ func (s *Service) startScheduledRun(name, cwd, prompt string) (string, error) {
 func (s *Service) newServiceScheduler(dir string) *scheduler {
 	sc := newScheduler(newScheduleStore(filepath.Join(dir, "schedules.json")))
 	sc.alive = s.tmux.Has
+	// Read s.hooks at each firing: the registry can attach after SetDataDir.
+	sc.runState = func(name string) (agent.State, bool) {
+		if s.hooks == nil {
+			return agent.StateUnknown, false
+		}
+		return s.hooks.runState(name)
+	}
 	sc.start = s.startScheduledRun
 	return sc
 }

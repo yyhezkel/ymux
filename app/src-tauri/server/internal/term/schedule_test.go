@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ymux-server/internal/agent"
 )
 
 func at(s string) time.Time {
@@ -96,31 +98,133 @@ func TestGateOutcomeOverlapAndCap(t *testing.T) {
 	dead := func(string) bool { return false }
 	live := func(string) bool { return true }
 	s := &Schedule{MaxRunsPerDay: 2}
-	if o := gateOutcome(s, now, false, dead); o != "" {
+	if o := gateOutcome(s, now, false, dead, unknownRunState); o != "" {
 		t.Fatalf("fresh schedule: %q", o)
 	}
-	if o := gateOutcome(s, now, true, dead); o != outcomeSkippedOverlap {
+	if o := gateOutcome(s, now, true, dead, unknownRunState); o != outcomeSkippedOverlap {
 		t.Fatalf("in flight: %q", o)
 	}
 	s.LastSession = "sched-x-1"
-	if o := gateOutcome(s, now, false, live); o != outcomeSkippedOverlap {
+	if o := gateOutcome(s, now, false, live, unknownRunState); o != outcomeSkippedOverlap {
 		t.Fatalf("previous run alive: %q", o)
 	}
-	if o := gateOutcome(s, now, false, dead); o != "" {
+	if o := gateOutcome(s, now, false, dead, unknownRunState); o != "" {
 		t.Fatalf("previous run gone: %q", o)
 	}
 	s.RunDay, s.RunsToday = "2026-11-10", 2
-	if o := gateOutcome(s, now, false, dead); o != outcomeSkippedCap {
+	if o := gateOutcome(s, now, false, dead, unknownRunState); o != outcomeSkippedCap {
 		t.Fatalf("cap reached: %q", o)
 	}
 	// A new day resets the count.
-	if o := gateOutcome(s, at("2026-11-11 00:00"), false, dead); o != "" {
+	if o := gateOutcome(s, at("2026-11-11 00:00"), false, dead, unknownRunState); o != "" {
 		t.Fatalf("next day: %q", o)
 	}
 	// No cap set: the default applies.
 	s.MaxRunsPerDay, s.RunsToday = 0, scheduleDefaultCap
-	if o := gateOutcome(s, now, false, dead); o != outcomeSkippedCap {
+	if o := gateOutcome(s, now, false, dead, unknownRunState); o != outcomeSkippedCap {
 		t.Fatalf("default cap: %q", o)
+	}
+}
+
+// TestGateOutcomeHookState: a live previous session blocks the next firing
+// only while its claude has not finished (owner decision, option a).
+func TestGateOutcomeHookState(t *testing.T) {
+	now := at("2026-11-10 03:00")
+	live := func(string) bool { return true }
+	dead := func(string) bool { return false }
+	cases := []struct {
+		name     string
+		st       agent.State
+		turnOpen bool
+		want     string
+	}{
+		{"running blocks", agent.StateRunning, true, outcomeSkippedOverlap},
+		{"done does not block", agent.StateDone, false, ""},
+		{"failed does not block", agent.StateFailed, false, ""},
+		{"unknown blocks", agent.StateUnknown, false, outcomeSkippedOverlap},
+		{"needs-input after stop does not block", agent.StateNeedsInput, false, ""},
+		{"needs-input in a turn blocks", agent.StateNeedsInput, true, outcomeSkippedOverlap},
+	}
+	for _, c := range cases {
+		s := &Schedule{MaxRunsPerDay: 4, LastSession: "sched-x-1"}
+		state := func(name string) (agent.State, bool) {
+			if name != "sched-x-1" {
+				t.Fatalf("%s: state asked for %q", c.name, name)
+			}
+			return c.st, c.turnOpen
+		}
+		if o := gateOutcome(s, now, false, live, state); o != c.want {
+			t.Errorf("%s: got %q, want %q", c.name, o, c.want)
+		}
+		// A gone session never blocks, whatever its last state.
+		if o := gateOutcome(s, now, false, dead, state); o != "" {
+			t.Errorf("%s, session gone: got %q", c.name, o)
+		}
+		// A firing in flight blocks, whatever the state.
+		if o := gateOutcome(s, now, true, live, state); o != outcomeSkippedOverlap {
+			t.Errorf("%s, in flight: got %q", c.name, o)
+		}
+	}
+}
+
+// TestRegistryRunState reads the state the hooks fold into a session.
+func TestRegistryRunState(t *testing.T) {
+	r := NewHookRegistry()
+	if st, open := r.runState("sched-x-1"); st != agent.StateUnknown || open {
+		t.Fatalf("unregistered: %s %v", st, open)
+	}
+	e := &hookEntry{name: "sched-x-1", paneID: "term_1"}
+	r.add(e)
+	if st, _ := r.runState("sched-x-1"); st != agent.StateUnknown {
+		t.Fatalf("no hook yet: %s", st)
+	}
+	r.mu.Lock()
+	r.applyLocked(e, "user-prompt-submit", hookPayload{}, "")
+	r.mu.Unlock()
+	if st, open := r.runState("sched-x-1"); st != agent.StateRunning || !open {
+		t.Fatalf("after prompt: %s %v", st, open)
+	}
+	r.mu.Lock()
+	r.applyLocked(e, "stop", hookPayload{}, "")
+	r.applyLocked(e, "notification", hookPayload{NotificationType: "idle_prompt"}, "")
+	r.mu.Unlock()
+	st, open := r.runState("sched-x-1")
+	if st != agent.StateNeedsInput || open || !runFinished(st, open) {
+		t.Fatalf("idle after stop: %s %v", st, open)
+	}
+	r.mu.Lock()
+	e.released = true
+	r.mu.Unlock()
+	if st, _ := r.runState("sched-x-1"); st != agent.StateUnknown {
+		t.Fatalf("released: %s", st)
+	}
+}
+
+// TestFireAfterFinishedRunKeepsSession: a finished run does not block the
+// next firing, and the scheduler does not kill its session.
+func TestFireAfterFinishedRunKeepsSession(t *testing.T) {
+	sc, f := testScheduler(t, &Schedule{ID: "s1", Cron: "* * * * *", Prompt: "p", Enabled: true, MaxRunsPerDay: 5})
+	states := map[string]agent.State{}
+	sc.runState = func(n string) (agent.State, bool) {
+		if st, ok := states[n]; ok {
+			return st, st == agent.StateRunning
+		}
+		return agent.StateUnknown, false
+	}
+	first := sc.fire("s1", at("2026-11-10 03:00"))
+	if first.Outcome != outcomeRan {
+		t.Fatalf("first firing: %+v", first)
+	}
+	states[first.Session] = agent.StateRunning
+	if r := sc.fire("s1", at("2026-11-10 03:01")); r.Outcome != outcomeSkippedOverlap {
+		t.Fatalf("while running: %+v", r)
+	}
+	states[first.Session] = agent.StateDone
+	if r := sc.fire("s1", at("2026-11-10 03:02")); r.Outcome != outcomeRan {
+		t.Fatalf("after done: %+v", r)
+	}
+	if !f.alive[first.Session] {
+		t.Fatal("the finished session must stay open")
 	}
 }
 

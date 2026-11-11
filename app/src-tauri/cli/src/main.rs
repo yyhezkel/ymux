@@ -367,8 +367,8 @@ async fn forward_hook_to_server(
     let _ = tokio::time::timeout(dur, s.read(&mut buf)).await;
 }
 
-/// The local ymux-server API port. Same as `forward_hook_to_server`.
-const SERVER_ADDR: &str = "127.0.0.1:7879";
+/// The ymux-server's default `--port`. `ymux schedule --port` overrides it.
+const DEFAULT_SERVER_PORT: u16 = 7879;
 
 /// A schedule id goes into a URL path, so it is checked first.
 fn valid_schedule_id(id: &str) -> bool {
@@ -378,7 +378,7 @@ fn valid_schedule_id(id: &str) -> bool {
 }
 
 /// `ymux schedule ...`: one REST call to the local ymux-server.
-async fn schedule_call(op: &ScheduleOp) -> Result<Value, String> {
+async fn schedule_call(port: u16, op: &ScheduleOp) -> Result<Value, String> {
     let id_path = |id: &str, tail: &str| -> Result<String, String> {
         if !valid_schedule_id(id) {
             return Err(format!("invalid schedule id: {id:?}"));
@@ -419,18 +419,20 @@ async fn schedule_call(op: &ScheduleOp) -> Result<Value, String> {
             if let Some(n) = precheck_timeout {
                 body["precheck_timeout_seconds"] = json!(n);
             }
-            server_request("POST", "/api/v2/schedules", Some(&body)).await
+            server_request(port, "POST", "/api/v2/schedules", Some(&body)).await
         }
-        ScheduleOp::List => server_request("GET", "/api/v2/schedules", None).await,
-        ScheduleOp::Rm { id } => server_request("DELETE", &id_path(id.as_str(), "")?, None).await,
+        ScheduleOp::List => server_request(port, "GET", "/api/v2/schedules", None).await,
+        ScheduleOp::Rm { id } => {
+            server_request(port, "DELETE", &id_path(id.as_str(), "")?, None).await
+        }
         ScheduleOp::Enable { id } => {
-            server_request("POST", &id_path(id.as_str(), "/enable")?, None).await
+            server_request(port, "POST", &id_path(id.as_str(), "/enable")?, None).await
         }
         ScheduleOp::Disable { id } => {
-            server_request("POST", &id_path(id.as_str(), "/disable")?, None).await
+            server_request(port, "POST", &id_path(id.as_str(), "/disable")?, None).await
         }
         ScheduleOp::History { id } => {
-            server_request("GET", &id_path(id.as_str(), "/history")?, None).await
+            server_request(port, "GET", &id_path(id.as_str(), "/history")?, None).await
         }
     }
 }
@@ -439,7 +441,12 @@ async fn schedule_call(op: &ScheduleOp) -> Result<Value, String> {
 /// the answer unchunked and closes the socket at its end, so a plain read to
 /// EOF is the whole response. No new dependency. The token is never logged
 /// or printed (Rule #8).
-async fn server_request(method: &str, path: &str, body: Option<&Value>) -> Result<Value, String> {
+async fn server_request(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+) -> Result<Value, String> {
     let token = read_server_token().ok_or_else(|| {
         "no local ymux-server (~/.ymux/server/token not found). Run this on the remote host."
             .to_string()
@@ -452,9 +459,11 @@ async fn server_request(method: &str, path: &str, body: Option<&Value>) -> Resul
         body.len()
     );
     let dur = std::time::Duration::from_secs(10);
-    let mut s = match tokio::time::timeout(dur, tokio::net::TcpStream::connect(SERVER_ADDR)).await {
+    // Loopback only: the token must never leave the host.
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let mut s = match tokio::time::timeout(dur, tokio::net::TcpStream::connect(addr)).await {
         Ok(Ok(s)) => s,
-        _ => return Err(format!("ymux-server not reachable on {SERVER_ADDR}")),
+        _ => return Err(format!("ymux-server not reachable on {addr}")),
     };
     s.write_all(req.as_bytes())
         .await
@@ -698,6 +707,11 @@ enum Cmd {
     /// Scheduled prompts on the host's ymux-server: claude runs on a cron
     /// schedule with the desktop off. Run it on the remote host.
     Schedule {
+        /// The local ymux-server port: the daemon's `--port`. The daemon
+        /// writes its port nowhere, so set this when it is not 7879.
+        #[arg(long, global = true, default_value_t = DEFAULT_SERVER_PORT,
+              value_parser = clap::value_parser!(u16).range(1..))]
+        port: u16,
         #[command(subcommand)]
         op: ScheduleOp,
     },
@@ -2250,7 +2264,7 @@ async fn real_main() -> ExitCode {
             )
             .await
         }
-        Cmd::Schedule { op } => schedule_call(op).await,
+        Cmd::Schedule { port, op } => schedule_call(*port, op).await,
         Cmd::Notify {
             title,
             body,
@@ -3590,6 +3604,15 @@ mod wait_read_worktree_tests {
         ])
         .is_err());
         assert!(Cli::try_parse_from(["ymux", "schedule", "history", "s1a2b3c4"]).is_ok());
+        // --port: default 7879, before or after the verb, never 0.
+        let c = Cli::try_parse_from(["ymux", "schedule", "list"]);
+        assert!(matches!(c.map(|c| c.command), Ok(Cmd::Schedule { port: 7879, .. })));
+        let c = Cli::try_parse_from(["ymux", "schedule", "--port", "7880", "list"]);
+        assert!(matches!(c.map(|c| c.command), Ok(Cmd::Schedule { port: 7880, .. })));
+        let c = Cli::try_parse_from(["ymux", "schedule", "list", "--port", "7881"]);
+        assert!(matches!(c.map(|c| c.command), Ok(Cmd::Schedule { port: 7881, .. })));
+        assert!(Cli::try_parse_from(["ymux", "schedule", "--port", "0", "list"]).is_err());
+        assert!(Cli::try_parse_from(["ymux", "schedule", "--port", "70000", "list"]).is_err());
         assert!(Cli::try_parse_from(["ymux", "schedule", "rm"]).is_err());
     }
 

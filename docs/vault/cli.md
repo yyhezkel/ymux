@@ -101,9 +101,13 @@ workspace.
 
 `ymux schedule ...` manages the scheduled prompts of the host's `ymux-server`
 (`server-go.md` § scheduled prompts). `schedule_call` maps each verb to one REST call, and
-`server_request` sends it to `127.0.0.1:7879` with the token in `~/.ymux/server/token`
+`server_request` sends it to `127.0.0.1:<port>` with the token in `~/.ymux/server/token`
 (`read_server_token`, shared with `forward_hook_to_server`). There is no RPC, no tunnel
 and no desktop. With no token file the verb exits 2 with "Run this on the remote host".
+`--port` (on `Cmd::Schedule`, `global = true`, so before or after the verb; 1–65535,
+default `DEFAULT_SERVER_PORT` 7879) is the daemon's own `--port`. The daemon writes its
+port nowhere, so the CLI cannot read it. The address is always loopback, so the token
+never leaves the host. `forward_hook_to_server` still dials 7879.
 
 The request is raw HTTP/1.0 over a tokio `TcpStream`, with no new dependency. HTTP/1.0
 makes Go answer without chunking and close the socket, so a read to EOF is the whole

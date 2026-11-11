@@ -165,6 +165,20 @@ func (r *HookRegistry) hasSession(name string) bool {
 	return ok
 }
 
+// runState returns the hook state of session name and whether a turn is in
+// flight, for the scheduled prompts' overlap rule. A name that is not
+// registered, or a released session (its hooks no longer update it), is
+// StateUnknown.
+func (r *HookRegistry) runState(name string) (agent.State, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	e, ok := r.byName[name]
+	if !ok || e.released {
+		return agent.StateUnknown, false
+	}
+	return e.run.CurrentState(), !e.run.TurnStartedAt.IsZero()
+}
+
 // paneInUse reports whether a live session already carries paneID.
 func (r *HookRegistry) paneInUse(paneID string) bool {
 	r.mu.Lock()
