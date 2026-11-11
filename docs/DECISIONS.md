@@ -25,6 +25,11 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-11-11 — Hibernation limits (PR #113), decide after the live check
+- **MCP stdio children:** an agent with a stdio MCP server has child processes, so it never hibernates. Options: keep it so, or allow known MCP children.
+- **Attached client:** an open browser tab keeps the agent awake. Options: keep it so, or hibernate even when a client is attached.
+- **State:** feature merged, off by default. Not run live.
+
 ### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
 - **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
   access, in the same place the mobile pairing lives, on the same logic. Checked against
@@ -464,6 +469,10 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 ---
 
 ## Decided
+
+### 2026-11-11 — Scheduled prompts: when a run counts as finished (PR #114)
+- **Decision:** option (a). A scheduled run whose hook state is `done` or `failed` does not block the next firing. `running` and unknown block. The daemon never kills a finished session; the user reads it.
+- **Two refinements found while building it:** `needs-input` with no open turn counts as finished, because Claude sends `idle_prompt` about a minute after a turn. A session hibernated by #113 counts as `done`.
 
 ### 2026-11-09 — Three owner decisions from the backlog merge run
 - **Smart bidi:** the pane-header button is gone. The per-profile setting `terminal.rtl.{local,remote}.smart_bidi` replaces it, default off (PR #89).

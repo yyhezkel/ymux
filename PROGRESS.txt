@@ -8042,3 +8042,10 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Left open: #83 (not this run). Dependabot PRs and alerts were handled in a separate session (#105-#109).
   #101 merged with `rust` cancelled during the GitHub Actions outage; docs only. The gate script was fixed after it.
   Result: compiles on CI, untested live (Rule #14). No release cut. Steps: knowledge/research/ymux-2026-11-09-live-checks.md.
+
+2026-11-11 | Orca ideas 5, 7, 8, 9 merged
+  Task: implement the remaining Orca ideas and merge them in order, each with green CI.
+  Merged: #111 (PR status card), #112 (history search, daemon 2.21.0), #113 (hibernation, 2.22.0), #114 (scheduled prompts, 2.23.0).
+  Each daemon PR was re-bumped and its server blobs rebaked from its own CI run before merge.
+  Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
+  Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.

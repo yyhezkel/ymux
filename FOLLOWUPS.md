@@ -15,6 +15,12 @@ Format:
 
 ## Open
 
+- [ ] P1 | 2026-11-11 | PRs #111-#114 | NOT VERIFIED LIVE (Rule #14): the Orca 5/7/8/9 work compiles on CI and has not run on a real machine. Steps: the live-test list in each PR body. No release carries them yet.
+- [ ] P3 | 2026-11-11 | cli schedule (--port), cli forward_hook_to_server, addons.rs, pairing.rs | The daemon takes `--port` but writes its port nowhere, so every caller assumes 7879. `ymux schedule --port` is a manual override. Fix: the daemon writes a port file and all callers read it.
+- [ ] P3 | 2026-11-11 | PR #112 history search | The desktop searches only the newest 200 sessions, and a search cut by the caps (500 files, 3 s, 512 KB) gives no signal to the user. Show a "results truncated" note.
+- [ ] P3 | 2026-11-11 | PR #111 Diff pane PR card | Polling does not stop for an inactive tab or a minimized window, and a logged-out `gh` is not told apart from "no PR".
+- [ ] P3 | 2026-11-11 | PR #113 hibernation | Only browser-created sessions hibernate; desktop sessions never do. Ctrl-C before the stop deletes a draft left in the input box.
+- [ ] P3 | 2026-11-11 | docs/vault/server-go.md (term package) | The page says `term` has 4,240 lines; the non-test files are now about 9,000. Correct the figure.
 - [ ] P2 | 2026-11-05 | app/src-tauri/crates/ymux-core/src/log_writer.rs:298 write_to_current | **The running app writes into `debug.log.1`, not `debug.log`.** Seen live on v0.5.1 (built 2026-11-02): `debug.log` mtime 2026-10-07 (2.1 MB, content 08-18…10-07), `debug.log.1` 5.2 MB starting 2026-11-03 and still growing. So the reopen-on-length-mismatch check from ba90d1d is not catching this case (or another writer is), and anyone who opens `debug.log` sees a month-old log. Not chased.
 - [ ] P2 | 2026-11-10 | app/src-tauri/Cargo.lock (rustls, through ureq: the update checker) | NOT VERIFIED LIVE (Rule #14): the Dependabot `cargo-security` PR moves rustls 0.23.42 to >= 0.23.46. Once it merges, run an update check from a real install (Settings -> check for updates) and confirm the manifest fetch still completes.
 - [ ] P1 | 2026-11-09 | PRs #84-#97, #99, #100 | NOT VERIFIED LIVE (Rule #14): all of the 2026-11-09 backlog and Orca work compiles on CI and has not run on a real machine. Steps per PR: knowledge/research/ymux-2026-11-09-live-checks.md [2026-11-09: every PR here is merged to `main`; none has run live, and no release carries them yet.]
