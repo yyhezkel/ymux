@@ -192,7 +192,17 @@ func TestRegistryRunState(t *testing.T) {
 	if st != agent.StateNeedsInput || open || !runFinished(st, open) {
 		t.Fatalf("idle after stop: %s %v", st, open)
 	}
+	// Hibernation stops claude; its session-end resets the run to unknown.
+	// A hibernated session still reads as finished.
 	r.mu.Lock()
+	r.applyLocked(e, "session-end", hookPayload{}, "")
+	e.hib = &hibernation{Session: "sched-x-1"}
+	r.mu.Unlock()
+	if st, open := r.runState("sched-x-1"); st != agent.StateDone || open {
+		t.Fatalf("hibernated: %s %v", st, open)
+	}
+	r.mu.Lock()
+	e.hib = nil
 	e.released = true
 	r.mu.Unlock()
 	if st, _ := r.runState("sched-x-1"); st != agent.StateUnknown {

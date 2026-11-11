@@ -284,6 +284,13 @@ export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
   inject_protocol: true,
 };
 
+// Settings the ymux-server daemon reads from the browser's settings document
+// (server/internal/term/settings.go). hibernate_idle_minutes: stop an idle
+// claude after this many minutes and resume it on attach; 0 = off.
+export interface DaemonSettings {
+  hibernate_idle_minutes: number;
+}
+
 export interface I18nSettings {
   language: "en" | "he" | "ar" | "ru" | string;
   direction: "auto" | "ltr" | "rtl" | string;
@@ -322,6 +329,9 @@ export interface Settings {
   // via serde(default); this mirror MUST round-trip through SettingsModal
   // or settings_save wipes the group (the terminal.rtl incident).
   brief?: BriefSettings;
+  // Read by the ymux-server daemon only (browser mode); the desktop's
+  // Rust Settings has no such field. See DaemonSettings.
+  daemon?: DaemonSettings;
   hooks_updates?: HooksUpdatesSettings;
   // Phase 41: auto-connect a background SSH session on workspace select.
   // Backend defaults to true; always serialized.

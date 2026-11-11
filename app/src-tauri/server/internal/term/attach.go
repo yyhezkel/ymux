@@ -100,6 +100,11 @@ func (s *Service) handleAttach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no such session", http.StatusNotFound)
 		return
 	}
+	// A hibernated claude comes back first, so the client sees it start
+	// (hibernate.go). A failed resume is logged there; the attach goes on.
+	if s.hooks != nil {
+		s.hooks.wakeSession(name, "attach")
+	}
 	cols, rows := querySize(r)
 	logger.Debug("attach upgrading", "session", name, "cols", cols, "rows", rows, "ip", clientIP(r))
 

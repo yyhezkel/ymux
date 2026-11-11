@@ -9,7 +9,9 @@ package term
 // file — it stays the CLI's to write — plus Claude Code's own transcripts
 // under ~/.claude/projects.
 //
-//	GET  /api/v2/term/history                     ended rows, newest first
+//	GET  /api/v2/term/history                     ended rows, newest first;
+//	                                              ?q=&branch=&model= searches,
+//	                                              ?offset=&limit= pages
 //	GET  /api/v2/claude/sessions/{id}/transcript  the turns, paged
 //	POST /api/v2/term/history/{name}/resume       a new tmux session running
 //	                                              `claude --resume <id>`
@@ -30,6 +32,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HistoryRow is one ended session.
@@ -42,6 +45,45 @@ type HistoryRow struct {
 	Label           string `json:"label,omitempty"`
 	Cwd             string `json:"cwd,omitempty"`
 	EndedAt         string `json:"ended_at"`
+	// Set only on a search (q, branch or model given): read from the
+	// transcript, as the resume picker reads them.
+	GitBranch string `json:"git_branch,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Preview   string `json:"preview,omitempty"`
+}
+
+// searchHistory keeps the rows that match q, then returns the page
+// offset..offset+limit (limit <= 0: to the end). Without a query it reads no
+// transcript. With one it peeks each row's transcript once; the CLI keeps at
+// most 100 ended rows (HISTORY_MAX_ENDED), and the peek is bounded, so the
+// scan is bounded too. It stops when the page is full.
+func searchHistory(home string, rows []HistoryRow, q sessionQuery, offset, limit int) ([]HistoryRow, int) {
+	offset = max(offset, 0)
+	out := []HistoryRow{}
+	peeked, skipped := 0, 0
+	for _, row := range rows {
+		if limit > 0 && len(out) >= limit {
+			break
+		}
+		if q.active() {
+			var pk claudePeek
+			if p, ok := transcriptPath(home, row.ClaudeSessionID); ok {
+				peeked++
+				pk, _ = peekClaudeJSONL(p, "")
+			}
+			title := strings.Join([]string{row.Display, row.ClaudeTitle, row.Label, row.AutoName, pk.title}, "\n")
+			if !q.match(title, row.Cwd, pk.gitBranch, pk.model, pk.firstUser, pk.lastAssistant) {
+				continue
+			}
+			row.GitBranch, row.Model, row.Preview = pk.gitBranch, pk.model, pk.firstUser
+		}
+		if skipped < offset {
+			skipped++
+			continue
+		}
+		out = append(out, row)
+	}
+	return out, peeked
 }
 
 // History lists the meta rows that ended and still name a Claude session,
@@ -64,15 +106,30 @@ func History(meta map[string]MetaEntry, live []Session) []HistoryRow {
 	return out
 }
 
-func (s *Service) handleHistory(w http.ResponseWriter, _ *http.Request) {
+// handleHistory serves GET /api/v2/term/history?q=&branch=&model=&offset=
+// &limit=. Without any of them the reply is every row, as before.
+func (s *Service) handleHistory(w http.ResponseWriter, r *http.Request) {
 	live, err := s.tmux.List()
 	if err != nil {
 		failErr(w, err)
 		return
 	}
 	rows := History(LoadMeta(s.home), live)
-	logger.Info("session history listed", "rows", len(rows))
-	writeJSON(w, http.StatusOK, rows)
+	v := r.URL.Query()
+	q := parseSessionQuery(v)
+	offset, _ := strconv.Atoi(v.Get("offset"))
+	limit, _ := strconv.Atoi(v.Get("limit"))
+	if !q.active() && offset <= 0 && limit <= 0 {
+		logger.Info("session history listed", "rows", len(rows))
+		writeJSON(w, http.StatusOK, rows)
+		return
+	}
+	start := time.Now()
+	page, peeked := searchHistory(s.home, rows, q, offset, limit)
+	// Rule #1: the query is user text. Counts and timing only.
+	logger.Info("session history searched", "rows", len(rows), "matched", len(page), "peeked", peeked,
+		"ms", time.Since(start).Milliseconds())
+	writeJSON(w, http.StatusOK, page)
 }
 
 // claudeSessionID is what Claude Code names a session: a UUID. Checked
@@ -241,7 +298,7 @@ func (s *Service) handleResume(w http.ResponseWriter, r *http.Request) {
 		cwd = "" // tmux falls back to its default; claude --resume still finds it by id
 	}
 	created, hooks, err := s.spawnSession(newName, cwd, body.Policy, body.WorkspaceID, "",
-		s.claudeBinary(), "--resume", e.ClaudeSessionID)
+		resumeArgv(s.claudeBinary(), e.ClaudeSessionID)...)
 	if err != nil {
 		failErr(w, err)
 		return

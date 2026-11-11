@@ -860,6 +860,28 @@ export function SettingsModal(p: Props) {
                   </label>
                   <p class="settings-hint">{t("settings.brief.injectProtocol.hint")}</p>
                 </section>
+                {/* Hibernation of idle agents. Only the daemon reads this
+                    field, so only the browser (whose settings live on the
+                    daemon) shows it. 0 = off, the default. */}
+                <Show when={backend.kind === "web"}>
+                  <section>
+                    <label>
+                      <span>{t("settings.daemon.hibernate.label")}</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1440"
+                        value={p.settings.daemon?.hibernate_idle_minutes ?? 0}
+                        onInput={(e) => {
+                          const raw = parseInt(e.currentTarget.value, 10);
+                          const n = Number.isFinite(raw) ? Math.min(1440, Math.max(0, raw)) : 0;
+                          update("daemon", { ...p.settings.daemon, hibernate_idle_minutes: n });
+                        }}
+                      />
+                    </label>
+                    <p class="settings-hint">{t("settings.daemon.hibernate.hint")}</p>
+                  </section>
+                </Show>
                 <section>
                   <label class="settings-checkbox">
                     <input

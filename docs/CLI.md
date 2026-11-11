@@ -191,7 +191,7 @@ ymux schedule rm|enable|disable|history <id>
 ymux schedule [--port <1-65535>] <verb> ...
 ```
 
-Scheduled prompts on the host's `ymux-server` (daemon 2.21.0 and later). The
+Scheduled prompts on the host's `ymux-server` (daemon 2.23.0 and later). The
 daemon starts `claude <prompt>` in a new tmux session on the cron schedule, also
 when the desktop is off. Run these verbs on the remote host. They call the local
 daemon on `127.0.0.1:<port>` with `~/.ymux/server/token`, not the desktop.

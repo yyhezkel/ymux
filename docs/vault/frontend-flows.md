@@ -125,7 +125,9 @@ toggles + two minute thresholds + Phase 105.C's "Inject context into sessions"
 and "Teach sessions the brief format" (`inject_protocol`), both
 checked unless explicitly `false` since they default on); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
-group.
+group. Below it, only when `backend.kind === "web"`, one number field writes
+`daemon.hibernate_idle_minutes` (0–1440, 0 = off). Only the daemon reads it
+(`server-go.md` § hibernate), and only the browser's settings reach the daemon.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the

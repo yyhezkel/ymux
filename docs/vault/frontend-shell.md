@@ -77,6 +77,11 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
 
+`hibernatedPanes` (browser mode only) holds the panes whose idle claude the daemon
+stopped. It is seeded from `pane_hibernated` at boot and kept by `pane:hibernated`.
+`shownStatusText()` puts `t("pane.hibernated")` over the pane's status text, and
+`LayoutView` gets that map instead of `paneStatusText` — that is the whole marker.
+
 A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
 (`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
 focus sends nothing. The backend uses it to pick the ticket pane-cwd tmux session.
@@ -395,6 +400,17 @@ editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
 (`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
 the directory listing itself no longer lives in `PaneView`.
+
+**The resume picker's search (Orca idea #9, history search).** The search box is
+debounced: `ncQuery` follows `ncSearch` 300 ms after the last key. A settled query
+refetches `pane_list_claude_sessions` with `query` and `limit: 200` (40 without a
+query); `ncLoadSeq` drops a reply that a newer fetch replaced. The filter is
+`matchesQuery` from `paletteMatch.ts` (token-AND, case-insensitive) over id, title,
+folder, branch, model and both previews — the daemon's `matchTokens` uses the same rule,
+and `term/testdata/search_match.json` pins both. A search with no rows shows
+`claude_picker.noMatch`, not `claude_picker.empty`. Rows show the branch and model as
+badges and the title above the preview. `ncSessionsLoaded` gates the auto-load: before
+it, an empty list read as "not loaded" and the effect fetched again in a loop.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls
