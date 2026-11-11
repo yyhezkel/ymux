@@ -96,6 +96,7 @@ import { applyI18nSettings, t, tEn } from "./i18n";
 import { isMac, isWindows } from "./platform";
 import {
   buildShortcutTable,
+  conflictingAccels,
   formatAccel,
   keyEq,
   matches,
@@ -3580,6 +3581,7 @@ function App() {
     const stt = settings()?.stt;
     if (!stt?.enabled) return;
     setSttError(null);
+    log.debug(`stt start: backend=${stt.backend} lang=${stt.language || "auto"}`);
     const rec = makeSttRecorder(stt.backend, stt.language || "auto");
     sttRecorder = rec;
     setSttListening(true);
@@ -3606,10 +3608,22 @@ function App() {
   };
   const stopPushToTalk = () => {
     if (!sttRecorder) return;
+    log.debug("stt stop requested");
     try {
       sttRecorder.stop();
     } catch (e) {
       log.warn("stt stop failed", e);
+    }
+  };
+  // A clash between the PTT key and a table binding used to leave one of
+  // them silently dead with nothing in the log. Called on load and on every
+  // settings:changed; the Shortcuts tab shows the same set in red.
+  const warnShortcutConflicts = (s: Settings) => {
+    const dupes = conflictingAccels(s.shortcuts, {
+      push_to_talk: s.stt?.enabled ? s.stt.push_to_talk_hotkey : undefined,
+    });
+    for (const accel of dupes) {
+      log.warn(`shortcut conflict: ${accel} is bound more than once`);
     }
   };
 
@@ -3913,27 +3927,33 @@ function App() {
     // four modifiers AND the key exactly, so there is no prefix ambiguity
     // between entries: order only decides who wins a duplicate the user
     // created, which the Shortcuts tab flags in red.
+    //
+    // Phase 58: push-to-talk (down) runs BEFORE the table. It lives in
+    // settings.stt, not settings.shortcuts, so it is parsed on every press
+    // rather than read out of the table — cheap, and it lets the settings
+    // edit take effect without a relaunch. It wins a clash because a PTT key
+    // is an explicit choice of a user who turned voice on, while a table
+    // default can move under it: Phase 87 put focus_zoom on Ctrl+Shift+Z and
+    // silently killed a PTT already bound there. Repeats (and a held key
+    // while recording) are swallowed by the sttRecorder guard.
+    // conflictingAccels() still sees it, so the clash is flagged in Settings
+    // and logged by warnShortcutConflicts.
+    const stt = settings()?.stt;
+    const ptt = stt ? parseShortcut(stt.push_to_talk_hotkey) : null;
+    if (ptt && matches(e, ptt)) {
+      if (stt?.enabled) {
+        e.preventDefault();
+        if (!sttRecorder) startPushToTalk();
+        return;
+      }
+      log.debug("stt disabled — hotkey ignored");
+    }
     const sc = shortcutTable();
     for (const b of keyBindings) {
       if (!matches(e, sc[b.id])) continue;
       if (b.when && !b.when(e)) continue; // not mine — let the key through
       b.run(e);
       return;
-    }
-    // Phase 58: push-to-talk (down). Lives in settings.stt, not
-    // settings.shortcuts, so it is parsed on every press rather than read
-    // out of the table — cheap, and it lets the settings edit take effect
-    // without a relaunch. Repeats are suppressed by the sttRecorder guard.
-    // conflictingAccels() still sees it, so a clash with a table binding is
-    // reported in Settings even though the two live in different schemas.
-    const stt = settings()?.stt;
-    if (stt?.enabled) {
-      const accel = parseShortcut(stt.push_to_talk_hotkey);
-      if (accel && matches(e, accel) && !sttRecorder) {
-        e.preventDefault();
-        startPushToTalk();
-        return;
-      }
     }
   };
 
@@ -4041,6 +4061,7 @@ function App() {
         log.warn("notifications_list failed", e);
       }
       setShortcutTable(buildShortcutTable(s.shortcuts ?? DEFAULT_SHORTCUTS));
+      warnShortcutConflicts(s);
       setCtrlCCopyOnSelect(
         (s.shortcuts ?? DEFAULT_SHORTCUTS).copy_on_select_with_ctrl_c,
       );
@@ -4542,6 +4563,7 @@ function App() {
         setShortcutTable(
           buildShortcutTable(e.payload.shortcuts ?? DEFAULT_SHORTCUTS),
         );
+        warnShortcutConflicts(e.payload);
         setCtrlCCopyOnSelect(
           (e.payload.shortcuts ?? DEFAULT_SHORTCUTS).copy_on_select_with_ctrl_c,
         );
