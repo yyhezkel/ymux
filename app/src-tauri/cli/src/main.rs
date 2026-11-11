@@ -3595,7 +3595,7 @@ mod wait_read_worktree_tests {
         ]);
         assert!(matches!(
             c.map(|c| c.command),
-            Ok(Cmd::Schedule { op: ScheduleOp::Add { precheck, max_per_day: Some(2), disabled: false, .. } })
+            Ok(Cmd::Schedule { op: ScheduleOp::Add { precheck, max_per_day: Some(2), disabled: false, .. }, .. })
                 if precheck == ["git", "fetch", "--dry-run"]
         ));
         assert!(Cli::try_parse_from([
