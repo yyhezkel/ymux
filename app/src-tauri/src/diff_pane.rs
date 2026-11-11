@@ -71,9 +71,9 @@ struct DiffPaneUpdatedEvent {
     truncated: bool,
 }
 
-struct PaneCtx {
-    conn: Option<Connection>,
-    cwd: Option<String>,
+pub(crate) struct PaneCtx {
+    pub(crate) conn: Option<Connection>,
+    pub(crate) cwd: Option<String>,
     source: DiffSource,
 }
 
@@ -439,7 +439,7 @@ async fn fetch_bundle_local(cwd: &str, source: &DiffSource) -> Result<Fetched, S
 
 // ─── layout lookup ───────────────────────────────────────────────────
 
-fn lookup_pane_context(state: &AppState, pane_id: &str) -> Result<Option<PaneCtx>, String> {
+pub(crate) fn lookup_pane_context(state: &AppState, pane_id: &str) -> Result<Option<PaneCtx>, String> {
     let file = state
         .workspaces
         .lock()

@@ -60,7 +60,7 @@ type hookEntry struct {
 	// keeps running, but it no longer speaks for any pane: its hooks get a
 	// quiet passive answer and every pane-keyed lookup skips it.
 	released bool
-	// Hibernation (hibernate.go, 2.21.0). lastHook is the last hook from
+	// Hibernation (hibernate.go, 2.22.0). lastHook is the last hook from
 	// this session (the idle clock); hib is non-nil while claude is
 	// stopped; hibBusy marks a stop in progress; hibSkip is the last guard
 	// that failed (logged once) and hibRetryAt the next check after it.

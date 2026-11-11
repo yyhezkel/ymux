@@ -71,7 +71,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), the PWA's files + Web Push notifications (114), and hibernation of idle agents (2.21.0) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), the PWA's files + Web Push notifications (114), and hibernation of idle agents (2.22.0) |
 | `webpush` | 418 | Phase 114 (WEB-DESIGN E): Web Push to a browser's push service — RFC 8291 encryption, RFC 8292 VAPID, the subscriptions file. Stdlib only; the second OUTBOUND client |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
@@ -366,6 +366,8 @@ writes, the CLI's `session-meta.json` (which now keeps ended rows with `ended_at
 see the CLI vault page) and Claude Code's transcripts:
 - `GET /api/v2/term/history` — rows with `ended_at` AND a `claude_session_id`, newest
   first, minus any whose tmux name is live again (the CLI may not have re-pruned yet).
+  Optional `q` / `branch` / `model` / `offset` / `limit` search and page it (2.21.0, see
+  "History search" below). No client calls this route yet.
 - `GET /api/v2/claude/sessions/{id}/transcript?offset=&limit=` — found by globbing
   `~/.claude/projects/*/<id>.jsonl`, so the cwd is not needed. The id must be a **UUID
   before it touches a path or an argv**. Turns are the user's prompts, Claude's text and
@@ -505,14 +507,14 @@ document** (the web-workspaces guard). The document is the desktop's `Settings` 
 stored **opaque** — it must be a JSON object, ≤ 256 KB, and a new setting needs no Go
 change. The daemon reads exactly three fields, for its own hooks (`parseHookRules`, once per
 write): `brief.inject_context`, `hooks.custom_block` and `daemon.hibernate_idle_minutes`
-(2.21.0; anything but a whole number > 0 is 0 = off, clamped to one week). A value of the wrong type costs
+(2.22.0; anything but a whole number > 0 is 0 = off, clamped to one week). A value of the wrong type costs
 only itself (encoding/json skips it and fills the rest; one Warn, field and type only);
 only a JSON `false` turns injection off. `<data dir>/web-settings.json`, compact, tmp + fsync + rename.
 Each save publishes `settings:changed` `{version, settings}` on the events socket (the
 WebBackend unwraps it into the desktop's bare-`Settings` payload). Logs carry the version
 and byte count only.
 
-**`term/hibernate.go` (2.21.0, Orca idea #8) — hibernate idle agents.** Frees RAM on a
+**`term/hibernate.go` (2.22.0, Orca idea #8) — hibernate idle agents.** Frees RAM on a
 crowded box. OFF by default; `daemon.hibernate_idle_minutes` in the settings document
 turns it on. Only sessions in the registry (browser-created, hooks routed to the daemon)
 are candidates: the daemon sees no hooks from a desktop session, so it cannot judge it idle.
@@ -689,6 +691,24 @@ fails open. The store is the daemon's own, so a desktop-created session has no r
 first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
 assistant line via `extractTextField`, 80 chars + …); the scope is the transcript's own
 `cwd` (trailing `/` ignored), applied before the limit, and a mismatch skips the tail read.
+The peek also yields `title` (the latest `summary` / `ai-title` / `custom-title` line),
+`git_branch` and `model` (the `message.model` of the assistant lines up to the one with
+text; `<synthetic>` dropped), from the lines it reads anyway.
+**History search (2.21.0, Orca idea #9, `term/search.go`).** `matchTokens(q, fields…)`
+is token-AND, case-insensitive substring — the rule of `matchesQuery` in
+`app/src/paletteMatch.ts`, and `testdata/search_match.json` is read by both test
+suites. `sessionQuery` adds the `branch` / `model` field filters (substring); each value
+is cut at 200 runes. `GET /api/v2/claude/sessions` takes `q`, `branch`, `model` and
+`offset`; the page is `offset..offset+limit` of the MATCHING rows. Without a query the
+path is the old one, and rows before the offset are skipped without a peek. A search
+peeks at most `searchScanMax` (500) files within `searchScanBudget` (3 s), and stops
+when the page is full; past a cap the reply is just shorter (`capped` is in the log,
+not the reply). `GET /api/v2/term/history` takes the same `q` / `branch` / `model` /
+`offset` / `limit`: with none of them the reply is every row, as before, and no
+transcript is read. With a query each row's transcript is peeked once (`transcriptPath`
+by id; the CLI keeps at most 100 ended rows) and the matched row gets `git_branch`,
+`model` and `preview`. **Rule #1: the query is never logged** — counts, `peeked` and
+`ms` only. Neither route is a huma operation, so the OpenAPI spec does not change.
 **`replace_pane` (Phase 117)** on term-create: a pane id is carried by at most one live
 session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
 With the flag, `releasePane` marks the current carrier `released`: it keeps running, its

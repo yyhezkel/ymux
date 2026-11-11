@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createSignal, For, on, onCleanup, onMount, Show } from "solid-js";
 import type { JSX } from "solid-js";
 import { Portal } from "solid-js/web";
 import { backend } from "./backend";
@@ -6,6 +6,7 @@ import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSe
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
+import { matchesQuery } from "./paletteMatch";
 import { DirPicker, pushRecentDir } from "./DirPicker";
 import { isMac } from "./platform";
 import { createLogger } from "./logger";
@@ -44,6 +45,10 @@ interface ClaudeSessionInfo {
   last_user?: string | null;
   last_assistant?: string | null;
   is_subagent: boolean;
+  // History search (Orca idea #9). The SSH arm sends no title.
+  title?: string | null;
+  git_branch?: string | null;
+  model?: string | null;
 }
 
 export type ConnectOpts = {
@@ -297,6 +302,20 @@ export function PaneView(p: Props) {
   const [ncSessionsLoading, setNcSessionsLoading] = createSignal(false);
   const [ncSessionsErr, setNcSessionsErr] = createSignal<string | null>(null);
   const [ncSearch, setNcSearch] = createSignal("");
+  // The search box is debounced: ncQuery follows ncSearch 300 ms after the
+  // last key, and only ncQuery fetches and filters.
+  const [ncQuery, setNcQuery] = createSignal("");
+  let ncSearchTimer: number | undefined;
+  const onNcSearchInput = (v: string) => {
+    setNcSearch(v);
+    window.clearTimeout(ncSearchTimer);
+    ncSearchTimer = window.setTimeout(() => setNcQuery(v.trim()), 300);
+  };
+  onCleanup(() => window.clearTimeout(ncSearchTimer));
+  // Set after the first load attempt. Without it the auto-load effect saw an
+  // empty result as "not loaded yet" and fetched again in a loop.
+  const [ncSessionsLoaded, setNcSessionsLoaded] = createSignal(false);
+  let ncLoadSeq = 0;
   const [ncFilter, setNcFilter] = createSignal<NcFilter>("user");
   const [ncPickedSession, setNcPickedSession] = createSignal<ClaudeSessionInfo | null>(null);
   const ncShowsList = (): boolean => ncCmd() === "from-list";
@@ -363,6 +382,8 @@ export function PaneView(p: Props) {
     return parts.join(" · ");
   };
   const loadNcSessions = async () => {
+    const seq = ++ncLoadSeq;
+    const query = ncQuery();
     setNcSessionsLoading(true);
     setNcSessionsErr(null);
     try {
@@ -372,31 +393,45 @@ export function PaneView(p: Props) {
       // project on this machine", so picking a foreign session does not
       // fail — it succeeds, resuming another repo's conversation inside
       // this folder.
+      // A search asks for a wider window: the daemon filters it itself
+      // (`query`), the desktop returns its newest 200 and the filter below
+      // narrows them.
       const list = await backend.call<ClaudeSessionInfo[]>("pane_list_claude_sessions", {
         workspaceId: p.workspaceId,
-        limit: 40,
+        limit: query ? 200 : 40,
         projectPath: folderAnchor(),
+        query,
       });
+      if (seq !== ncLoadSeq) return; // a newer search owns the list
       setNcSessions(list);
     } catch (e) {
+      if (seq !== ncLoadSeq) return;
       setNcSessionsErr(String(e));
     } finally {
-      setNcSessionsLoading(false);
+      if (seq === ncLoadSeq) {
+        setNcSessionsLoading(false);
+        setNcSessionsLoaded(true);
+      }
     }
   };
+  // Token-AND over title, folder, branch, model and both previews: the same
+  // rule as the daemon's matchTokens (testdata/search_match.json pins both).
+  const ncSessionFields = (s: ClaudeSessionInfo): string[] => [
+    s.session_id,
+    s.title ?? "",
+    s.project_path ?? "",
+    s.git_branch ?? "",
+    s.model ?? "",
+    s.last_user ?? "",
+    s.last_assistant ?? "",
+  ];
   const ncFilteredSessions = (): ClaudeSessionInfo[] => {
-    const q = ncSearch().trim().toLowerCase();
+    const q = ncQuery();
     const f = ncFilter();
     return ncSessions().filter((s) => {
       if (f === "user" && s.is_subagent) return false;
       if (f === "agent" && !s.is_subagent) return false;
-      if (!q) return true;
-      return (
-        s.session_id.toLowerCase().includes(q) ||
-        (s.project_path ?? "").toLowerCase().includes(q) ||
-        (s.last_user ?? "").toLowerCase().includes(q) ||
-        (s.last_assistant ?? "").toLowerCase().includes(q)
-      );
+      return matchesQuery(q, ncSessionFields(s));
     });
   };
   // When true, the folder picker returns its choice into the new-connection
@@ -455,6 +490,9 @@ export function PaneView(p: Props) {
     setNcCmd("plain");
     setNcCustom("");
     setNcSearch("");
+    window.clearTimeout(ncSearchTimer);
+    setNcQuery("");
+    setNcSessionsLoaded(false);
     setNcFilter("user");
     setNcPickedSession(null);
     setNcSessions([]);
@@ -544,10 +582,14 @@ export function PaneView(p: Props) {
   // v0.4.4-beta.2: auto-load the Claude session list when "choose from list"
   // is picked while the modal is open (once; refresh via the list's ⟳).
   createEffect(() => {
-    if (newConnModal() && ncShowsList() && ncSessions().length === 0 && !ncSessionsLoading()) {
+    if (newConnModal() && ncShowsList() && !ncSessionsLoaded() && !ncSessionsLoading()) {
       void loadNcSessions();
     }
   });
+  // A settled search refetches, so it reaches past the first page.
+  createEffect(on(ncQuery, () => {
+    if (newConnModal() && ncShowsList()) void loadNcSessions();
+  }, { defer: true }));
   // v0.4.4-beta.2: SMART [Connect]. Arm the target headlessly → probe tmux →
   // branch: live sessions → picker; otherwise a plain regular shell. A target
   // with no tmux (a Windows shell) connects straight away.
@@ -2050,9 +2092,12 @@ export function PaneView(p: Props) {
                       <div class="nc-resume-tools">
                         <input
                           class="nc-input nc-search"
+                          type="search"
                           placeholder={t("connect.newConn.search")}
+                          aria-label={t("claude_picker.searchLabel")}
+                          title={t("claude_picker.searchLabel")}
                           value={ncSearch()}
-                          onInput={(e) => setNcSearch(e.currentTarget.value)}
+                          onInput={(e) => onNcSearchInput(e.currentTarget.value)}
                         />
                         <div class="nc-segmented nc-filter">
                           <For each={[
@@ -2080,7 +2125,9 @@ export function PaneView(p: Props) {
                           <p class="nc-muted err"><IconWarning size={13} /> {ncSessionsErr()}</p>
                         </Show>
                         <Show when={!ncSessionsLoading() && !ncSessionsErr() && ncFilteredSessions().length === 0}>
-                          <p class="nc-muted">{t("claude_picker.empty")}</p>
+                          <p class="nc-muted" role="status">
+                            {ncQuery() ? t("claude_picker.noMatch") : t("claude_picker.empty")}
+                          </p>
                         </Show>
                         <For each={ncFilteredSessions()}>
                           {(s) => (
@@ -2095,8 +2142,17 @@ export function PaneView(p: Props) {
                                   <span class="nc-resume-badge">{t("connect.newConn.filterAgent")}</span>
                                 </Show>
                                 <span class="nc-resume-proj">{s.project_path}</span>
+                                <Show when={s.git_branch}>
+                                  <span class="nc-resume-badge">{s.git_branch}</span>
+                                </Show>
+                                <Show when={s.model}>
+                                  <span class="nc-resume-badge">{s.model}</span>
+                                </Show>
                                 <span class="nc-resume-age">{fmtSessionAge(s.mtime_unix)}</span>
                               </div>
+                              <Show when={s.title}>
+                                <div class="nc-resume-prev"><b>{s.title}</b></div>
+                              </Show>
                               <Show when={s.last_user}>
                                 <div class="nc-resume-prev">{s.last_user}</div>
                               </Show>

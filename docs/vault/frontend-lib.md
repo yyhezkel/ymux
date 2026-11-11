@@ -62,7 +62,7 @@ answers the same command names from the daemon's HTTP/WS API.
   `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
 - **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
   `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
-  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward, prStatus).
   `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
   host lacks the local-machine ones and the UI hides their entry points rather than
   failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
@@ -70,7 +70,7 @@ answers the same command names from the daemon's HTTP/WS API.
   App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
   pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
   Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
-  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab, the Diff pane's PR card (`prStatus`).
 - **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
   `src/backend/` imports anything from `@tauri-apps/*`.
 
@@ -93,7 +93,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `notifications_list`; a reconnect's hello re-reads workspaces and emits
   `backend:resync` (nothing listens yet). `pane_hibernated` (browser only) answers
   pane id → true from the hello's `panes[*].hibernated`; live changes arrive as
-  `pane:hibernated` (daemon 2.21.0).
+  `pane:hibernated` (daemon 2.22.0).
 - **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
   `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
   `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
@@ -150,7 +150,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `sessions_kill_by_name` kills through a holding pane or the DELETE route;
   `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
   `session_context_list` read the daemon (`/api/v2/claude/sessions`,
-  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `/api/v2/context/sessions`); a non-empty `query` arg becomes `q=`, so the daemon
+  filters before the limit (history search). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
   `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
   decode → filter order; `connect` sets it from `a.smartBidi`, the value `connectPane`

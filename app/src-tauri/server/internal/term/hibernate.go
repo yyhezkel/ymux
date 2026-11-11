@@ -1,7 +1,7 @@
 package term
 
 // hibernate.go — stop an idle claude and resume it in the same pane
-// (Orca idea #8, 2.21.0).
+// (Orca idea #8, 2.22.0).
 //
 // The goal is RAM on a crowded server. The feature is OFF by default. The
 // settings document's `daemon.hibernate_idle_minutes` turns it on (0 = off).

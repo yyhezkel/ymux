@@ -57,7 +57,7 @@ put logic there.
 
 ## Key types
 
-- **`AppState`** ([AppState@lib.rs:151](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
+- **`AppState`** ([AppState@lib.rs:160](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
   state, `Clone` because every field is an `Arc<Mutex<…>>` and the RPC server task needs
   its own handle. It **wraps** `ymux_core::CoreState` at `state.core`: `sessions`,
   `pane_sessions`, `forwards`, `port_watchers`, `detected_ports`, `port_watcher_tasks`,
@@ -288,7 +288,8 @@ a wide argument list because every connection mode funnels through it: `persiste
   spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
-  `pairing::mobile_pairing_set_shell`, Phase 113.)
+  `pairing::mobile_pairing_set_shell`, Phase 113, and `pr_status::diff_pane_pr_status`, the
+  Diff pane PR card; see `backend-panes.md`.)
 - `emit_data` ([emit_data@lib.rs:2719](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
@@ -589,6 +590,14 @@ list command. The module owns what the picker never needed:
   returns `Err` when the script did not finish (the attach guard reads a short list as
   "session gone"); `pane_kill_session` keeps its 800 ms and reports no status as
   `attempted`, never `killed`; the Claude session listing ignores the exit on purpose.
+- **`ClaudeSessionInfo` carries `title`, `git_branch` and `model` (history search, Orca
+  idea #9).** The local arm reads them in `peek_claude_jsonl` from the lines its head and
+  tail windows read anyway: the latest `summary` / `ai-title` / `custom-title` line, the
+  latest `gitBranch`, and `message.model` of the assistant lines up to the one with text
+  (`<synthetic>` is dropped). It mirrors `peekClaudeJSONL` in the daemon. The SSH arm does
+  not change its shell script: `extract_json_str_field` takes branch and model out of the
+  600-byte fragments it already prints, best effort, and it sends no title. The desktop
+  does not filter; the picker filters the rows it gets (`frontend-shell.md`).
 - **`ssh_handle_for_machine` is the one session picker** for a workspace: its own session
   first, else a sibling workspace's on the same user@host:port. It takes the workspaces
   lock, so never call it while holding that guard.
