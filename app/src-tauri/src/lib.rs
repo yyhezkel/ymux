@@ -16,6 +16,7 @@ mod connect_wizard;
 mod context_store;
 mod dev;
 mod diff_pane;
+mod pr_status;
 mod file_manager;
 mod fonts;
 // beta.3-lh-insights: native local Insights (sysinfo + bollard) for the
@@ -13204,6 +13205,7 @@ pub fn run() {
             diff_pane::diff_pane_set_cwd,
             diff_pane::diff_pane_refresh,
             diff_pane::diff_pane_worktrees,
+            pr_status::diff_pane_pr_status,
             file_manager::file_download,
             file_manager::fm_transfer_cancel,
             file_manager::download_remote_file_via_osc,

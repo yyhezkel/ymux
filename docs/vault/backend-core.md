@@ -57,7 +57,7 @@ put logic there.
 
 ## Key types
 
-- **`AppState`** ([AppState@lib.rs:151](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
+- **`AppState`** ([AppState@lib.rs:160](../../app/src-tauri/src/lib.rs)) — the single managed Tauri
   state, `Clone` because every field is an `Arc<Mutex<…>>` and the RPC server task needs
   its own handle. It **wraps** `ymux_core::CoreState` at `state.core`: `sessions`,
   `pane_sessions`, `forwards`, `port_watchers`, `detected_ports`, `port_watcher_tasks`,
@@ -288,7 +288,8 @@ a wide argument list because every connection mode funnels through it: `persiste
   spawns `web_addon::spawn_auto_update` (Phase 112): a host that has the `ymux-web`
   add-on is brought to this desktop's frontend in the background. `setup()` calls
   `web_addon::init` to read the embedded frontend once. (`invoke_handler` also registers
-  `pairing::mobile_pairing_set_shell`, Phase 113.)
+  `pairing::mobile_pairing_set_shell`, Phase 113, and `pr_status::diff_pane_pr_status`, the
+  Diff pane PR card; see `backend-panes.md`.)
 - `emit_data` ([emit_data@lib.rs:2719](../../app/src-tauri/src/lib.rs)) is UTF-8 **boundary-safe** —
   it buffers a partial multibyte sequence rather than emitting a broken string, and it
   decodes BEFORE the OSC parser and the bidi filter (both see whole chars). Do not
