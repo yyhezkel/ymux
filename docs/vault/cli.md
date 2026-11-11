@@ -50,6 +50,8 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
   `-resolve-url`, `-url`, `-history`, `-wait`, `-wait-for`, `-eval`, `-screenshot`,
   `-click`, `-find`, `-snapshot`, `-type`. This is how an agent drives the workspace
   browser.
+- **Scheduled prompts** — `schedule add|list|rm|enable|disable|history` (below). The
+  only family that does not talk to the desktop.
 - **Agent** — `claude-hook`, `setup-hooks`, `claude-sessions-list`
 - **Driving other agents** — `wait`, `read`, `worktree create` (below)
 - **Notes / settings** — `note`, `settings` (`show` / `set` / `preset`)
@@ -94,6 +96,27 @@ the byte count only, because a reply can hold pane text (Rule #1).
 **`worktree create`** sends the name to `worktree.create`, which validates it. It passes
 `$YMUX_PANE_ID` so the desktop can find the workspace; it never falls back to the active
 workspace.
+
+## `schedule` — the one verb family that calls the daemon
+
+`ymux schedule ...` manages the scheduled prompts of the host's `ymux-server`
+(`server-go.md` § scheduled prompts). `schedule_call` maps each verb to one REST call, and
+`server_request` sends it to `127.0.0.1:<port>` with the token in `~/.ymux/server/token`
+(`read_server_token`, shared with `forward_hook_to_server`). There is no RPC, no tunnel
+and no desktop. With no token file the verb exits 2 with "Run this on the remote host".
+`--port` (on `Cmd::Schedule`, `global = true`, so before or after the verb; 1–65535,
+default `DEFAULT_SERVER_PORT` 7879) is the daemon's own `--port`. The daemon writes its
+port nowhere, so the CLI cannot read it. The address is always loopback, so the token
+never leaves the host. `forward_hook_to_server` still dials 7879.
+
+The request is raw HTTP/1.0 over a tokio `TcpStream`, with no new dependency. HTTP/1.0
+makes Go answer without chunking and close the socket, so a read to EOF is the whole
+response. `parse_http_response` is pure and tested: 2xx gives the JSON body, any other
+status gives an error with the code and the first body line. The id is checked
+(`valid_schedule_id`, `[A-Za-z0-9_-]`) before it goes into a URL path. A relative
+`--cwd` resolves against the CLI's current directory, because the CLI and the daemon run
+on the same host. The precheck argv follows `--` (`#[arg(last = true)]`) and stays an
+argv up to the daemon's `exec` (Rule #3). Rule #8: the token is never printed.
 
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
@@ -247,7 +270,9 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
 - **Rule #1** — hook payloads carry user prompts and tool arguments. Log metadata only.
 - **Rule #8** — the tunnel HMAC token passes through here; never log it.
 - A new verb is: clap subcommand + a `dispatch` arm in `rpc_server.rs` + a line in
-  `docs/CLI.md`. Nothing generates one from another.
+  `docs/CLI.md`. Nothing generates one from another. The exception is `schedule`: its
+  other end is a daemon route in `server/internal/term/schedroutes.go`, not
+  `rpc_server.rs`.
 - The app no longer answers on the legacy `winmux-` pipe; the CLI's `default_pipe_name_legacy`
   dial is only a client-side fallback and now finds no listener.
 - `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`

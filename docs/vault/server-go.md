@@ -71,7 +71,7 @@ dependency arrow points one way, so there is no cycle to break later.
 | `logging` | 599 | the unified `log/slog` handler |
 | `logs` | 475 | per-client log storage and the SSE tail |
 | `push` | 433 | self-hosted push over a long-lived WebSocket |
-| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), the PWA's files + Web Push notifications (114), and hibernation of idle agents (2.22.0) |
+| `term` | 4,240 | tmux sessions + a binary WebSocket carrying a real PTY (95), the embedded diagnostic page (97), hook routing for browser-created sessions (100), their feed, gate and events socket (101), the small verbs, notes and port detection (102), browser workspaces with the agent layout verbs (103), session history (104), serving the web bundle + the browser settings document (108), the PWA's files + Web Push notifications (114), hibernation of idle agents (2.22.0), and the scheduled prompts (2.23.0) |
 | `webpush` | 418 | Phase 114 (WEB-DESIGN E): Web Push to a browser's push service — RFC 8291 encryption, RFC 8292 VAPID, the subscriptions file. Stdlib only; the second OUTBOUND client |
 | `workspace` | 1,613 | the workspace pub/sub substrate and its WebSocket frame contract |
 
@@ -750,6 +750,59 @@ transcript / screen text gets `--tools ""` (untrusted input must not act) and
 `--no-session-persistence` (a summary is not a session to resume), one call per kind at a
 time (`TryLock` → 409), timeouts 20 / 45 / 90 s, names `ValidName`d, logs carry counts only.
 `runClaude` is the test seam.
+
+**`term/cron.go` + `schedule.go` + `schedroutes.go` (2.23.0, Orca idea #5) — scheduled
+prompts.** The daemon starts `claude <prompt>` in a new tmux session on a cron schedule,
+with the desktop off.
+- **`cron.go`** is a 5-field parser, stdlib only (Go has no cron package, and a new module
+  needs `go.sum` lines no dev box here can make — the `creack/pty` reason). `*`, `N`,
+  `A-B`, `*/S`, `A-B/S`, `N/S`, lists, `JAN`/`MON` names, dow 7 = Sunday. When both day
+  fields are restricted, either one matches (Vixie). No `@daily`, no seconds field.
+  `matches` per minute; `next` skips whole days and gives up after 5 years. Host local time.
+- **The store** is `<data dir>/schedules.json` (`writeFileAtomic` / `loadJSON`, so a corrupt
+  file is moved aside). It holds each schedule (`id` `s<8 hex>`, name, cron, cwd, prompt,
+  precheck argv, precheck timeout, `max_runs_per_day`, enabled) and its state: `run_day` +
+  `runs_today` for the cap, `last_session` for the overlap, and the last 50 history rows
+  (`start`, `outcome`, `session`, `exit_code`, `reason`). The cap counter is kept apart from
+  the history, because skip rows can push a day's runs out of 50 rows. **No output of a run
+  or a precheck is stored**: the run writes to its tmux pane, the precheck to /dev/null.
+- **A firing** (`scheduler.fire`) goes overlap → cap → cwd → precheck → run, and each step
+  writes one row. Outcomes: `ran`, `skipped-overlap` (the `last_session` tmux session still
+  exists and its claude has not finished, or a firing of this schedule is still in flight),
+  `skipped-cap`, `skipped-precheck`
+  (non-zero exit, or `precheck-timeout`), `failed` (`cwd-missing`, `precheck-start-failed`,
+  `spawn-failed`, `no-hook-routing`). `reason` is a fixed word, never tool output. The
+  precheck is `exec.CommandContext` in cwd, argv only (Rule #3), timeout default 60 s, max
+  600, `YMUX_HEADLESS=1`. On Linux `precheckProcGroup` (`precheck_linux.go`) starts it with
+  `Setpgid` and its `Cancel` sends SIGKILL to `-pid`, so a timeout kills the whole process
+  group, children included; `precheck_other.go` is a no-op. The cap defaults to 4 per local
+  day, 1–24. `gateOutcome` is the pure overlap + cap rule; `alive`, `runState`, `precheck`
+  and `start` are fields, so the tests never exec.
+- **"Finished" (owner decision, option a).** `runState` is `HookRegistry.runState`: the
+  session's `hookEntry.run` state, plus whether a turn is in flight (`TurnStartedAt` set).
+  `runFinished`: `done` and `failed` are finished; `needs-input` is finished only with no turn
+  in flight, because claude sends `idle_prompt` about a minute after `stop`, which turns
+  `done` into `needs-input`, while a gate inside a turn keeps the turn open; `running` and
+  `unknown` (no hook yet, a released session, or a daemon restart that emptied the
+  registry) block. A hibernated session (`hib` or `hibBusy` set) reads `done`: hibernation stops only a finished claude, and its session-end resets the run to unknown. A gone tmux session never blocks. The scheduler never kills a finished
+  session: it stays for the user to read. The minute tick (`run`) hands each minute out once (`due`) and fires each schedule
+  in its own goroutine. Missed firings are not caught up.
+- **The run is policy `gate`, always.** `startScheduledRun` → `spawnSession(name, cwd,
+  policyGate, "", "", claude, prompt)`: hooks, the feed, the Queue and the session list as
+  for any browser session. Policy `none` would answer every permission request `allow`, so
+  it is never used here; an unanswered gate times out and the CLI denies. When the session
+  cannot get hook routing (no listener, tmux < 3.2) the run is refused before tmux starts,
+  so claude never runs ungated. Session name `sched-<id>-<YYYYMMDD-HHMM>` — no prompt text,
+  because `tmux ls` and the logs show it. The prompt is one argv entry; one that starts
+  with `-` is refused at add time, so it cannot read as a claude flag.
+- **Routes** (raw, behind `gate`, so `shell:attach`; not in OpenAPI): `GET/POST
+  /api/v2/schedules`, `GET/DELETE /api/v2/schedules/{id}`, `POST …/{id}/enable|disable`,
+  `GET …/{id}/history` (newest first). The list and one-schedule answers add `next_run`,
+  `last_run` and today's `runs_today`, and leave the history out. POST rejects unknown
+  fields, 64 KB body, 64 schedules at most (409). The CLI's `ymux schedule` verbs are the
+  client (`cli.md`). `main.go` calls `StartScheduler` after `RecoverHooks`.
+- **Rule #1:** logs carry the schedule id, outcome, exit code, session and reason. Never
+  the prompt, never the precheck argv.
 
 **`files/` — the Files API, and since Phase 116 (WEB-DESIGN F2) the browser's File
 Manager.** `LocalFiles` confines every path to one root (`resolve`: `..` collapsed against

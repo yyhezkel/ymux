@@ -333,6 +333,10 @@ func main() {
 	termSvc.LoadHibernated()
 	termSvc.StartHibernation(context.Background())
 	termSvc.StartPortWatch(context.Background(), *port)
+	// Scheduled prompts: cron-fired claude runs in gate sessions. After
+	// hooks.Start and RecoverHooks, so a run gets hook routing and the
+	// overlap rule sees the sessions that survived a restart.
+	termSvc.StartScheduler(context.Background())
 
 	srv := api.NewServer(token, *port, api.Deps{
 		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,
