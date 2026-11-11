@@ -11459,6 +11459,17 @@ pub(crate) struct ClaudeSessionInfo {
     /// Drives the Main/Sub/All filter in the resume picker. Defaults false.
     #[serde(default)]
     pub is_subagent: bool,
+    /// Orca idea #9 (history search): the session title, from the latest
+    /// `summary` / `ai-title` / `custom-title` line. Local path only; the
+    /// SSH pipeline does not read it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// The git branch Claude Code stamps on each line (`gitBranch`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_branch: Option<String>,
+    /// The model of the latest assistant line (`message.model`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Phase 12.B: list recent Claude Code sessions on the workspace's host.
@@ -11556,6 +11567,10 @@ async fn pane_list_claude_sessions(
         let is_subagent = parts.get(3).map(|s| s.trim() == "1").unwrap_or(false);
         let last_user = parts.get(4).map(|s| extract_text_field(s));
         let last_asst = parts.get(5).map(|s| extract_text_field(s));
+        // Best effort: both keys sit before the message content in Claude
+        // Code's compact JSON, so the 600-byte fragments usually hold them.
+        let git_branch = parts.get(4).and_then(|s| extract_json_str_field(s, "gitBranch"));
+        let model = parts.get(5).and_then(|s| extract_json_str_field(s, "model")).filter(|m| m != "<synthetic>");
         let session_id = std::path::Path::new(&path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -11580,6 +11595,9 @@ async fn pane_list_claude_sessions(
             last_user: last_user.filter(|s| !s.is_empty()),
             last_assistant: last_asst.filter(|s| !s.is_empty()),
             is_subagent,
+            title: None,
+            git_branch: git_branch.filter(|s| !s.is_empty()),
+            model: model.filter(|s| !s.is_empty()),
         });
     }
     Ok(out)
@@ -11717,6 +11735,9 @@ fn list_claude_sessions_local(
             last_user: peek.first_user,
             last_assistant: peek.last_assistant,
             is_subagent: peek.is_subagent,
+            title: peek.title,
+            git_branch: peek.git_branch,
+            model: peek.model,
         });
     }
     Ok(out)
@@ -11726,13 +11747,53 @@ fn list_claude_sessions_local(
 /// reading the whole file (sessions run to tens of MB): the first
 /// `PEEK_BYTES` give cwd / sidechain flag / first user line, the last
 /// `PEEK_BYTES` give the latest assistant line — the same head/tail
-/// window the SSH-side shell pipeline uses.
+/// window the SSH-side shell pipeline uses. The title, branch and model
+/// (history search) come from the lines both windows read anyway. Mirror
+/// of `peekClaudeJSONL` in `server/internal/term/claudesessions.go`.
 #[derive(Default)]
 struct ClaudeJsonlPeek {
     cwd: Option<String>,
     is_subagent: bool,
     first_user: Option<String>,
     last_assistant: Option<String>,
+    title: Option<String>,
+    git_branch: Option<String>,
+    model: Option<String>,
+}
+
+/// A non-empty string at `key` of a parsed line.
+fn json_nonempty_str(v: &serde_json::Value, key: &str) -> Option<String> {
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+/// The session title a line carries: a `summary`, `ai-title` or
+/// `custom-title` line. Clipped to 120 chars + `…`.
+fn claude_line_title(v: &serde_json::Value) -> Option<String> {
+    match v.get("type").and_then(|x| x.as_str()) {
+        Some("summary" | "ai-title" | "custom-title") => {}
+        _ => return None,
+    }
+    let t = json_nonempty_str(v, "customTitle")
+        .or_else(|| json_nonempty_str(v, "title"))
+        .or_else(|| json_nonempty_str(v, "summary"))?;
+    if t.chars().count() <= 120 {
+        return Some(t);
+    }
+    let mut out: String = t.chars().take(120).collect();
+    out.push('…');
+    Some(out)
+}
+
+/// Cheap pre-check before a tail line is parsed for a title. Claude Code
+/// writes compact JSON, so the type key has no spaces.
+fn claude_line_may_carry_title(line: &str) -> bool {
+    line.contains("\"type\":\"summary\"")
+        || line.contains("\"type\":\"ai-title\"")
+        || line.contains("\"type\":\"custom-title\"")
 }
 
 const CLAUDE_PEEK_BYTES: u64 = 256 * 1024;
@@ -11762,6 +11823,12 @@ fn peek_claude_jsonl(path: &Path) -> ClaudeJsonlPeek {
         if v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true) {
             out.is_subagent = true;
         }
+        if out.git_branch.is_none() {
+            out.git_branch = json_nonempty_str(&v, "gitBranch");
+        }
+        if let Some(t) = claude_line_title(&v) {
+            out.title = Some(t);
+        }
         if out.first_user.is_none() && v.get("type").and_then(|x| x.as_str()) == Some("user") {
             let text = extract_text_field(line);
             if !text.is_empty() {
@@ -11782,7 +11849,22 @@ fn peek_claude_jsonl(path: &Path) -> ClaudeJsonlPeek {
         let tail = String::from_utf8_lossy(&tail);
         let lines: Vec<&str> = tail.lines().collect();
         let skip = usize::from(tail_start > 0);
+        let (mut tail_title, mut tail_branch, mut tail_model) = (None, None, None);
         for line in lines.iter().skip(skip).rev() {
+            if tail_title.is_none() && claude_line_may_carry_title(line) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
+                    tail_title = claude_line_title(&v);
+                }
+                continue;
+            }
+            // The model and branch come from the assistant lines read
+            // anyway, up to the one with text; no extra line is parsed.
+            if out.last_assistant.is_some() {
+                if tail_title.is_some() {
+                    break;
+                }
+                continue;
+            }
             if !line.contains("\"assistant\"") {
                 continue;
             }
@@ -11790,13 +11872,28 @@ fn peek_claude_jsonl(path: &Path) -> ClaudeJsonlPeek {
                 continue;
             };
             if v.get("type").and_then(|x| x.as_str()) == Some("assistant") {
+                if tail_branch.is_none() {
+                    tail_branch = json_nonempty_str(&v, "gitBranch");
+                }
+                if tail_model.is_none() {
+                    tail_model = v
+                        .get("message")
+                        .and_then(|m| json_nonempty_str(m, "model"))
+                        .filter(|m| m != "<synthetic>");
+                }
                 let text = extract_text_field(line);
                 if !text.is_empty() {
                     out.last_assistant = Some(text);
-                    break;
                 }
             }
         }
+        if tail_title.is_some() {
+            out.title = tail_title;
+        }
+        if tail_branch.is_some() {
+            out.git_branch = tail_branch;
+        }
+        out.model = tail_model;
     }
     out
 }
@@ -11806,36 +11903,8 @@ fn peek_claude_jsonl(path: &Path) -> ClaudeJsonlPeek {
 /// the JSON-escape sequences decoded. Sufficient for the preview column;
 /// not a full JSON parser. Returns the trimmed first ~80 chars.
 fn extract_text_field(fragment: &str) -> String {
-    fn extract_one(s: &str, key: &str) -> Option<String> {
-        let needle = format!("\"{}\":\"", key);
-        let idx = s.find(&needle)?;
-        let mut chars = s[idx + needle.len()..].chars().peekable();
-        let mut out = String::new();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                match chars.next() {
-                    Some('"') => out.push('"'),
-                    Some('n') => out.push(' '),
-                    Some('t') => out.push(' '),
-                    Some('r') => {}
-                    Some('\\') => out.push('\\'),
-                    Some('/') => out.push('/'),
-                    Some(other) => out.push(other),
-                    None => break,
-                }
-            } else if c == '"' {
-                break;
-            } else {
-                out.push(c);
-            }
-            if out.len() > 600 {
-                break;
-            }
-        }
-        Some(out)
-    }
-    let extracted = extract_one(fragment, "text")
-        .or_else(|| extract_one(fragment, "content"))
+    let extracted = extract_json_str_field(fragment, "text")
+        .or_else(|| extract_json_str_field(fragment, "content"))
         .unwrap_or_default();
     let trimmed = extracted.trim();
     if trimmed.chars().count() <= 80 {
@@ -11845,6 +11914,37 @@ fn extract_text_field(fragment: &str) -> String {
         out.push('…');
         out
     }
+}
+
+/// The first `"<key>":"…"` string in a fragment of a JSONL line, escapes
+/// decoded, at most ~600 bytes. Not a JSON parser: a fragment may be cut.
+fn extract_json_str_field(s: &str, key: &str) -> Option<String> {
+    let needle = format!("\"{}\":\"", key);
+    let idx = s.find(&needle)?;
+    let mut chars = s[idx + needle.len()..].chars().peekable();
+    let mut out = String::new();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('"') => out.push('"'),
+                Some('n') => out.push(' '),
+                Some('t') => out.push(' '),
+                Some('r') => {}
+                Some('\\') => out.push('\\'),
+                Some('/') => out.push('/'),
+                Some(other) => out.push(other),
+                None => break,
+            }
+        } else if c == '"' {
+            break;
+        } else {
+            out.push(c);
+        }
+        if out.len() > 600 {
+            break;
+        }
+    }
+    Some(out)
 }
 
 /// Phase 11.A: introspection — is this pane currently bound to a tmux
@@ -15180,6 +15280,36 @@ mod claude_jsonl_peek_tests {
         assert_eq!(peek.cwd.as_deref(), Some("C:\\dev\\x"));
         let none = peek_claude_jsonl(std::path::Path::new("/nonexistent/winmux/x.jsonl"));
         assert!(none.cwd.is_none() && none.last_assistant.is_none());
+    }
+
+    #[test]
+    fn reads_title_branch_and_model() {
+        let body = concat!(
+            "{\"type\":\"summary\",\"summary\":\"Old title\"}\n",
+            "{\"type\":\"user\",\"cwd\":\"/srv/api\",\"gitBranch\":\"main\",\"message\":{\"content\":\"fix login\"}}\n",
+            "{\"type\":\"assistant\",\"gitBranch\":\"feat/login\",\"message\":{\"model\":\"claude-opus-4\",\"content\":[{\"type\":\"text\",\"text\":\"done\"}]}}\n",
+            "{\"type\":\"custom-title\",\"customTitle\":\"Login fix\"}\n",
+        );
+        let p = write_tmp("title", body);
+        let peek = peek_claude_jsonl(&p);
+        let _ = std::fs::remove_file(&p);
+        assert_eq!(peek.title.as_deref(), Some("Login fix"));
+        assert_eq!(peek.git_branch.as_deref(), Some("feat/login"));
+        assert_eq!(peek.model.as_deref(), Some("claude-opus-4"));
+        assert_eq!(peek.last_assistant.as_deref(), Some("done"));
+
+        let p = write_tmp("synthetic", "{\"type\":\"assistant\",\"message\":{\"model\":\"<synthetic>\",\"content\":[{\"type\":\"text\",\"text\":\"x\"}]}}\n");
+        let peek = peek_claude_jsonl(&p);
+        let _ = std::fs::remove_file(&p);
+        assert!(peek.model.is_none() && peek.title.is_none());
+    }
+
+    #[test]
+    fn extracts_a_named_string_from_a_fragment() {
+        let frag = "{\"cwd\":\"/x\",\"gitBranch\":\"feat/a\",\"message\":{\"model\":\"claude-sonnet-4\",\"content\":[";
+        assert_eq!(super::extract_json_str_field(frag, "gitBranch").as_deref(), Some("feat/a"));
+        assert_eq!(super::extract_json_str_field(frag, "model").as_deref(), Some("claude-sonnet-4"));
+        assert!(super::extract_json_str_field(frag, "absent").is_none());
     }
 }
 

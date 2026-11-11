@@ -1,16 +1,25 @@
 package term
 
 // claudesessions.go — the resume picker's session list (Phase 117,
-// WEB-DESIGN F3): GET /api/v2/claude/sessions?limit=&project_path=.
+// WEB-DESIGN F3): GET /api/v2/claude/sessions?limit=&offset=&project_path=
+// &q=&branch=&model=.
 //
 // A port of lib.rs pane_list_claude_sessions' local path
 // (list_claude_sessions_local + peek_claude_jsonl + extract_text_field): the
 // transcripts under ~/.claude/projects/*/*.jsonl, newest first, each peeked
 // at its first and last 256 KB for the real cwd, the sidechain flag, the
-// first user line and the last assistant line. A project_path scope is
-// checked against the transcript's own "cwd" (the directory NAME is a lossy
-// encoding) and applied BEFORE the limit, as on the desktop. Behind gate.
-// Nothing here logs transcript content (Rule #1) — only counts.
+// first user line, the last assistant line, the git branch, the model and
+// the title. A project_path scope is checked against the transcript's own
+// "cwd" (the directory NAME is a lossy encoding) and applied BEFORE the
+// limit, as on the desktop. Behind gate.
+//
+// Search (Orca idea #9): q is token-AND over title, cwd, branch, model and
+// the two previews (search.go); branch and model are field filters. Paging
+// applies to the filtered rows. A search peeks at most searchScanMax files
+// within searchScanBudget, and stops when the page is full.
+//
+// Nothing here logs transcript content or the query (Rule #1) — only counts
+// and timing.
 
 import (
 	"bufio"
@@ -22,6 +31,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 )
 
@@ -34,9 +44,19 @@ type ClaudeSessionInfo struct {
 	LastUser      string `json:"last_user,omitempty"`
 	LastAssistant string `json:"last_assistant,omitempty"`
 	IsSubagent    bool   `json:"is_subagent"`
+	Title         string `json:"title,omitempty"`
+	GitBranch     string `json:"git_branch,omitempty"`
+	Model         string `json:"model,omitempty"`
 }
 
 const claudePeekBytes = 256 * 1024
+
+// The search cost caps. Each peek reads at most 2 × claudePeekBytes, so one
+// search reads at most searchScanMax × 512 KB.
+const (
+	searchScanMax    = 500
+	searchScanBudget = 3 * time.Second
+)
 
 // claudeProjectsRoot is swapped in tests.
 var claudeProjectsRoot = func() string {
@@ -48,23 +68,47 @@ var claudeProjectsRoot = func() string {
 }
 
 func (s *Service) handleClaudeSessions(w http.ResponseWriter, r *http.Request) {
+	v := r.URL.Query()
 	limit := 30
-	if n, err := strconv.Atoi(r.URL.Query().Get("limit")); err == nil && n > 0 {
+	if n, err := strconv.Atoi(v.Get("limit")); err == nil && n > 0 {
 		limit = n
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	scope := strings.TrimSpace(r.URL.Query().Get("project_path"))
-	out := listClaudeSessions(claudeProjectsRoot(), limit, scope)
-	logger.Debug("claude sessions listed", "count", len(out), "scoped", scope != "")
+	offset, _ := strconv.Atoi(v.Get("offset"))
+	offset = max(offset, 0)
+	scope := strings.TrimSpace(v.Get("project_path"))
+	q := parseSessionQuery(v)
+	start := time.Now()
+	out, st := searchClaudeSessions(claudeProjectsRoot(), scope, q, offset, limit)
+	if q.active() {
+		logger.Info("claude sessions searched", "count", len(out), "peeked", st.peeked,
+			"capped", st.capped, "ms", time.Since(start).Milliseconds())
+	} else {
+		logger.Debug("claude sessions listed", "count", len(out), "scoped", scope != "")
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
+// listClaudeSessions is the unfiltered first page.
 func listClaudeSessions(root string, limit int, scope string) []ClaudeSessionInfo {
+	out, _ := searchClaudeSessions(root, scope, sessionQuery{}, 0, limit)
+	return out
+}
+
+type searchStats struct {
+	peeked int
+	capped bool // the scan stopped at searchScanMax or searchScanBudget
+}
+
+// searchClaudeSessions walks the transcripts newest first and returns rows
+// offset..offset+limit of those that match scope and q.
+func searchClaudeSessions(root, scope string, q sessionQuery, offset, limit int) ([]ClaudeSessionInfo, searchStats) {
 	out := []ClaudeSessionInfo{}
+	var st searchStats
 	if root == "" {
-		return out
+		return out, st
 	}
 	type entry struct {
 		path  string
@@ -89,13 +133,27 @@ func listClaudeSessions(root string, limit int, scope string) []ClaudeSessionInf
 		}
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].mtime > entries[j].mtime })
+	searching := q.active()
+	deadline := time.Now().Add(searchScanBudget)
+	skipped := 0
 	for _, e := range entries {
 		if len(out) >= limit {
+			break
+		}
+		// Without a scope or a query a row needs no peek to be counted, so
+		// the rows before the offset cost nothing.
+		if scope == "" && !searching && skipped < offset {
+			skipped++
+			continue
+		}
+		if searching && (st.peeked >= searchScanMax || time.Now().After(deadline)) {
+			st.capped = true
 			break
 		}
 		// The scope is checked against the transcript's own cwd, before the
 		// limit, so a scoped list is never short because newer sessions
 		// belonged to other projects; a mismatch skips the tail read.
+		st.peeked++
 		pk, ok := peekClaudeJSONL(e.path, scope)
 		if !ok {
 			continue
@@ -106,6 +164,13 @@ func listClaudeSessions(root string, limit int, scope string) []ClaudeSessionInf
 			// does not start with "/".
 			project = filepath.Base(filepath.Dir(e.path))
 		}
+		if searching && !q.match(pk.title, project, pk.gitBranch, pk.model, pk.firstUser, pk.lastAssistant) {
+			continue
+		}
+		if skipped < offset {
+			skipped++
+			continue
+		}
 		out = append(out, ClaudeSessionInfo{
 			SessionID:     strings.TrimSuffix(filepath.Base(e.path), ".jsonl"),
 			ProjectPath:   project,
@@ -114,9 +179,12 @@ func listClaudeSessions(root string, limit int, scope string) []ClaudeSessionInf
 			LastUser:      pk.firstUser,
 			LastAssistant: pk.lastAssistant,
 			IsSubagent:    pk.isSubagent,
+			Title:         pk.title,
+			GitBranch:     pk.gitBranch,
+			Model:         pk.model,
 		})
 	}
-	return out
+	return out, st
 }
 
 // normPath is lib.rs norm_path for POSIX paths: trimmed, no trailing "/".
@@ -130,11 +198,67 @@ func normPath(p string) string {
 
 type claudePeek struct {
 	cwd, firstUser, lastAssistant string
+	title, gitBranch, model       string
 	isSubagent                    bool
+}
+
+// peekLine is the subset of one transcript line the peek reads.
+type peekLine struct {
+	Cwd         string `json:"cwd"`
+	IsSidechain bool   `json:"isSidechain"`
+	Type        string `json:"type"`
+	GitBranch   string `json:"gitBranch"`
+	Summary     string `json:"summary"`
+	Title       string `json:"title"`
+	CustomTitle string `json:"customTitle"`
+	Message     struct {
+		Model string `json:"model"`
+	} `json:"message"`
+}
+
+// lineTitle is the session title a line carries: Claude Code's "summary"
+// line, or an "ai-title" / "custom-title" line. "" for any other line.
+func (v peekLine) lineTitle() string {
+	switch v.Type {
+	case "summary", "ai-title", "custom-title":
+	default:
+		return ""
+	}
+	for _, t := range []string{v.CustomTitle, v.Title, v.Summary} {
+		if t = strings.TrimSpace(t); t != "" {
+			return clipRunes(t, 120)
+		}
+	}
+	return ""
+}
+
+// lineModel is the assistant line's model; Claude Code's "<synthetic>"
+// placeholder is not a model.
+func (v peekLine) lineModel() string {
+	if v.Message.Model == "<synthetic>" {
+		return ""
+	}
+	return v.Message.Model
+}
+
+// mayCarryTitle is a cheap pre-check before a line is unmarshalled. Claude
+// Code writes compact JSON, so the type key has no spaces.
+func mayCarryTitle(line string) bool {
+	return strings.Contains(line, `"type":"summary"`) || strings.Contains(line, `"type":"ai-title"`) ||
+		strings.Contains(line, `"type":"custom-title"`)
+}
+
+func clipRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n]) + "…"
 }
 
 // peekClaudeJSONL reads the head (and, when the scope matches, the tail);
 // ok is false when a scope was given and the transcript's cwd is not it.
+// The title is the latest title line; the branch and the model are the
+// latest the tail shows, else the head's.
 func peekClaudeJSONL(path, scope string) (claudePeek, bool) {
 	var out claudePeek
 	f, err := os.Open(path)
@@ -151,19 +275,21 @@ func peekClaudeJSONL(path, scope string) (claudePeek, bool) {
 	sc.Buffer(make([]byte, 0, 64*1024), claudePeekBytes+1)
 	for sc.Scan() {
 		line := sc.Text()
-		var v struct {
-			Cwd         string `json:"cwd"`
-			IsSidechain bool   `json:"isSidechain"`
-			Type        string `json:"type"`
-		}
+		var v peekLine
 		if json.Unmarshal([]byte(line), &v) != nil {
 			continue
 		}
 		if out.cwd == "" {
 			out.cwd = v.Cwd
 		}
+		if out.gitBranch == "" {
+			out.gitBranch = v.GitBranch
+		}
 		if v.IsSidechain {
 			out.isSubagent = true
+		}
+		if t := v.lineTitle(); t != "" {
+			out.title = t
 		}
 		if out.firstUser == "" && v.Type == "user" {
 			out.firstUser = extractTextField(line)
@@ -175,8 +301,8 @@ func peekClaudeJSONL(path, scope string) (claudePeek, bool) {
 	if scope != "" && (out.cwd == "" || normPath(out.cwd) != normPath(scope)) {
 		return out, false
 	}
-	// Tail: the last whole "assistant" line; the first line after a seek
-	// into the middle is partial and skipped.
+	// Tail: the last whole "assistant" line and the last title line; the
+	// first line after a seek into the middle is partial and skipped.
 	start := size - claudePeekBytes
 	if start < 0 {
 		start = 0
@@ -187,22 +313,49 @@ func peekClaudeJSONL(path, scope string) (claudePeek, bool) {
 		if start > 0 && len(lines) > 0 {
 			lines = lines[1:]
 		}
+		tailTitle, tailBranch, tailModel := "", "", ""
 		for i := len(lines) - 1; i >= 0; i-- {
 			line := lines[i]
+			// The model comes from the assistant lines read anyway, up to the
+			// one with text, so no extra line is unmarshalled for it.
+			needAssistant := out.lastAssistant == ""
+			if tailTitle == "" && mayCarryTitle(line) {
+				var v peekLine
+				if json.Unmarshal([]byte(line), &v) == nil {
+					tailTitle = v.lineTitle()
+				}
+				continue
+			}
+			if !needAssistant {
+				if tailTitle != "" {
+					break
+				}
+				continue
+			}
 			if !strings.Contains(line, `"assistant"`) {
 				continue
 			}
-			var v struct {
-				Type string `json:"type"`
-			}
+			var v peekLine
 			if json.Unmarshal([]byte(line), &v) != nil || v.Type != "assistant" {
 				continue
 			}
-			if t := extractTextField(line); t != "" {
-				out.lastAssistant = t
-				break
+			if tailBranch == "" {
+				tailBranch = v.GitBranch
+			}
+			if tailModel == "" {
+				tailModel = v.lineModel()
+			}
+			if out.lastAssistant == "" {
+				out.lastAssistant = extractTextField(line)
 			}
 		}
+		if tailTitle != "" {
+			out.title = tailTitle
+		}
+		if tailBranch != "" {
+			out.gitBranch = tailBranch
+		}
+		out.model = tailModel
 	}
 	return out, true
 }

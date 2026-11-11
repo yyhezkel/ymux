@@ -148,7 +148,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `sessions_kill_by_name` kills through a holding pane or the DELETE route;
   `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
   `session_context_list` read the daemon (`/api/v2/claude/sessions`,
-  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `/api/v2/context/sessions`); a non-empty `query` arg becomes `q=`, so the daemon
+  filters before the limit (history search). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
   `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
   decode → filter order; `connect` sets it from `a.smartBidi`, the value `connectPane`

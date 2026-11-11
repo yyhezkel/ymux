@@ -1117,6 +1117,8 @@
   "claude_picker.title": "המשך session של Claude Code",
   "claude_picker.loading": "טוען…",
   "claude_picker.empty": "לא נמצאו sessions של Claude Code בשרת הזה.",
+  "claude_picker.noMatch": "אין sessions שתואמים לחיפוש.",
+  "claude_picker.searchLabel": "חיפוש sessions לפי כותרת, תיקייה, branch, מודל או טקסט",
   "claude_picker.user_prefix": "משתמש:",
   "claude_picker.assistant_prefix": "Claude:",
   "_phase24d_note": "Phase 24.D removed ws_header.add_chat / .add_claudelog and the chat.* / cl.* key namespaces with the ClaudeChat (Phase 22) + ClaudeLog (Phase 24.B) panes.",

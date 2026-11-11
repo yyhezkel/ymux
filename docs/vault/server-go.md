@@ -366,6 +366,8 @@ writes, the CLI's `session-meta.json` (which now keeps ended rows with `ended_at
 see the CLI vault page) and Claude Code's transcripts:
 - `GET /api/v2/term/history` — rows with `ended_at` AND a `claude_session_id`, newest
   first, minus any whose tmux name is live again (the CLI may not have re-pruned yet).
+  Optional `q` / `branch` / `model` / `offset` / `limit` search and page it (2.21.0, see
+  "History search" below). No client calls this route yet.
 - `GET /api/v2/claude/sessions/{id}/transcript?offset=&limit=` — found by globbing
   `~/.claude/projects/*/<id>.jsonl`, so the cwd is not needed. The id must be a **UUID
   before it touches a path or an argv**. Turns are the user's prompts, Claude's text and
@@ -653,6 +655,24 @@ fails open. The store is the daemon's own, so a desktop-created session has no r
 first, each peeked at its first / last 256 KB (cwd, isSidechain, first user line, last
 assistant line via `extractTextField`, 80 chars + …); the scope is the transcript's own
 `cwd` (trailing `/` ignored), applied before the limit, and a mismatch skips the tail read.
+The peek also yields `title` (the latest `summary` / `ai-title` / `custom-title` line),
+`git_branch` and `model` (the `message.model` of the assistant lines up to the one with
+text; `<synthetic>` dropped), from the lines it reads anyway.
+**History search (2.21.0, Orca idea #9, `term/search.go`).** `matchTokens(q, fields…)`
+is token-AND, case-insensitive substring — the rule of `matchesQuery` in
+`app/src/paletteMatch.ts`, and `testdata/search_match.json` is read by both test
+suites. `sessionQuery` adds the `branch` / `model` field filters (substring); each value
+is cut at 200 runes. `GET /api/v2/claude/sessions` takes `q`, `branch`, `model` and
+`offset`; the page is `offset..offset+limit` of the MATCHING rows. Without a query the
+path is the old one, and rows before the offset are skipped without a peek. A search
+peeks at most `searchScanMax` (500) files within `searchScanBudget` (3 s), and stops
+when the page is full; past a cap the reply is just shorter (`capped` is in the log,
+not the reply). `GET /api/v2/term/history` takes the same `q` / `branch` / `model` /
+`offset` / `limit`: with none of them the reply is every row, as before, and no
+transcript is read. With a query each row's transcript is peeked once (`transcriptPath`
+by id; the CLI keeps at most 100 ended rows) and the matched row gets `git_branch`,
+`model` and `preview`. **Rule #1: the query is never logged** — counts, `peeked` and
+`ms` only. Neither route is a huma operation, so the OpenAPI spec does not change.
 **`replace_pane` (Phase 117)** on term-create: a pane id is carried by at most one live
 session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
 With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
