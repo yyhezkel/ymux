@@ -355,6 +355,8 @@
     "app/src-tauri/server/internal/term/page.go": "3ef2e634e6ca748e6413f1fb4b410658b53e255840c1285f82f1ed8a2b257509",
     "app/src-tauri/server/internal/term/page_test.go": "a9ec43e88fee004dee0b1e502b005ce39b3a41ebbcc509078f3ea5359c4d8e29",
     "app/src-tauri/server/internal/term/ports.go": "d20a5b7f75a3430766320884f012ada3e403e95cf7d9fe9288a649be64456a8d",
+    "app/src-tauri/server/internal/term/precheck_linux.go": "319f25f525e6fa038c7ecb58ec98c0002d3ed622ed832ec8c74338c1593d1b7f",
+    "app/src-tauri/server/internal/term/precheck_other.go": "eab886562c1c9f20535c47c041271e16a4bb7d94dc4d1ef80e5dde7826984d9e",
     "app/src-tauri/server/internal/term/pty_linux.go": "6288a413db2c84f5c44d4d32ff71e9bc2627aeef038e2e5c584eac6914710e41",
     "app/src-tauri/server/internal/term/pty_other.go": "6ec5667eec7a5a26ae81843eb3999b5a49e3640739d448a86aee28d5d696fb82",
     "app/src-tauri/server/internal/term/recover.go": "7b44e4f02bad681f150f8b3a8f7aafa8a5a4d1f70c236139d7cb845de21e33d2",
