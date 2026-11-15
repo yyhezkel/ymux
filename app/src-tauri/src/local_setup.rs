@@ -740,6 +740,7 @@ pub(crate) struct LocalSetupInspect {
     pub claude: ToolStatus,
     pub codex: ToolStatus,
     pub gemini: ToolStatus,
+    pub grok: ToolStatus,
     /// 2026-08-19: the multiplexer that gives native Windows panes session
     /// persistence - the job WSL used to do here. Always `missing()` off
     /// Windows, where tmux plays that role - see `mac`.
@@ -747,6 +748,8 @@ pub(crate) struct LocalSetupInspect {
     // Always `WslInspect::absent()` off Windows.
     pub wsl: WslInspect,
     pub local_hooks_version: Option<String>,
+    /// `ymux_meta.hooks_version` in `~/.grok/hooks/ymux.json`, when present.
+    pub grok_hooks_version: Option<String>,
     pub local_claude_dir: bool,
     // None on Windows, Some on macOS/Linux.
     pub mac: Option<MacInspect>,
@@ -898,6 +901,15 @@ fn canonical_claude() -> Vec<PathBuf> {
     // The official install.sh target (~/.local/bin/claude) plus the
     // usual dirs a `npm i -g @anthropic-ai/claude-code` lands in.
     unix_canonical("claude")
+}
+#[cfg(not(target_os = "windows"))]
+fn canonical_grok() -> Vec<PathBuf> {
+    // Official install.sh default is $HOME/.grok/bin (GROK_BIN_DIR
+    // overrides). The installer also symlinks into a dir already on
+    // PATH when it can, so the usual dirs stay in the list.
+    let mut paths = vec![home_dir().join(".grok").join("bin").join("grok")];
+    paths.extend(unix_canonical("grok"));
+    paths
 }
 
 /// The local Claude Code binary, if installed: PATH first, then the
@@ -1106,14 +1118,32 @@ echo "HOOKSV $(sed -n 's/.*"hooks_version"[: ]*"\([^"]*\)".*/\1/p' "$HOME/.claud
     w
 }
 
-fn local_hooks_version() -> Option<String> {
-    let p = home_dir().join(".claude").join("settings.json");
-    let text = std::fs::read_to_string(p).ok()?;
+fn hooks_version_at(path: PathBuf) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
     v.get("ymux_meta")?
         .get("hooks_version")?
         .as_str()
         .map(|s| s.to_string())
+}
+
+fn local_hooks_version() -> Option<String> {
+    hooks_version_at(home_dir().join(".claude").join("settings.json"))
+}
+
+fn grok_hooks_version() -> Option<String> {
+    hooks_version_at(home_dir().join(".grok").join("hooks").join("ymux.json"))
+}
+
+#[cfg(target_os = "windows")]
+fn canonical_grok() -> Vec<PathBuf> {
+    // Official install.ps1 default is %USERPROFILE%\.grok\bin
+    // (GROK_BIN_DIR overrides). .local\bin is Claude's layout, kept
+    // for a binary someone placed there by hand.
+    vec![
+        home_dir().join(".grok").join("bin").join("grok.exe"),
+        home_dir().join(".local").join("bin").join("grok.exe"),
+    ]
 }
 
 /// Detect everything the "local → new" wizard offers to install. Never
@@ -1129,6 +1159,7 @@ pub(crate) async fn local_setup_inspect(distro: Option<String>) -> Result<LocalS
         let claude = probe_tool(&["claude.exe", "claude.cmd"], &canonical_claude()).await;
         let codex = probe_tool(&["codex.cmd", "codex.exe"], &[]).await;
         let gemini = probe_tool(&["gemini.cmd", "gemini.exe"], &[]).await;
+        let grok = probe_tool(&["grok.exe", "grok.cmd"], &canonical_grok()).await;
         let zellij = probe_tool(&["zellij.exe"], &canonical_zellij()).await;
         let wsl = inspect_wsl(distro.as_deref()).await;
         LocalSetupInspect {
@@ -1139,9 +1170,11 @@ pub(crate) async fn local_setup_inspect(distro: Option<String>) -> Result<LocalS
             claude,
             codex,
             gemini,
+            grok,
             zellij,
             wsl,
             local_hooks_version: local_hooks_version(),
+            grok_hooks_version: grok_hooks_version(),
             local_claude_dir: home_dir().join(".claude").is_dir(),
             mac: None,
         }
@@ -1157,6 +1190,7 @@ pub(crate) async fn local_setup_inspect(distro: Option<String>) -> Result<LocalS
         let claude = probe_tool(&["claude"], &canonical_claude()).await;
         let codex = probe_tool(&["codex"], &unix_canonical("codex")).await;
         let gemini = probe_tool(&["gemini"], &unix_canonical("gemini")).await;
+        let grok = probe_tool(&["grok"], &canonical_grok()).await;
         let tmux = probe_tool(&["tmux"], &unix_canonical("tmux")).await;
         LocalSetupInspect {
             winget,
@@ -1166,9 +1200,11 @@ pub(crate) async fn local_setup_inspect(distro: Option<String>) -> Result<LocalS
             claude,
             codex,
             gemini,
+            grok,
             zellij: ToolStatus::missing(),
             wsl: WslInspect::absent(),
             local_hooks_version: local_hooks_version(),
+            grok_hooks_version: grok_hooks_version(),
             local_claude_dir: home_dir().join(".claude").is_dir(),
             mac: Some(MacInspect {
                 tmux,
@@ -1612,16 +1648,50 @@ async fn run_step_unix(app: &AppHandle, kind: &str) -> Result<String, Provisioni
                 other => step_outcome(kind, other),
             }
         }
+        "InstallGrok" => {
+            let mut c = hidden_cmd("/bin/bash");
+            c.args(["-c", "curl -fsSL https://x.ai/cli/install.sh | bash"]);
+            c.env("PATH", unix_path_env());
+            let installed = || {
+                canonical_grok().iter().any(|p| p.is_file())
+                    || crate::local_wizard::which("grok").is_some()
+            };
+            match run_capture(c, "grok install", 600).await {
+                Ok((0, out)) => {
+                    if installed() {
+                        Ok(out)
+                    } else {
+                        Err(ProvisioningError::StepFailed {
+                            step: kind.into(),
+                            exit_code: 0,
+                            stderr: format!("installer exited 0 but grok was not found\n{out}"),
+                        })
+                    }
+                }
+                Ok((_, out)) if installed() => Ok(out),
+                other => step_outcome(kind, other),
+            }
+        }
         "InstallCodex" => step_outcome(kind, npm_install_global("@openai/codex").await),
         "InstallGemini" => {
             step_outcome(kind, npm_install_global("@google/gemini-cli@latest").await)
         }
         "InstallLocalHooks" => match resolve_ymux_cli(app) {
             Some(cli) => {
-                let mut c = hidden_cmd(&cli.to_string_lossy());
-                c.args(["setup-hooks", "--agent", "claude", "--source", "bundled"]);
-                c.env("PATH", unix_path_env());
-                step_outcome(kind, run_capture(c, "setup-hooks", 120).await)
+                let mut out = String::new();
+                for agent in ["claude", "grok"] {
+                    let mut c = hidden_cmd(&cli.to_string_lossy());
+                    c.args(["setup-hooks", "--agent", agent, "--source", "bundled"]);
+                    c.env("PATH", unix_path_env());
+                    match run_capture(c, "setup-hooks", 120).await {
+                        Ok((0, piece)) => {
+                            out.push_str(&piece);
+                            out.push('\n');
+                        }
+                        other => return step_outcome(kind, other),
+                    }
+                }
+                Ok(out)
             }
             None => Err(ProvisioningError::Generic(
                 "winmux CLI is not bundled in the macOS build yet — hooks unavailable".into(),
@@ -1812,6 +1882,49 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                     Err(e) => Err(ProvisioningError::Generic(e)),
                 }
             }
+            "InstallGrok" => {
+                let mut c = hidden_cmd("powershell");
+                c.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-Command",
+                    "irm https://x.ai/cli/install.ps1 | iex",
+                ]);
+                let installed = || {
+                    canonical_grok().iter().any(|p| p.is_file())
+                        || crate::local_wizard::which("grok.exe").is_some()
+                        || crate::local_wizard::which("grok.cmd").is_some()
+                };
+                match run_capture(c, "grok install", 600).await {
+                    Ok((0, out)) => {
+                        if installed() {
+                            Ok(out)
+                        } else {
+                            Err(ProvisioningError::StepFailed {
+                                step: kind.into(),
+                                exit_code: 0,
+                                stderr: format!(
+                                    "installer exited 0 but grok.exe was not found\n{out}"
+                                ),
+                            })
+                        }
+                    }
+                    Ok((code, out)) => {
+                        if installed() {
+                            Ok(out)
+                        } else {
+                            Err(ProvisioningError::StepFailed {
+                                step: kind.into(),
+                                exit_code: code,
+                                stderr: out,
+                            })
+                        }
+                    }
+                    Err(e) => Err(ProvisioningError::Generic(e)),
+                }
+            }
             "InstallCodex" => match npm_install_global("@openai/codex").await {
                 Ok((0, out)) => Ok(out),
                 Ok((code, out)) => Err(ProvisioningError::StepFailed {
@@ -1832,17 +1945,26 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
             },
             "InstallLocalHooks" => match resolve_ymux_cli(&app) {
                 Some(cli) => {
-                    let mut c = hidden_cmd(&cli.to_string_lossy());
-                    c.args(["setup-hooks", "--agent", "claude", "--source", "bundled"]);
-                    match run_capture(c, "setup-hooks", 120).await {
-                        Ok((0, out)) => Ok(out),
-                        Ok((code, out)) => Err(ProvisioningError::StepFailed {
-                            step: kind.into(),
-                            exit_code: code,
-                            stderr: out,
-                        }),
-                        Err(e) => Err(ProvisioningError::Generic(e)),
+                    let mut out = String::new();
+                    for agent in ["claude", "grok"] {
+                        let mut c = hidden_cmd(&cli.to_string_lossy());
+                        c.args(["setup-hooks", "--agent", agent, "--source", "bundled"]);
+                        match run_capture(c, "setup-hooks", 120).await {
+                            Ok((0, piece)) => {
+                                out.push_str(&piece);
+                                out.push('\n');
+                            }
+                            Ok((code, piece)) => {
+                                return Err(ProvisioningError::StepFailed {
+                                    step: kind.into(),
+                                    exit_code: code,
+                                    stderr: piece,
+                                });
+                            }
+                            Err(e) => return Err(ProvisioningError::Generic(e)),
+                        }
                     }
+                    Ok(out)
                 }
                 None => Err(ProvisioningError::Generic(
                     "bundled ymux-cli.exe not found (dev build without staged resources?)"
@@ -2169,7 +2291,7 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
             "InstallHooksInWsl" => {
                 // Best-effort, mirroring the remote bootstrap's posture —
                 // a distro without ~/.claude just reports and moves on.
-                let script = "\"$HOME/.ymux/bin/ymux\" setup-hooks --agent claude --source bundled 2>&1 || true";
+                let script = "\"$HOME/.ymux/bin/ymux\" setup-hooks --agent claude --source bundled 2>&1 || true; \"$HOME/.ymux/bin/ymux\" setup-hooks --agent grok --source bundled 2>&1 || true";
                 match tokio::time::timeout(
                     std::time::Duration::from_secs(120),
                     wsl_exec(distro.as_deref(), None, script),
@@ -2385,6 +2507,7 @@ mod tests {
             "InstallGit",
             "InstallNodejs",
             "InstallClaudeCode",
+            "InstallGrok",
             "InstallCodex",
             "InstallGemini",
             "InstallLocalHooks",

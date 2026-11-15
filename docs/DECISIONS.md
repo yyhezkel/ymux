@@ -25,6 +25,11 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 
 ## Open
 
+### 2026-11-15 — Grok transcript mirror, cost, and resume stay Claude-only
+- **Context:** Grok Build now installs, detects, and drives the same hook gate as Claude (permission card, traffic light, context inject). Its on-disk sessions are not Claude jsonl.
+- **Not in this change:** mirroring those sessions into the transcript view, the cost / usage insights tab, and resuming a Grok session from disk. The statusline under `ymux-tools/statuslines/` was left as it is.
+- **Status:** open. Decide after a live Grok session whether a second parser is worth it.
+
 ### 2026-11-11 — Hibernation limits (PR #113), decide after the live check
 - **MCP stdio children:** an agent with a stdio MCP server has child processes, so it never hibernates. Options: keep it so, or allow known MCP children.
 - **Attached client:** an open browser tab keeps the agent awake. Options: keep it so, or hibernate even when a client is attached.
@@ -469,6 +474,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 ---
 
 ## Decided
+
+### 2026-11-15 — Grok Build is a first-class agent for install, hooks, and the permission gate
+- **Decision:** reuse `claude-hook`. Register `~/.grok/hooks/ymux.json` (spec 1.0.0). No second parser. `canonical_tool_name` maps Grok's tool names onto Claude's before the policy judges them, and the phone forward sends `Bash`, so `policy.go` and `testdata/policy.json` stay untouched and the server blobs are not rebaked. SessionStart `new` / `load` map to `startup` / `resume` in the CLI, before `context.inject`.
+- **Scope:** local wizard, the `all-agents` profile, bootstrap, add-on detect / install / uninstall, the outdated-hooks banner. `default` and `hardened` stay Claude-only. A saved `all-agents` profile is not rewritten.
+- **Modes:** `plan` stays on the gate. `auto` still defers. `bypassPermissions` still auto-allows.
+- **Deferred:** transcript mirror, cost tab, resume-from-Grok-session. See Open.
 
 ### 2026-11-11 — Scheduled prompts: when a run counts as finished (PR #114)
 - **Decision:** option (a). A scheduled run whose hook state is `done` or `failed` does not block the next firing. `running` and unknown block. The daemon never kills a finished session; the user reads it.

@@ -134,6 +134,18 @@ persistence group **only on macOS** — on Windows zellij is an ordinary tool ro
 group would offer the same install twice.
 `LocalSetupResult.persistence_chain_ok` (was `wsl_chain_ok`) reports whether that chain succeeded; the ts-rs binding mirrors the name.
 
+Grok Build is probed and installed here, next to Claude. `canonical_grok` looks at
+`~/.grok/bin/grok` (Windows: `%USERPROFILE%\.grok\bin\grok.exe`), which is the
+official installer's default, then the usual PATH dirs and, on Windows,
+`%USERPROFILE%\.local\bin\grok.exe`. `InstallGrok` runs
+`curl -fsSL https://x.ai/cli/install.sh | bash` on unix and
+`irm https://x.ai/cli/install.ps1 | iex` on Windows. Like Claude, a non-zero
+installer exit still succeeds when that binary is already on disk. `InstallLocalHooks`
+runs `setup-hooks --agent claude` and `--agent grok`, both `--source bundled`.
+`grok_hooks_version` is read from `~/.grok/hooks/ymux.json`. The kept
+`InstallHooksInWsl` script runs both agents too. There is no separate WSL install
+step for Grok.
+
 ## `local_wizard.rs` (439) — the two small local affordances
 
 1. `detect_local_shells()` — what is actually installed, labelled. Windows: PowerShell 7,
@@ -169,6 +181,13 @@ seconds:
 `ssh_handle_for_machine`) has 120 s because it hits
 GitHub from the server. It and `ssh_exec_simple` (6 s, hooks check and session labels)
 return `Err` on anything but a clean exit, so the toast and the logs tell the truth.
+
+`check_remote_hooks` probes Claude (`~/.claude/settings.json`, manifest key
+`claude-code`) and then Grok (`~/.grok/hooks/ymux.json`, key `grok`). Banners off
+returns before either probe. A missing manifest key, a missing file, or a version
+of `none` / `null` is not a banner. The first older version that was not dismissed
+emits one `hooks:outdated` and returns. Dismiss is per agent key, so a dismissed
+Claude version still lets the Grok probe run. A missing install is not a banner.
 
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.

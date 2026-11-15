@@ -843,7 +843,9 @@ function App() {
       // reaches the catch below, so the toast cannot claim success.
       await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
-        cmd: '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
+        cmd: b.agent === "grok"
+          ? '"$HOME/.ymux/bin/ymux" setup-hooks --agent grok --force --source github'
+          : '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
       });
       flashSummaryToast("ok", t("hooks_update.toast_done", { version: b.latest }));
       setHooksBanner(null);

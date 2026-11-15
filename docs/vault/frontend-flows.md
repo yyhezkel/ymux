@@ -46,16 +46,20 @@ SetupWizard  (318)
 `ProvisionNewServerFlow` is the former ProvisioningWizard with the picker stripped out,
 and it no longer hosts the "existing" flows at all.
 
-- **`LocalSetupFlow`** — detects git / node / Claude Code / codex / gemini plus the
-  platform's multiplexer, offers to install what is missing (winget / Homebrew /
-  official installers / `npm -g`), installs ymux hooks for local Claude Code, and
-  finishes by creating a local workspace to land in. Progress arrives as
+- **`LocalSetupFlow`** — detects git / node / Claude Code / Grok Build / codex / gemini
+  plus the platform's multiplexer, offers to install what is missing (winget / Homebrew /
+  official installers / `npm -g`), installs ymux hooks when Claude or Grok is present
+  (or its install step is checked), and finishes by creating a local workspace to land
+  in. The hooks row shows `claude v…` and `grok v…` from the inspect. Progress arrives as
   `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
   `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
   The macOS tmux chain is toggled by the `persistenceGroup` signal (default on; off when
-  brew and tmux are both absent).
+  brew and tmux are both absent). The hooks checkbox stays hidden on non-Windows, the
+  same rule Claude already had.
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
-  `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
+  `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run. The
+  agent-section header is drawn before the first of InstallClaudeCode, InstallGrok,
+  InstallCodex, InstallGemini.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
   (`connect_existing_discover` / `connect_existing_execute`) does the work; this is the
   chooser.

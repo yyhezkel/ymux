@@ -406,17 +406,21 @@ export function ProvisionNewServerFlow(p: Props) {
               // Phase 14.A.2: visually separate AI-agent install
               // steps from the rest, since they're an opt-in
               // group that usually moves together. The dividing
-              // header appears right before the first
-              // InstallClaudeCode entry.
-              const isFirstAgent = id === "InstallClaudeCode" &&
-                !stepCatalog().slice(0, idx()).some(([s]) =>
-                  s === "InstallClaudeCode"
-                );
+              // header appears before the first of these steps.
+              const agentSteps = [
+                "InstallClaudeCode",
+                "InstallGrok",
+                "InstallCodex",
+                "InstallGemini",
+              ];
+              const isFirstAgent = agentSteps.includes(id) &&
+                !stepCatalog().slice(0, idx()).some(([s]) => agentSteps.includes(s));
               // Use i18n labels where we have one; fall back to
               // the backend's English label (which itself is the
               // source of truth for unknown step ids).
               const i18nKey =
                 id === "InstallClaudeCode" ? "provisioning.step.install_claude.label"
+                : id === "InstallGrok" ? "provisioning.step.install_grok.label"
                 : id === "InstallCodex" ? "provisioning.step.install_codex.label"
                 : id === "InstallGemini" ? "provisioning.step.install_gemini.label"
                 : id === "AddYmuxToPath" ? "provisioning.step.add_ymux_to_path.label"

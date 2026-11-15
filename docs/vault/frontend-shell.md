@@ -67,7 +67,9 @@ try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from 
 ## `App.tsx` (5,916) — one component, ~50 signals
 
 `triggerHooksUpdate` runs `"$HOME/.ymux/bin/ymux" setup-hooks` through
-`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry). A
+`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry).
+The banner's `agent` picks the flag: `grok` runs `--agent grok`, anything else
+`--agent claude`. Both use `--force --source github`. A
 failure rejects into the catch, so the toast cannot claim success.
 
 There is a single `function App()` starting at line 142 and it holds essentially all

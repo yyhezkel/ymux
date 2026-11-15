@@ -8050,6 +8050,12 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
   Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.
 
+2026-11-15 | Grok Build as a first-class agent (branch feat/grok-build-agent)
+  Task: install, detect, hooks, permission gate, traffic light, and context inject for Grok Build beside Claude Code.
+  Files: hooks/grok.json (new, 1.0.0); cli hooks.rs + main.rs (Grok adapter writes ~/.grok/hooks/ymux.json, session_start_source new/load, phone forward sends canonical Bash); ymux-policy canonical_tool_name; provisioning InstallGrok on all-agents only; local_setup probe/install (binary is ~/.grok/bin, not ~/.local/bin); bootstrap + addons detect/install/uninstall; updater one banner, Claude then Grok; wizard UI + i18n en/he/ar/ru; manifest hooks.grok 1.0.0. Claude manifest version left at 1.6.0. No Go change.
+  Docs: vault cli, crates, backend-remote, backend-wizards, frontend-flows, frontend-shell; INSTALL_AGENTS; CLI; PROTOCOLS; ARCHITECTURE; DECISIONS (decided scope, open transcript/cost/resume).
+  Result: compiles-untested until CI. Not run live. Existing saved all-agents profiles are not rewritten. No server rebake.
+
 2026-11-16 | STT: microphone picker for the Local backend
   Task: voice input "shows recording, types nothing". Causes found, in order: PTT hotkey shadowed by focus_zoom
   (Ctrl+Shift+Z), Web Speech in WebView2 returns chars=0, then the Local backend recorded the muted laptop array

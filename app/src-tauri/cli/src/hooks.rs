@@ -168,6 +168,30 @@ fn bundled_claude_spec() -> HookSpec {
     }
 }
 
+/// Bundled fallback for Grok Build. Same events as Claude: Grok speaks
+/// the Claude hook dialect (snake_case aliases + hookSpecificOutput) and
+/// maps the Claude matcher names onto its own tools. The version is
+/// independent — a Claude spec bump must not look like a Grok bump.
+const BUNDLED_GROK_VERSION: &str = "1.0.0";
+
+fn bundled_grok_spec() -> HookSpec {
+    let mut spec = bundled_claude_spec();
+    spec.ymux_hooks_version = BUNDLED_GROK_VERSION.into();
+    spec.agent = "grok".into();
+    spec
+}
+
+/// Grok's SessionStart `source` is `new` / `load`. The context injector
+/// only fills `startup` / `resume` / `compact`. Pass Claude's words
+/// through unchanged.
+pub fn session_start_source(raw: &str) -> &str {
+    match raw {
+        "new" => "startup",
+        "load" => "resume",
+        other => other,
+    }
+}
+
 /// Resolve the spec per `--source`:
 ///   - `github`: fetch `raw.githubusercontent.com/yyhezkel/ymux/main/hooks/<agent>.json`,
 ///     fall through to cache, then to bundled.
@@ -226,6 +250,7 @@ fn parse_spec(text: &str) -> Result<HookSpec, String> {
 fn bundled_spec_for(agent_id: &str) -> HookSpec {
     match agent_id {
         "claude-code" | "claude" => bundled_claude_spec(),
+        "grok" | "grok-build" => bundled_grok_spec(),
         // Other agents have no bundled fallback — return an empty
         // spec so the caller's apply step is a no-op. The github
         // path is the only way they get useful hooks today.
@@ -362,6 +387,102 @@ impl HookAdapter for Claude {
     }
 }
 
+pub struct Grok;
+
+fn home_dir() -> Result<PathBuf, AgentStatus> {
+    match std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        Some(h) => Ok(PathBuf::from(h)),
+        None => Err(AgentStatus::Error("$HOME / %USERPROFILE% not set".into())),
+    }
+}
+
+fn ymux_exe_path(home: &std::path::Path) -> Result<String, AgentStatus> {
+    if cfg!(windows) {
+        match std::env::current_exe() {
+            Ok(p) => Ok(format!("\"{}\"", p.to_string_lossy())),
+            Err(e) => Err(AgentStatus::Error(format!("current_exe: {e}"))),
+        }
+    } else {
+        match home.to_str() {
+            Some(s) => Ok(format!("{s}/.ymux/bin/ymux")),
+            None => Err(AgentStatus::Error("non-UTF-8 $HOME".into())),
+        }
+    }
+}
+
+fn bin_on_path(names: &[&str]) -> bool {
+    let finder = if cfg!(windows) { "where.exe" } else { "which" };
+    names.iter().any(|name| {
+        std::process::Command::new(finder)
+            .arg(name)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    })
+}
+
+/// True when Grok Build is on this machine. The official installer
+/// writes `$HOME/.grok/bin/grok` and creates `~/.grok` before the first
+/// launch. `GROK_BIN_DIR` and a PATH install count too, so setup-hooks
+/// can register hooks for a binary that has never been started. This
+/// does not create `~/.grok` when grok is absent.
+fn grok_installed(home: &std::path::Path) -> bool {
+    let grok_bin = home.join(".grok").join("bin");
+    if grok_bin.join("grok").is_file() || grok_bin.join("grok.exe").is_file() {
+        return true;
+    }
+    if home.join(".grok").is_dir() {
+        return true;
+    }
+    let local = home.join(".local").join("bin");
+    if local.join("grok").is_file() || local.join("grok.exe").is_file() {
+        return true;
+    }
+    bin_on_path(if cfg!(windows) {
+        &["grok.exe", "grok.cmd", "grok"]
+    } else {
+        &["grok"]
+    })
+}
+
+impl HookAdapter for Grok {
+    fn label(&self) -> &'static str {
+        "Grok Build"
+    }
+
+    fn run(&self, dry: bool, force: bool, source: &str, matcher_mode: &str) -> AgentStatus {
+        let home = match home_dir() {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        if !grok_installed(&home) {
+            return AgentStatus::NotDetected;
+        }
+        let exe_path = match ymux_exe_path(&home) {
+            Ok(p) => p,
+            Err(e) => return e,
+        };
+        let mut spec = match load_spec(source, "grok") {
+            Ok(s) => s,
+            Err(e) => return AgentStatus::Error(format!("load spec: {e}")),
+        };
+        apply_matcher_mode(&mut spec, matcher_mode);
+        // Grok reads every `~/.grok/hooks/*.json`. A file of our own keeps
+        // the user's other hook files untouched. `ymux_meta` sits beside
+        // `hooks`, the same stamp Claude's settings.json carries.
+        let hooks_dir = home.join(".grok").join("hooks");
+        if !dry {
+            if let Err(e) = fs::create_dir_all(&hooks_dir) {
+                return AgentStatus::Error(format!("mkdir {}: {e}", hooks_dir.display()));
+            }
+        }
+        let path = hooks_dir.join("ymux.json");
+        apply_to_settings(&hooks_dir, &path, &exe_path, &spec, dry, force)
+    }
+}
+
 /// Substitute `${YMUX_BIN}` (and the legacy bare `ymux`) in a
 /// spec command string with the absolute path we just computed.
 ///
@@ -462,7 +583,11 @@ fn apply_to_settings(
 
     let backup = if path.exists() {
         let stamp = chrono::Local::now().format("%Y%m%dT%H%M%S").to_string();
-        let bk = claude_dir.join(format!("settings.json.bak.{}", stamp));
+        let file_name = path
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("settings.json");
+        let bk = claude_dir.join(format!("{file_name}.bak.{stamp}"));
         if let Err(e) = fs::copy(path, &bk) {
             return AgentStatus::Error(format!("backup {}: {}", bk.display(), e));
         }
@@ -495,7 +620,11 @@ fn apply_to_settings(
         obj.remove("winmux_meta");
     }
 
-    let tmp = claude_dir.join(format!("settings.json.ymux-tmp.{}", std::process::id()));
+    let tmp_name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("settings.json");
+    let tmp = claude_dir.join(format!("{tmp_name}.ymux-tmp.{}", std::process::id()));
     let text = match serde_json::to_string_pretty(&root) {
         Ok(t) => t,
         Err(e) => return AgentStatus::Error(format!("serialize: {e}")),
@@ -852,6 +981,26 @@ mod tests {
         let ev = spec.events.get("StopFailure").expect("StopFailure registered");
         assert_eq!(ev.matcher, "");
         assert_eq!(ev.command, "${YMUX_BIN} claude-hook stop-failure");
+    }
+
+    #[test]
+    fn bundled_grok_spec_matches_claude_events_at_its_own_version() {
+        let claude = bundled_claude_spec();
+        let grok = bundled_grok_spec();
+        assert_eq!(grok.ymux_hooks_version, "1.0.0");
+        assert_eq!(grok.agent, "grok");
+        assert_eq!(grok.events.len(), claude.events.len());
+        let pre = grok.events.get("PreToolUse").expect("PreToolUse");
+        assert_eq!(pre.timeout, Some(600));
+        assert!(pre.command.contains("claude-hook pre-tool-use"));
+    }
+
+    #[test]
+    fn grok_session_sources_map_onto_the_injector() {
+        assert_eq!(session_start_source("new"), "startup");
+        assert_eq!(session_start_source("load"), "resume");
+        assert_eq!(session_start_source("startup"), "startup");
+        assert_eq!(session_start_source("compact"), "compact");
     }
 
     #[test]

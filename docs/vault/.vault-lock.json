@@ -36,10 +36,10 @@
     "app/src-tauri/src/worktrees.rs": "9d6e93ece0e6d6ca83964bb7233139c262101e64f9ce68daa9a607587d21fecd"
   },
   "backend-remote": {
-    "app/src-tauri/src/addons.rs": "ad6bd42034f4457b1a0247d1051b6d9108cbfdfaced6d97bd23774f8d2ca713c",
+    "app/src-tauri/src/addons.rs": "93d6491f0ef98531e0b5e2565996708727045ee284786a0c34ca28462c4ed750",
     "app/src-tauri/src/bootstrap_guard.rs": "b26eec62d8ebb47eb2e1ba13c922b7dd58d4929608d3119796d09fde0b167c0b",
     "app/src-tauri/src/pairing.rs": "e9eb2e82df82efd3ce793177a3c80a502ce261d14c551355b85b91fb4dd79664",
-    "app/src-tauri/src/provisioning.rs": "8304c3f98bbae3c870658e6b3e0b659eabc8e6b0d863293ac708141093204de7",
+    "app/src-tauri/src/provisioning.rs": "6fd2db08f49c4351ac35295df14c4d34964359c5a74d283ffcf7a3b60cbab9ad",
     "app/src-tauri/src/remote_bootstrap.rs": "fbf03e1178e55a051161fd3a82e21d52bb34a39f67665b4356aaaa000410b5bd",
     "app/src-tauri/src/web_addon.rs": "2ea931abf5508deb7060896c7eb8f73edecef5270294052281a2caf5cbe1e3a0"
   },
@@ -59,7 +59,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "a4ac0e67c4128e5deeaaf9a4dc99c438761762ea91a52f9dcd2e1d5b133d14e9",
-    "app/src-tauri/src/local_setup.rs": "9b098658a98d218bcf31d77a682919ca004ec20e3461f6e6a62b3bae9590b08d",
+    "app/src-tauri/src/local_setup.rs": "5c1edf9af387e0c50b897a16f21ab4c0a3ac5c2cf5e35f05f88c462c0f34077c",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "297b15a424ca781b23769862c1a97a084bc5970e15cb0820dd11d92f2e35e089",
     "app/src-tauri/src/updater.rs": "794cb8d7ba1de8c88b25b1f4ebc1985ee925c78698216847b28485c0fcab21d5",
@@ -86,19 +86,19 @@
   "cli": {
     "app/src-tauri/cli/Cargo.toml": "2fc070f19a86d795f42ebcfd6856a76532846239bb6b69a6ca93b2329a55b000",
     "app/src-tauri/cli/build.rs": "1de3d84c35a1063b630fd3f392b28073b8ffa79d36ce3125bb075ea5953fbae3",
-    "app/src-tauri/cli/src/hooks.rs": "797d32d03f9f610dfca9438674964999117f38e5f1fa190aa670eebf557e0240",
-    "app/src-tauri/cli/src/main.rs": "d8f74771fed0923cc0362339eb912ad0f979ffafdee0f94e04997e5a9c3bacc9",
+    "app/src-tauri/cli/src/hooks.rs": "d6d00481132a40493f76cffc8c1db38ddb26d1c3a742fc29249d2a1c85868e7b",
+    "app/src-tauri/cli/src/main.rs": "f150364b30ec1c5a2da36fa1187f5c6b5b2037a7f1153a8f5ddfff0a1a87188b",
     "app/src-tauri/cli/src/port_watch.rs": "2cbe1c091f5f4b7ae79c54bee7dff231f0bb528e162e4ad9c8673b1711fe286c",
     "app/src-tauri/cli/src/session_meta.rs": "e51cfa3e0bba15ee820b02e81504431678b79373638091a742058f9814f23640"
   },
   "crates": {
     "app/src-tauri/crates/ymux-addons/src/lib.rs": "d87da097b66cfe23c3602dace65c66433705316bc3dde46b49d548cf5743dae3",
-    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "4665e48d31d2986a8c22702db4c729bcce47d29ff9e86f37d165acaee4c280bd",
+    "app/src-tauri/crates/ymux-bootstrap/src/lib.rs": "95f16d2144a5bb4077efd6ef6b94d7b6bb51fb1446daf9ed7173d4cc4aa1c8ba",
     "app/src-tauri/crates/ymux-core/src/http.rs": "396fc04106232856bd39f47ee2f5eefb25c9da009c38089ab9dc00850137f66d",
     "app/src-tauri/crates/ymux-core/src/lib.rs": "cdeb70c2428ae65eed65142169b4fa5f1e971671e528b2b9117fde495df1474c",
     "app/src-tauri/crates/ymux-core/src/log_writer.rs": "f664cf8098b2310c9068551f8381d441cbed774b1065f7144485843b841855a6",
     "app/src-tauri/crates/ymux-core/src/ssh_exec.rs": "2cb225125a6366385e4fb05ebe9d6ca78f1c943094dedd94ebcef9a2e7c1a65f",
-    "app/src-tauri/crates/ymux-policy/src/lib.rs": "2176c18ab6c9cb515cbe10ab84179af8b7b93049e56cc5b873434c525c07fa9f",
+    "app/src-tauri/crates/ymux-policy/src/lib.rs": "5d1f778901df7a3b691d90f67a504cf698cc95deeb59ecdcf139a0bdb33b4c91",
     "app/src-tauri/crates/ymux-protocol/src/lib.rs": "48c14d3ed87410097ffb2d28fdf6d301b1ccf8cd230018bda88e90e8329574c8",
     "app/src-tauri/crates/ymux-ssh/src/lib.rs": "0f73f8678f866be603b74dc9fc02d23ea1a9d22cb99ef33e917395c6a0912d36",
     "app/src-tauri/crates/ymux-tunnel/src/lib.rs": "896dcb6c513d00140d537518d2693ca6cba8c7405997b3375c8ce426435d9176",
@@ -109,10 +109,10 @@
     "app/src/ConnectExistingFlow.tsx": "40e24cc337edbb7534bafd26675d882fad11818aedabebbf5da02f35347473c5",
     "app/src/CreateWorkspaceModal.tsx": "dfa4c85dde7a3c823b0b118c7fcf49f3105466b34bcfff21b99ab20bc7f10ebd",
     "app/src/DirPicker.tsx": "aa9fdd8581aeaaacdc781487ae2c2dafb147237fead6fcde7369b9b5ba27222a",
-    "app/src/LocalSetupFlow.tsx": "1922bbb738c833e56dfbd88b9ca456e6d594b8f5b63e469d98cf5fa9069541ca",
+    "app/src/LocalSetupFlow.tsx": "4b6dea1313904e36bd0f4333ab7c92426c47932da7f8ef5ef9c5b16747247122",
     "app/src/NotesModal.tsx": "690a4999179b4eb3190ac1ea89016331e449a6c19f0406010b78728c18743185",
     "app/src/ProjectFolderModal.tsx": "5d99c70c0c22e2b9e94620553191dd209903c97b6a23e1509024147fd7a139c4",
-    "app/src/ProvisionNewServerFlow.tsx": "92565c4ed73376385e6e1f0332dbabd55388ccceac23f4eb29fea38c886949c8",
+    "app/src/ProvisionNewServerFlow.tsx": "3388fddab7ccfccda96418a7639141666f969841ce28fc65ae0f05b02b1f58f0",
     "app/src/QuickLocalCreateFlow.tsx": "4dee72621931eef7608938df0299acd3e5189d82b681a59b08ed34bb57be0b68",
     "app/src/QuickSshCreateFlow.tsx": "8e202a7cfdfbefd48bda445ca8e46bf42ad3eb5587cc9cd47f46c6e69fa7c929",
     "app/src/SettingsModal.tsx": "dfff7bb9c46d04aff588e35e7f81727676fd6248dfdf7db553a20696d6904d93",

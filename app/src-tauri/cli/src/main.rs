@@ -983,7 +983,7 @@ enum Cmd {
     /// Register agent hooks (e.g. Claude Code's hooks.json) so AI agents pipe
     /// permission requests + lifecycle events through ymux. Idempotent and additive.
     SetupHooks {
-        /// Which agent's config to install. `claude` (default) or `all`.
+        /// Which agent's config to install. `claude` (default), `grok`, or `all`.
         #[arg(long, default_value = "claude")]
         agent: String,
         /// Print what would change without writing anything.
@@ -2925,7 +2925,9 @@ async fn real_main() -> ExitCode {
                 let mut req = json!({
                     "pane_id": std::env::var("YMUX_PANE_ID").ok(),
                     "session_id": s("session_id"),
-                    "source": s("source"),
+                    // Grok says `new` / `load`. The injector only fills
+                    // Claude's `startup` / `resume` / `compact`.
+                    "source": s("source").as_deref().map(hooks::session_start_source),
                 });
                 if let Some(t) = session_meta::resolve_session_name() {
                     req["tmux_session"] = json!(t);
@@ -3194,11 +3196,17 @@ async fn real_main() -> ExitCode {
                 let rid = request_id.clone();
                 let pid = pane_id.clone().unwrap_or_default();
                 let ttl = title.clone();
-                let tool = payload
-                    .get("tool_name")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("")
-                    .to_string();
+                // The daemon's Block half only knows the Claude name `Bash`.
+                // Send that, so a Grok `run_terminal_command` wipe is still
+                // denied on a paired phone. The desktop judges the raw
+                // payload itself via `canonical_tool_name`.
+                let tool = ymux_policy::canonical_tool_name(
+                    payload
+                        .get("tool_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or(""),
+                )
+                .to_string();
                 let to = timeout_secs;
                 tokio::spawn(async move {
                     forward_hook_to_server(&rid, &pid, &tool, &ttl, to).await;
@@ -3388,8 +3396,10 @@ async fn real_main() -> ExitCode {
             let mut adapters: Vec<Box<dyn hooks::HookAdapter>> = Vec::new();
             match agent.as_str() {
                 "claude" => adapters.push(Box::new(hooks::Claude)),
+                "grok" | "grok-build" => adapters.push(Box::new(hooks::Grok)),
                 "all" => {
                     adapters.push(Box::new(hooks::Claude));
+                    adapters.push(Box::new(hooks::Grok));
                     adapters.push(Box::new(hooks::Stub { label: "Codex" }));
                     adapters.push(Box::new(hooks::Stub { label: "Cursor" }));
                     adapters.push(Box::new(hooks::Stub { label: "OpenCode" }));
@@ -3397,7 +3407,10 @@ async fn real_main() -> ExitCode {
                     adapters.push(Box::new(hooks::Stub { label: "Copilot CLI" }));
                 }
                 other => {
-                    eprintln!("error: unknown --agent {:?} (use 'claude' or 'all')", other);
+                    eprintln!(
+                        "error: unknown --agent {:?} (use 'claude', 'grok', or 'all')",
+                        other
+                    );
                     return ExitCode::from(2);
                 }
             }

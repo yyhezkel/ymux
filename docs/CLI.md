@@ -268,10 +268,16 @@ Set a transient status text on the pane's header in the UI.
 ymux claude-hook <subcommand> [< stdin-json]
 ```
 
-Designed for use as a hook command from an AI agent (Claude Code, etc).
+Designed for use as a hook command from an AI agent (Claude Code, Grok Build).
 Reads JSON from stdin, sends a `feed.push` over the tunnel, and waits for the
 user's decision (for blocking subcommands) or returns immediately
 (for passive ones).
+
+Grok Build registers this same verb from `~/.grok/hooks/ymux.json` via
+`ymux setup-hooks --agent grok` (`--agent` is `claude` by default, or `all`).
+Grok's SessionStart `source` values `new` and `load` are mapped to `startup`
+and `resume` before `context.inject`. Shell calls that arrive as
+`run_terminal_command` are judged as `Bash`.
 
 #### Subcommands
 

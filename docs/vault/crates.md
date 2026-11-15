@@ -219,6 +219,15 @@ string. `rpc_server::push_policy_audit` records the outcomes. The Block half als
 in Go (`server/internal/agent/policy.go`, 2026-11-09): **a change to `BLOCK_PATTERNS` must
 be made on both sides**, and `server/internal/agent/testdata/policy.json` is the shared test.
 
+`canonical_tool_name` runs at the start of `evaluate_with`. It maps Grok's tool names
+onto the Claude names this crate already knows, and a Claude name maps to itself.
+`run_terminal_command` and `Shell` become `Bash`, so `rm -rf /` is Block and a plain
+`sudo` is Gate. `search_replace`, `hashline_edit`, `StrReplace` and `EditNotebook`
+become `Edit`; `write` becomes `Write`; those stay Auto. `spawn_subagent` becomes
+`Task`. The CLI phone forward sends that canonical name. Go's `BlockedBy` still
+returns a pattern only for `Bash`, so the fixture gained no Grok row and `policy.go`
+did not change.
+
 ## `ymux-protocol` (327) — mobile/web wire types
 
 Shared between `ymux serve` and its clients (Android first, web later). Pure data.
@@ -271,6 +280,10 @@ It also runs the zombie `port-watch` reap from a prior session. Until Phase 86.B
 pattern was `[w]inmux-linux-x64$` — the pre-rename binary name, anchored at end of
 line — which never matched the real cmdline `…/ymux port-watch --workspace <id>`, so
 the reap had been a no-op since the rename. Now `/([w]inmux|[y]mux) port-watch `.
+
+`ensure_hooks_installed` runs `setup-hooks --agent claude --source bundled` and then
+`--agent grok`, each with `|| true` and without `--force`. A machine with no Grok
+exits 0 (`NotDetected`) and the connect continues.
 
 ## Invariants
 

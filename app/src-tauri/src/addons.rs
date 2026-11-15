@@ -130,6 +130,8 @@ async fn run_builtin(
                 handle,
                 &format!(
                     "grep -o '\"hooks_version\"[^,}}]*' \"{home}/.claude/settings.json\" \
+                     2>/dev/null | grep -o '[0-9][0-9.]*' | head -1 || \
+                     grep -o '\"hooks_version\"[^,}}]*' \"{home}/.grok/hooks/ymux.json\" \
                      2>/dev/null | grep -o '[0-9][0-9.]*' | head -1 || true"
                 ),
                 8,
@@ -145,7 +147,8 @@ async fn run_builtin(
             exec(
                 handle,
                 &format!(
-                    "\"{bin}\" setup-hooks --agent claude --source bundled --force 2>&1 | tail -1"
+                    "\"{bin}\" setup-hooks --agent claude --source bundled --force 2>&1 | tail -1; \
+                     \"{bin}\" setup-hooks --agent grok --source bundled --force 2>&1 | tail -1"
                 ),
                 30,
             )
@@ -670,12 +673,11 @@ fn hooks_uninstall_script(home: &str) -> String {
     format!(
         r#"python3 - <<'PY' 2>/dev/null || true
 import json, os
-for fn in ("settings.json", "hooks.json"):
-    p = "{home}/.claude/" + fn
+for p, nested in (("{home}/.claude/settings.json", True), ("{home}/.claude/hooks.json", False), ("{home}/.grok/hooks/ymux.json", True)):
     if not os.path.exists(p): continue
     try: d = json.load(open(p))
     except Exception: continue
-    blocks = d.get("hooks", d) if fn == "settings.json" else d
+    blocks = d.get("hooks", d) if nested else d
     for ev in list(blocks):
         if isinstance(blocks[ev], list):
             # Both spellings: entries written before the winmux -> ymux

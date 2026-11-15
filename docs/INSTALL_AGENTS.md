@@ -1,6 +1,6 @@
 # Installing AI coding agents
 
-ymux integrates with three first-class AI coding agents. They're all
+ymux integrates with four AI coding agents. They're all
 optional — pick whichever ones you want. The **Provisioning Wizard**
 (sidebar → ☁ Provision server) can install any subset of them on a
 fresh remote Linux box, but you can also install them manually anywhere
@@ -9,6 +9,7 @@ using the commands below.
 | Agent | Vendor | Install medium | License model |
 |---|---|---|---|
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) | Anthropic | `curl` installer + winget + npm | Subscription / API key |
+| [Grok Build](https://docs.x.ai/build) | xAI | `curl` / PowerShell installer | grok.com sign-in or API key |
 | [Codex CLI](https://github.com/openai/codex) | OpenAI | npm | Plus / Pro plan or API key |
 | [Gemini CLI](https://github.com/google-gemini/gemini-cli) | Google | npm | Free tier + paid plans |
 
@@ -56,6 +57,61 @@ on a phone or another machine. The credentials persist in
 
 Alternative for CI / headless: set `ANTHROPIC_API_KEY=sk-ant-...`. Get
 a key from [console.anthropic.com/api-keys](https://console.anthropic.com/settings/keys).
+
+## Grok Build
+
+### Remote Linux (what the Provisioning Wizard runs)
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+```
+
+Self-contained installer. No Node.js. The binary lands at
+`~/.grok/bin/grok`, and the script adds that directory to the shell
+rc when it can. The `all-agents` profile runs this. The `default` and
+`hardened` profiles stay Claude-only.
+
+### Windows desktop
+
+```pwsh
+irm https://x.ai/cli/install.ps1 | iex
+```
+
+The binary lands at `%USERPROFILE%\.grok\bin\grok.exe`. A WinGet
+package also exists (`xAI.GrokBuild`); ymux's wizard uses the script
+above, and a WinGet install updates with `winget upgrade`, not
+`grok update`.
+
+### macOS
+
+```bash
+curl -fsSL https://x.ai/cli/install.sh | bash
+```
+
+Same installer as Linux.
+
+### Authentication
+
+After install, run `grok` in any terminal. On a desktop OS this opens
+a browser to grok.com. Credentials persist in `~/.grok/auth.json`.
+
+Headless / CI: set `XAI_API_KEY`. The wizard cannot sign you in.
+
+### Hooks
+
+`ymux setup-hooks --agent grok` writes `~/.grok/hooks/ymux.json`. The
+commands inside are the existing `ymux claude-hook` handler: Grok's
+hook stdin carries Claude's field names, so there is no second parser.
+`--agent claude` is still the default. `--agent all` registers Claude,
+Grok, and the still-empty Codex / Gemini stubs. Connect-time bootstrap
+runs the claude and grok adapters (`--source bundled`) and ignores a
+machine where that agent is not installed.
+
+Permission cards, the pane traffic light, and Context Rail injection
+work for a Grok session inside a ymux pane. Shell calls are judged
+with the same Block / Gate rules as Claude's Bash tool. Transcript
+mirroring, the cost tab, and resume-from-session stay Claude-only:
+Grok's on-disk sessions are not Claude jsonl.
 
 ## Codex CLI
 
@@ -125,36 +181,40 @@ For API-key mode get one from [aistudio.google.com/apikey](https://aistudio.goog
 The wizard's **Configure** step lists every agent above as a checkbox
 under "AI coding agents". Three things to know:
 
-1. **Pick any subset.** The `default` profile checks only Claude Code;
-   `all-agents` enables all three.
-2. **Codex and Gemini both need Node.js.** Make sure
-   "Install Node.js LTS" is also checked if you want either of them.
-   The step will fail fast with a clear error if Node isn't on PATH —
-   nothing destructive.
+1. **Pick any subset.** The `default` profile checks only Claude Code.
+   `all-agents` enables Claude, Grok, Codex and Gemini. A profile
+   already saved on disk is not rewritten when this list grows; pick
+   Grok on that profile by hand, or delete the profile so the built-in
+   one is seeded again.
+2. **Codex and Gemini both need Node.js.** Grok Build does not. Make
+   sure "Install Node.js LTS" is also checked if you want Codex or
+   Gemini. The step will fail fast with a clear error if Node isn't on
+   PATH.
 3. **Authentication is manual.** None of the wizard steps can sign you
    in (that needs a token only you should hold). The execute-step log
-   prints the exact `<agent> login` command to run on the remote after
-   the wizard finishes.
+   prints what to run on the remote after the wizard finishes (`claude`,
+   `grok`, or the agent's login command).
 
 ## Combining agents
 
-All three agents can coexist on the same machine without conflict —
-they each install into distinct locations (`~/.claude/`, `~/.codex/`,
-`~/.gemini/`), expose distinct CLI binaries (`claude`, `codex`,
-`gemini`), and have separate auth state. You can use one in one
-ymux pane and another in a sibling pane.
+The four agents can coexist on the same machine without conflict.
+They install into distinct locations (`~/.claude/`, `~/.grok/`,
+`~/.codex/`, `~/.gemini/`), expose distinct CLI binaries (`claude`,
+`grok`, `codex`, `gemini`), and have separate auth state. You can use
+one in one ymux pane and another in a sibling pane.
 
-The **agent permission hook** integration (Settings → Hooks) currently
-only ships for Claude Code — Codex and Gemini don't yet have a public
-hook contract analogous to Claude's `~/.claude/settings.json` hooks
-array. As Codex / Gemini add hook APIs, ymux's `setup-hooks --agent
-<name>` will grow corresponding adapters.
+The **agent permission hook** integration ships for Claude Code and
+Grok Build. Codex and Gemini still have placeholder specs
+(`hooks/codex.json`, `hooks/gemini.json`) with no events. As those
+CLIs add a public hook contract, `setup-hooks --agent <name>` grows
+the adapter.
 
 ## Updating
 
 | Agent | Update command |
 |---|---|
 | Claude Code | `claude update` (in-place self-update) |
+| Grok Build | `grok update` (a WinGet install: `winget upgrade --id xAI.GrokBuild -e`) |
 | Codex CLI | `npm update -g @openai/codex` |
 | Gemini CLI | `npm update -g @google/gemini-cli` |
 
@@ -163,5 +223,6 @@ array. As Codex / Gemini add hook APIs, ymux's `setup-hooks --agent
 | Agent | Uninstall |
 |---|---|
 | Claude Code | `claude uninstall` or remove `~/.claude/` + the PATH bumps |
+| Grok Build | remove `~/.grok/bin` (and the PATH line the installer added) and `~/.grok/` if you also want the config. ymux's add-on uninstall only strips `~/.grok/hooks/ymux.json`; it does not delete Grok |
 | Codex CLI | `npm uninstall -g @openai/codex` + remove `~/.codex/` |
 | Gemini CLI | `npm uninstall -g @google/gemini-cli` + remove `~/.gemini/` |
