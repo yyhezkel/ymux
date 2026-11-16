@@ -1332,6 +1332,11 @@ pub(crate) struct SttSettings {
     /// microphone).
     #[serde(default = "default_stt_hotkey")]
     pub push_to_talk_hotkey: String,
+    /// `MediaDeviceInfo.deviceId` of the microphone the Local backend
+    /// records from. None = the Windows default recording device. The Web
+    /// Speech backend cannot pick a device and always uses the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_device_id: Option<String>,
 }
 
 /// Phase 58: backend choice. ts-rs lowercases via the serde attr so

@@ -275,6 +275,26 @@ export function SettingsModal(p: Props) {
       push_to_talk: p.settings.stt?.push_to_talk_hotkey,
     }),
   );
+  // Microphones for the Local STT backend. enumerateDevices() returns empty
+  // labels until mic permission has been granted once, so the list is
+  // re-read on focus rather than only at mount — after the first recording
+  // the names show up without reopening Settings.
+  const [mics, setMics] = createSignal<MediaDeviceInfo[]>([]);
+  const loadMics = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      // "default" / "communications" are Chromium aliases for real devices
+      // already in the list; the empty-value option stands for the default.
+      setMics(
+        all.filter(
+          (d) => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications",
+        ),
+      );
+    } catch (e) {
+      log.warn("enumerateDevices failed", e);
+    }
+  };
+  onMount(() => void loadMics());
   // beta.3: sub-tab inside the "Hooks & Notifications" card.
   const [hnSubTab, setHnSubTab] = createSignal<HooksNotifSubTab>("hooks");
   // 2026-08-19: which RTL profile the controls below are editing. Local
@@ -1720,6 +1740,42 @@ export function SettingsModal(p: Props) {
                           })
                         }
                       />
+                    </label>
+                    <label>
+                      <span>{t("settings.stt.mic.label")}</span>
+                      <select
+                        value={p.settings.stt?.input_device_id ?? ""}
+                        onFocus={() => void loadMics()}
+                        onChange={(e) =>
+                          update("stt", {
+                            ...(p.settings.stt ?? {
+                              enabled: false,
+                              backend: "local",
+                              local_endpoint: null,
+                              language: "auto",
+                              push_to_talk_hotkey: "Ctrl+Shift+M",
+                            }),
+                            input_device_id: e.currentTarget.value === "" ? null : e.currentTarget.value,
+                          })
+                        }
+                      >
+                        <option value="">{t("settings.stt.mic.default")}</option>
+                        <For each={mics()}>
+                          {(m) => <option value={m.deviceId}>{m.label || m.deviceId.slice(0, 12)}</option>}
+                        </For>
+                        {/* A saved device that is unplugged right now still shows,
+                            so the select doesn't silently snap back to "default". */}
+                        <Show
+                          when={
+                            p.settings.stt?.input_device_id &&
+                            !mics().some((m) => m.deviceId === p.settings.stt?.input_device_id)
+                          }
+                        >
+                          <option value={p.settings.stt?.input_device_id ?? ""}>
+                            {t("settings.stt.mic.missing")}
+                          </option>
+                        </Show>
+                      </select>
                     </label>
                   </Show>
                   <label>

@@ -68,6 +68,11 @@ the single source of truth instead, so a `settings.json` written by an older bui
 simply lacks the new keys and picks them up. Add a field there and to the `Default`
 impl, nothing else. The frontend parses these strings; Rust never validates them.
 
+`SttSettings.input_device_id` (`Option<String>`, skipped when None) is the
+`MediaDeviceInfo.deviceId` of the microphone the Local STT backend records from; None
+means the Windows default recording device. Only the frontend reads it — `stt.rs` never
+sees audio-device state, just the bytes.
+
 `Settings.sessions_as_rows` (Phase 91.C, default false, bare `#[serde(default)]`) is the
 switch for mirroring a host's sessions into the sidebar tree; the frontend is its only
 writer, so it round-trips through `update("sessions_as_rows", ...)` with no carry-list

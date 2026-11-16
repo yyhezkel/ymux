@@ -3593,7 +3593,7 @@ function App() {
     if (!stt?.enabled) return;
     setSttError(null);
     log.debug(`stt start: backend=${stt.backend} lang=${stt.language || "auto"}`);
-    const rec = makeSttRecorder(stt.backend, stt.language || "auto");
+    const rec = makeSttRecorder(stt.backend, stt.language || "auto", stt.input_device_id ?? null);
     sttRecorder = rec;
     setSttListening(true);
     rec

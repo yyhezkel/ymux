@@ -308,6 +308,8 @@ export interface SttSettings {
   local_endpoint: string | null;
   language: string;
   push_to_talk_hotkey: string;
+  /** deviceId of the Local backend's microphone; null/absent = system default. */
+  input_device_id?: string | null;
 }
 
 export interface Settings {

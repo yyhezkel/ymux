@@ -8050,4 +8050,13 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
   Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.
 
+2026-11-16 | STT: microphone picker for the Local backend
+  Task: voice input "shows recording, types nothing". Causes found, in order: PTT hotkey shadowed by focus_zoom
+  (Ctrl+Shift+Z), Web Speech in WebView2 returns chars=0, then the Local backend recorded the muted laptop array
+  (Windows console default) instead of the JBL headset -> silent clips.
+  Change: settings.stt.input_device_id + mic picker (Local backend only), getUserMedia deviceId ideal;
+  whisperLanguage() strips BCP-47 region (whisper.cpp rejected 'he-IL').
+  Files: settings.rs, bindings/SttSettings.ts, settings.ts, stt.ts, App.tsx, SettingsModal.tsx, i18n x4, vault x4.
+  Result: compiles on CI pending, untested live (Rule #14).
+
 [2026-11-16] debug.log "silent since Oct 7" investigation: not a ymux bug. Claude desktop (MSIX) shells see %APPDATA%\ymux through a stale copy-on-write overlay (LocalCache\Roaming\ymux, frozen 2026-10-07); the real log is live (read via RPC dev.debug-log-tail). Files: CLAUDE.md (gotcha line). Result: doc only, no code change.

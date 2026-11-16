@@ -137,7 +137,7 @@ function makeWebspeechRecorder(language: string): SttRecorder {
 }
 
 /** Local-endpoint backend. */
-function makeLocalRecorder(language: string): SttRecorder {
+function makeLocalRecorder(language: string, deviceId: string | null): SttRecorder {
   let stream: MediaStream | null = null;
   let recorder: MediaRecorder | null = null;
   const chunks: BlobPart[] = [];
@@ -176,7 +176,10 @@ function makeLocalRecorder(language: string): SttRecorder {
         rejectText = reject;
         stopRequested = false;
         navigator.mediaDevices
-          .getUserMedia({ audio: true })
+          // `ideal`, not `exact`: an unplugged headset falls back to the
+          // system default instead of failing every press until the user
+          // finds the setting again.
+          .getUserMedia({ audio: deviceId ? { deviceId: { ideal: deviceId } } : true })
           .then((s) => {
             stream = s;
             // Phase 59.B: if stop() fired before the mic opened, tear
@@ -220,7 +223,7 @@ function makeLocalRecorder(language: string): SttRecorder {
                 // of audio (a few MB), well under any pipe limit.
                 const text = await backend.call<string>("stt_transcribe_local", {
                   audioBytes: Array.from(buf),
-                  language: language === "auto" ? "" : language,
+                  language: whisperLanguage(language),
                 });
                 resolveText?.(text.trim());
               } catch (e) {
@@ -252,11 +255,23 @@ function makeLocalRecorder(language: string): SttRecorder {
   };
 }
 
+/**
+ * The language picker stores BCP-47 tags ("he-IL") because Web Speech wants
+ * them. Whisper servers want the bare ISO 639-1 code: whisper.cpp logs
+ * `unknown language 'he-IL'` and falls back to detection. "auto" -> "" (the
+ * field is then ignored and the server detects).
+ */
+export function whisperLanguage(language: string): string {
+  if (!language || language === "auto") return "";
+  return language.split("-")[0].toLowerCase();
+}
+
 export function makeSttRecorder(
   backend: SttBackend,
   language: string,
+  deviceId: string | null = null,
 ): SttRecorder {
   return backend === "local"
-    ? makeLocalRecorder(language)
+    ? makeLocalRecorder(language, deviceId)
     : makeWebspeechRecorder(language);
 }
