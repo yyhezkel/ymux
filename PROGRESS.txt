@@ -8049,3 +8049,5 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Each daemon PR was re-bumped and its server blobs rebaked from its own CI run before merge.
   Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
   Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.
+
+[2026-11-16] debug.log "silent since Oct 7" investigation: not a ymux bug. Claude desktop (MSIX) shells see %APPDATA%\ymux through a stale copy-on-write overlay (LocalCache\Roaming\ymux, frozen 2026-10-07); the real log is live (read via RPC dev.debug-log-tail). Files: CLAUDE.md (gotcha line). Result: doc only, no code change.
