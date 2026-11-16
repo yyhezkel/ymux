@@ -175,6 +175,16 @@ same `ShortcutRow` (it was a free-text box until Phase 87 — the accelerator ha
 typed, and a typo produced a hotkey that silently never fired), and it is passed into
 `conflictingAccels` explicitly so a clash across the two schemas is still reported.
 
+**The Local STT backend has a microphone picker** (`settings.stt.input_device_id`), shown
+only with backend = Local because Web Speech cannot choose a device. It exists because
+Chromium's `getUserMedia({audio:true})` takes the Windows *console* default, which on a
+laptop is often the built-in array — muted, so every press produced a silent clip and an
+empty transcript with no error. `enumerateDevices()` returns blank labels until mic
+permission has been granted once, so the list is re-read on focus, not only at mount; the
+`default` / `communications` aliases are filtered out (the empty option stands for
+default), and a saved device that is unplugged keeps its own "(not connected)" option so
+the select doesn't silently show "default".
+
 **`VersionManager.tsx` (228)** is the Updates tab's list: every published release,
 install any of them (including a downgrade, with a warning), and pick a release channel.
 The Install button is enabled by `dmg_url` on macOS and `nsis_url` elsewhere.

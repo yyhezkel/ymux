@@ -122,7 +122,8 @@ run before the table so no rebind can shadow them. STT push-to-talk is stored in
 it used to run after, so when Phase 87 moved `focus_zoom` onto `Ctrl+Shift+Z` a PTT
 already bound there went silently dead — no recording, no log line. An enabled PTT now
 wins the clash (an explicit choice beats a default that moved under it); a disabled one
-falls through to the table. All three are listed read-only in Settings → Shortcuts so
+falls through to the table. `startPushToTalk` passes `stt.input_device_id` to
+`makeSttRecorder` so the Local backend records from the chosen microphone. All three are listed read-only in Settings → Shortcuts so
 they are at least visible. `warnShortcutConflicts` runs `conflictingAccels` (PTT
 included) on load and on every `settings:changed` and logs each duplicate as
 `log.warn`, so a clash is visible in the log and not only in red in Settings. Every

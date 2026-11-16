@@ -542,7 +542,14 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`stt.ts` (262)** — one recorder interface over two backends: `webspeech` uses
   `window.SpeechRecognition` directly (WebView2 ships it, but Chrome streams to Google's
   servers behind the scenes — which is exactly why the Local option exists), and `local`
-  records with MediaRecorder and POSTs through `stt_transcribe_local`.
+  records with MediaRecorder and POSTs through `stt_transcribe_local`. `local` opens the
+  mic with `deviceId: { ideal }` from `settings.stt.input_device_id` — `ideal`, so an
+  unplugged headset falls back to the default instead of failing every press — and sends
+  `whisperLanguage(language)`: the picker stores BCP-47 (`he-IL`) for Web Speech, but
+  whisper.cpp only knows ISO 639-1 and logs `unknown language 'he-IL'`, so the region is
+  stripped and `auto` becomes empty. In practice Web Speech inside WebView2 records and
+  then returns an empty transcript with no error (`stt result ... chars=0`); Local is the
+  backend that actually works on Windows.
 - **`download.ts` (55)**, **`fontProbe.ts` (121)** — OSC 8 / file-link downloads, and
   probing whether a font family is actually installed.
 - **`clipboardText.ts` (32)** — `copyText`. `navigator.clipboard.writeText` is the path

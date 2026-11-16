@@ -8049,3 +8049,12 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Each daemon PR was re-bumped and its server blobs rebaked from its own CI run before merge.
   Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
   Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.
+
+2026-11-16 | STT: microphone picker for the Local backend
+  Task: voice input "shows recording, types nothing". Causes found, in order: PTT hotkey shadowed by focus_zoom
+  (Ctrl+Shift+Z), Web Speech in WebView2 returns chars=0, then the Local backend recorded the muted laptop array
+  (Windows console default) instead of the JBL headset -> silent clips.
+  Change: settings.stt.input_device_id + mic picker (Local backend only), getUserMedia deviceId ideal;
+  whisperLanguage() strips BCP-47 region (whisper.cpp rejected 'he-IL').
+  Files: settings.rs, bindings/SttSettings.ts, settings.ts, stt.ts, App.tsx, SettingsModal.tsx, i18n x4, vault x4.
+  Result: compiles on CI pending, untested live (Rule #14).
