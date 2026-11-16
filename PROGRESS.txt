@@ -8058,3 +8058,5 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   whisperLanguage() strips BCP-47 region (whisper.cpp rejected 'he-IL').
   Files: settings.rs, bindings/SttSettings.ts, settings.ts, stt.ts, App.tsx, SettingsModal.tsx, i18n x4, vault x4.
   Result: compiles on CI pending, untested live (Rule #14).
+
+[2026-11-16] debug.log "silent since Oct 7" investigation: not a ymux bug. Claude desktop (MSIX) shells see %APPDATA%\ymux through a stale copy-on-write overlay (LocalCache\Roaming\ymux, frozen 2026-10-07); the real log is live (read via RPC dev.debug-log-tail). Files: CLAUDE.md (gotcha line). Result: doc only, no code change.
