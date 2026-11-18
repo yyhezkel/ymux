@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
+import { effectiveAgentsForWorkspace } from "./codingAgents";
 import { backend, type Capability, type UnlistenFn } from "./backend";
 import { Sidebar } from "./Sidebar";
 import { CreateWorkspaceModal } from "./CreateWorkspaceModal";
@@ -5325,6 +5326,11 @@ function App() {
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}
                     boundSessions={boundSessions()}
+                    connectAgents={effectiveAgentsForWorkspace(
+                      settings()?.coding_agents,
+                      file().workspaces,
+                      activeWs()!.id,
+                    )}
                     ensureTerm={ensureTerm}
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}

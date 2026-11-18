@@ -103,6 +103,7 @@ const META_KEYS = [
   "color",
   "emoji",
   "tmux_session",
+  "multi_agent",
 ] as const;
 
 /** The fields the daemon stores as named columns. */
@@ -446,6 +447,7 @@ export class WebBackend implements Backend {
       intent: w.intent ?? null,
       known_sessions: [],
       is_folder: m.is_folder === true,
+      multi_agent: m.multi_agent === true,
     };
   }
 
@@ -933,6 +935,11 @@ export class WebBackend implements Backend {
     workspace_secret_env_keys: async () => [],
     workspace_set_auto_port_forward: async (a) => this.getRow(str(a.workspaceId)),
     workspace_set_claude_separate_account: async () => null,
+    workspace_set_multi_agent: async (a) => {
+      const id = str(a.workspaceId);
+      await this.patch(id, { multi_agent: a.enabled === true });
+      return this.getRow(id);
+    },
     ssh_cancel_reconnect: async () => null,
 
     // ── the Diff pane + worktrees (Phase 118, F4) ──

@@ -22,6 +22,7 @@ import {
   type HostTrustPending,
   type PassphrasePending,
 } from "./PaneView";
+import type { AgentId } from "./codingAgents";
 import {
   paneKindOf,
   type Connection,
@@ -82,6 +83,8 @@ interface Props {
   // workspace's first pane bound to `tmux_session`). Only panes that are
   // NOT live carry one; `gone` + a Claude id make it a Resume.
   boundSessions: Record<string, BoundSession>;
+  // Agents the connect wizard may launch for this workspace's machine.
+  connectAgents: readonly AgentId[];
   onKillSession: (paneId: string) => void;
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
@@ -243,6 +246,7 @@ function LeafPane(props: { all: Props; pane: Extract<LayoutNode, { kind: "pane" 
           onDisconnect={props.all.onDisconnect}
           tmuxSession={props.all.panePersistence[props.pane.pane_id] ?? null}
           boundSession={props.all.boundSessions[props.pane.pane_id] ?? null}
+          connectAgents={props.all.connectAgents}
           onKillSession={props.all.onKillSession}
           onSetTitle={props.all.onSetTitle}
           onSetAnnotation={props.all.onSetAnnotation}
