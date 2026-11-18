@@ -479,7 +479,200 @@ impl HookAdapter for Grok {
             }
         }
         let path = hooks_dir.join("ymux.json");
-        apply_to_settings(&hooks_dir, &path, &exe_path, &spec, dry, force)
+        let status = apply_to_settings(&hooks_dir, &path, &exe_path, &spec, dry, force);
+        // Dry-run and a failed hooks write leave Grok's own config alone.
+        // A successful run (including "hooks already current") still merges
+        // the two display keys: bootstrap calls setup-hooks on every connect,
+        // and an install that already had hooks has never had them written.
+        if dry || !matches!(status, AgentStatus::Done { .. }) {
+            return status;
+        }
+        if let Err(e) = ensure_grok_tui_prefs(&home) {
+            return AgentStatus::Error(e);
+        }
+        status
+    }
+}
+
+/// Grok's welcome screen (logo + upgrade CTA) eats the pane, and its
+/// default `alt_screen = "auto"` drops the alternate screen under Zellij
+/// and `tmux -CC`. Write the two keys that fix that, once, and only when
+/// the user has not already chosen a value — `never` and `false` stay.
+/// `alt_screen` lives in `pager.toml`; `compact_mode` lives in `config.toml`.
+fn ensure_grok_tui_prefs(home: &std::path::Path) -> Result<(), String> {
+    let dir = home.join(".grok");
+    merge_toml_file(&dir.join("pager.toml"), "terminal", "alt_screen", "\"always\"")?;
+    merge_toml_file(&dir.join("config.toml"), "ui", "compact_mode", "true")?;
+    Ok(())
+}
+
+fn merge_toml_file(
+    path: &std::path::Path,
+    table: &str,
+    key: &str,
+    value_lit: &str,
+) -> Result<(), String> {
+    let existing = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => return Err(format!("read {}: {e}", path.display())),
+    };
+    let Some(next) = ensure_toml_key(&existing, table, key, value_lit) else {
+        return Ok(());
+    };
+    write_text_atomic(path, &next)
+}
+
+fn write_text_atomic(path: &std::path::Path, text: &str) -> Result<(), String> {
+    let parent = match path.parent() {
+        Some(p) => p,
+        None => return Err(format!("no parent for {}", path.display())),
+    };
+    if let Err(e) = fs::create_dir_all(parent) {
+        return Err(format!("mkdir {}: {e}", parent.display()));
+    }
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("grok.toml");
+    let tmp = parent.join(format!("{name}.ymux-tmp.{}", std::process::id()));
+    if let Err(e) = fs::write(&tmp, text) {
+        return Err(format!("write tmp: {e}"));
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("rename: {e}"));
+    }
+    Ok(())
+}
+
+/// Insert `key = value_lit` into `[table]` when that key is absent.
+/// Comment lines do not count. An existing value (`never`, `false`,
+/// anything else) is left byte-for-byte. `None` means "do not rewrite".
+/// A root key `table.key` counts as already set. No TOML crate: the CLI
+/// binary only depends on serde_json, and this scan is the whole parser.
+fn ensure_toml_key(text: &str, table: &str, key: &str, value_lit: &str) -> Option<String> {
+    let crlf = text.contains("\r\n");
+    let body = text
+        .trim_start_matches('\u{FEFF}')
+        .replace("\r\n", "\n")
+        .replace('\r', "");
+    let lines: Vec<&str> = if body.is_empty() {
+        Vec::new()
+    } else {
+        body.strip_suffix('\n').unwrap_or(&body).split('\n').collect()
+    };
+
+    let mut at_root = true;
+    let mut in_target = false;
+    let mut key_found = false;
+    let mut first_header: Option<usize> = None;
+
+    for (i, line) in lines.iter().enumerate() {
+        let code = strip_toml_comment(line).trim();
+        // `[[name]]` is a different table. Leaving `in_target` set would
+        // treat a key inside it as ours.
+        if toml_array_table(code) {
+            at_root = false;
+            in_target = false;
+            continue;
+        }
+        if let Some(name) = toml_table_name(code) {
+            at_root = false;
+            if name == table && first_header.is_none() {
+                first_header = Some(i);
+                in_target = true;
+            } else {
+                in_target = name == table;
+            }
+            continue;
+        }
+        if code.is_empty() {
+            continue;
+        }
+        if in_target && is_toml_assignment(code, key) {
+            key_found = true;
+        } else if at_root && is_toml_assignment(code, &format!("{table}.{key}")) {
+            key_found = true;
+        }
+    }
+    if key_found {
+        return None;
+    }
+
+    let assignment = format!("{key} = {value_lit}");
+    let mut out: Vec<String> = lines.iter().map(|s| (*s).to_string()).collect();
+    if let Some(header) = first_header {
+        out.insert(header + 1, assignment);
+    } else if out.is_empty() {
+        out.push(format!("[{table}]"));
+        out.push(assignment);
+    } else {
+        if out.last().is_some_and(|l| !l.is_empty()) {
+            out.push(String::new());
+        }
+        out.push(format!("[{table}]"));
+        out.push(assignment);
+    }
+    let mut rendered = out.join("\n");
+    rendered.push('\n');
+    if crlf {
+        rendered = rendered.replace('\n', "\r\n");
+    }
+    Some(rendered)
+}
+
+/// Drop a `#` comment that is not inside quotes. A full-line comment
+/// comes back empty, so it cannot satisfy a key check.
+fn strip_toml_comment(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' if !in_single => in_double = !in_double,
+            b'\'' if !in_double => in_single = !in_single,
+            b'#' if !in_single && !in_double => return &line[..i],
+            _ => {}
+        }
+        i += 1;
+    }
+    line
+}
+
+fn toml_array_table(code: &str) -> bool {
+    let t = code.trim();
+    t.starts_with("[[") && t.ends_with("]]") && t.len() >= 4
+}
+
+/// `[name]` only. `[[name]]` is an array of tables and not our header.
+fn toml_table_name(code: &str) -> Option<&str> {
+    let t = code.trim();
+    if !t.starts_with('[') || t.starts_with("[[") || !t.ends_with(']') {
+        return None;
+    }
+    let inner = t[1..t.len() - 1].trim();
+    if inner.is_empty() || inner.contains('[') || inner.contains(']') {
+        return None;
+    }
+    Some(inner)
+}
+
+fn is_toml_assignment(code: &str, key: &str) -> bool {
+    let t = code.trim();
+    if assignment_rest(t, key) {
+        return true;
+    }
+    let quoted_double = format!("\"{key}\"");
+    let quoted_single = format!("'{key}'");
+    assignment_rest(t, &quoted_double) || assignment_rest(t, &quoted_single)
+}
+
+fn assignment_rest(line: &str, key: &str) -> bool {
+    match line.strip_prefix(key) {
+        Some(rest) => rest.trim_start().starts_with('='),
+        None => false,
     }
 }
 
@@ -1001,6 +1194,81 @@ mod tests {
         assert_eq!(session_start_source("load"), "resume");
         assert_eq!(session_start_source("startup"), "startup");
         assert_eq!(session_start_source("compact"), "compact");
+    }
+
+    // Grok's welcome chrome and alt-screen default. The merge is string-level
+    // so it does not touch a home directory. An existing value is sacred:
+    // `never` and `false` are choices, not missing keys.
+
+    #[test]
+    fn missing_toml_file_gains_only_the_new_section() {
+        let got = ensure_toml_key("", "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert_eq!(got, "[terminal]\nalt_screen = \"always\"\n");
+        let again = ensure_toml_key(&got, "terminal", "alt_screen", "\"always\"");
+        assert!(again.is_none(), "second pass must not rewrite");
+    }
+
+    #[test]
+    fn missing_key_is_inserted_under_its_own_table() {
+        let src = "[terminal]\ncolor = true\n\n[other]\na = 1\n";
+        let got = ensure_toml_key(src, "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert_eq!(
+            got,
+            "[terminal]\nalt_screen = \"always\"\ncolor = true\n\n[other]\na = 1\n"
+        );
+    }
+
+    #[test]
+    fn an_existing_value_is_not_rewritten() {
+        let never = "[terminal]\nalt_screen = \"never\"\n";
+        assert!(ensure_toml_key(never, "terminal", "alt_screen", "\"always\"").is_none());
+        let off = "[ui]\ncompact_mode = false\n";
+        assert!(ensure_toml_key(off, "ui", "compact_mode", "true").is_none());
+        let spaced = "[terminal]\nalt_screen   =   \"auto\"\n";
+        assert!(ensure_toml_key(spaced, "terminal", "alt_screen", "\"always\"").is_none());
+    }
+
+    #[test]
+    fn a_commented_key_does_not_count_as_set() {
+        let src = "[terminal]\n# alt_screen = \"never\"\ncolor = true\n";
+        let got = ensure_toml_key(src, "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert!(got.contains("alt_screen = \"always\""));
+        assert!(got.contains("# alt_screen = \"never\""));
+        let inline = "[terminal]\nalt_screen = \"never\" # leave it\n";
+        assert!(ensure_toml_key(inline, "terminal", "alt_screen", "\"always\"").is_none());
+    }
+
+    #[test]
+    fn the_same_key_in_another_table_is_not_ours() {
+        let src = "[ui]\nalt_screen = \"never\"\n";
+        let got = ensure_toml_key(src, "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert!(got.contains("[terminal]\nalt_screen = \"always\"\n"));
+        assert!(got.contains("[ui]\nalt_screen = \"never\"\n"));
+        // A longer name sharing the prefix is a different key.
+        let longer = "[terminal]\nalt_screen_mode = true\n";
+        let got = ensure_toml_key(longer, "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert!(got.contains("alt_screen = \"always\""));
+        assert!(got.contains("alt_screen_mode = true"));
+    }
+
+    #[test]
+    fn a_root_dotted_key_counts_as_set() {
+        let src = "terminal.alt_screen = \"never\"\n\n[other]\na = 1\n";
+        assert!(ensure_toml_key(src, "terminal", "alt_screen", "\"always\"").is_none());
+    }
+
+    #[test]
+    fn a_key_inside_an_array_table_is_not_the_terminal_key() {
+        let src = "[[terminal]]\nalt_screen = \"never\"\n";
+        let got = ensure_toml_key(src, "terminal", "alt_screen", "\"always\"").expect("insert");
+        assert!(got.contains("[terminal]\nalt_screen = \"always\"\n"));
+    }
+
+    #[test]
+    fn crlf_is_preserved_when_a_key_is_added() {
+        let src = "[ui]\r\ntheme = \"dark\"\r\n";
+        let got = ensure_toml_key(src, "ui", "compact_mode", "true").expect("insert");
+        assert_eq!(got, "[ui]\r\ncompact_mode = true\r\ntheme = \"dark\"\r\n");
     }
 
     #[test]
