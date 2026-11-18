@@ -158,9 +158,11 @@ of the sessions seen on its host, in first-seen order. `KnownSession { name, dis
 claude_session_id?, cwd?, last_seen }`: everything but `name` elided, so a plain shell
 session costs two keys. Merged by `workspace_remember_sessions` (backend-core.md); it is
 what lets a sidebar row for a session that vanished from the host be shown greyed and
-resumed with `claude --resume`. In the elision test's key list (seven keys), and adding
+resumed with `claude --resume`. In the elision test's key list, and adding
 it bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop it. (Round 1's
 `sessions_mode` flag was removed the same day, before any release.)
+
+**`Workspace.multi_agent: bool`** is the machine-header toggle for "more than one agent". Serde-default false and `skip_serializing_if = "is_false"`, so a legacy row stays byte-identical (`workspace_minimal_legacy_load` asserts it is false). The elision test's key list names nine skipped keys, `multi_agent` last. Adding it did **not** bump `WORKSPACES_SCHEMA_VERSION` — same rationale as `tabs_mode`: an older build that drops a `true` falls back to one agent. The wizard reads it on the machine, not on the screen (`screen_under` does not copy it).
 
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding

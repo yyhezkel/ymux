@@ -55,6 +55,8 @@ and round-tripped by SettingsModal's General tab — the settings_save
 whole-document replace makes that mirror mandatory, per the `terminal.rtl`
 incident.
 
+**`CodingAgents`** is not part of `hooks`. `claude` defaults true via `default_true`, `grok` defaults false, and the wire key is `default` (Rust field `default_agent`, because `default` is a keyword). A missing group on an old `settings.json` means Claude on, Grok off, default Claude. Mirrored as `coding_agents?` in `app/src/settings.ts` and round-tripped by SettingsModal's AI tab, which spreads `DEFAULT_CODING_AGENTS` and then the stored group before `update()` — the same whole-document rule as Brief. The connect wizard reads this group. It does not probe which binaries are installed on the server.
+
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
 33 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`

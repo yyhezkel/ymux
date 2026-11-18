@@ -113,6 +113,26 @@ with the same Block / Gate rules as Claude's Bash tool. Transcript
 mirroring, the cost tab, and resume-from-session stay Claude-only:
 Grok's on-disk sessions are not Claude jsonl.
 
+After the hooks file lands (including when it was already current),
+and only when the run is not a dry run, setup-hooks merges two keys
+that are missing: `[terminal] alt_screen = "always"` into
+`~/.grok/pager.toml`, and `[ui] compact_mode = true` into
+`~/.grok/config.toml`. An existing value stays, including `never` and
+`false`. A missing file is created with only that section. The write
+is atomic. A hooks error skips the merge. The same path runs on
+remote bootstrap (tmux) and on the local wizard, including Windows
+where the multiplexer is zellij. It does not create `~/.grok` when
+grok is not installed, and it does not set
+`[scrollback.display] rtl_bidi`.
+
+Which agents the connect wizard offers is a manual mark, not a probe
+of what is installed. Settings → Coding agents: Claude defaults on,
+Grok defaults off, and a default applies on a server with one agent.
+A machine-header toggle, `multi_agent`, shows every agent checked in
+Settings; off, the wizard offers only the default. `grok` and
+`grok -c` launch as a shell command (`mode: cmd`), not as Claude mode,
+so the Hebrew TUI signal stays off.
+
 ## Codex CLI
 
 ### Install (any platform with Node.js)

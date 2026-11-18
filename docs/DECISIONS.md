@@ -475,6 +475,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-11-18 — Compact Grok's TUI, and a manual agent list
+- **Context:** Grok's welcome chrome eats the pane. Alt-screen also drops under Zellij and tmux control mode. The connect wizard still hardcoded Claude, including an empty "launch Claude Code" row.
+- **Decision:** `ymux setup-hooks --agent grok` writes `[terminal] alt_screen = "always"` in `~/.grok/pager.toml` and `[ui] compact_mode = true` in `~/.grok/config.toml`, only when that key is missing. An existing `never` or `false` stays. Dry-run and a hooks error do not write. No `[scrollback.display] rtl_bidi` — both engines together double-reverse Hebrew. The connect menu comes from Settings `coding_agents` (Claude on, Grok off, wire key `default`) plus a machine-header `multi_agent` flag, not from probing binaries. Grok launches as `mode: cmd` (`grok` / `grok -c`), so `tui_owns_bidi` stays off. `multi_agent` false is elided and `WORKSPACES_SCHEMA_VERSION` stays 4.
+- **Outcome / Commit:** `41f94fba` (compact keys), `32313d4f` (settings, flag, wizard). Live smoke still open.
+
 ### 2026-11-15 — Grok Build is a first-class agent for install, hooks, and the permission gate
 - **Decision:** reuse `claude-hook`. Register `~/.grok/hooks/ymux.json` (spec 1.0.0). No second parser. `canonical_tool_name` maps Grok's tool names onto Claude's before the policy judges them, and the phone forward sends `Bash`, so `policy.go` and `testdata/policy.json` stay untouched and the server blobs are not rebaked. SessionStart `new` / `load` map to `startup` / `resume` in the CLI, before `context.inject`.
 - **Scope:** local wizard, the `all-agents` profile, bootstrap, add-on detect / install / uninstall, the outdated-hooks banner. `default` and `hardened` stay Claude-only. A saved `all-agents` profile is not rewritten.

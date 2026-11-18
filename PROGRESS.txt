@@ -8066,3 +8066,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Result: compiles on CI pending, untested live (Rule #14).
 
 [2026-11-16] debug.log "silent since Oct 7" investigation: not a ymux bug. Claude desktop (MSIX) shells see %APPDATA%\ymux through a stale copy-on-write overlay (LocalCache\Roaming\ymux, frozen 2026-10-07); the real log is live (read via RPC dev.debug-log-tail). Files: CLAUDE.md (gotcha line). Result: doc only, no code change.
+
+[2026-11-18] Grok TUI compact + which agents the connect wizard offers (feat/grok-build-agent)
+  Task: when setup-hooks finishes for grok, write alt_screen=always and compact_mode=true only if those keys are missing. Settings coding_agents (Claude on, Grok off, default claude) plus a machine-header multi_agent flag decide the connect menu. grok / grok -c launch as mode cmd. No rtl_bidi. No schema bump. No probe of installed binaries. Transcript, cost, and resume stay Claude-only.
+  Files: cli/src/hooks.rs (41f94fba). settings.rs, ymux-types Workspace.multi_agent, lib.rs workspace_set_multi_agent, codingAgents.ts + test, bindings, settings.ts, SettingsModal, CreateWorkspaceModal, App/LayoutView/PaneView, web.ts META_KEYS, i18n en/he/ar/ru (32313d4f).
+  Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). A server without the flag should show only the default agent; with the flag, every agent checked in Settings. An existing pager.toml value must not change.

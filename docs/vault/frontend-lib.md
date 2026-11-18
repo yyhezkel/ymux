@@ -180,7 +180,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   insights:read), `clear_debug_log_cmd` is a no-op. Answered, not rejected:
   `clipboard_read_text` "" (the server's clipboard is never read),
   `workspace_secret_env_keys` [], `workspace_set_auto_port_forward` (returns the row),
-  `workspace_set_claude_separate_account`, `ssh_cancel_reconnect`. Tickets and skills stay
+  `workspace_set_claude_separate_account`, `workspace_set_multi_agent` (patches `{ multi_agent }` on the row's opaque `meta` — the key is in `META_KEYS` — and returns the row), `ssh_cancel_reconnect`. Tickets and skills stay
   out (`can()` off): ticket capture needs the in-app browser, skills install from the
   desktop's registry.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
@@ -462,7 +462,7 @@ is optional here: the Rust side omits an empty list, and the web backend never s
 **`settings.ts` (801)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
 (`BriefSettings` gained `inject_context`, default true, in Phase 105.C, and
-`inject_protocol`, default true, later). `daemon?: DaemonSettings`
+`inject_protocol`, default true, later). `coding_agents?` (`CodingAgentsSettings` from `codingAgents.ts`) must round-trip on every save: Claude defaults on, Grok off, `default` `"claude"`. A Settings modal that omits it wipes the group, the same way a pre-`terminal.rtl` client erased that block. `daemon?: DaemonSettings`
 (`hibernate_idle_minutes`) has no Rust twin: only the daemon reads it, from the browser's
 settings document. Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is

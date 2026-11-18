@@ -14,6 +14,7 @@ covers:
   - app/src/windowPaneName.ts
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
+  - app/src/codingAgents.ts
   - app/src/BriefingCard.tsx
   - app/src/QueueRow.tsx
   - app/src/IntentEditor.tsx
@@ -414,6 +415,8 @@ and `term/testdata/search_match.json` pins both. A search with no rows shows
 `claude_picker.noMatch`, not `claude_picker.empty`. Rows show the branch and model as
 badges and the title above the preview. `ncSessionsLoaded` gates the auto-load: before
 it, an empty list read as "not loaded" and the effect fetched again in a loop.
+
+**The command menu is `connectCommands(connectAgents)`.** App computes `effectiveAgentsForWorkspace(settings()?.coding_agents, file().workspaces, activeWs id)` and passes `connectAgents` through LayoutView into PaneView. `codingAgents.ts` holds that logic: `enabledAgents` treats a missing `claude` as on and a missing `grok` as off; `effectiveAgents` offers only the default when the machine's `multi_agent` is false (if that default is unchecked, the one agent that is checked); `multi_agent` true offers every checked agent, Claude then Grok; none checked yields an empty list. `machineOf` walks the pane's workspace and `ancestorsOf` (nearest first) and skips folder and project-root headers. No machine ancestor counts as one agent. `connectCommands` always starts with `plain` and ends with `custom`. Claude adds `claude`, `--continue`, `--resume`, `--dangerously-skip-permissions`, and `from-list`. Grok adds `grok` and `grok-c` and does not add from-list. With neither agent, from-list stays (the session list is still there) and there is no agent launch row. `buildNewConnOpts` sets `mode: "cmd"` and `cmd` to the literal `grok` or `grok -c` for those two, before the Claude branch, so `tuiSignalOnConnect` stays off. A `createEffect` resets the picked command to `plain` when it leaves the menu. Labels are the command text; `plain` uses `connect.newConn.noneShell`. The unused `connect.runClaude` key stays unused.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls

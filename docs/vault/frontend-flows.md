@@ -85,6 +85,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
   split. Each env row has a `secret` checkbox: secret → password input, unchecking clears
   the value; optional `storedSecretKeys` prop swaps the placeholder to "stored — leave
   blank to keep".
+- **More than one agent** — edit-only, and only when `isMachineHeader(editing)` (a root that is not a folder and not a project root). The toggle calls `workspace_set_multi_agent` immediately, the same shape as the auto-port-forward toggle. It is not part of the `onUpdate` bag. It hydrates from `w.multi_agent === true`, because `false` is omitted on the wire.
 
 ## Dialogs
 
@@ -120,7 +121,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
 ## `SettingsModal.tsx` (1,971)
 
 The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hooks,
-notifications, logs, Claude, updates, shortcuts. Reads and writes through
+notifications, logs, Claude, updates, shortcuts. The AI tab's first section is the coding-agents list (`settings.agents.*`): Claude and Grok checkboxes, and a default `<select>` only when both are on. `setAgents` writes the complete group (`DEFAULT_CODING_AGENTS` spread under the stored `coding_agents`), so a partial save cannot drop the other key — the `setRtlField` lesson, applied because `settings_save` replaces the document. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
 modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"

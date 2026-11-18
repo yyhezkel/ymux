@@ -137,6 +137,8 @@ daemon's Bash-only Block half still sees a shell wipe. The card title keeps the
 name Grok sent. Backup and temp files take the real filename (`ymux.json.bak…`),
 not a hardcoded `settings.json`.
 
+After that write returns `AgentStatus::Done` (an unchanged hooks file counts) and the run is not a dry run, `ensure_grok_tui_prefs` merges two keys that are missing: `[terminal] alt_screen = "always"` into `~/.grok/pager.toml`, and `[ui] compact_mode = true` into `~/.grok/config.toml`. An existing value stays, including `never` and `false`. A missing file is created with only that section. The merge is a line scan — no `toml` crate. Comment lines and an inline `#` outside quotes do not count as a set key. A key in another table, or inside `[[terminal]]`, does not count; a root dotted `terminal.alt_screen` does. The assignment is inserted immediately after the first `[table]` header, else a new section is appended. CRLF is preserved. The write is atomic (`{filename}.ymux-tmp.{pid}` then rename). A toml error returns `AgentStatus::Error` after the hooks file is already in place; the next connect retries, because bootstrap runs setup-hooks on every connect. The same path runs on the local wizard, including Windows where the multiplexer is zellij. It does not create `~/.grok` when grok is not installed. It does not set `[scrollback.display] rtl_bidi`.
+
 **`Notification` is registered again as of hooks v1.5.0.** v0.4.4 had dropped it as
 observability-only; it is back with a different job — the CLI filters on
 `notification_type` and pushes the type alone, and the desktop turns that into per-pane
