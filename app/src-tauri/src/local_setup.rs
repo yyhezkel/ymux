@@ -1945,7 +1945,12 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
             },
             "InstallLocalHooks" => match resolve_ymux_cli(&app) {
                 Some(cli) => {
+                    // This match sits inside run_local_setup, which returns
+                    // (). `return Err` here would leave the whole wizard,
+                    // and it does not type-check. A failed agent is the
+                    // arm's value instead.
                     let mut out = String::new();
+                    let mut failed: Option<ProvisioningError> = None;
                     for agent in ["claude", "grok"] {
                         let mut c = hidden_cmd(&cli.to_string_lossy());
                         c.args(["setup-hooks", "--agent", agent, "--source", "bundled"]);
@@ -1955,16 +1960,23 @@ async fn run_local_setup(app: AppHandle, state: AppState, run_id: String, input:
                                 out.push('\n');
                             }
                             Ok((code, piece)) => {
-                                return Err(ProvisioningError::StepFailed {
+                                failed = Some(ProvisioningError::StepFailed {
                                     step: kind.into(),
                                     exit_code: code,
                                     stderr: piece,
                                 });
+                                break;
                             }
-                            Err(e) => return Err(ProvisioningError::Generic(e)),
+                            Err(e) => {
+                                failed = Some(ProvisioningError::Generic(e));
+                                break;
+                            }
                         }
                     }
-                    Ok(out)
+                    match failed {
+                        Some(err) => Err(err),
+                        None => Ok(out),
+                    }
                 }
                 None => Err(ProvisioningError::Generic(
                     "bundled ymux-cli.exe not found (dev build without staged resources?)"

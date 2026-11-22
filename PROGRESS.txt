@@ -8071,3 +8071,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Task: when setup-hooks finishes for grok, write alt_screen=always and compact_mode=true only if those keys are missing. Settings coding_agents (Claude on, Grok off, default claude) plus a machine-header multi_agent flag decide the connect menu. grok / grok -c launch as mode cmd. No rtl_bidi. No schema bump. No probe of installed binaries. Transcript, cost, and resume stay Claude-only.
   Files: cli/src/hooks.rs (41f94fba). settings.rs, ymux-types Workspace.multi_agent, lib.rs workspace_set_multi_agent, codingAgents.ts + test, bindings, settings.ts, SettingsModal, CreateWorkspaceModal, App/LayoutView/PaneView, web.ts META_KEYS, i18n en/he/ar/ru (32313d4f).
   Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). A server without the flag should show only the default agent; with the flag, every agent checked in Settings. An existing pager.toml value must not change.
+
+[2026-11-22] PR #118 rust CI: InstallLocalHooks return type
+  Cause: the Windows arm sits inside run_local_setup, which returns (). `return Err` does not type-check (E0308, expected ()). The macOS arm is in run_step_unix and may return.
+  Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
+  Result: compiles-untested until CI. Not run live.

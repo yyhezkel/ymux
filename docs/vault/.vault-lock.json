@@ -59,7 +59,7 @@
   },
   "backend-wizards": {
     "app/src-tauri/src/connect_wizard.rs": "a4ac0e67c4128e5deeaaf9a4dc99c438761762ea91a52f9dcd2e1d5b133d14e9",
-    "app/src-tauri/src/local_setup.rs": "5c1edf9af387e0c50b897a16f21ab4c0a3ac5c2cf5e35f05f88c462c0f34077c",
+    "app/src-tauri/src/local_setup.rs": "22e7c76e455e71e2950dc4a1fa2c43fc044944eaaa3ee0f8663ada5462f502de",
     "app/src-tauri/src/local_wizard.rs": "d1ed11abe026659984bb1695d0a7cc692b3c3dde8ba0db740b04316786bae4d1",
     "app/src-tauri/src/settings.rs": "ae8690bbe815a40e05d3a1dfdef91a9dc230fd614f20087518710b06a05c0abb",
     "app/src-tauri/src/updater.rs": "db53481ce22374cb499f75f1a89d4fe61dec990650ea496cf7211df43ee9390b",

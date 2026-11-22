@@ -144,6 +144,10 @@ official installer's default, then the usual PATH dirs and, on Windows,
 `irm https://x.ai/cli/install.ps1 | iex` on Windows. Like Claude, a non-zero
 installer exit still succeeds when that binary is already on disk. `InstallLocalHooks`
 runs `setup-hooks --agent claude` and `--agent grok`, both `--source bundled`.
+On Windows that arm sits inside `run_local_setup`, which returns `()`, so a
+failed agent is the match arm's `Err` (the loop stops). A `return Err` from
+there does not type-check and would abandon the wizard. The macOS arm lives
+in `run_step_unix`, which does return `Result`, so it may `return`.
 `grok_hooks_version` is read from `~/.grok/hooks/ymux.json`. The kept
 `InstallHooksInWsl` script runs both agents too. There is no separate WSL install
 step for Grok.
