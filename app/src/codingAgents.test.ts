@@ -5,6 +5,7 @@ import {
   connectCommands,
   effectiveAgents,
   effectiveAgentsForWorkspace,
+  grokResumeCommand,
   isMachineHeader,
   type AgentTreeNode,
   type CodingAgentsSettings,
@@ -68,7 +69,7 @@ test("the command menu follows the effective list", () => {
     "from-list",
     "custom",
   ]);
-  assert.deepEqual(connectCommands(["grok"]), ["plain", "grok", "grok-c", "custom"]);
+  assert.deepEqual(connectCommands(["grok"]), ["plain", "grok", "grok-c", "grok-resume", "custom"]);
   assert.deepEqual(connectCommands(["claude", "grok"]), [
     "plain",
     "claude",
@@ -78,9 +79,19 @@ test("the command menu follows the effective list", () => {
     "from-list",
     "grok",
     "grok-c",
+    "grok-resume",
     "custom",
   ]);
   assert.deepEqual(connectCommands([]), ["plain", "from-list", "custom"]);
+});
+
+test("a grok resume id is one shell token", () => {
+  assert.equal(grokResumeCommand("abc_1"), "grok --resume abc_1");
+  assert.equal(grokResumeCommand("Abc-9"), "grok --resume Abc-9");
+  assert.equal(grokResumeCommand(""), null);
+  assert.equal(grokResumeCommand("-x"), null);
+  assert.equal(grokResumeCommand("abc;rm"), null);
+  assert.equal(grokResumeCommand("a b"), null);
 });
 
 test("a screen reads multi_agent from the machine, not from a folder", () => {

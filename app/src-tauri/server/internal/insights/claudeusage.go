@@ -255,23 +255,24 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 		ByProject: []ClaudeRow{},
 		BySession: []ClaudeRow{},
 	}
-	if root == "" {
-		return rep, nil
-	}
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		// A machine that has never run Claude Code has no directory. That is
-		// an empty report, not an error.
-		if os.IsNotExist(err) {
-			return rep, nil
-		}
-		return nil, err
-	}
-
 	buckets := map[int64]*ClaudeTokens{}
 	byModel := newAgg()
 	byProject := newAgg()
 	bySession := newAgg()
+
+	// A missing Claude tree is an empty walk, not an error. Grok is counted
+	// afterwards, so a machine that only runs Grok still gets a report.
+	var entries []os.DirEntry
+	if root != "" {
+		var err error
+		entries, err = os.ReadDir(root)
+		if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err != nil {
+			entries = nil
+		}
+	}
 
 	for _, dir := range entries {
 		// os.Stat follows a symlinked project dir; a dangling one is skipped
@@ -308,6 +309,10 @@ func scanClaudeUsage(root string, since, until int64) (*ClaudeUsageReport, error
 			scanClaudeFile(path, since, until, rep, buckets, byModel, byProject, bySession)
 		}
 	}
+
+	// Cumulative turn_completed totals. Empty in tests (TestMain) so a real
+	// ~/.grok cannot change a Claude-only scan.
+	scanGrokUsage(grokUsageDir, since, until, rep, buckets, byModel, byProject, bySession)
 
 	for t, tok := range buckets {
 		rep.Series = append(rep.Series, ClaudeBucket{T: t, ClaudeTokens: *tok})

@@ -160,6 +160,7 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/v2/web/git/worktrees", s.gate(s.handleGitWorktrees))
 	// Phase 117 (F3): the resume picker's claude sessions.
 	mux.HandleFunc("GET /api/v2/claude/sessions", s.gate(s.handleClaudeSessions))
+	mux.HandleFunc("GET /api/v2/grok/sessions", s.gate(s.handleGrokSessions))
 	mux.HandleFunc("GET /api/v2/context/sessions", s.gate(s.handleContextSessions))
 	// Phase 118 (F4): the Diff pane's snapshot and worktree creation.
 	mux.HandleFunc("POST /api/v2/git/diff", s.gate(s.handleGitDiff))

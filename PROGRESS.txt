@@ -8076,3 +8076,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Cause: the Windows arm sits inside run_local_setup, which returns (). `return Err` does not type-check (E0308, expected ()). The macOS arm is in run_step_unix and may return.
   Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
   Result: compiles-untested until CI. Not run live.
+
+[2026-11-22] Grok sessions: resume list, transcript, cost
+  Task: finish the open item. Connect wizard grok-resume lists ~/.grok/sessions and launches grok --resume only for a one-token id, as mode cmd. Daemon transcript reads updates.jsonl when no Claude file exists. History resume uses grok in that case; hibernation stays Claude. Cost tab deltas cumulative turn_completed usage into the existing report (Go + Rust). Unknown models stay unpriced. Tests clear the Go grok root so a real ~/.grok cannot change Claude counts.
+  Files: grok_sessions.rs, lib.rs, claude_usage_local.rs, term/grok.go, term/history.go, term/service.go, insights/grokusage.go, insights/claudeusage.go, codingAgents.ts, PaneView.tsx, web.ts, i18n, vault, DECISIONS, INSTALL_AGENTS.
+  Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). Server blobs need a rebake from the CI artifact before the PR can go green.

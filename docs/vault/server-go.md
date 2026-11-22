@@ -368,19 +368,25 @@ see the CLI vault page) and Claude Code's transcripts:
   first, minus any whose tmux name is live again (the CLI may not have re-pruned yet).
   Optional `q` / `branch` / `model` / `offset` / `limit` search and page it (2.21.0, see
   "History search" below). No client calls this route yet.
-- `GET /api/v2/claude/sessions/{id}/transcript?offset=&limit=` — found by globbing
+- `GET /api/v2/claude/sessions/{id}/transcript?offset=&limit=` — a Claude UUID is found by globbing
   `~/.claude/projects/*/<id>.jsonl`, so the cwd is not needed. The id must be a **UUID
-  before it touches a path or an argv**. Turns are the user's prompts, Claude's text and
-  one `{role:"tool", tool}` marker per call; tool results, thinking, sidechain (sub-agent)
-  and `isMeta` lines are left out. Page default 200, max 1000. **Rule #1: logs carry the
-  id, byte count and turn count only.**
+  before it touches a path**. If that file is absent, a Grok id that is one shell token
+  (`safeGrokID`, no leading `-` or `_`) is read from `~/.grok/sessions/*/<id>/updates.jsonl`.
+  Claude wins when both exist. Grok turns merge consecutive `user_message_chunk` /
+  `agent_message_chunk` text; a `tool_call` is one `{role:"tool"}` marker. Thinking and
+  tool results are left out. Claude turns stay the user's prompts, Claude's text and
+  one tool marker; tool results, thinking, sidechain and `isMeta` lines are left out.
+  Page default 200, max 1000. **Rule #1: logs carry the id, byte count and turn count only.**
 - `POST /api/v2/term/history/{name}/resume` {workspace_id?, policy?} — `spawnSession`
-  with a command: `tmux new-session … -- <claude abs path> --resume <id>` (argv, no shell
+  with a command: `tmux new-session … -- <bin> --resume <id>` (argv, no shell
   — `Tmux.Create` takes an optional `cmd`, verified on tmux 3.4 that `$(id)` arrives
-  literally). The row's own name is reused when free, so the CLI's next prune flips it
-  back to live; else a name is minted. When claude exits the session ends and the row is
-  history again. `claude` is resolved to an absolute path by the daemon (its PATH was
-  augmented at start), so the tmux server's PATH does not matter.
+  literally). The binary is `grok` only when a Grok transcript exists for that id and a
+  Claude one does not. A UUID with neither file still resumes Claude. Any other id
+  without a Grok file is 404, so a forged id never reaches the argv. The row's own name
+  is reused when free, so the CLI's next prune flips it back to live; else a name is
+  minted. Hibernation resume stays Claude. `claude` / `grok` are resolved to an absolute
+  path by the daemon (its PATH was augmented at start), so the tmux server's PATH does
+  not matter.
 
 **Caller-chosen pane ids (Phase 109, 2.10.0).** `POST /api/v2/term/sessions` takes an
 optional `pane_id`; `spawnSession` passes it to `mint`, so the session's
@@ -709,6 +715,10 @@ transcript is read. With a query each row's transcript is peeked once (`transcri
 by id; the CLI keeps at most 100 ended rows) and the matched row gets `git_branch`,
 `model` and `preview`. **Rule #1: the query is never logged** — counts, `peeked` and
 `ms` only. Neither route is a huma operation, so the OpenAPI spec does not change.
+`GET /api/v2/grok/sessions` (`term/grok.go`) is the same shape for `~/.grok/sessions/<group>/<id>/`:
+`summary.json` is the row (`title`, `info.cwd`, `hidden`, `session_kind`, mtime), an 8 KiB
+edge of `updates.jsonl` is the preview, hidden rows are skipped, and `q` uses `matchTokens`.
+The scope compare is exact `cwd` (the daemon is Linux). A missing tree is `[]`. Counts only in the log.
 **`replace_pane` (Phase 117)** on term-create: a pane id is carried by at most one live
 session (`paneInUse` → 409), but "open a new session instead" needs the leaf back.
 With the flag, `releasePane` marks the current carrier `released`: it keeps running, its
@@ -852,7 +862,11 @@ are a `tokenCount` type that rejects non-integers/negatives as parse errors; an 
 line without `usage` is skipped; a missing or non-string `timestamp` is a parse
 error (pinned by tests on both sides); symlinks are followed; an unreadable root is a 500. The
 Rust mirror in `claude_usage_local.rs` follows the same nine-row policy table (D1-D9) in
-`backend-claude.md` — change one side, change both. The committed server blobs are stale
+`backend-claude.md` — change one side, change both. The same scan also folds Grok
+`turn_completed` usage from `~/.grok/sessions` (`grokusage.go`): the totals are cumulative,
+so each line adds only the increase, and a smaller reading does not rewind the baseline.
+`modelUsage`, when present, is the source of the tokens. Tests clear `grokUsageDir` so a
+real home directory cannot change Claude-only counts. The committed server blobs are stale
 until the post-push rebake.
 
 **`insights/hygiene.go`** — detects the leaks Yossi hit: duplicate `ymux port-watch`

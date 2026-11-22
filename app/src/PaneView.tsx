@@ -6,7 +6,7 @@ import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSe
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
-import { connectCommands, type AgentId, type ConnectCommand } from "./codingAgents";
+import { connectCommands, grokResumeCommand, type AgentId, type ConnectCommand } from "./codingAgents";
 import { matchesQuery } from "./paletteMatch";
 import { DirPicker, pushRecentDir } from "./DirPicker";
 import { isMac } from "./platform";
@@ -286,6 +286,7 @@ export function PaneView(p: Props) {
       case "claude-skip": return "claude --dangerously-skip-permissions";
       case "grok": return "grok";
       case "grok-c": return "grok -c";
+      case "grok-resume": return "grok --resume";
     }
   };
   // v0.4.4-beta.2: connection type is the FIRST step — "regular" = SSH → bare
@@ -332,7 +333,7 @@ export function PaneView(p: Props) {
   let ncLoadSeq = 0;
   const [ncFilter, setNcFilter] = createSignal<NcFilter>("user");
   const [ncPickedSession, setNcPickedSession] = createSignal<ClaudeSessionInfo | null>(null);
-  const ncShowsList = (): boolean => ncCmd() === "from-list";
+  const ncShowsList = (): boolean => ncCmd() === "from-list" || ncCmd() === "grok-resume";
   // v0.4.4-beta.2: SMART [Connect] flow. Clicking Connect first arms the SSH
   // handle headlessly, probes for live tmux sessions, and — if any exist — pops
   // a small picker so the user can RE-ATTACH to one or open a plain terminal.
@@ -410,7 +411,8 @@ export function PaneView(p: Props) {
       // A search asks for a wider window: the daemon filters it itself
       // (`query`), the desktop returns its newest 200 and the filter below
       // narrows them.
-      const list = await backend.call<ClaudeSessionInfo[]>("pane_list_claude_sessions", {
+      const listCmd = ncCmd() === "grok-resume" ? "pane_list_grok_sessions" : "pane_list_claude_sessions";
+      const list = await backend.call<ClaudeSessionInfo[]>(listCmd, {
         workspaceId: p.workspaceId,
         limit: query ? 200 : 40,
         projectPath: folderAnchor(),
@@ -558,6 +560,7 @@ export function PaneView(p: Props) {
     if (attachOnly()) return true;
     if (ncCmd() === "custom" && !ncCustom().trim()) return false;
     if (ncCmd() === "from-list" && !ncPickedSession()) return false;
+    if (ncCmd() === "grok-resume" && !grokResumeCommand(ncPickedSession()?.session_id ?? "")) return false;
     return true;
   };
   // v0.4.4-beta.2: browse is now an INLINE view within the same modal (not a
@@ -600,6 +603,12 @@ export function PaneView(p: Props) {
       void loadNcSessions();
     }
   });
+  // Claude rows must not stay on screen after the menu moves to Grok, or the reverse.
+  createEffect(on(ncCmd, () => {
+    setNcPickedSession(null);
+    setNcSessions([]);
+    setNcSessionsLoaded(false);
+  }, { defer: true }));
   // A settled search refetches, so it reaches past the first page.
   createEffect(on(ncQuery, () => {
     if (newConnModal() && ncShowsList()) void loadNcSessions();
@@ -752,10 +761,17 @@ export function PaneView(p: Props) {
       opts.cmd = ncCustom().trim();
     } else if (c === "grok" || c === "grok-c") {
       // "cmd", not "claude": tuiSignalOnConnect arms only for claude, and
-      // Grok must not turn tui_owns_bidi on. These two strings are fixed
-      // commands, the same path a custom command already takes.
+      // Grok must not turn tui_owns_bidi on.
       opts.mode = "cmd";
       opts.cmd = c === "grok-c" ? "grok -c" : "grok";
+    } else if (c === "grok-resume") {
+      // build_smart_connect_script interpolates cmd into a shell, so an
+      // id that is not one token never becomes a command.
+      const cmd = grokResumeCommand(picked?.session_id ?? "");
+      if (cmd) {
+        opts.mode = "cmd";
+        opts.cmd = cmd;
+      }
     } else {
       opts.mode = "claude";
       if (picked) opts.claudeArgs = `--resume ${picked.session_id}`;
@@ -2079,7 +2095,7 @@ export function PaneView(p: Props) {
                       class="nc-select"
                       disabled={attachOnly()}
                       value={ncCmd()}
-                      onChange={(e) => { setNcCmd(e.currentTarget.value as ConnectCommand); setNcPickedSession(null); }}
+                      onChange={(e) => { setNcCmd(e.currentTarget.value as ConnectCommand); setNcPickedSession(null); setNcSessions([]); setNcSessionsLoaded(false); }}
                     >
                       <For each={connectCommands(p.connectAgents)}>
                         {(cmd) => <option value={cmd}>{commandLabel(cmd)}</option>}
@@ -2142,7 +2158,7 @@ export function PaneView(p: Props) {
                         </Show>
                         <Show when={!ncSessionsLoading() && !ncSessionsErr() && ncFilteredSessions().length === 0}>
                           <p class="nc-muted" role="status">
-                            {ncQuery() ? t("claude_picker.noMatch") : t("claude_picker.empty")}
+                            {ncQuery() ? t("claude_picker.noMatch") : ncCmd() === "grok-resume" ? t("claude_picker.emptyGrok") : t("claude_picker.empty")}
                           </p>
                         </Show>
                         <For each={ncFilteredSessions()}>

@@ -23,6 +23,7 @@ mod fonts;
 // Monitor panel on Local workspaces. Commands mirror the remote daemon's
 // JSON shape so `insights_fetch` can route local vs. SSH transparently.
 mod claude_usage_local;
+mod grok_sessions;
 mod insights_local;
 mod insights_store;
 mod ipc_guard;
@@ -11633,6 +11634,62 @@ async fn pane_list_claude_sessions(
     Ok(out)
 }
 
+/// Grok Build sessions for the same picker. Local reads
+/// `~/.grok/sessions`; a live SSH workspace runs the listing on the
+/// remote. A missing tree is an empty list.
+#[tauri::command]
+async fn pane_list_grok_sessions(
+    state: State<'_, AppState>,
+    workspace_id: String,
+    limit: Option<usize>,
+    project_path: Option<String>,
+) -> Result<Vec<ClaudeSessionInfo>, String> {
+    let limit = limit.unwrap_or(30).min(200);
+    let scope = project_path
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty());
+    let handle_opt = ssh_handle_for_machine(&state, &workspace_id);
+    if let Some(handle) = handle_opt {
+        let script = grok_sessions::remote_list_script(limit);
+        let opts = ExecOpts { stderr: StderrMode::Drop, ..ExecOpts::timeout_secs(8) };
+        let raw = ymux_core::ssh_exec::exec(&handle, &script, opts).await?.stdout;
+        let mut out = Vec::new();
+        for line in raw.lines() {
+            let Some(row) = grok_sessions::parse_remote_line(line) else {
+                continue;
+            };
+            if let Some(want) = scope.as_deref() {
+                if row.cwd.is_empty() || !paths_equal(&row.cwd, want) {
+                    continue;
+                }
+            }
+            out.push(grok_row_to_info(row));
+        }
+        return Ok(out);
+    }
+    let Some(home) = dirs::home_dir() else {
+        return Ok(Vec::new());
+    };
+    let root = grok_sessions::sessions_root_from_home(&home);
+    let rows = grok_sessions::list_local(&root, limit, scope.as_deref());
+    Ok(rows.into_iter().map(grok_row_to_info).collect())
+}
+
+fn grok_row_to_info(row: grok_sessions::GrokSessionRow) -> ClaudeSessionInfo {
+    ClaudeSessionInfo {
+        session_id: row.session_id,
+        project_path: row.cwd,
+        jsonl_path: row.updates_path,
+        mtime_unix: row.mtime_unix,
+        last_user: row.first_user.filter(|s| !s.is_empty()),
+        last_assistant: row.last_assistant.filter(|s| !s.is_empty()),
+        is_subagent: row.is_subagent,
+        title: row.title.filter(|s| !s.is_empty()),
+        git_branch: None,
+        model: None,
+    }
+}
+
 /// Encode an absolute path the way Claude Code names its project dirs:
 /// every non-alphanumeric character becomes `-`. Used only to NARROW a
 /// search, never to reconstruct a path — the encoding is lossy in both
@@ -13253,6 +13310,7 @@ pub fn run() {
             pane_persistence_get,
             pane_persistence_list,
             pane_list_claude_sessions,
+            pane_list_grok_sessions,
             claude_usage::claude_usage_fetch,
             pane_list_tmux_sessions,
             pane_probe_tmux_sessions,

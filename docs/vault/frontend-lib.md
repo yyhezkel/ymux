@@ -148,10 +148,11 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `pane_set_claude_running` patch the layout leaf (the daemon keeps leaf fields opaque);
   `pane_set_active` is a no-op (the desktop's only reader is the SSH ticket lookup);
   `sessions_kill_by_name` kills through a holding pane or the DELETE route;
-  `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
-  `session_context_list` read the daemon (`/api/v2/claude/sessions`,
-  `/api/v2/context/sessions`); a non-empty `query` arg becomes `q=`, so the daemon
-  filters before the limit (history search). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions`,
+  `pane_list_grok_sessions` and `session_context_list` read the daemon
+  (`/api/v2/claude/sessions`, `/api/v2/grok/sessions`, `/api/v2/context/sessions`);
+  a non-empty `query` arg becomes `q=`, so the daemon filters before the limit
+  (history search). The Grok list uses the same row shape. **Smart bidi** runs in `web/bidiFilter.ts`, a port of
   `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
   decode → filter order; `connect` sets it from `a.smartBidi`, the value `connectPane`

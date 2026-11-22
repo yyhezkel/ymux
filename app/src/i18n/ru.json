@@ -1121,6 +1121,7 @@
   "claude_picker.title": "Возобновить сессию Claude Code",
   "claude_picker.loading": "Загрузка…",
   "claude_picker.empty": "Сессии Claude Code на этом хосте не найдены.",
+  "claude_picker.emptyGrok": "Сессии Grok на этом хосте не найдены.",
   "claude_picker.noMatch": "Нет сессий, подходящих под этот поиск.",
   "claude_picker.searchLabel": "Поиск сессий по названию, папке, ветке, модели или тексту",
   "claude_picker.user_prefix": "Пользователь:",
