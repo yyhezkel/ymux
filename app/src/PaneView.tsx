@@ -6,6 +6,7 @@ import type { BoundSession, Connection, KillSessionOutcome, LayoutNode, TargetSe
 import { describeConnection, effectiveIdentity, isLocalConn, isRemoteConn, isRemoteEffective, paneCaps, profileFor } from "./types";
 import type { TerminalInstance } from "./terminalInstance";
 import { t } from "./i18n";
+import { connectCommands, type AgentId, type ConnectCommand } from "./codingAgents";
 import { matchesQuery } from "./paletteMatch";
 import { DirPicker, pushRecentDir } from "./DirPicker";
 import { isMac } from "./platform";
@@ -141,6 +142,9 @@ interface Props {
   // host no longer lists the session and a Claude id is known. Null for an
   // ordinary pane.
   boundSession?: BoundSession | null;
+  // Agents this pane's machine may launch. Computed in App from Settings
+  // plus the machine's multi_agent flag, so the menu is not a fixed list.
+  connectAgents: readonly AgentId[];
   onSetTitle: (paneId: string, title: string) => void;
   onSetAnnotation: (paneId: string, annotation: string) => void;
   ensureTerm: (paneId: string, profile: RtlProfileKind) => TerminalInstance;
@@ -271,14 +275,19 @@ export function PaneView(p: Props) {
   // combines cwd_override + claude/cmd ("cd … && claude"), so this is pure
   // UI. Attaching to an existing tmux session stays a direct action (no
   // picker) via the separate tmux path below.
-  type NcCmd =
-    | "plain"
-    | "claude"
-    | "claude-continue"
-    | "claude-resume"
-    | "claude-skip"
-    | "from-list"
-    | "custom";
+  const commandLabel = (cmd: ConnectCommand): string => {
+    switch (cmd) {
+      case "plain": return t("connect.newConn.noneShell");
+      case "from-list": return t("connect.newConn.fromList");
+      case "custom": return t("connect.newConn.custom");
+      case "claude": return "claude";
+      case "claude-continue": return "claude --continue";
+      case "claude-resume": return "claude --resume";
+      case "claude-skip": return "claude --dangerously-skip-permissions";
+      case "grok": return "grok";
+      case "grok-c": return "grok -c";
+    }
+  };
   // v0.4.4-beta.2: connection type is the FIRST step — "regular" = SSH → bare
   // shell; "tmux" = SSH → tmux new-session. Maps to the `persistent` flag
   // (regular=false, tmux=true); the command choice is orthogonal.
@@ -292,7 +301,12 @@ export function PaneView(p: Props) {
   const [ncDir, setNcDir] = createSignal("");
   // Default command is empty ("plain" = inject nothing) — the type toggle
   // decides tmux vs regular; the real commands follow in the dropdown.
-  const [ncCmd, setNcCmd] = createSignal<NcCmd>("plain");
+  const [ncCmd, setNcCmd] = createSignal<ConnectCommand>("plain");
+  // Settings or the machine flag can change while the modal is open.
+  // A command that just left the menu must not still be what Connect sends.
+  createEffect(() => {
+    if (!connectCommands(p.connectAgents).includes(ncCmd())) setNcCmd("plain");
+  });
   const [ncCustom, setNcCustom] = createSignal("");
   // v0.4.4-beta.2: the Claude-session list is shown ONLY for the dedicated
   // "choose from list" command — NOT for --resume/--continue (those are plain
@@ -736,6 +750,12 @@ export function PaneView(p: Props) {
     } else if (c === "custom") {
       opts.mode = "cmd";
       opts.cmd = ncCustom().trim();
+    } else if (c === "grok" || c === "grok-c") {
+      // "cmd", not "claude": tuiSignalOnConnect arms only for claude, and
+      // Grok must not turn tui_owns_bidi on. These two strings are fixed
+      // commands, the same path a custom command already takes.
+      opts.mode = "cmd";
+      opts.cmd = c === "grok-c" ? "grok -c" : "grok";
     } else {
       opts.mode = "claude";
       if (picked) opts.claudeArgs = `--resume ${picked.session_id}`;
@@ -2059,15 +2079,11 @@ export function PaneView(p: Props) {
                       class="nc-select"
                       disabled={attachOnly()}
                       value={ncCmd()}
-                      onChange={(e) => { setNcCmd(e.currentTarget.value as NcCmd); setNcPickedSession(null); }}
+                      onChange={(e) => { setNcCmd(e.currentTarget.value as ConnectCommand); setNcPickedSession(null); }}
                     >
-                      <option value="plain"></option>
-                      <option value="claude">claude</option>
-                      <option value="claude-continue">claude --continue</option>
-                      <option value="claude-resume">claude --resume</option>
-                      <option value="claude-skip">claude --dangerously-skip-permissions</option>
-                      <option value="from-list">{t("connect.newConn.fromList")}</option>
-                      <option value="custom">{t("connect.newConn.custom")}</option>
+                      <For each={connectCommands(p.connectAgents)}>
+                        {(cmd) => <option value={cmd}>{commandLabel(cmd)}</option>}
+                      </For>
                     </select>
                     <Show when={ncCmd() === "custom"}>
                       <input

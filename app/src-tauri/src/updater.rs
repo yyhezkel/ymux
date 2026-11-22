@@ -412,66 +412,8 @@ pub(crate) async fn check_remote_hooks(
             return;
         }
     };
-    let claude_latest = match manifest.hooks.get("claude-code") {
-        Some(h) => h.version.clone(),
-        None => return,
-    };
-
-    // 2. Ask the remote what `ymux_meta.hooks_version` is in
-    //    ~/.claude/settings.json. `jq` does the lookup cleanly; we
-    //    fall back to grep for hosts without jq.
-    let cmd = "if [ -f \"$HOME/.claude/settings.json\" ]; then \
-               if command -v jq >/dev/null; then \
-                 jq -r '.ymux_meta.hooks_version // \"none\"' \"$HOME/.claude/settings.json\" 2>/dev/null; \
-               else \
-                 grep -oE '\"hooks_version\"\\s*:\\s*\"[^\"]+\"' \"$HOME/.claude/settings.json\" 2>/dev/null \
-                   | head -1 | sed -E 's/.*\"([^\"]+)\"$/\\1/'; \
-               fi; \
-             else echo MISSING; fi";
-    let current = match ssh_exec_simple(handle, cmd).await {
-        Ok(s) => s.trim().to_string(),
-        Err(e) => {
-            log_warn("UPDATER", &format!("hooks-check: remote read failed: {e}"));
-            return;
-        }
-    };
-    let current_opt: Option<String> = match current.as_str() {
-        "" | "MISSING" | "none" | "null" => None,
-        other => Some(other.to_string()),
-    };
-
-    // 3. Compare. None → hooks never installed (caller may want
-    //    "install now" prompt later; for outdated banner we skip).
-    //    Older → emit. Same/newer → no-op.
-    let need_banner = match &current_opt {
-        Some(cur) => matches!(cmp_versions(&claude_latest, cur), std::cmp::Ordering::Greater),
-        None => false,
-    };
-    if !need_banner {
-        log_debug("UPDATER", &format!(
-            "hooks-check: workspace={workspace_id} agent=claude-code current={current_opt:?} latest={claude_latest} → up-to-date or missing"
-        ));
-        return;
-    }
-
-    // 4. Honor the user's dismissed list.
-    let dismissed = state
-        .settings
-        .lock()
-        .ok()
-        .and_then(|s| {
-            s.hooks_updates
-                .dismissed
-                .get("claude-code")
-                .cloned()
-        })
-        .unwrap_or_default();
-    if dismissed.contains(&claude_latest) {
-        log_debug("UPDATER", &format!(
-            "hooks-check: workspace={workspace_id} claude-code v{claude_latest} silently dismissed"
-        ));
-        return;
-    }
+    // One banner at a time. Claude first, then Grok, so a box that is
+    // behind on both is told about Claude and the next check catches Grok.
     let show_banners = state
         .settings
         .lock()
@@ -481,15 +423,70 @@ pub(crate) async fn check_remote_hooks(
     if !show_banners {
         return;
     }
-
-    let info = HooksOutdatedInfo {
-        workspace_id: workspace_id.to_string(),
-        pane_id: pane_id.to_string(),
-        agent: "claude-code".to_string(),
-        current: current_opt,
-        latest: claude_latest,
-    };
-    let _ = app.emit("hooks:outdated", &info);
+    let probes = [
+        ("claude-code", "\"$HOME/.claude/settings.json\""),
+        ("grok", "\"$HOME/.grok/hooks/ymux.json\""),
+    ];
+    for (agent, path) in probes {
+        let Some(latest) = manifest.hooks.get(agent).map(|h| h.version.clone()) else {
+            continue;
+        };
+        // `jq` does the lookup cleanly; grep covers hosts without it.
+        let cmd = format!(
+            "if [ -f {path} ]; then \
+               if command -v jq >/dev/null; then \
+                 jq -r '.ymux_meta.hooks_version // \"none\"' {path} 2>/dev/null; \
+               else \
+                 grep -oE '\"hooks_version\"\\s*:\\s*\"[^\"]+\"' {path} 2>/dev/null \
+                   | head -1 | sed -E 's/.*\"([^\"]+)\"$/\\1/'; \
+               fi; \
+             else echo MISSING; fi"
+        );
+        let current = match ssh_exec_simple(handle, &cmd).await {
+            Ok(s) => s.trim().to_string(),
+            Err(e) => {
+                log_warn("UPDATER", &format!("hooks-check: remote read failed: {e}"));
+                continue;
+            }
+        };
+        let current_opt: Option<String> = match current.as_str() {
+            "" | "MISSING" | "none" | "null" => None,
+            other => Some(other.to_string()),
+        };
+        // None → hooks never installed. The banner is for an upgrade, not
+        // a first install. Older → emit. Same or newer → next agent.
+        let need_banner = match &current_opt {
+            Some(cur) => matches!(cmp_versions(&latest, cur), std::cmp::Ordering::Greater),
+            None => false,
+        };
+        if !need_banner {
+            log_debug("UPDATER", &format!(
+                "hooks-check: workspace={workspace_id} agent={agent} current={current_opt:?} latest={latest} → up-to-date or missing"
+            ));
+            continue;
+        }
+        let dismissed = state
+            .settings
+            .lock()
+            .ok()
+            .and_then(|s| s.hooks_updates.dismissed.get(agent).cloned())
+            .unwrap_or_default();
+        if dismissed.contains(&latest) {
+            log_debug("UPDATER", &format!(
+                "hooks-check: workspace={workspace_id} {agent} v{latest} silently dismissed"
+            ));
+            continue;
+        }
+        let info = HooksOutdatedInfo {
+            workspace_id: workspace_id.to_string(),
+            pane_id: pane_id.to_string(),
+            agent: agent.to_string(),
+            current: current_opt,
+            latest,
+        };
+        let _ = app.emit("hooks:outdated", &info);
+        return;
+    }
 }
 
 /// Phase 18: run an arbitrary shell command in a workspace's active

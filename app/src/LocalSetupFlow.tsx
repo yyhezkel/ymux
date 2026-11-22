@@ -6,7 +6,7 @@ import { IconClose, IconCheck, IconCircle } from "./icons";
 import type { ProvisioningError, StepProgress, RunHandle } from "./provisioningTypes";
 
 // Phase 80 (unified setup wizard): "local → new" — the smart local setup
-// flow. Detects what's installed (git/node/Claude Code/codex/gemini plus
+// flow. Detects what's installed (git/node/Claude Code/Grok Build/codex/gemini plus
 // the platform's multiplexer), offers to install what's missing (winget /
 // Homebrew / official installers / npm -g), installs ymux hooks for local
 // Claude Code, and finishes by creating a local workspace to land in.
@@ -44,7 +44,7 @@ interface Props {
 // standalone script on both platforms.
 const TOOL_ROWS: {
   step: string;
-  tool: keyof Pick<LocalSetupInspect, "git" | "node" | "claude" | "codex" | "gemini" | "zellij">;
+  tool: keyof Pick<LocalSetupInspect, "git" | "node" | "claude" | "grok" | "codex" | "gemini" | "zellij">;
   needsWinget: boolean;
   needsNode: boolean;
 }[] = [
@@ -55,6 +55,7 @@ const TOOL_ROWS: {
   { step: "InstallGit", tool: "git", needsWinget: true, needsNode: false },
   { step: "InstallNodejs", tool: "node", needsWinget: true, needsNode: false },
   { step: "InstallClaudeCode", tool: "claude", needsWinget: false, needsNode: false },
+  { step: "InstallGrok", tool: "grok", needsWinget: false, needsNode: false },
   { step: "InstallCodex", tool: "codex", needsWinget: false, needsNode: true },
   { step: "InstallGemini", tool: "gemini", needsWinget: false, needsNode: true },
 ];
@@ -64,6 +65,14 @@ const TOOL_ROWS: {
 // then a plain local workspace. Same skip rule the WSL chain used — the flow
 // only sends what the inspect says is missing.
 const MAC_CHAIN = ["InstallTmuxLocal", "DeployTmuxConfLocal"] as const;
+
+function hooksVersionLine(r: LocalSetupInspect): string {
+  const bits: string[] = [];
+  if (r.local_hooks_version) bits.push(`claude v${r.local_hooks_version}`);
+  if (r.grok_hooks_version) bits.push(`grok v${r.grok_hooks_version}`);
+  if (bits.length === 0) return t("localSetup.status.missing");
+  return `${t("localSetup.status.detected")} · ${bits.join(" · ")}`;
+}
 
 export function LocalSetupFlow(p: Props) {
   type FlowStep = "inspect" | "execute" | "done";
@@ -149,7 +158,13 @@ export function LocalSetupFlow(p: Props) {
       setCheckedTools(pre);
       // Hooks only make sense when Claude Code exists or is being installed.
       // On mac the checkbox is hidden (no bundled CLI yet) — never send it.
-      setInstallLocalHooks(!mac && (r.claude.present || pre.has("InstallClaudeCode")));
+      setInstallLocalHooks(
+        !mac &&
+          (r.claude.present ||
+            r.grok.present ||
+            pre.has("InstallClaudeCode") ||
+            pre.has("InstallGrok")),
+      );
       // mac: tmux comes from Homebrew, so without brew AND without tmux
       // the chain is guaranteed to fail — start it unchecked (and the
       // group checkbox is disabled below) instead of failing mid-run.
@@ -325,16 +340,19 @@ export function LocalSetupFlow(p: Props) {
                     <input
                       type="checkbox"
                       checked={installLocalHooks()}
-                      disabled={!r().claude.present && !checkedTools().has("InstallClaudeCode")}
+                      disabled={
+                        !r().claude.present &&
+                        !r().grok.present &&
+                        !checkedTools().has("InstallClaudeCode") &&
+                        !checkedTools().has("InstallGrok")
+                      }
                       onChange={() => setInstallLocalHooks(!installLocalHooks())}
                     />
                     <span>
                       {t("localSetup.step.InstallLocalHooks")}
                       <span class="provisioning-mode-hint">
                         {" — "}
-                        {r().local_hooks_version
-                          ? `${t("localSetup.status.detected")} · v${r().local_hooks_version}`
-                          : t("localSetup.status.missing")}
+                        {hooksVersionLine(r())}
                       </span>
                     </span>
                   </label>

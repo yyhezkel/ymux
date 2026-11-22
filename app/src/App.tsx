@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
+import { effectiveAgentsForWorkspace } from "./codingAgents";
 import { backend, type Capability, type UnlistenFn } from "./backend";
 import { Sidebar } from "./Sidebar";
 import { CreateWorkspaceModal } from "./CreateWorkspaceModal";
@@ -843,7 +844,9 @@ function App() {
       // reaches the catch below, so the toast cannot claim success.
       await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
-        cmd: '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
+        cmd: b.agent === "grok"
+          ? '"$HOME/.ymux/bin/ymux" setup-hooks --agent grok --force --source github'
+          : '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
       });
       flashSummaryToast("ok", t("hooks_update.toast_done", { version: b.latest }));
       setHooksBanner(null);
@@ -5323,6 +5326,11 @@ function App() {
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}
                     boundSessions={boundSessions()}
+                    connectAgents={effectiveAgentsForWorkspace(
+                      settings()?.coding_agents,
+                      file().workspaces,
+                      activeWs()!.id,
+                    )}
                     ensureTerm={ensureTerm}
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}

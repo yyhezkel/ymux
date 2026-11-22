@@ -17,6 +17,7 @@ import {
   type DirectionPolicy,
 } from "./terminalInstance";
 import type { RtlProfileKind } from "./types";
+import type { CodingAgentsSettings } from "./codingAgents.ts";
 import type { ITheme } from "@xterm/xterm";
 
 export interface AnsiPalette {
@@ -373,6 +374,9 @@ export interface Settings {
   // every session on the server; "local" = only sessions this machine
   // created (origin-less sessions stay visible — fail-open).
   session_visibility?: SessionVisibility;
+  // Which agents the connect wizard offers. Backend defaults to Claude
+  // on, Grok off. Round-trip it: settings_save replaces the document.
+  coding_agents?: CodingAgentsSettings;
 }
 
 // Phase 81: multi-machine session picker scope.

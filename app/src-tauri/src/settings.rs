@@ -1173,10 +1173,49 @@ pub(crate) struct Settings {
     /// String (not an enum) per the sidebar_mode / theme_mode pattern.
     #[serde(default = "default_session_visibility")]
     pub session_visibility: String,
+    /// Which agents the connect wizard may offer. Missing on an old
+    /// settings.json means Claude on, Grok off, default Claude — the
+    /// install the user already has. Not part of `hooks`: that block is
+    /// the policy engine, and these marks are manual.
+    #[serde(default)]
+    pub coding_agents: CodingAgents,
 }
 
 fn default_session_visibility() -> String {
     "shared".to_string()
+}
+
+fn default_coding_agent() -> String {
+    "claude".to_string()
+}
+
+/// Connect-wizard agents. `default_agent` is the wire key `default`
+/// (`default` is a Rust keyword). A String, not an enum, matching
+/// `session_visibility` / `theme_mode`.
+#[derive(Clone, Serialize, Deserialize, Debug, PartialEq, Eq, ts_rs::TS)]
+#[ts(export, export_to = "../../src/bindings/")]
+pub(crate) struct CodingAgents {
+    /// Shown in the connect wizard. Default on, so an existing install
+    /// still offers Claude.
+    #[serde(default = "default_true")]
+    pub claude: bool,
+    /// Opt-in. Default off, so a settings.json from before Grok was a
+    /// connect target does not grow a second agent button.
+    #[serde(default)]
+    pub grok: bool,
+    /// Which agent a single-agent server offers. "claude" or "grok".
+    #[serde(rename = "default", default = "default_coding_agent")]
+    pub default_agent: String,
+}
+
+impl Default for CodingAgents {
+    fn default() -> Self {
+        Self {
+            claude: true,
+            grok: false,
+            default_agent: default_coding_agent(),
+        }
+    }
 }
 
 fn default_sidebar_mode() -> String {
@@ -1504,6 +1543,7 @@ impl Default for Settings {
             hook_notifications: HookSettings::default(),
             theme_mode: default_theme_mode(),
             session_visibility: default_session_visibility(),
+            coding_agents: CodingAgents::default(),
         }
     }
 }
@@ -2775,8 +2815,8 @@ mod font_tests {
 #[cfg(test)]
 mod tests {
     use super::{
-        migrate_rtl_profiles, migrate_settings, BriefOptions, HookType, MigrationFlags, RtlProfile,
-        RtlProfiles, Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
+        migrate_rtl_profiles, migrate_settings, BriefOptions, CodingAgents, HookType, MigrationFlags,
+        RtlProfile, RtlProfiles, Settings, TerminalSettings, DEFAULT_MANIFEST_URL,
     };
 
     #[test]
@@ -3102,5 +3142,21 @@ mod tests {
         let t: TerminalSettings = serde_json::from_str(json).unwrap();
         assert!(t.rtl.is_none());
         assert_eq!(t.rtl_mode, "off");
+    }
+
+    #[test]
+    fn coding_agents_missing_means_claude_only() {
+        let c: CodingAgents = serde_json::from_str("{}").unwrap();
+        assert!(c.claude);
+        assert!(!c.grok);
+        assert_eq!(c.default_agent, "claude");
+        let off: CodingAgents =
+            serde_json::from_str(r#"{"claude":false,"grok":false,"default":"grok"}"#).unwrap();
+        assert!(!off.claude);
+        assert!(!off.grok);
+        assert_eq!(off.default_agent, "grok");
+        let wire = serde_json::to_value(CodingAgents::default()).unwrap();
+        assert_eq!(wire["default"], "claude");
+        assert!(wire.get("default_agent").is_none());
     }
 }

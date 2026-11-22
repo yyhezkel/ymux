@@ -55,6 +55,8 @@ and round-tripped by SettingsModal's General tab — the settings_save
 whole-document replace makes that mirror mandatory, per the `terminal.rtl`
 incident.
 
+**`CodingAgents`** is not part of `hooks`. `claude` defaults true via `default_true`, `grok` defaults false, and the wire key is `default` (Rust field `default_agent`, because `default` is a keyword). A missing group on an old `settings.json` means Claude on, Grok off, default Claude. Mirrored as `coding_agents?` in `app/src/settings.ts` and round-tripped by SettingsModal's AI tab, which spreads `DEFAULT_CODING_AGENTS` and then the stored group before `update()` — the same whole-document rule as Brief. The connect wizard reads this group. It does not probe which binaries are installed on the server.
+
 **`Shortcuts` is the one struct with container-level `#[serde(default)]`.** It carries
 33 accelerator fields (28 as of Phase 87 — it was 8, the rest were hardcoded in the
 frontend — plus BRIEF's `toggle_queue` Ctrl+Shift+Q and `show_briefing`
@@ -134,6 +136,22 @@ persistence group **only on macOS** — on Windows zellij is an ordinary tool ro
 group would offer the same install twice.
 `LocalSetupResult.persistence_chain_ok` (was `wsl_chain_ok`) reports whether that chain succeeded; the ts-rs binding mirrors the name.
 
+Grok Build is probed and installed here, next to Claude. `canonical_grok` looks at
+`~/.grok/bin/grok` (Windows: `%USERPROFILE%\.grok\bin\grok.exe`), which is the
+official installer's default, then the usual PATH dirs and, on Windows,
+`%USERPROFILE%\.local\bin\grok.exe`. `InstallGrok` runs
+`curl -fsSL https://x.ai/cli/install.sh | bash` on unix and
+`irm https://x.ai/cli/install.ps1 | iex` on Windows. Like Claude, a non-zero
+installer exit still succeeds when that binary is already on disk. `InstallLocalHooks`
+runs `setup-hooks --agent claude` and `--agent grok`, both `--source bundled`.
+On Windows that arm sits inside `run_local_setup`, which returns `()`, so a
+failed agent is the match arm's `Err` (the loop stops). A `return Err` from
+there does not type-check and would abandon the wizard. The macOS arm lives
+in `run_step_unix`, which does return `Result`, so it may `return`.
+`grok_hooks_version` is read from `~/.grok/hooks/ymux.json`. The kept
+`InstallHooksInWsl` script runs both agents too. There is no separate WSL install
+step for Grok.
+
 ## `local_wizard.rs` (439) — the two small local affordances
 
 1. `detect_local_shells()` — what is actually installed, labelled. Windows: PowerShell 7,
@@ -169,6 +187,13 @@ seconds:
 `ssh_handle_for_machine`) has 120 s because it hits
 GitHub from the server. It and `ssh_exec_simple` (6 s, hooks check and session labels)
 return `Err` on anything but a clean exit, so the toast and the logs tell the truth.
+
+`check_remote_hooks` probes Claude (`~/.claude/settings.json`, manifest key
+`claude-code`) and then Grok (`~/.grok/hooks/ymux.json`, key `grok`). Banners off
+returns before either probe. A missing manifest key, a missing file, or a version
+of `none` / `null` is not a banner. The first older version that was not dismissed
+emits one `hooks:outdated` and returns. Dismiss is per agent key, so a dismissed
+Claude version still lets the Grok probe run. A missing install is not a banner.
 
 The manifest URL is `settings.updates.manifest_url`, switchable without recompiling, and
 a failed fetch is **silent and never blocks startup**.

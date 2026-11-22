@@ -449,7 +449,10 @@ pub async fn bootstrap(
 /// when `~/.claude` is absent — the adapter reports "not detected". We do
 /// NOT pass `--force`, so a user's hand-edited matcher is never clobbered.
 async fn ensure_hooks_installed(handle: &mut Handle<SshClient>, symlink_abs: &str) {
-    let cmd = format!("{symlink_abs} setup-hooks --agent claude --source bundled 2>&1 || true");
+    let cmd = format!(
+        "{symlink_abs} setup-hooks --agent claude --source bundled 2>&1 || true; \
+         {symlink_abs} setup-hooks --agent grok --source bundled 2>&1 || true"
+    );
     match ssh_exec(handle, &cmd).await {
         Ok((out, code)) => {
             // Log only the final status line (e.g. "Done. …") — never the

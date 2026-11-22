@@ -59,7 +59,8 @@ It also records whether the remote CLI actually matches the embedded binary. Liv
 
 Takes a fresh box beyond "create a workspace": inspect the remote (OS, package manager,
 disk), then apply a profile of steps — update, install basics, create user, deploy SSH
-key, harden sshd, install language runtimes, install Claude Code, run `ymux setup-hooks`.
+key, harden sshd, install language runtimes, install Claude Code and (on the
+`all-agents` profile) Grok Build, run `ymux setup-hooks` for both.
 
 - Progress streams to the frontend as `provisioning:progress` events, which is what
   makes the wizard's live log feel native.
@@ -76,6 +77,8 @@ key, harden sshd, install language runtimes, install Claude Code, run `ymux setu
   password is never persisted (the old write-only `provisioning-secrets.json` was
   deleted); it lives in memory for the run only.
 - **Join-existing finalize builds a header + screen.** `finalize_workspace` Branch 2 calls `provisioned_root` → `create_root_with_screen` (layout-less root, active `shell` screen), not a root with a layout; the returned/emitted `workspace_id` is the ROOT id.
+- **`InstallGrok`** is in the step catalog and in `all-agents` (after Claude, before Codex). `default` and `hardened` stay Claude-only. The remote command is `sudo -u <user> bash -lc 'curl -fsSL https://x.ai/cli/install.sh | bash'`; the user is `shell_escape`d. The official binary lands at `~/.grok/bin/grok`. Node is not required. `load_profiles_from_disk` only inserts a built-in profile whose id is missing, so an `all-agents` profile already saved on disk keeps its old step list.
+- **`SetupYmuxHooks`** runs `ymux setup-hooks --agent claude` and `--agent grok`, each `|| true`, when `ymux` is on `PATH`.
 
 **This is the file where Rule #3 (argv arrays, never string concatenation) is enforced
 most often.** It and `local_setup.rs` are the two paths that build remote commands from
@@ -97,7 +100,11 @@ Built-ins dispatch to the **remote shell / remote CLI**, not back into the Rust
 bootstrap, so the connect-time bootstrap stays the single owner of the CLI + tmux.conf
 upload — those appear here as detect-only / "managed on connect". Hooks are fully
 manageable through the remote `ymux setup-hooks`; `insights` ships its own
-`ymux insights install` subcommand.
+`ymux insights install` subcommand. Detect reads `ymux_meta.hooks_version` from
+`~/.claude/settings.json` and, if that file has none, from `~/.grok/hooks/ymux.json`.
+Install runs `--agent claude` and `--agent grok`, both `--source bundled --force`.
+Uninstall strips ymux/winmux entries from Claude's `settings.json` and `hooks.json`
+and from `~/.grok/hooks/ymux.json`.
 
 `insights_fetch` lives here and is the **remote-vs-local routing decision** for the
 Insights panel — the frontend does not make it. Shared helpers `exec`, `exec_stdin`,

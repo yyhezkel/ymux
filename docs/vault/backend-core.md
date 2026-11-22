@@ -262,7 +262,7 @@ task that idles unless a Local workspace exists; details in `backend-claude.md`.
 
 ## Spawning a shell
 
-`pane_connect` ([pane_connect@lib.rs:9351](../../app/src-tauri/src/lib.rs)) is the front door and takes
+`pane_connect` ([pane_connect@lib.rs:9382](../../app/src-tauri/src/lib.rs)) is the front door and takes
 a wide argument list because every connection mode funnels through it: `persistent`,
 `mode` (`default | tmux | plain | cmd | claude`), `cwd_override`, `cmd`, `claude_args`, `smart_bidi`,
 `tmux_session_name`, plus the credential arguments.
@@ -511,7 +511,16 @@ list command. The module owns what the picker never needed:
   path does not apply — a plain screen from `screen_under` (connection, cwd,
   setup/teardown/env/auto_port_forward/claude_separate_account cloned off the header,
   because the runtime resolves those BY PANE), name made unique with
-  `unique_sibling_name`; `workspace_open_worktree` lost its "repo root → activate the root"
+  `unique_sibling_name`. `screen_under` then fills the rest with `..Default::default()`,
+  so a new screen does **not** inherit `multi_agent`; the flag stays on the machine and
+  the wizard walks ancestors to find it. **`workspace_set_multi_agent`** is the dedicated
+  writer (same shape as `workspace_set_claude_separate_account`, not a field on
+  `workspace_update`). It refuses anything that is not a machine header — `!is_header`
+  or `is_folder` or `is_project_root` returns before the mutate, with
+  "multi_agent belongs on the machine, not on a folder or a screen". `false` is elided
+  and `WORKSPACES_SCHEMA_VERSION` stays 4: an older build that drops a `true` just
+  offers one agent. The connect wizard treats a chain with no machine ancestor as
+  `multi_agent` false. `workspace_open_worktree` lost its "repo root → activate the root"
   early return (the folder's shell has that cwd, so the `(parent, cwd)` idempotency finds
   it — that match is `paths_equal`, not `==`, since 91.H: a byte compare of git's `C:/…`
   against the stored `C:\…` created a duplicate row on every click on Windows);

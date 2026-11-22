@@ -48,6 +48,9 @@ pub(crate) enum StepKind {
     /// (`curl … | bash`) is npm-agnostic — Anthropic ships a static
     /// binary launcher — and it's the version they want users on.
     InstallClaudeCode,
+    /// Grok Build (`curl https://x.ai/cli/install.sh | bash`). Same shape
+    /// as Claude Code: a static launcher, no Node.js prerequisite.
+    InstallGrok,
     /// New in Phase 14.A.2: Codex CLI (`npm i -g @openai/codex`).
     /// Needs Node.js — the step will fail with a clear hint if
     /// `npm` isn't on PATH yet.
@@ -80,6 +83,7 @@ impl StepKind {
             StepKind::InstallPython => "Install Python 3 + pip + venv",
             StepKind::InstallDocker => "Install Docker (official repo)",
             StepKind::InstallClaudeCode => "Install Claude Code (Anthropic, curl installer)",
+            StepKind::InstallGrok => "Install Grok Build (xAI, curl installer)",
             StepKind::InstallCodex => "Install Codex CLI (OpenAI, npm)",
             StepKind::InstallGemini => "Install Gemini CLI (Google, npm)",
             StepKind::AddYmuxToPath => "Add ymux to PATH (~/.bashrc or equivalent)",
@@ -162,7 +166,7 @@ pub(crate) fn default_profiles() -> Vec<ProvisioningProfile> {
         },
         ProvisioningProfile {
             id: "all-agents".into(),
-            label: "All agents — Claude Code + Codex + Gemini".into(),
+            label: "All agents — Claude Code + Grok Build + Codex + Gemini".into(),
             steps: vec![
                 StepKind::UpdatePackages,
                 StepKind::InstallBasics,
@@ -171,9 +175,10 @@ pub(crate) fn default_profiles() -> Vec<ProvisioningProfile> {
                 StepKind::DeployPubkey,
                 StepKind::TestNewKey,
                 // Codex + Gemini both ship via npm; Node.js must be on
-                // PATH first.
+                // PATH first. Claude Code and Grok Build do not need it.
                 StepKind::InstallNodejs,
                 StepKind::InstallClaudeCode,
+                StepKind::InstallGrok,
                 StepKind::InstallCodex,
                 StepKind::InstallGemini,
                 StepKind::AddYmuxToPath,
@@ -748,6 +753,18 @@ async fn run_provisioning(
                            sudo usermod -aG docker $(whoami)";
                 run_step(&mut handle, &app, &run_id, idx, kind, cmd).await
             }
+            StepKind::InstallGrok => {
+                // Official xAI installer (https://x.ai/cli/install.sh).
+                // Self-contained, same shape as Claude Code. Runs as the
+                // new user so `~/.grok/bin/grok` lands in the right home.
+                let u = shell_escape(&input.new_user);
+                let cmd = format!(
+                    "sudo -u {u} bash -lc 'curl -fsSL https://x.ai/cli/install.sh | bash' && \
+                     echo '✓ Grok Build installed. Run `grok` on the server to authenticate (browser-based) \
+                     or set XAI_API_KEY for headless mode.'"
+                );
+                run_step(&mut handle, &app, &run_id, idx, kind, &cmd).await
+            }
             StepKind::InstallClaudeCode => {
                 // Official Anthropic installer (https://claude.ai/install.sh).
                 // Self-contained — no npm prerequisite. Runs as the new
@@ -840,7 +857,7 @@ async fn run_provisioning(
                 // Best-effort — ymux CLI on remote is bootstrapped on
                 // first SSH connection from the desktop app, so it may
                 // not be there yet. Wrap in `command -v`.
-                let cmd = "if command -v ymux >/dev/null; then ymux setup-hooks --agent claude || true; else echo 'ymux CLI not yet bootstrapped — connect once to install, then re-run'; fi";
+                let cmd = "if command -v ymux >/dev/null; then ymux setup-hooks --agent claude || true; ymux setup-hooks --agent grok || true; else echo 'ymux CLI not yet bootstrapped — connect once to install, then re-run'; fi";
                 run_step(&mut handle, &app, &run_id, idx, kind, cmd).await
             }
         };
@@ -1726,6 +1743,7 @@ pub(crate) fn provisioning_step_catalog() -> Vec<(String, String)> {
         StepKind::InstallPython,
         StepKind::InstallDocker,
         StepKind::InstallClaudeCode,
+        StepKind::InstallGrok,
         StepKind::InstallCodex,
         StepKind::InstallGemini,
         StepKind::AddYmuxToPath,

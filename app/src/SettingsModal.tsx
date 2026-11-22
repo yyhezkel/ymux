@@ -33,6 +33,7 @@ import {
   type RtlProfileFields,
 } from "./settings";
 import { applyI18nSettings, LANGUAGES, t } from "./i18n";
+import { DEFAULT_CODING_AGENTS, type CodingAgentsSettings } from "./codingAgents";
 import { isFontAvailableAsync } from "./fontProbe";
 import { isWindows } from "./platform";
 import { IconChevronDown, IconChevronRight, IconRefreshCcw } from "./icons";
@@ -520,6 +521,13 @@ export function SettingsModal(p: Props) {
 
   const update = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     queueSave({ ...p.settings, [k]: v });
+
+  const agents = (): CodingAgentsSettings => ({
+    ...DEFAULT_CODING_AGENTS,
+    ...p.settings.coding_agents,
+  });
+  const setAgents = (patch: Partial<CodingAgentsSettings>) =>
+    update("coding_agents", { ...agents(), ...patch });
 
   const setTheme = (patch: Partial<Settings["theme"]>) => {
     const next = { ...p.settings, theme: { ...p.settings.theme, ...patch, preset: "custom" } };
@@ -1583,6 +1591,38 @@ export function SettingsModal(p: Props) {
               </Show>
 
               <Show when={tab() === "ai"}>
+                <section>
+                  <h4>{t("settings.agents.title")}</h4>
+                  <p class="settings-hint">{t("settings.agents.hint")}</p>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={agents().claude}
+                      onChange={(e) => setAgents({ claude: e.currentTarget.checked })}
+                    />
+                    <span>{t("settings.agents.claude")}</span>
+                  </label>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={agents().grok}
+                      onChange={(e) => setAgents({ grok: e.currentTarget.checked })}
+                    />
+                    <span>{t("settings.agents.grok")}</span>
+                  </label>
+                  <Show when={agents().claude && agents().grok}>
+                    <label>
+                      <span>{t("settings.agents.default")}</span>
+                      <select
+                        value={agents().default === "grok" ? "grok" : "claude"}
+                        onChange={(e) => setAgents({ default: e.currentTarget.value })}
+                      >
+                        <option value="claude">{t("settings.agents.claude")}</option>
+                        <option value="grok">{t("settings.agents.grok")}</option>
+                      </select>
+                    </label>
+                  </Show>
+                </section>
                 <section>
                   <h4>{t("settings.claude.title")}</h4>
                   <label class="settings-checkbox">

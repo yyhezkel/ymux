@@ -8119,6 +8119,36 @@ async fn workspace_set_claude_separate_account(
     Ok(updated)
 }
 
+/// One machine, more than one agent. The connect wizard reads this off
+/// the machine header only: a folder or a screen has no flag of its own.
+#[tauri::command]
+async fn workspace_set_multi_agent(
+    state: State<'_, AppState>,
+    app: AppHandle,
+    workspace_id: String,
+    enabled: bool,
+) -> Result<Workspace, String> {
+    let updated: Workspace;
+    {
+        let mut file = state.workspaces.lock().map_err(|e| e.to_string())?;
+        let ws = file
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+            .ok_or_else(|| format!("no workspace {workspace_id}"))?;
+        if !is_header(ws) || ws.is_folder || ws.is_project_root {
+            return Err(
+                "multi_agent belongs on the machine, not on a folder or a screen".to_string(),
+            );
+        }
+        ws.multi_agent = enabled;
+        updated = ws.clone();
+    }
+    persist(&state)?;
+    let _ = app.emit("workspaces:changed", ());
+    Ok(updated)
+}
+
 /// Phase 47: try to start the workspace's port-watcher. Best-effort —
 /// returns silently (with a dlog) when no pane-backed SSH session has
 /// set up a reverse tunnel yet (headless connect from Phase 41 doesn't
@@ -13158,6 +13188,7 @@ pub fn run() {
             workspace_swap_panes,
             workspace_set_auto_port_forward,
             workspace_set_claude_separate_account,
+            workspace_set_multi_agent,
             port_forward_stop,
             forward_port_start,
             workspace_ensure_port_watcher,
