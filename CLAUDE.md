@@ -146,8 +146,9 @@ rebake without a local Go toolchain (Rule #17): download the
 `ymux-server-linux` artifact from the ci-windows run **of the final commit
 you will merge** (after any merge of `main`), drop both files into
 `app/src-tauri/resources/`, and commit them. A blob from either side of a
-merge fails the gate. To bump Go: change the `toolchain` line and rebake in
-the same commit. Manual build commands live in `docs/ymux-server/README.md`
+merge fails the gate. `scripts/rebake-server.sh [run-id]` does the download
+and the commit; it refuses a run that did not build HEAD. To bump Go: change
+the `toolchain` line and rebake in the same commit. Manual build commands live in `docs/ymux-server/README.md`
 § Build.
 
 ## Communication
