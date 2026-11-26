@@ -474,6 +474,11 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Context:** Grok Build installs and drives the same hook gate as Claude. Its sessions are directories of `updates.jsonl`, not Claude jsonl. The statusline under `ymux-tools/statuslines/` stays as it is.
 - **Decision:** A second, small parser. The connect wizard's `grok-resume` lists `~/.grok/sessions` and launches `grok --resume <id>` as `mode: cmd`, and only when the id is one shell token. The daemon transcript route reads `updates.jsonl` when no Claude file exists, and history resume uses `grok --resume` in that same case. Hibernation resume stays Claude. The cost tab folds cumulative `turn_completed` usage into the existing token report on both the daemon and the local mirror. Prices stay in `claudePricing.ts`; an unknown model shows tokens and usd 0. No `rtl_bidi`.
 - **Outcome:** branch `feat/grok-sessions`. Live smoke still open (Rule #14).
+### 2026-11-26 — Server-blob gate is now a byte-compare
+- **Context:** the ci-windows gate only checked that `resources/ymux-server-linux-{x64,arm64}` changed in the diff. A merge that keeps one side's blob passes it and ships a server without the other side's Go changes. PR #110 hit that conflict. It was rebaked correctly, but by hand.
+- **Why the old comment rejected a byte-compare:** setup-go floated `go 1.26` to the newest patch, and the blob carried `vcs.revision`, so it could never equal a build of its own commit.
+- **Decision:** `go.mod` pins `toolchain go1.26.10`, and a CI step asserts `go env GOVERSION` against it. The build adds `-buildvcs=false`. The gate runs `cmp` on both blobs against the build of the same commit, on every event.
+- **Cost:** every merge of `main` into a branch that changes the server needs a fresh rebake from the CI run of the merged commit. A Go bump is a `toolchain` edit plus a rebake.
 
 ### 2026-11-18 — Compact Grok's TUI, and a manual agent list
 - **Context:** Grok's welcome chrome eats the pane. Alt-screen also drops under Zellij and tmux control mode. The connect wizard still hardcoded Claude, including an empty "launch Claude Code" row.

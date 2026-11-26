@@ -2,6 +2,8 @@ module ymux-server
 
 go 1.26
 
+toolchain go1.26.10
+
 require (
 	github.com/danielgtaylor/huma/v2 v2.38.0
 	github.com/google/uuid v1.6.0
