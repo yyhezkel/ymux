@@ -8110,3 +8110,4 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 
 [2026-11-26] PR #110: merge main after #119
   Task: merged origin/main 499d8934 (Grok sessions). Only PROGRESS/DECISIONS/vault lock conflicted; union + re-stamp. Rebake from this commit's CI run follows.
+  Rebake: copied the ymux-server-linux artifact of run 45819387818 (built from b71dbc47).
