@@ -164,6 +164,15 @@ impl Agg {
 /// Scan the transcript tree for one window. A missing root is an empty report;
 /// any other failure to read it is an error (same policy as the Go scanner).
 pub fn scan(root: &Path, since: i64, until: i64) -> Result<ClaudeUsageReport, String> {
+    scan_inner(root, None, since, until)
+}
+
+fn scan_inner(
+    root: &Path,
+    grok_root: Option<&Path>,
+    since: i64,
+    until: i64,
+) -> Result<ClaudeUsageReport, String> {
     let t0 = std::time::Instant::now();
     let mut rep = ClaudeUsageReport {
         since,
@@ -195,6 +204,18 @@ pub fn scan(root: &Path, since: i64, until: i64) -> Result<ClaudeUsageReport, St
     let dirs_iter = match std::fs::read_dir(root) {
         Ok(d) => d,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            if let Some(grok_root) = grok_root {
+                scan_grok_sessions(
+                    grok_root,
+                    since,
+                    until,
+                    &mut rep,
+                    &mut buckets,
+                    &mut by_model,
+                    &mut by_project,
+                    &mut by_session,
+                );
+            }
             return Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0));
         }
         Err(e) => return Err(format!("read claude projects dir: {e}")),
@@ -254,7 +275,244 @@ pub fn scan(root: &Path, since: i64, until: i64) -> Result<ClaudeUsageReport, St
         }
     }
 
+    // Grok's usage is cumulative per session, so the walk deltas each
+    // turn_completed. Callers that only want the Claude tree pass None.
+    if let Some(grok_root) = grok_root {
+        scan_grok_sessions(
+            grok_root,
+            since,
+            until,
+            &mut rep,
+            &mut buckets,
+            &mut by_model,
+            &mut by_project,
+            &mut by_session,
+        );
+    }
+
     Ok(finish(rep, buckets, &by_model, &by_project, &by_session, t0))
+}
+
+#[derive(Clone, Copy, Default)]
+struct GrokNums {
+    input: u64,
+    output: u64,
+    cache_read: u64,
+}
+
+fn grok_nums(v: &serde_json::Value) -> GrokNums {
+    let n = |k: &str| v.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+    let cache = n("cachedReadTokens");
+    GrokNums {
+        input: n("inputTokens").saturating_sub(cache),
+        output: n("outputTokens"),
+        cache_read: cache,
+    }
+}
+
+fn grok_delta(cur: GrokNums, prev: GrokNums) -> GrokNums {
+    GrokNums {
+        input: cur.input.saturating_sub(prev.input),
+        output: cur.output.saturating_sub(prev.output),
+        cache_read: cur.cache_read.saturating_sub(prev.cache_read),
+    }
+}
+
+/// The higher of the two readings. A smaller one does not rewind the
+/// baseline, or the next line would count the same tokens again.
+fn grok_advance(cur: GrokNums, prev: GrokNums) -> GrokNums {
+    GrokNums {
+        input: cur.input.max(prev.input),
+        output: cur.output.max(prev.output),
+        cache_read: cur.cache_read.max(prev.cache_read),
+    }
+}
+
+fn grok_unix(v: &serde_json::Value) -> Option<i64> {
+    let ms = v
+        .pointer("/params/_meta/agentTimestampMs")
+        .and_then(|n| n.as_i64())?;
+    Some(if ms.abs() > 10_000_000_000 { ms / 1000 } else { ms })
+}
+
+/// Walk `~/.grok/sessions/<group>/<id>/updates.jsonl`. Usage on
+/// `turn_completed` is a running total, so each line contributes only
+/// the increase since the previous line in that file.
+fn scan_grok_sessions(
+    root: &Path,
+    since: i64,
+    until: i64,
+    rep: &mut ClaudeUsageReport,
+    buckets: &mut HashMap<i64, ClaudeTokens>,
+    by_model: &mut Agg,
+    by_project: &mut Agg,
+    by_session: &mut Agg,
+) {
+    let groups = match std::fs::read_dir(root) {
+        Ok(it) => it,
+        Err(_) => return,
+    };
+    for group in groups.flatten() {
+        if !group.path().is_dir() {
+            continue;
+        }
+        let sessions = match std::fs::read_dir(group.path()) {
+            Ok(it) => it,
+            Err(_) => continue,
+        };
+        for session in sessions.flatten() {
+            let updates = session.path().join("updates.jsonl");
+            let meta = match std::fs::metadata(&updates) {
+                Ok(m) if m.is_file() => m,
+                _ => continue,
+            };
+            let fresh = meta
+                .modified()
+                .ok()
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64 >= since)
+                .unwrap_or(false);
+            if !fresh {
+                rep.skipped_files += 1;
+                continue;
+            }
+            rep.scanned_files += 1;
+            let cwd = std::fs::read_to_string(session.path().join("summary.json"))
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| {
+                    v.pointer("/info/cwd")
+                        .and_then(|c| c.as_str())
+                        .map(str::to_string)
+                })
+                .unwrap_or_default();
+            let sid = session.file_name().to_string_lossy().into_owned();
+            scan_grok_file(
+                &updates, since, until, &cwd, &sid, rep, buckets, by_model, by_project, by_session,
+            );
+        }
+    }
+}
+
+fn credit_grok(
+    model: &str,
+    d: GrokNums,
+    ts: i64,
+    cwd: &str,
+    sid: &str,
+    rep: &mut ClaudeUsageReport,
+    buckets: &mut HashMap<i64, ClaudeTokens>,
+    by_model: &mut Agg,
+    by_project: &mut Agg,
+    by_session: &mut Agg,
+) {
+    if d.input == 0 && d.output == 0 && d.cache_read == 0 {
+        return;
+    }
+    let tok = ClaudeTokens {
+        calls: 1,
+        in_tokens: d.input,
+        out_tokens: d.output,
+        cache_read: d.cache_read,
+        cache_write: 0,
+        cache_write_5m: 0,
+        cache_write_1h: 0,
+    };
+    rep.totals.add(&tok);
+    if rep.first_ts == 0 || ts < rep.first_ts {
+        rep.first_ts = ts;
+    }
+    if ts > rep.last_ts {
+        rep.last_ts = ts;
+    }
+    buckets.entry((ts / SERIES_STEP) * SERIES_STEP).or_default().add(&tok);
+    let mk = format!("{model} standard");
+    by_model.add(&mk, ts, &tok);
+    by_model.speed.insert(mk, "standard".to_string());
+    if !cwd.is_empty() {
+        by_project.add(cwd, ts, &tok);
+        by_session.project.insert(sid.to_string(), cwd.to_string());
+    }
+    if !sid.is_empty() {
+        by_session.add(sid, ts, &tok);
+    }
+}
+
+fn scan_grok_file(
+    path: &Path,
+    since: i64,
+    until: i64,
+    cwd: &str,
+    sid: &str,
+    rep: &mut ClaudeUsageReport,
+    buckets: &mut HashMap<i64, ClaudeTokens>,
+    by_model: &mut Agg,
+    by_project: &mut Agg,
+    by_session: &mut Agg,
+) {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(_) => {
+            rep.skipped_files += 1;
+            return;
+        }
+    };
+    let mut prev_models: HashMap<String, GrokNums> = HashMap::new();
+    let mut prev_top = GrokNums::default();
+    for line in BufReader::new(file).lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => {
+                rep.parse_errors += 1;
+                continue;
+            }
+        };
+        if !line.contains("turn_completed") {
+            continue;
+        }
+        let v: serde_json::Value = match serde_json::from_str(&line) {
+            Ok(v) => v,
+            Err(_) => {
+                rep.parse_errors += 1;
+                continue;
+            }
+        };
+        if v.pointer("/params/update/sessionUpdate").and_then(|s| s.as_str()) != Some("turn_completed")
+        {
+            continue;
+        }
+        let Some(usage) = v.pointer("/params/update/usage").filter(|u| u.is_object()) else {
+            continue;
+        };
+        let ts = grok_unix(&v).filter(|t| *t >= since && *t <= until);
+        if let Some(models) = usage.get("modelUsage").and_then(|m| m.as_object()) {
+            if !models.is_empty() {
+                for (model, val) in models {
+                    let cur = grok_nums(val);
+                    let prev = prev_models.get(model).copied().unwrap_or_default();
+                    let d = grok_delta(cur, prev);
+                    prev_models.insert(model.clone(), grok_advance(cur, prev));
+                    if let Some(ts) = ts {
+                        credit_grok(
+                            model, d, ts, cwd, sid, rep, buckets, by_model, by_project, by_session,
+                        );
+                    }
+                }
+                continue;
+            }
+        }
+        let cur = grok_nums(usage);
+        let d = grok_delta(cur, prev_top);
+        prev_top = grok_advance(cur, prev_top);
+        let model = v
+            .pointer("/params/_meta/modelId")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("grok");
+        if let Some(ts) = ts {
+            credit_grok(model, d, ts, cwd, sid, rep, buckets, by_model, by_project, by_session);
+        }
+    }
 }
 
 fn finish(
@@ -504,9 +762,10 @@ pub fn route(query: &str) -> Result<String, String> {
         since = newest;
     }
 
+    let grok = dirs::home_dir().map(|h| h.join(".grok").join("sessions"));
     let rep = match projects_dir() {
-        Some(root) => scan(&root, since, until)?,
-        None => scan(Path::new(""), since, until)?,
+        Some(root) => scan_inner(&root, grok.as_deref(), since, until)?,
+        None => scan_inner(Path::new(""), grok.as_deref(), since, until)?,
     };
     crate::log_debug(
         "MONITOR",
@@ -866,6 +1125,78 @@ mod tests {
             (rep.scanned_files, rep.totals.calls, rep.skipped_files),
             (6, 6, 2)
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    fn grok_turn(ts: Option<i64>, model: &str, usage: &str) -> String {
+        let meta = match ts {
+            Some(ts) if !model.is_empty() => {
+                format!(r#""_meta":{{"agentTimestampMs":{ts},"modelId":"{model}"}},"#)
+            }
+            Some(ts) => format!(r#""_meta":{{"agentTimestampMs":{ts}}},"#),
+            None => String::new(),
+        };
+        format!(
+            r#"{{"params":{{{meta}"update":{{"sessionUpdate":"turn_completed","usage":{usage}}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn grok_usage_missing_dir_is_empty() {
+        let now = chrono::Utc::now().timestamp();
+        let base = std::env::temp_dir().join(format!("ymux-grok-miss-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let rep = super::scan_inner(
+            &base.join("no-claude"),
+            Some(&base.join("no-grok")),
+            now - 3600,
+            now,
+        )
+        .expect("scan");
+        assert_eq!((rep.totals.calls, rep.scanned_files), (0, 0));
+    }
+
+    // A turn before the window, and a line with no timestamp, set the
+    // baseline and are not added. modelUsage is not also counted at the
+    // top level. A broken line is a parse error.
+    #[test]
+    fn grok_usage_counts_the_increase_only() {
+        let now = chrono::Utc::now().timestamp();
+        let base = std::env::temp_dir().join(format!("ymux-grok-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let sess = base.join("grp").join("sess1");
+        std::fs::create_dir_all(&sess).expect("dir");
+        let old_ms = (now - 10 * 86400) * 1000;
+        let now_ms = now * 1000;
+        let body = format!(
+            "{}\n{}\n{}\nturn_completed {{\n",
+            grok_turn(None, "", r#"{"inputTokens":3,"outputTokens":1}"#),
+            grok_turn(Some(old_ms), "", r#"{"inputTokens":10,"outputTokens":4}"#),
+            grok_turn(Some(now_ms), "grok-2", r#"{"inputTokens":25,"outputTokens":9}"#),
+        );
+        std::fs::write(sess.join("updates.jsonl"), body).expect("write");
+        std::fs::write(sess.join("summary.json"), r#"{"info":{"cwd":"/work"}}"#).expect("summary");
+        let models = base.join("grp").join("sess2");
+        std::fs::create_dir_all(&models).expect("dir");
+        let model_line = format!(
+            "{}\n",
+            grok_turn(
+                Some(now_ms),
+                "grok-top",
+                r#"{"inputTokens":100,"outputTokens":10,"cachedReadTokens":40,"modelUsage":{"grok-4":{"inputTokens":100,"outputTokens":10,"cachedReadTokens":40}}}"#,
+            )
+        );
+        std::fs::write(models.join("updates.jsonl"), model_line).expect("write");
+        let rep = super::scan_inner(&base.join("no-claude"), Some(&base), now - 3600, now + 60).expect("scan");
+        assert_eq!(rep.totals.calls, 2, "calls");
+        assert_eq!(rep.totals.in_tokens, 75, "in");
+        assert_eq!(rep.totals.out_tokens, 15, "out");
+        assert_eq!(rep.totals.cache_read, 40, "cache");
+        assert!(rep.parse_errors >= 1, "parse {}", rep.parse_errors);
+        let keys: Vec<&str> = rep.by_model.iter().map(|r| r.key.as_str()).collect();
+        assert!(keys.contains(&"grok-2"), "{keys:?}");
+        assert!(keys.contains(&"grok-4"), "{keys:?}");
+        assert!(!keys.iter().any(|k| *k == "grok-top"), "{keys:?}");
         let _ = std::fs::remove_dir_all(&base);
     }
 }

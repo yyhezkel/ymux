@@ -109,9 +109,12 @@ machine where that agent is not installed.
 
 Permission cards, the pane traffic light, and Context Rail injection
 work for a Grok session inside a ymux pane. Shell calls are judged
-with the same Block / Gate rules as Claude's Bash tool. Transcript
-mirroring, the cost tab, and resume-from-session stay Claude-only:
-Grok's on-disk sessions are not Claude jsonl.
+with the same Block / Gate rules as Claude's Bash tool. The connect
+wizard can resume a Grok session from `~/.grok/sessions` (`grok --resume`
+plus a session id). The cost tab counts Grok's cumulative
+`turn_completed` tokens and does not price an unknown model. The
+daemon transcript route reads `updates.jsonl` when there is no Claude
+file for that id.
 
 After the hooks file lands (including when it was already current),
 and only when the run is not a dry run, setup-hooks merges two keys
@@ -129,9 +132,10 @@ Which agents the connect wizard offers is a manual mark, not a probe
 of what is installed. Settings → Coding agents: Claude defaults on,
 Grok defaults off, and a default applies on a server with one agent.
 A machine-header toggle, `multi_agent`, shows every agent checked in
-Settings; off, the wizard offers only the default. `grok` and
-`grok -c` launch as a shell command (`mode: cmd`), not as Claude mode,
-so the Hebrew TUI signal stays off.
+Settings; off, the wizard offers only the default. `grok`,
+`grok -c`, and `grok --resume <id>` launch as a shell command
+(`mode: cmd`), not as Claude mode, so the Hebrew TUI signal stays off.
+The resume id has to be one shell token.
 
 ## Codex CLI
 

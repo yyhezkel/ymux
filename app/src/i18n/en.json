@@ -1121,6 +1121,7 @@
   "claude_picker.title": "Resume Claude Code session",
   "claude_picker.loading": "Loading…",
   "claude_picker.empty": "No Claude Code sessions found on this host.",
+  "claude_picker.emptyGrok": "No Grok sessions found on this host.",
   "claude_picker.noMatch": "No sessions match this search.",
   "claude_picker.searchLabel": "Search sessions by title, folder, branch, model or text",
   "claude_picker.user_prefix": "U:",

@@ -1121,6 +1121,7 @@
   "claude_picker.title": "استئناف جلسة Claude Code",
   "claude_picker.loading": "جارٍ التحميل…",
   "claude_picker.empty": "لم يتم العثور على جلسات Claude Code على هذا المضيف.",
+  "claude_picker.emptyGrok": "لم يتم العثور على جلسات Grok على هذا المضيف.",
   "claude_picker.noMatch": "لا توجد جلسات تطابق هذا البحث.",
   "claude_picker.searchLabel": "ابحث في الجلسات حسب العنوان أو المجلد أو الفرع أو النموذج أو النص",
   "claude_picker.user_prefix": "المستخدم:",

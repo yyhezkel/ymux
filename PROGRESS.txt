@@ -8077,7 +8077,20 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
   Result: compiles-untested until CI. Not run live.
 
+[2026-11-22] Grok sessions: resume list, transcript, cost
+  Task: finish the open item. Connect wizard grok-resume lists ~/.grok/sessions and launches grok --resume only for a one-token id, as mode cmd. Daemon transcript reads updates.jsonl when no Claude file exists. History resume uses grok in that case; hibernation stays Claude. Cost tab deltas cumulative turn_completed usage into the existing report (Go + Rust). Unknown models stay unpriced. Tests clear the Go grok root so a real ~/.grok cannot change Claude counts.
+  Files: grok_sessions.rs, lib.rs, claude_usage_local.rs, term/grok.go, term/history.go, term/service.go, insights/grokusage.go, insights/claudeusage.go, codingAgents.ts, PaneView.tsx, web.ts, i18n, vault, DECISIONS, INSTALL_AGENTS.
+  Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). Server blobs need a rebake from the CI artifact before the PR can go green.
+
+[2026-11-26] Grok sessions: rebake server blobs
+  Task: PR #119 go job failed the rebake gate. Copied ymux-server-linux-{x64,arm64} from the ymux-server-linux artifact of run 45032179710 (built from 39e455be on main 7ac5849e).
+  Files: app/src-tauri/resources/ymux-server-linux-{x64,arm64}.
+  Result: compiles-untested until CI re-runs.
 [2026-11-26] CI: server-blob gate is a byte-compare
   Task: the old gate only checked that the blobs changed, so a blob from the wrong side of a merge passed. Pinned toolchain go1.26.10 in go.mod plus an assert step, added -buildvcs=false, replaced the diff gate with cmp against the build of the same commit. Blobs rebaked from this branch's CI run.
   Files: ci-windows.yml, server/go.mod, resources/ymux-server-linux-{x64,arm64}, docs/ymux-server/README.md, CLAUDE.md, DECISIONS, vault server-go.md.
   Result: proven on CI only if the first run fails the gate and the run after the rebake passes.
+
+[2026-11-26] PR #119: merge main (#120 gate) and rebake
+  Task: merged origin/main b6b2ec93, then copied the ymux-server-linux artifact of run 45817060518 (built from f6eb18b9).
+  Result: compiles-untested until CI re-runs.
