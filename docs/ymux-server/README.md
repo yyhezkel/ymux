@@ -37,13 +37,16 @@ CGO-free (`modernc.org/sqlite`), so it cross-compiles cleanly:
 
 ```
 cd app/src-tauri/server
-GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
   -o ../resources/ymux-server-linux-x64 ./cmd/ymux-server
-GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -buildvcs=false -ldflags="-s -w" \
   -o ../resources/ymux-server-linux-arm64 ./cmd/ymux-server
 ```
 
-`-trimpath` keeps the build-host username out of the binary. The desktop embeds
+`-trimpath` keeps the build-host username out of the binary. `-buildvcs=false`
+keeps the commit stamp out, so the same source always gives the same bytes.
+Use exactly the Go version on the `toolchain` line of `go.mod`: any other
+version gives different bytes and fails the CI gate. The desktop embeds
 these two binaries (`include_bytes!` in `src/addons.rs`) and SFTP-uploads the
 right arch to `~/.ymux/bin/ymux-server` on install.
 
@@ -51,9 +54,10 @@ right arch to `~/.ymux/bin/ymux-server` on install.
 builds happen on CI: `ci-windows.yml` runs the identical cross-build on every
 push/PR and uploads the result as the `ymux-server-linux` artifact. Rebaking =
 download that artifact into `../resources/` and commit it alongside the Go
-change. The same workflow *fails* if you change `server/**` without doing so,
-because the committed blobs are what ships — the Go source is never compiled
-by the desktop build.
+change. The same workflow byte-compares the committed blobs with its own
+build of the same commit and *fails* on any difference, because the committed
+blobs are what ships — the Go source is never compiled by the desktop build.
+To bump Go: change the `toolchain` line and rebake in the same commit.
 
 See [DEPLOYMENT.md](DEPLOYMENT.md) for the systemd unit + tunnel, and
 [UPGRADE.md](UPGRADE.md) for the 1.x → 2.0 path.
