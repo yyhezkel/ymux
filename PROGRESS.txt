@@ -8090,3 +8090,7 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Task: the old gate only checked that the blobs changed, so a blob from the wrong side of a merge passed. Pinned toolchain go1.26.10 in go.mod plus an assert step, added -buildvcs=false, replaced the diff gate with cmp against the build of the same commit. Blobs rebaked from this branch's CI run.
   Files: ci-windows.yml, server/go.mod, resources/ymux-server-linux-{x64,arm64}, docs/ymux-server/README.md, CLAUDE.md, DECISIONS, vault server-go.md.
   Result: proven on CI only if the first run fails the gate and the run after the rebake passes.
+
+[2026-11-26] PR #119: merge main (#120 gate) and rebake
+  Task: merged origin/main b6b2ec93, then copied the ymux-server-linux artifact of run 45817060518 (built from f6eb18b9).
+  Result: compiles-untested until CI re-runs.
