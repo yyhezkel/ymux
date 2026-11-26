@@ -8087,3 +8087,7 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Task: PR was CONFLICTING. Resolved: hooks.rs keeps write_settings_atomic and takes main's tmp name from the target file (Grok). hookreg.go keeps []*hookEntry and adds main's hadHib persist. hibernate.go (new on main) passes the entry to pendingFor. FOLLOWUPS: union, minus 3 items main archived. Server blobs: main's copy, rebake from CI next.
   Files: hooks.rs, hookreg.go, hibernate.go, FOLLOWUPS*, PROGRESS, DECISIONS, vault server-go.md + lock.
   Result: compiles-untested until CI.
+
+[2026-11-26] PR #110: rebake server blobs
+  Task: copied ymux-server-linux-{x64,arm64} from the artifact of run 45810629795 (built from 9c5560cd).
+  Result: compiles-untested until CI re-runs.
