@@ -197,9 +197,12 @@ func (c *ChatAPI) handleItem(w http.ResponseWriter, r *http.Request, deviceID st
 		writeJSON(w, sum)
 	case http.MethodDelete:
 		if s := c.mgr.get(id); s != nil {
-			s.stop("client delete")
+			s.stop("client delete") // transition() writes the row
+		} else {
+			// No live session (a row left by an earlier daemon run): the row
+			// is all there is.
+			c.store.updateSessionStatus(id, stKilled)
 		}
-		c.store.updateSessionStatus(id, stKilled)
 		c.mgr.forget(id)
 		writeJSON(w, map[string]any{"ok": true})
 	default:

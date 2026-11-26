@@ -357,7 +357,7 @@ func (r *HookRegistry) hibernateScan(sessions []Session, idle time.Duration) (wa
 		attached[s.Name] = s.Attached
 	}
 	now := r.now()
-	var cand []string
+	var cand []*hookEntry
 	r.mu.Lock()
 	for _, e := range r.byName {
 		n, live := attached[e.name]
@@ -371,13 +371,13 @@ func (r *HookRegistry) hibernateScan(sessions []Session, idle time.Duration) (wa
 			continue
 		}
 		if now.After(e.hibRetryAt) && idleEnough(e, now, idle, n, false) {
-			cand = append(cand, e.paneID)
+			cand = append(cand, e)
 		}
 	}
 	r.mu.Unlock()
-	for _, p := range cand { // the feed has its own lock: never under r.mu
-		if len(r.feed.pendingFor(p)) == 0 {
-			sleep = append(sleep, p)
+	for _, e := range cand { // the feed has its own lock: never under r.mu
+		if len(r.feed.pendingFor(e)) == 0 {
+			sleep = append(sleep, e.paneID)
 		}
 	}
 	return wake, sleep

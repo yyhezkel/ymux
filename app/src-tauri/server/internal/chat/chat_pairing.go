@@ -99,6 +99,9 @@ func (c *ChatAPI) handlePairDevices(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "GET only", http.StatusMethodNotAllowed)
 		return
 	}
+	// A box paired only by QR never reaches the browser-pairing routes that
+	// prune, so drop dead one-shots here too, before listing.
+	c.store.pruneRequests(nowUnix())
 	devs, err := c.store.listDevices()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)

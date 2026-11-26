@@ -6,6 +6,7 @@ package config
 // chat.db (paired devices), workspace.db, metrics.db, and logs in place.
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +19,13 @@ import (
 // under ~/.ymux, i.e. the same filesystem); if the new dir already exists
 // non-empty — e.g. the installer pre-created it — it moves entries one by one.
 // Returns true if a migration happened.
+//
+// The `token` file is the "already migrated" test in both directions, so the
+// entry-by-entry path must not stop at the first entry that will not move:
+// once `token` is across, no later boot comes back for the rest (and if it is
+// not across, the daemon mints a new one and no later boot comes back
+// either). Every entry is attempted; the ones that failed are reported
+// together and stay in the legacy dir.
 func MigrateDataDir(legacy, current string) (bool, error) {
 	if !hasFile(legacy, "token") {
 		return false, nil // nothing legacy to migrate
@@ -46,15 +54,16 @@ func MigrateDataDir(legacy, current string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	var failed []error
 	for _, e := range entries {
 		src := filepath.Join(legacy, e.Name())
 		dst := filepath.Join(current, e.Name())
 		if err := os.Rename(src, dst); err != nil {
-			return true, fmt.Errorf("move %s: %w", e.Name(), err)
+			failed = append(failed, fmt.Errorf("move %s: %w", e.Name(), err))
 		}
 	}
-	_ = os.Remove(legacy) // best-effort: drop the now-empty legacy dir
-	return true, nil
+	_ = os.Remove(legacy) // best-effort: drops the legacy dir only if now empty
+	return true, errors.Join(failed...)
 }
 
 func hasFile(dir, name string) bool {

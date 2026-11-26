@@ -8036,6 +8036,12 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Files: sdk-gen/package-lock.json (lock refresh: quicktype was a stale entry, not in package.json; 154 -> 47 packages), sdk/typescript/package-lock.json (ws 8.21+), .github/dependabot.yml (npm entry now covers the three dirs), FOLLOWUPS.md, FOLLOWUPS-ARCHIVE.md.
   Result: `npm audit` reports 0 in both SDK dirs. No vault-covered file changed. Generated-SDK drift is checked by CI (go job), not run locally.
 
+2026-11-10 | Implicit state machines: inventory, then fixes for what it turned up (PR #110)
+  Cause: an inventory of state held in flags, map membership, timestamps and strings found 21 suspected defects (D1-D21). Each was verified by reading the code before any change.
+  Fixed with a regression test: D1 (CLI hook: an error REPLY from the desktop no longer falls back to allow on a Gate verdict), D2 (desktop decide_feed: first decision is final, resolve_feed), D4-D10 and D12-D14 (Go daemon: chat status transition, workspace subscribers, pending-hook timeout_at, deny-on-kill by owner + YMUX_RELEASED, feed decide + eviction, pairing prune, push order, ports, data-dir migration, tmux -V cache), D15-D19 (CLI reply deadline, port watcher resend, setup-hooks prune + atomic stamp, log writer identity on unix, tunnel DENIED on bad hex).
+  Not changed: D3 (already fixed on main by 3277fe80, entry archived), D11 (not a defect, the desktop twin behaves the same), D20 + D21 (deliberate, logged under Open in docs/DECISIONS.md).
+  Files: cli/src/{main,hooks,port_watch}.rs, src/lib.rs, crates/ymux-core/src/log_writer.rs, crates/ymux-tunnel/src/lib.rs, server/internal/{chat,workspace,term,push,config}, docs/vault/{cli,crates,backend-core,backend-rpc,server-go}.md, FOLLOWUPS*, docs/DECISIONS.md.
+  Result: compiles-untested until CI; nothing ran on a real machine (Rule #14). Smoke steps are the P1 entry in FOLLOWUPS.
 2026-11-09 | Backlog run merged
   Task: merge the 2026-11-09 backlog and Orca PRs to main, in order, each with green CI.
   Merged: #99 #91 #92 #101 #100 #93 #84 #85 #86 #87 #94 #88 #89 #90 #95 #96 #97.
@@ -8077,6 +8083,13 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
   Result: compiles-untested until CI. Not run live.
 
+[2026-11-26] PR #110: merge origin/main (7ac5849e)
+  Task: PR was CONFLICTING. Resolved: hooks.rs keeps write_settings_atomic and takes main's tmp name from the target file (Grok). hookreg.go keeps []*hookEntry and adds main's hadHib persist. hibernate.go (new on main) passes the entry to pendingFor. FOLLOWUPS: union, minus 3 items main archived. Server blobs: main's copy, rebake from CI next.
+  Files: hooks.rs, hookreg.go, hibernate.go, FOLLOWUPS*, PROGRESS, DECISIONS, vault server-go.md + lock.
+  Result: compiles-untested until CI.
+
+[2026-11-26] PR #110: rebake server blobs
+  Task: copied ymux-server-linux-{x64,arm64} from the artifact of run 45810629795 (built from 9c5560cd).
 [2026-11-22] Grok sessions: resume list, transcript, cost
   Task: finish the open item. Connect wizard grok-resume lists ~/.grok/sessions and launches grok --resume only for a one-token id, as mode cmd. Daemon transcript reads updates.jsonl when no Claude file exists. History resume uses grok in that case; hibernation stays Claude. Cost tab deltas cumulative turn_completed usage into the existing report (Go + Rust). Unknown models stay unpriced. Tests clear the Go grok root so a real ~/.grok cannot change Claude counts.
   Files: grok_sessions.rs, lib.rs, claude_usage_local.rs, term/grok.go, term/history.go, term/service.go, insights/grokusage.go, insights/claudeusage.go, codingAgents.ts, PaneView.tsx, web.ts, i18n, vault, DECISIONS, INSTALL_AGENTS.
@@ -8094,3 +8107,7 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 [2026-11-26] PR #119: merge main (#120 gate) and rebake
   Task: merged origin/main b6b2ec93, then copied the ymux-server-linux artifact of run 45817060518 (built from f6eb18b9).
   Result: compiles-untested until CI re-runs.
+
+[2026-11-26] PR #110: merge main after #119
+  Task: merged origin/main 499d8934 (Grok sessions). Only PROGRESS/DECISIONS/vault lock conflicted; union + re-stamp. Rebake from this commit's CI run follows.
+  Rebake: copied the ymux-server-linux artifact of run 45819387818 (built from b71dbc47).

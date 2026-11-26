@@ -54,6 +54,11 @@ type client struct {
 	deviceID string
 	conn     *websocket.Conn
 	mu       sync.Mutex
+
+	// flushMu serializes flush and guards sent: the highest push_seq written
+	// on this connection (it starts at the client's cursor).
+	flushMu sync.Mutex
+	sent    int64
 }
 
 func (c *client) writeJSON(v any) error {
@@ -105,9 +110,33 @@ func (s *Server) get(deviceID string) *client {
 	return s.live[deviceID]
 }
 
+// flush writes every queued event after the last one this connection sent,
+// in push_seq order, and reports how many. It is the ONLY place an event
+// envelope is written, for the reconnect replay and live delivery alike, so a
+// connection's push_seq never goes backwards: the client's dedup drops any
+// envelope <= the highest it processed (PUSH-PROTOCOL §5) and its ack is
+// cumulative (§3.4), so an out-of-order envelope would be lost for good.
+func (s *Server) flush(c *client) (int, error) {
+	c.flushMu.Lock()
+	defer c.flushMu.Unlock()
+	n := 0
+	for _, pe := range s.deps.PendingAfter(c.deviceID, c.sent) {
+		var ev any
+		_ = json.Unmarshal([]byte(pe.Event), &ev)
+		if err := c.writeJSON(envelope(c.deviceID, pe.PushSeq, ev)); err != nil {
+			return n, err
+		}
+		c.sent = pe.PushSeq
+		n++
+	}
+	return n, nil
+}
+
 // Notify implements core.NotificationSender: persist the event to the device's
 // queue (assigning its push_seq), then deliver live if the socket is up. If not
 // connected it waits in the queue for the reconnect replay — at-least-once.
+// Live delivery is a flush of the queue, not a direct write, so it can never
+// overtake a replay in progress or another Notify's lower push_seq.
 func (s *Server) Notify(deviceID string, payload map[string]any) error {
 	eventJSON, err := json.Marshal(payload)
 	if err != nil {
@@ -121,7 +150,7 @@ func (s *Server) Notify(deviceID string, payload map[string]any) error {
 	live := s.get(deviceID) != nil
 	logger.Debug("notify", "device", deviceID, "seq", seq, "type", payload["type"], "live", live)
 	if c := s.get(deviceID); c != nil {
-		_ = c.writeJSON(envelope(deviceID, seq, payload))
+		_, _ = s.flush(c)
 	}
 	return nil
 }
@@ -170,26 +199,25 @@ func (s *Server) Handler(w http.ResponseWriter, r *http.Request) {
 		return // Upgrade already wrote the error
 	}
 	logger.Info("device subscribed", "device", deviceID, "cursor", cursor)
-	c := &client{deviceID: deviceID, conn: conn}
-	s.register(c)
+	c := &client{deviceID: deviceID, conn: conn, sent: cursor}
 	defer func() {
 		s.unregister(c)
 		_ = conn.Close()
 	}()
 
+	// hello first, then register: once registered a concurrent Notify may
+	// flush, and no event may precede the hello. An event that lands before
+	// the register is in the queue, and the flush below sends it.
 	_ = c.writeJSON(map[string]any{
 		"v": envelopeVersion, "type": "hello", "device_id": deviceID, "heartbeat_sec": heartbeatSec,
 	})
-	pending := s.deps.PendingAfter(deviceID, cursor)
-	if len(pending) > 0 {
-		logger.Info("replaying queued events", "count", len(pending), "device", deviceID, "cursor", cursor)
+	s.register(c)
+	n, err := s.flush(c)
+	if n > 0 {
+		logger.Info("replayed queued events", "count", n, "device", deviceID, "cursor", cursor)
 	}
-	for _, pe := range pending {
-		var ev any
-		_ = json.Unmarshal([]byte(pe.Event), &ev)
-		if err := c.writeJSON(envelope(deviceID, pe.PushSeq, ev)); err != nil {
-			return
-		}
+	if err != nil {
+		return
 	}
 
 	// Heartbeat: ping every heartbeatSec; drop if no pong within pongWait.

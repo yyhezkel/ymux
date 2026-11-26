@@ -58,9 +58,12 @@ type Tmux struct {
 	bin string
 	run runner
 
-	// envOnce caches whether `new-session -e` is available (tmux >= 3.2).
-	envOnce sync.Once
-	envOK   bool
+	// envOK caches whether `new-session -e` is available (tmux >= 3.2), once
+	// tmux has actually reported a version (envKnown). A failed `tmux -V` is
+	// not an answer and is not cached.
+	envMu    sync.Mutex
+	envKnown bool
+	envOK    bool
 }
 
 // NewTmux returns a Tmux driving the real binary.
@@ -210,22 +213,28 @@ func (t *Tmux) Create(name, cwd string, env map[string]string, cmd ...string) er
 }
 
 // SupportsSessionEnv reports whether this tmux accepts `new-session -e`
-// (added in 3.2). Asked once per daemon run; a tmux that cannot even report
-// its version is treated as too old, so the create still succeeds — just
-// without the hook variables.
+// (added in 3.2). The version tmux reports is cached for the daemon's run. A
+// tmux that cannot report its version right now is treated as too old for
+// THIS call, so the create still succeeds — just without the hook variables
+// — but that failure is not cached: one transient error (a timeout under
+// load, a fork that failed) must not switch hooks off until the next restart.
 func (t *Tmux) SupportsSessionEnv() bool {
-	t.envOnce.Do(func() {
-		out, err := t.exec("-V")
-		if err != nil {
-			logger.Warn("tmux -V failed; browser sessions will not route hooks to the daemon", "err", err)
-			return
-		}
-		t.envOK = versionAtLeast(strings.TrimSpace(string(out)), 3, 2)
-		if !t.envOK {
-			logger.Warn("tmux too old for new-session -e; browser sessions will not route hooks to the daemon",
-				"version", strings.TrimSpace(string(out)))
-		}
-	})
+	t.envMu.Lock()
+	defer t.envMu.Unlock()
+	if t.envKnown {
+		return t.envOK
+	}
+	out, err := t.exec("-V")
+	if err != nil {
+		logger.Warn("tmux -V failed; this session will not route hooks to the daemon", "err", err)
+		return false
+	}
+	t.envOK = versionAtLeast(strings.TrimSpace(string(out)), 3, 2)
+	t.envKnown = true
+	if !t.envOK {
+		logger.Warn("tmux too old for new-session -e; browser sessions will not route hooks to the daemon",
+			"version", strings.TrimSpace(string(out)))
+	}
 	return t.envOK
 }
 

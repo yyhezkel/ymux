@@ -278,3 +278,35 @@ func contains(hay []string, needle string) bool {
 	}
 	return false
 }
+
+// A `tmux -V` that fails once (a timeout, a failed fork) must not be cached
+// as "no hook env" for the rest of the daemon's run; a real answer is.
+func TestSupportsSessionEnvCachesOnlyARealAnswer(t *testing.T) {
+	fail := true
+	tm, calls := fake(func(args []string) ([]byte, error) {
+		if args[0] == "-V" && fail {
+			return nil, errors.New("fork/exec: resource temporarily unavailable")
+		}
+		return []byte("tmux 3.4\n"), nil
+	})
+	if tm.SupportsSessionEnv() {
+		t.Fatal("a failed tmux -V must read as unsupported for that call")
+	}
+	fail = false
+	if !tm.SupportsSessionEnv() {
+		t.Fatal("the earlier failure was cached: tmux 3.4 reported as unsupported")
+	}
+	asked := len(*calls)
+	if !tm.SupportsSessionEnv() || len(*calls) != asked {
+		t.Fatalf("a real answer must be cached: %d calls after, %d before", len(*calls), asked)
+	}
+
+	// "Too old" is a real answer too, and is cached.
+	old, oldCalls := fake(ok("tmux 3.1c\n"))
+	if old.SupportsSessionEnv() || old.SupportsSessionEnv() {
+		t.Fatal("tmux 3.1c supports -e?")
+	}
+	if len(*oldCalls) != 1 {
+		t.Fatalf("tmux -V asked %d times for a cached answer, want 1", len(*oldCalls))
+	}
+}

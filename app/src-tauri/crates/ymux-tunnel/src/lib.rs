@@ -138,7 +138,18 @@ where
             return Err(format!("bad response framing from {peer}: {:?}", line));
         }
     };
-    let resp = hex_decode(resp_hex)?;
+    // Deny in the peer's dialect, as the bad-mac arm does. A bare `?` here
+    // left the peer with no verdict line at all.
+    let resp = match hex_decode(resp_hex) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = bs
+                .write_all(format!("{reply_tag}-DENIED bad-format\n").as_bytes())
+                .await;
+            let _ = bs.flush().await;
+            return Err(format!("bad response hex from {peer}: {e}"));
+        }
+    };
 
     // 3) Verify HMAC in constant time (`Hmac::verify_slice`).
     let mut mac = HmacSha256::new_from_slice(expected_token.as_bytes())
@@ -402,8 +413,43 @@ pub fn spawn_bridge(
 
 #[cfg(test)]
 mod tests {
-    use super::{bridge_copy, render_env_file};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use super::{bridge_copy, perform_handshake, render_env_file};
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufStream};
+
+    // Pins D19: a response whose hex does not decode returned through `?`
+    // with no verdict written, so the peer saw a closed stream or its own
+    // timeout instead of DENIED. Both dialects, because the verdict must
+    // come back on the tag the peer spoke.
+    #[tokio::test]
+    async fn undecodable_hex_is_denied_in_the_peers_dialect() {
+        // A non-hex digit, then an odd length: the two ways hex_decode fails.
+        for (tag, bad_hex) in [("YMUX", "zz"), ("WINMUX", "abc")] {
+            let (cli, srv) = tokio::io::duplex(1024);
+            let server = tokio::spawn(async move {
+                let mut bs = BufStream::new(srv);
+                perform_handshake(&mut bs, "tok", "test-peer").await
+            });
+            let mut cli = BufStream::new(cli);
+            let mut challenge = String::new();
+            cli.read_line(&mut challenge).await.unwrap();
+            assert!(challenge.starts_with("YMUX-CHALLENGE "), "got: {challenge:?}");
+            cli.write_all(format!("{tag}-RESPONSE {bad_hex}\n").as_bytes())
+                .await
+                .unwrap();
+            cli.flush().await.unwrap();
+            let mut verdict = String::new();
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                cli.read_line(&mut verdict),
+            )
+            .await
+            .expect("a verdict must arrive, not a timeout")
+            .unwrap();
+            assert_eq!(verdict, format!("{tag}-DENIED bad-format\n"));
+            let result = server.await.unwrap();
+            assert!(result.is_err(), "the handshake itself still fails");
+        }
+    }
 
     #[test]
     fn env_file_carries_only_ymux_spellings() {

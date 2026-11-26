@@ -76,3 +76,58 @@ func TestCreateRecordsPolicyAndWorkspaceInTheSession(t *testing.T) {
 		t.Errorf("last call = %v", last)
 	}
 }
+
+// A pane handed over with replace_pane is carried by two sessions. The
+// release is written into the old session's environment, so recovery gives
+// the pane to the new one whatever order tmux lists them in.
+func TestRecoverKeepsAReleasedSessionReleased(t *testing.T) {
+	head := "YMUX_SOCKET_ADDR=127.0.0.1:4321\nYMUX_PANE_ID=p_leaf_1\nYMUX_TUNNEL_TOKEN="
+	envs := map[string]string{
+		"=stale": head + strings.Repeat("ab", 32) + "\nYMUX_RELEASED=1\n",
+		"=fresh": head + strings.Repeat("cd", 32) + "\n",
+	}
+	for _, order := range []string{"stale\t1\t1\t0\t/x\nfresh\t1\t1\t0\t/x\n", "fresh\t1\t1\t0\t/x\nstale\t1\t1\t0\t/x\n"} {
+		s, _ := testService(func(args []string) ([]byte, error) {
+			switch args[0] {
+			case "-V":
+				return []byte("tmux 3.4\n"), nil
+			case "list-sessions":
+				return []byte(order), nil
+			case "show-environment":
+				return []byte(envs[args[2]]), nil
+			}
+			return nil, nil
+		})
+		s.attachHooks(NewHookRegistry())
+		s.hooks.SetHookAddr("127.0.0.1:4321")
+
+		s.RecoverHooks()
+
+		if snap := s.hooks.Snapshot(); len(snap) != 1 || snap["p_leaf_1"].Session != "fresh" {
+			t.Fatalf("pane owner after recovery = %+v, want fresh only", snap)
+		}
+		st, ok := s.hooks.byName["stale"]
+		if !ok || !st.released {
+			t.Fatalf("the released session must come back known and released: %+v %v", st, ok)
+		}
+		if fr := s.hooks.byName["fresh"]; fr == nil || fr.released {
+			t.Fatalf("the new owner came back released: %+v", fr)
+		}
+	}
+}
+
+func TestReleasePaneIsRecordedInTheSession(t *testing.T) {
+	s, calls := hookService("tmux 3.4")
+	e, _, _ := s.hooks.mint("web", "127.0.0.1:1", "p1")
+	s.hooks.add(e)
+	if n := s.hooks.releasePane("p1"); n != 1 {
+		t.Fatalf("released %d, want 1", n)
+	}
+	last := (*calls)[len(*calls)-1]
+	if strings.Join(last[1:], " ") != "set-environment -t =web YMUX_RELEASED 1" {
+		t.Errorf("last call = %v", last)
+	}
+	if s.hooks.releasePane("p1") != 0 {
+		t.Error("a second release found something to release")
+	}
+}

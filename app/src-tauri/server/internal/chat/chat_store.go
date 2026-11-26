@@ -386,9 +386,17 @@ func (s *ChatStore) requestByOts(otsHash string) (*PairedDevice, bool) {
 	return d, true
 }
 
-// pruneRequests drops requests that expired without an answer.
+// pruneRequests drops rows whose one-shot expired before it was used: a
+// `requested` row nobody answered, and a `pending` row (a QR that was issued,
+// or a request that was approved) nobody redeemed. For both, expires_at is
+// the one-shot's deadline and redeemDevice refuses the row past it, so it can
+// never become a device — it would only sit in the device list forever.
+//
+// Never `active` (or `revoked`): a redeemed device keeps the expires_at of
+// the one-shot it was born from, long in the past, and must not be touched.
 func (s *ChatStore) pruneRequests(now int64) {
-	_, _ = s.db.Exec(`DELETE FROM paired_devices WHERE status='requested' AND expires_at<?`, now)
+	_, _ = s.db.Exec(
+		`DELETE FROM paired_devices WHERE status IN ('requested','pending') AND expires_at<?`, now)
 }
 
 // redeemDevice exchanges a valid one-shot (pending, unexpired) for a long-term

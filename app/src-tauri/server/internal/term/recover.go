@@ -45,7 +45,12 @@ func (s *Service) RecoverHooks() {
 			continue
 		}
 		tok, pane := env["YMUX_TUNNEL_TOKEN"], env["YMUX_PANE_ID"]
-		if len(tok) != 64 || !ValidPaneID(pane) || s.hooks.paneInUse(pane) {
+		// YMUX_RELEASED (releasePane): another session took this pane id
+		// over. It comes back released — known, so its hooks get the quiet
+		// passive answer, but never the pane's owner — whatever order tmux
+		// lists the two in.
+		released := env["YMUX_RELEASED"] == "1"
+		if len(tok) != 64 || !ValidPaneID(pane) || (!released && s.hooks.paneInUse(pane)) {
 			continue
 		}
 		policy := env["YMUX_POLICY"]
@@ -56,7 +61,7 @@ func (s *Service) RecoverHooks() {
 		if ws != "" && (s.hooks.webws == nil || !s.hooks.webws.exists(ws)) {
 			ws = ""
 		}
-		s.hooks.add(&hookEntry{name: ss.Name, token: tok, paneID: pane, policy: policy, workspaceID: ws})
+		s.hooks.add(&hookEntry{name: ss.Name, token: tok, paneID: pane, policy: policy, workspaceID: ws, released: released})
 		n++
 	}
 	// Counts only: names can carry project names, and the env holds tokens.

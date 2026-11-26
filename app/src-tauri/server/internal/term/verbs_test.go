@@ -249,3 +249,70 @@ func TestPortRPCFeedsTheSameSet(t *testing.T) {
 		t.Error("port.opened without a port must fail")
 	}
 }
+
+// The set is keyed per family, the event by port number: a v4 listener
+// closing while the v6 one on the same port is still up is not "port gone".
+func TestPortGoneOnlyWhenItsLastFamilyCloses(t *testing.T) {
+	hub := newEventHub()
+	sub := hub.add("en")
+	w := newPortWatch(hub, func() []uint16 { return nil })
+	tail := " 0A 00000000:00000000 00:00000000 00000000  1000 0 1 1"
+	v4 := procHeader + "\n   0: 0100007F:0BB8 00000000:0000" + tail
+	v6 := procHeader + "\n   0: 00000000000000000000000001000000:0BB8 00000000000000000000000000000000:0000" + tail
+
+	w.apply(w.scan(v4, v6))
+	if l := w.list(); len(l) != 2 {
+		t.Fatalf("want the v4 and the v6 record of 3000, got %+v", l)
+	}
+	nextOf(t, sub, "port-detected")
+	nextOf(t, sub, "port-detected")
+
+	// v4 closes, v6 stays.
+	w.apply(w.scan(procHeader+"\n", v6))
+	if l := w.list(); len(l) != 1 || l[0].Family != "v6" || l[0].RemotePort != 3000 {
+		t.Fatalf("after the v4 close: %+v", l)
+	}
+	select {
+	case b := <-sub.ch:
+		t.Fatalf("a port still listening on v6 was announced: %s", b)
+	default:
+	}
+
+	// The last one closes: now it is gone.
+	w.apply(w.scan(procHeader+"\n", procHeader+"\n"))
+	if f := nextOf(t, sub, "port-undetected"); !strings.Contains(string(f.Data), `"remote_port":3000`) {
+		t.Errorf("port-undetected = %s", f.Data)
+	}
+}
+
+// A port.opened RPC obeys the scan's filter, so it cannot add a port the
+// next scan diff would only remove again (the daemon's own, a privileged one).
+func TestPortRPCObeysTheScanFilter(t *testing.T) {
+	r, _, tg := gateEntry(t, policyNone)
+	r.ports = newPortWatch(r.hub, func() []uint16 { return []uint16{7879} })
+	sub := r.hub.add("en")
+	for _, port := range []int{7879, 80, 22} {
+		res, err := call(t, tg, "port.opened", map[string]any{"port": port})
+		if err != nil {
+			t.Fatalf("port.opened %d: %+v", port, err)
+		}
+		if m := asMap(t, res); m["ok"] != true || m["detected"] != false {
+			t.Errorf("port.opened %d → %v, want ok and not detected", port, m)
+		}
+	}
+	if l := r.ports.list(); len(l) != 0 {
+		t.Fatalf("filtered ports were recorded: %+v", l)
+	}
+	select {
+	case b := <-sub.ch:
+		t.Fatalf("a filtered port was announced: %s", b)
+	default:
+	}
+	res, _ := call(t, tg, "port.opened", map[string]any{"port": 5173})
+	if m := asMap(t, res); m["detected"] != true {
+		t.Errorf("an ordinary port → %v", m)
+	}
+	if l := r.ports.list(); len(l) != 1 || l[0].RemotePort != 5173 {
+		t.Fatalf("ports = %+v", l)
+	}
+}

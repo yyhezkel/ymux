@@ -86,6 +86,10 @@ put logic there.
 - **`LoadState`** — `Loaded | Failed`. A poison flag: if `load_from_disk` hit a real
   read/parse error, `persist` refuses to write, because saving in-memory state over a
   file we failed to understand destroys the user's workspaces.
+- **`FeedStore`** — `items` (the cards, capped at 50) plus `pending` (request id → the
+  oneshot sender a blocking hook waits on). `resolve_feed` is the single transition out of
+  `FeedItemState::Pending` and `decide_feed` its only caller: the first decision wins, a
+  later one for the same request is a no-op. Detail in `backend-rpc.md` § feed.
 - **`AppState.secret_env`** — `secret_env::SecretEnvStore` (see `secret_env.rs`). `persist`
   runs `reconcile_secret_env` FIRST (before the `LoadState` gate) so no `secret: true` row
   keeps a value in `workspaces`; the store is saved (per-pid tmp + rename) to `<config>/secret-env.json` when it
