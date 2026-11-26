@@ -54,7 +54,8 @@ right arch to `~/.ymux/bin/ymux-server` on install.
 builds happen on CI: `ci-windows.yml` runs the identical cross-build on every
 push/PR and uploads the result as the `ymux-server-linux` artifact. Rebaking =
 download that artifact into `../resources/` and commit it alongside the Go
-change. The same workflow byte-compares the committed blobs with its own
+change. `scripts/rebake-server.sh [run-id]` does that for the newest
+ci-windows run of HEAD, and refuses a run built from another commit. The same workflow byte-compares the committed blobs with its own
 build of the same commit and *fails* on any difference, because the committed
 blobs are what ships — the Go source is never compiled by the desktop build.
 To bump Go: change the `toolchain` line and rebake in the same commit.
