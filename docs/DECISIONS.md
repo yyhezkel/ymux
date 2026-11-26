@@ -535,6 +535,10 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-11-22 — Grok transcript, cost, and resume
+- **Context:** Grok Build installs and drives the same hook gate as Claude. Its sessions are directories of `updates.jsonl`, not Claude jsonl. The statusline under `ymux-tools/statuslines/` stays as it is.
+- **Decision:** A second, small parser. The connect wizard's `grok-resume` lists `~/.grok/sessions` and launches `grok --resume <id>` as `mode: cmd`, and only when the id is one shell token. The daemon transcript route reads `updates.jsonl` when no Claude file exists, and history resume uses `grok --resume` in that same case. Hibernation resume stays Claude. The cost tab folds cumulative `turn_completed` usage into the existing token report on both the daemon and the local mirror. Prices stay in `claudePricing.ts`; an unknown model shows tokens and usd 0. No `rtl_bidi`.
+- **Outcome:** branch `feat/grok-sessions`. Live smoke still open (Rule #14).
 ### 2026-11-26 — Server-blob gate is now a byte-compare
 - **Context:** the ci-windows gate only checked that `resources/ymux-server-linux-{x64,arm64}` changed in the diff. A merge that keeps one side's blob passes it and ships a server without the other side's Go changes. PR #110 hit that conflict. It was rebaked correctly, but by hand.
 - **Why the old comment rejected a byte-compare:** setup-go floated `go 1.26` to the newest patch, and the blob carried `vcs.revision`, so it could never equal a build of its own commit.
@@ -550,7 +554,7 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 - **Decision:** reuse `claude-hook`. Register `~/.grok/hooks/ymux.json` (spec 1.0.0). No second parser. `canonical_tool_name` maps Grok's tool names onto Claude's before the policy judges them, and the phone forward sends `Bash`, so `policy.go` and `testdata/policy.json` stay untouched and the server blobs are not rebaked. SessionStart `new` / `load` map to `startup` / `resume` in the CLI, before `context.inject`.
 - **Scope:** local wizard, the `all-agents` profile, bootstrap, add-on detect / install / uninstall, the outdated-hooks banner. `default` and `hardened` stay Claude-only. A saved `all-agents` profile is not rewritten.
 - **Modes:** `plan` stays on the gate. `auto` still defers. `bypassPermissions` still auto-allows.
-- **Deferred:** transcript mirror, cost tab, resume-from-Grok-session. See Open.
+- **Deferred, then done 2026-11-22:** transcript mirror, cost tab, resume-from-Grok-session. See the 2026-11-22 entry.
 
 ### 2026-11-11 — Scheduled prompts: when a run counts as finished (PR #114)
 - **Decision:** option (a). A scheduled run whose hook state is `done` or `failed` does not block the next firing. `running` and unknown block. The daemon never kills a finished session; the user reads it.

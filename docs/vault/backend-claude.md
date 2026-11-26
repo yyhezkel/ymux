@@ -5,6 +5,7 @@ covers:
   - app/src-tauri/src/claude_summary.rs
   - app/src-tauri/src/claude_usage.rs
   - app/src-tauri/src/claude_usage_local.rs
+  - app/src-tauri/src/grok_sessions.rs
   - app/src-tauri/src/insights_local.rs
   - app/src-tauri/src/insights_store.rs
   - app/src-tauri/src/claude_usage_local.rs
@@ -279,6 +280,29 @@ collapsing them understates a long session.
 Rule #1 is why the parser reads only `message.model`, `message.usage`, the timestamp, the
 session id and the cwd — never message *content* — and logs nothing but counts.
 
+`route` also walks `~/.grok/sessions/<group>/<id>/updates.jsonl`. Grok writes a running
+total on `turn_completed` (`usage.inputTokens` / `outputTokens` / `cachedReadTokens`,
+optional `modelUsage`). Each line adds only the increase since the previous line in
+that file; a smaller reading does not rewind the baseline. Input credited is
+`inputTokens - cachedReadTokens`. A turn whose `agentTimestampMs` is outside the window,
+or a line with no timestamp, updates the baseline and adds nothing. When `modelUsage`
+is non-empty, those models are counted and the top-level totals are not. Speed is
+always `standard`. A model that is not in `claudePricing.ts` shows tokens with usd 0.
+`scan` still takes only the Claude root, so the Claude-only tests do not read `~/.grok`.
+A missing Claude projects directory does not skip the Grok walk. A file whose mtime is
+older than `since` is not opened.
+
+## `grok_sessions.rs` — the resume list
+
+Grok sessions are directories, not Claude jsonl. `list_local` walks
+`~/.grok/sessions/<group>/<id>/`, skips symlinks, hidden summaries, and ids that are
+not a single shell token (`safe_session_id`). `summary.json` supplies `title`,
+`info.cwd`, and `updated_at` / `last_active_at` / `created_at`. Previews are the first
+user chunk and the last assistant chunk in an 8 KiB head or tail of `updates.jsonl`,
+clipped to 120 characters. `resume_command` returns `grok --resume <id>` only for a
+safe id. The SSH script is `remote_list_script`: GNU find, `head` clamped to 200.
+`chat_history.jsonl` is not read.
+
 ## Related, elsewhere
 
 - `AppState.claude_paths` (in `lib.rs`) caches the absolute path to the `claude` binary
@@ -289,6 +313,7 @@ session id and the cwd — never message *content* — and logs nothing but coun
 - `pane_list_claude_sessions`, `list_claude_sessions_local`, `peek_claude_jsonl`
   (`CLAUDE_PEEK_BYTES = 256 KB`) and `claude_project_dir_prefix` live in `lib.rs` — the
   session picker reads only the tail of a transcript rather than the whole file.
+  `pane_list_grok_sessions` is the Grok list; the walk is `grok_sessions.rs`.
 - The hook verbs that feed all of this (`stop`, `user-prompt-submit`, …) are handled in
   `rpc_server.rs`; see `backend-rpc.md`.
 

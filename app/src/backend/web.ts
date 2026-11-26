@@ -886,6 +886,12 @@ export class WebBackend implements Backend {
       if (str(a.query).trim()) q.set("q", str(a.query).trim());
       return api("GET", `/api/v2/claude/sessions?${q}`);
     },
+    pane_list_grok_sessions: (a) => {
+      const q = new URLSearchParams({ limit: String(num(a.limit, 30)) });
+      if (str(a.projectPath)) q.set("project_path", str(a.projectPath));
+      if (str(a.query).trim()) q.set("q", str(a.query).trim());
+      return api("GET", `/api/v2/grok/sessions?${q}`);
+    },
     // The Context Rail: the daemon's per-session records (term/context.go);
     // `context:changed` arrives on the events socket like any other event.
     session_context_list: (a) => api("GET", `/api/v2/context/sessions?ws_id=${encodeURIComponent(str(a.wsId))}`),

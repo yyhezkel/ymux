@@ -52,11 +52,21 @@ export type ConnectCommand =
   | "from-list"
   | "grok"
   | "grok-c"
+  | "grok-resume"
   | "custom";
 
+/** One token we will place after `grok --resume` in a shell command. */
+const GROK_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,80}$/;
+
+/** `grok --resume <id>` when the id is a single safe token. Otherwise null. */
+export function grokResumeCommand(id: string): string | null {
+  if (!GROK_SESSION_ID.test(id)) return null;
+  return `grok --resume ${id}`;
+}
+
 /** Command menu for the wizard. Shell, custom, and (when Claude is not
- *  the one agent on offer) the session list stay. Grok is two commands
- *  and has no resume-from-list. */
+ *  the one agent on offer) the session list stay. Grok adds a fresh
+ *  launch, continue-latest, and resume-from-its-own-list. */
 export function connectCommands(agents: readonly AgentId[]): ConnectCommand[] {
   const claude = agents.includes("claude");
   const grok = agents.includes("grok");
@@ -64,7 +74,7 @@ export function connectCommands(agents: readonly AgentId[]): ConnectCommand[] {
   if (claude) {
     out.push("claude", "claude-continue", "claude-resume", "claude-skip", "from-list");
   }
-  if (grok) out.push("grok", "grok-c");
+  if (grok) out.push("grok", "grok-c", "grok-resume");
   if (!claude && !grok) out.push("from-list");
   out.push("custom");
   return out;

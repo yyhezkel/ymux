@@ -611,6 +611,7 @@ list command. The module owns what the picker never needed:
   not change its shell script: `extract_json_str_field` takes branch and model out of the
   600-byte fragments it already prints, best effort, and it sends no title. The desktop
   does not filter; the picker filters the rows it gets (`frontend-shell.md`).
+- **`pane_list_grok_sessions`** returns the same `ClaudeSessionInfo` rows for Grok Build. Local reads `~/.grok/sessions/<group>/<id>/` via `grok_sessions.rs` (`summary.json` for the row, an 8 KiB edge of `updates.jsonl` for the previews). A live SSH workspace runs a fixed `find` script; the limit is clamped to 1..=200 and is the only value interpolated. Rows whose id is not one shell token are dropped. A missing tree is an empty list. The scope filter uses `paths_equal` on the summary's `info.cwd`.
 - **`ssh_handle_for_machine` is the one session picker** for a workspace: its own session
   first, else a sibling workspace's on the same user@host:port. It takes the workspaces
   lock, so never call it while holding that guard.

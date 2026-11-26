@@ -229,6 +229,11 @@ const (
 func (s *Service) handleTranscript(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	path, ok := transcriptPath(s.home, id)
+	grok := false
+	if !ok {
+		path, ok = grokUpdatesPath(s.home, id)
+		grok = ok
+	}
 	if !ok {
 		http.Error(w, "no transcript for that session", http.StatusNotFound)
 		return
@@ -239,7 +244,13 @@ func (s *Service) handleTranscript(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	turns, n, err := parseTranscript(f)
+	var turns []Turn
+	var n int64
+	if grok {
+		turns, n, err = parseGrokTranscript(f)
+	} else {
+		turns, n, err = parseTranscript(f)
+	}
 	if err != nil {
 		logger.Warn("transcript read stopped early", "session", id, "err", err)
 	}
@@ -285,7 +296,17 @@ func (s *Service) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	e, ok := LoadMeta(s.home)[name]
-	if !ok || e.EndedAt == "" || !claudeSessionID.MatchString(e.ClaudeSessionID) {
+	if !ok || e.EndedAt == "" {
+		http.Error(w, errNotHistory.Error(), http.StatusNotFound)
+		return
+	}
+	id := e.ClaudeSessionID
+	_, claudeFile := transcriptPath(s.home, id)
+	_, grokFile := grokUpdatesPath(s.home, id)
+	// A Grok transcript wins only when there is no Claude file for the same
+	// id. A UUID with neither file still resumes Claude, as before.
+	useGrok := grokFile && !claudeFile
+	if !useGrok && !claudeSessionID.MatchString(id) {
 		http.Error(w, errNotHistory.Error(), http.StatusNotFound)
 		return
 	}
@@ -297,8 +318,12 @@ func (s *Service) handleResume(w http.ResponseWriter, r *http.Request) {
 	if st, err := os.Stat(cwd); cwd == "" || err != nil || !st.IsDir() {
 		cwd = "" // tmux falls back to its default; claude --resume still finds it by id
 	}
+	bin := s.claudeBinary()
+	if useGrok {
+		bin = s.grokBinary()
+	}
 	created, hooks, err := s.spawnSession(newName, cwd, body.Policy, body.WorkspaceID, "",
-		resumeArgv(s.claudeBinary(), e.ClaudeSessionID)...)
+		resumeArgv(bin, id)...)
 	if err != nil {
 		failErr(w, err)
 		return
@@ -323,4 +348,11 @@ func (s *Service) claudeBinary() string {
 		return p
 	}
 	return "claude"
+}
+
+func (s *Service) grokBinary() string {
+	if p, err := exec.LookPath("grok"); err == nil {
+		return p
+	}
+	return "grok"
 }
