@@ -115,9 +115,9 @@ listener, `X-Winmux-Truncated`, `use_winmux_tmux_config` alias, CLI
   cross-build**, because those two binaries are the only server artifact
   that ever ships (`include_bytes!` in `src/addons.rs`) and nothing else in
   CI compiles them. The `go` job also runs `sdk-gen/ci-check.mjs`
-  (SDK/OpenAPI drift) and fails the build if `server/**` changed without
-  rebaking `resources/ymux-server-linux-{x64,arm64}` — see "Rebaking the
-  server" below. The `rust` job also uploads the musl CLI it stages as the
+  (SDK/OpenAPI drift) and fails the build if `resources/ymux-server-linux-{x64,arm64}`
+  are not byte-identical to its own build of the same commit — see
+  "Rebaking the server" below. The `rust` job also uploads the musl CLI it stages as the
   `ymux-cli-linux-x64` artifact — that is how a CLI change gets smoke-tested
   on a real box; the committed `resources/ymux-linux-x64` still only moves
   with a release. The `frontend` job uploads the vite build as the
@@ -138,11 +138,17 @@ listener, `X-Winmux-Truncated`, `use_winmux_tmux_config` alias, CLI
 `app/src-tauri/resources/ymux-server-linux-{x64,arm64}` are **committed
 blobs**, not build output. The desktop `include_bytes!`s them, so a Go change
 that skips the rebake is green in every job and ships the OLD server to every
-remote. `ci-windows.yml` now fails on exactly that. To rebake without a local
-Go toolchain (Rule #17): download the `ymux-server-linux` artifact from the
-ci-windows run, drop both files into `app/src-tauri/resources/`, and commit
-them in the same change as the Go source. Manual build commands live in
-`docs/ymux-server/README.md` § Build.
+remote. `ci-windows.yml` byte-compares both blobs with its own build of the
+same commit and fails on any difference. That build is reproducible because
+`go.mod` pins the exact Go (`toolchain` line, asserted by its own step) and
+the flags drop paths and the commit stamp (`-trimpath -buildvcs=false`). To
+rebake without a local Go toolchain (Rule #17): download the
+`ymux-server-linux` artifact from the ci-windows run **of the final commit
+you will merge** (after any merge of `main`), drop both files into
+`app/src-tauri/resources/`, and commit them. A blob from either side of a
+merge fails the gate. To bump Go: change the `toolchain` line and rebake in
+the same commit. Manual build commands live in `docs/ymux-server/README.md`
+§ Build.
 
 ## Communication
 

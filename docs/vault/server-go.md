@@ -33,9 +33,13 @@ behind interfaces, and Phase 95 added the first piece of "ymux in the browser"
 `app/src-tauri/resources/ymux-server-linux-{x64,arm64}` are **committed binaries**, not
 build output. `src/addons.rs` pulls them in with `include_bytes!`, so nothing in the
 desktop build reads this Go source. **A Go change that skips the rebake is green in every
-job and ships the OLD server to every remote.** `ci-windows.yml` has a gate that fails on
-exactly that; the rebake path is "download the `ymux-server-linux` artifact from the CI
-run, drop both files into `app/src-tauri/resources/`, commit them in the same change".
+job and ships the OLD server to every remote.** `ci-windows.yml` byte-compares both blobs
+with its own cross-build of the same commit and fails on any difference. That holds
+because the build is reproducible: `go.mod` pins the exact Go (`toolchain go1.26.10`,
+asserted by a CI step), and the flags are `-trimpath -buildvcs=false`. The rebake path is
+"download the `ymux-server-linux` artifact from the CI run of the final commit, drop both
+files into `app/src-tauri/resources/`, commit them". A Go bump is a `toolchain` edit plus
+a rebake in one commit.
 Manual build commands: `docs/ymux-server/README.md` § Build.
 
 ## Architecture: `core` is a leaf
@@ -988,8 +992,9 @@ out of the server and fails CI if the committed SDKs moved.
 - **`core.Version` and `ymux-addons`' `INSIGHTS_VERSION` are bumped together.** They had
   already drifted once (2.2.1 vs 2.2.0), and the effect was that the desktop stopped
   offering the update at all. See `crates.md`.
-- **Rebake the two Linux blobs in the same commit as any shipping Go change.** Test files
-  are excluded from the gate; they do not reach the binary.
+- **Rebake the two Linux blobs in the same commit as any shipping Go change**, from the CI
+  run of the final commit. After a merge of `main`, rebake again: a blob from either side
+  fails the byte-compare.
 - The wire contract lives in `frames.go` + the committed schemas. Change the Go type and
   the schema together, or the SDK drift-guard will say so.
 - CGO-free (`modernc.org/sqlite`), which is why the linux/amd64 + linux/arm64 cross-build

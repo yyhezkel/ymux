@@ -535,6 +535,12 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 
 ## Decided
 
+### 2026-11-26 — Server-blob gate is now a byte-compare
+- **Context:** the ci-windows gate only checked that `resources/ymux-server-linux-{x64,arm64}` changed in the diff. A merge that keeps one side's blob passes it and ships a server without the other side's Go changes. PR #110 hit that conflict. It was rebaked correctly, but by hand.
+- **Why the old comment rejected a byte-compare:** setup-go floated `go 1.26` to the newest patch, and the blob carried `vcs.revision`, so it could never equal a build of its own commit.
+- **Decision:** `go.mod` pins `toolchain go1.26.10`, and a CI step asserts `go env GOVERSION` against it. The build adds `-buildvcs=false`. The gate runs `cmp` on both blobs against the build of the same commit, on every event.
+- **Cost:** every merge of `main` into a branch that changes the server needs a fresh rebake from the CI run of the merged commit. A Go bump is a `toolchain` edit plus a rebake.
+
 ### 2026-11-18 — Compact Grok's TUI, and a manual agent list
 - **Context:** Grok's welcome chrome eats the pane. Alt-screen also drops under Zellij and tmux control mode. The connect wizard still hardcoded Claude, including an empty "launch Claude Code" row.
 - **Decision:** `ymux setup-hooks --agent grok` writes `[terminal] alt_screen = "always"` in `~/.grok/pager.toml` and `[ui] compact_mode = true` in `~/.grok/config.toml`, only when that key is missing. An existing `never` or `false` stays. Dry-run and a hooks error do not write. No `[scrollback.display] rtl_bidi` — both engines together double-reverse Hebrew. The connect menu comes from Settings `coding_agents` (Claude on, Grok off, wire key `default`) plus a machine-header `multi_agent` flag, not from probing binaries. Grok launches as `mode: cmd` (`grok` / `grok -c`), so `tui_owns_bidi` stays off. `multi_agent` false is elided and `WORKSPACES_SCHEMA_VERSION` stays 4.

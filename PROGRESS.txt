@@ -8091,3 +8091,7 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
 [2026-11-26] PR #110: rebake server blobs
   Task: copied ymux-server-linux-{x64,arm64} from the artifact of run 45810629795 (built from 9c5560cd).
   Result: compiles-untested until CI re-runs.
+[2026-11-26] CI: server-blob gate is a byte-compare
+  Task: the old gate only checked that the blobs changed, so a blob from the wrong side of a merge passed. Pinned toolchain go1.26.10 in go.mod plus an assert step, added -buildvcs=false, replaced the diff gate with cmp against the build of the same commit. Blobs rebaked from this branch's CI run.
+  Files: ci-windows.yml, server/go.mod, resources/ymux-server-linux-{x64,arm64}, docs/ymux-server/README.md, CLAUDE.md, DECISIONS, vault server-go.md.
+  Result: proven on CI only if the first run fails the gate and the run after the rebake passes.
