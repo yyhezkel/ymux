@@ -33,6 +33,7 @@ import {
   type RtlProfileFields,
 } from "./settings";
 import { applyI18nSettings, LANGUAGES, t } from "./i18n";
+import { DEFAULT_CODING_AGENTS, type CodingAgentsSettings } from "./codingAgents";
 import { isFontAvailableAsync } from "./fontProbe";
 import { isWindows } from "./platform";
 import { IconChevronDown, IconChevronRight, IconRefreshCcw } from "./icons";
@@ -275,6 +276,26 @@ export function SettingsModal(p: Props) {
       push_to_talk: p.settings.stt?.push_to_talk_hotkey,
     }),
   );
+  // Microphones for the Local STT backend. enumerateDevices() returns empty
+  // labels until mic permission has been granted once, so the list is
+  // re-read on focus rather than only at mount — after the first recording
+  // the names show up without reopening Settings.
+  const [mics, setMics] = createSignal<MediaDeviceInfo[]>([]);
+  const loadMics = async () => {
+    try {
+      const all = await navigator.mediaDevices.enumerateDevices();
+      // "default" / "communications" are Chromium aliases for real devices
+      // already in the list; the empty-value option stands for the default.
+      setMics(
+        all.filter(
+          (d) => d.kind === "audioinput" && d.deviceId !== "default" && d.deviceId !== "communications",
+        ),
+      );
+    } catch (e) {
+      log.warn("enumerateDevices failed", e);
+    }
+  };
+  onMount(() => void loadMics());
   // beta.3: sub-tab inside the "Hooks & Notifications" card.
   const [hnSubTab, setHnSubTab] = createSignal<HooksNotifSubTab>("hooks");
   // 2026-08-19: which RTL profile the controls below are editing. Local
@@ -500,6 +521,13 @@ export function SettingsModal(p: Props) {
 
   const update = <K extends keyof Settings>(k: K, v: Settings[K]) =>
     queueSave({ ...p.settings, [k]: v });
+
+  const agents = (): CodingAgentsSettings => ({
+    ...DEFAULT_CODING_AGENTS,
+    ...p.settings.coding_agents,
+  });
+  const setAgents = (patch: Partial<CodingAgentsSettings>) =>
+    update("coding_agents", { ...agents(), ...patch });
 
   const setTheme = (patch: Partial<Settings["theme"]>) => {
     const next = { ...p.settings, theme: { ...p.settings.theme, ...patch, preset: "custom" } };
@@ -860,6 +888,28 @@ export function SettingsModal(p: Props) {
                   </label>
                   <p class="settings-hint">{t("settings.brief.injectProtocol.hint")}</p>
                 </section>
+                {/* Hibernation of idle agents. Only the daemon reads this
+                    field, so only the browser (whose settings live on the
+                    daemon) shows it. 0 = off, the default. */}
+                <Show when={backend.kind === "web"}>
+                  <section>
+                    <label>
+                      <span>{t("settings.daemon.hibernate.label")}</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="1440"
+                        value={p.settings.daemon?.hibernate_idle_minutes ?? 0}
+                        onInput={(e) => {
+                          const raw = parseInt(e.currentTarget.value, 10);
+                          const n = Number.isFinite(raw) ? Math.min(1440, Math.max(0, raw)) : 0;
+                          update("daemon", { ...p.settings.daemon, hibernate_idle_minutes: n });
+                        }}
+                      />
+                    </label>
+                    <p class="settings-hint">{t("settings.daemon.hibernate.hint")}</p>
+                  </section>
+                </Show>
                 <section>
                   <label class="settings-checkbox">
                     <input
@@ -1542,6 +1592,38 @@ export function SettingsModal(p: Props) {
 
               <Show when={tab() === "ai"}>
                 <section>
+                  <h4>{t("settings.agents.title")}</h4>
+                  <p class="settings-hint">{t("settings.agents.hint")}</p>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={agents().claude}
+                      onChange={(e) => setAgents({ claude: e.currentTarget.checked })}
+                    />
+                    <span>{t("settings.agents.claude")}</span>
+                  </label>
+                  <label class="settings-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={agents().grok}
+                      onChange={(e) => setAgents({ grok: e.currentTarget.checked })}
+                    />
+                    <span>{t("settings.agents.grok")}</span>
+                  </label>
+                  <Show when={agents().claude && agents().grok}>
+                    <label>
+                      <span>{t("settings.agents.default")}</span>
+                      <select
+                        value={agents().default === "grok" ? "grok" : "claude"}
+                        onChange={(e) => setAgents({ default: e.currentTarget.value })}
+                      >
+                        <option value="claude">{t("settings.agents.claude")}</option>
+                        <option value="grok">{t("settings.agents.grok")}</option>
+                      </select>
+                    </label>
+                  </Show>
+                </section>
+                <section>
                   <h4>{t("settings.claude.title")}</h4>
                   <label class="settings-checkbox">
                     <input
@@ -1698,6 +1780,42 @@ export function SettingsModal(p: Props) {
                           })
                         }
                       />
+                    </label>
+                    <label>
+                      <span>{t("settings.stt.mic.label")}</span>
+                      <select
+                        value={p.settings.stt?.input_device_id ?? ""}
+                        onFocus={() => void loadMics()}
+                        onChange={(e) =>
+                          update("stt", {
+                            ...(p.settings.stt ?? {
+                              enabled: false,
+                              backend: "local",
+                              local_endpoint: null,
+                              language: "auto",
+                              push_to_talk_hotkey: "Ctrl+Shift+M",
+                            }),
+                            input_device_id: e.currentTarget.value === "" ? null : e.currentTarget.value,
+                          })
+                        }
+                      >
+                        <option value="">{t("settings.stt.mic.default")}</option>
+                        <For each={mics()}>
+                          {(m) => <option value={m.deviceId}>{m.label || m.deviceId.slice(0, 12)}</option>}
+                        </For>
+                        {/* A saved device that is unplugged right now still shows,
+                            so the select doesn't silently snap back to "default". */}
+                        <Show
+                          when={
+                            p.settings.stt?.input_device_id &&
+                            !mics().some((m) => m.deviceId === p.settings.stt?.input_device_id)
+                          }
+                        >
+                          <option value={p.settings.stt?.input_device_id ?? ""}>
+                            {t("settings.stt.mic.missing")}
+                          </option>
+                        </Show>
+                      </select>
                     </label>
                   </Show>
                   <label>

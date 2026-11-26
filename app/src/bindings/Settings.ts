@@ -16,6 +16,7 @@ import type { SttSettings } from "./SttSettings";
 import type { TerminalSettings } from "./TerminalSettings";
 import type { Theme } from "./Theme";
 import type { Updates } from "./Updates";
+import type { CodingAgents } from "./CodingAgents";
 
 export type Settings = { version: number, theme: Theme, font: Font, terminal: TerminalSettings, hooks: Hooks, notifications: Notifications, updates: Updates, i18n: I18n, 
 /**
@@ -165,4 +166,9 @@ theme_mode: string,
  * machine (origin-less legacy sessions stay visible — fail-open). A
  * String (not an enum) per the sidebar_mode / theme_mode pattern.
  */
-session_visibility: string, };
+session_visibility: string, 
+/**
+ * Which agents the connect wizard may offer. Missing on an old
+ * settings.json means Claude on, Grok off, default Claude.
+ */
+coding_agents: CodingAgents, };

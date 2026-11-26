@@ -46,16 +46,20 @@ SetupWizard  (318)
 `ProvisionNewServerFlow` is the former ProvisioningWizard with the picker stripped out,
 and it no longer hosts the "existing" flows at all.
 
-- **`LocalSetupFlow`** — detects git / node / Claude Code / codex / gemini plus the
-  platform's multiplexer, offers to install what is missing (winget / Homebrew /
-  official installers / `npm -g`), installs ymux hooks for local Claude Code, and
-  finishes by creating a local workspace to land in. Progress arrives as
+- **`LocalSetupFlow`** — detects git / node / Claude Code / Grok Build / codex / gemini
+  plus the platform's multiplexer, offers to install what is missing (winget / Homebrew /
+  official installers / `npm -g`), installs ymux hooks when Claude or Grok is present
+  (or its install step is checked), and finishes by creating a local workspace to land
+  in. The hooks row shows `claude v…` and `grok v…` from the inspect. Progress arrives as
   `local-setup:progress` events from `local_setup.rs`. `local_setup_start` input is
   `{steps, distro, workspace_name, create_workspace, workspace_cwd}` — no username field.
   The macOS tmux chain is toggled by the `persistenceGroup` signal (default on; off when
-  brew and tmux are both absent).
+  brew and tmux are both absent). The hooks checkbox stays hidden on non-Windows, the
+  same rule Claude already had.
 - **`ProvisionNewServerFlow`** — same step-card UI, fed by `provisioning:progress` from
-  `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run.
+  `provisioning.rs`. Per-step retry/skip; a failed step does not abort the run. The
+  agent-section header is drawn before the first of InstallClaudeCode, InstallGrok,
+  InstallCodex, InstallGemini.
 - **`ConnectExistingFlow`** — auth → discover → choose. The Rust side
   (`connect_existing_discover` / `connect_existing_execute`) does the work; this is the
   chooser.
@@ -81,6 +85,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
   split. Each env row has a `secret` checkbox: secret → password input, unchecking clears
   the value; optional `storedSecretKeys` prop swaps the placeholder to "stored — leave
   blank to keep".
+- **More than one agent** — edit-only, and only when `isMachineHeader(editing)` (a root that is not a folder and not a project root). The toggle calls `workspace_set_multi_agent` immediately, the same shape as the auto-port-forward toggle. It is not part of the `onUpdate` bag. It hydrates from `w.multi_agent === true`, because `false` is omitted on the wire.
 
 ## Dialogs
 
@@ -116,7 +121,7 @@ Phase 49-B worktree block (`workspace_create_worktree`, local cwd only) renders 
 ## `SettingsModal.tsx` (1,971)
 
 The whole settings surface in tabs — theme, fonts, terminal, RTL profiles, hooks,
-notifications, logs, Claude, updates, shortcuts. Reads and writes through
+notifications, logs, Claude, updates, shortcuts. The AI tab's first section is the coding-agents list (`settings.agents.*`): Claude and Grok checkboxes, and a default `<select>` only when both are on. `setAgents` writes the complete group (`DEFAULT_CODING_AGENTS` spread under the stored `coding_agents`), so a partial save cannot drop the other key — the `setRtlField` lesson, applied because `settings_save` replaces the document. Reads and writes through
 `settings.ts` (the typed mirror; `src-tauri/src/settings.rs` owns the canonical schema)
 and reacts to `settings:changed`, so a `ymux settings set` from the CLI updates the open
 modal. The General tab also carries the Phase 91.C "Show every session as a sidebar row"
@@ -125,7 +130,9 @@ toggles + two minute thresholds + Phase 105.C's "Inject context into sessions"
 and "Teach sessions the brief format" (`inject_protocol`), both
 checked unless explicitly `false` since they default on); its writes always spread the COMPLETE `brief`
 group over `DEFAULT_BRIEF_SETTINGS` — the `setRtlField` lesson applied to a new
-group.
+group. Below it, only when `backend.kind === "web"`, one number field writes
+`daemon.hibernate_idle_minutes` (0–1440, 0 = off). Only the daemon reads it
+(`server-go.md` § hibernate), and only the browser's settings reach the daemon.
 
 The RTL block is the one worth knowing: a `local` / `remote` profile pill, then the
 `rtl_mode` radios — `auto_per_line`, `force_rtl`, `bidi_reorder`, `off` — over the
@@ -172,6 +179,16 @@ at `settings.stt.push_to_talk_hotkey` rather than in `settings.shortcuts`. It us
 same `ShortcutRow` (it was a free-text box until Phase 87 — the accelerator had to be
 typed, and a typo produced a hotkey that silently never fired), and it is passed into
 `conflictingAccels` explicitly so a clash across the two schemas is still reported.
+
+**The Local STT backend has a microphone picker** (`settings.stt.input_device_id`), shown
+only with backend = Local because Web Speech cannot choose a device. It exists because
+Chromium's `getUserMedia({audio:true})` takes the Windows *console* default, which on a
+laptop is often the built-in array — muted, so every press produced a silent clip and an
+empty transcript with no error. `enumerateDevices()` returns blank labels until mic
+permission has been granted once, so the list is re-read on focus, not only at mount; the
+`default` / `communications` aliases are filtered out (the empty option stands for
+default), and a saved device that is unplugged keeps its own "(not connected)" option so
+the select doesn't silently show "default".
 
 **`VersionManager.tsx` (228)** is the Updates tab's list: every published release,
 install any of them (including a downgrade, with a warning), and pick a release channel.

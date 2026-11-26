@@ -58,6 +58,8 @@ Clap subcommands, ~60 of them. `docs/CLI.md` is the user-facing reference; this 
   `-resolve-url`, `-url`, `-history`, `-wait`, `-wait-for`, `-eval`, `-screenshot`,
   `-click`, `-find`, `-snapshot`, `-type`. This is how an agent drives the workspace
   browser.
+- **Scheduled prompts** — `schedule add|list|rm|enable|disable|history` (below). The
+  only family that does not talk to the desktop.
 - **Agent** — `claude-hook`, `setup-hooks`, `claude-sessions-list`
 - **Driving other agents** — `wait`, `read`, `worktree create` (below)
 - **Notes / settings** — `note`, `settings` (`show` / `set` / `preset`)
@@ -116,11 +118,47 @@ the byte count only, because a reply can hold pane text (Rule #1).
 `$YMUX_PANE_ID` so the desktop can find the workspace; it never falls back to the active
 workspace.
 
+## `schedule` — the one verb family that calls the daemon
+
+`ymux schedule ...` manages the scheduled prompts of the host's `ymux-server`
+(`server-go.md` § scheduled prompts). `schedule_call` maps each verb to one REST call, and
+`server_request` sends it to `127.0.0.1:<port>` with the token in `~/.ymux/server/token`
+(`read_server_token`, shared with `forward_hook_to_server`). There is no RPC, no tunnel
+and no desktop. With no token file the verb exits 2 with "Run this on the remote host".
+`--port` (on `Cmd::Schedule`, `global = true`, so before or after the verb; 1–65535,
+default `DEFAULT_SERVER_PORT` 7879) is the daemon's own `--port`. The daemon writes its
+port nowhere, so the CLI cannot read it. The address is always loopback, so the token
+never leaves the host. `forward_hook_to_server` still dials 7879.
+
+The request is raw HTTP/1.0 over a tokio `TcpStream`, with no new dependency. HTTP/1.0
+makes Go answer without chunking and close the socket, so a read to EOF is the whole
+response. `parse_http_response` is pure and tested: 2xx gives the JSON body, any other
+status gives an error with the code and the first body line. The id is checked
+(`valid_schedule_id`, `[A-Za-z0-9_-]`) before it goes into a URL path. A relative
+`--cwd` resolves against the CLI's current directory, because the CLI and the daemon run
+on the same host. The precheck argv follows `--` (`#[arg(last = true)]`) and stays an
+argv up to the daemon's `exec` (Rule #3). Rule #8: the token is never printed.
+
 ## `hooks.rs` (730) — `ymux setup-hooks`
 
-Registers agent hooks that point at the local `ymux` binary, so Claude Code (and codex,
-gemini) pipe permission requests and lifecycle events back through the tunnel into the
-desktop UI.
+Registers agent hooks that point at the local `ymux` binary, so the agent pipes
+permission requests and lifecycle events back through the tunnel into the desktop UI.
+Claude Code and Grok Build are real adapters. Codex, Cursor, OpenCode, Gemini and
+Copilot stay empty stubs.
+
+Grok's adapter (`Grok`) writes `~/.grok/hooks/ymux.json`. It creates `~/.grok/hooks`
+only when grok is detected and the run is not a dry run. Detection is
+`~/.grok/bin/grok` (the official installer target), a `~/.grok` directory, a binary
+under `~/.local/bin`, or `grok` on `PATH`. The installed command is still
+`claude-hook`: Grok's stdin is camelCase plus Claude's snake_case aliases.
+`session_start_source` maps Grok's SessionStart `new` / `load` to `startup` /
+`resume` before `context.inject`; any other source, including Claude's own, passes
+through. `forward_hook_to_server` (main.rs) sends `canonical_tool_name`, so the
+daemon's Bash-only Block half still sees a shell wipe. The card title keeps the
+name Grok sent. Backup and temp files take the real filename (`ymux.json.bak…`),
+not a hardcoded `settings.json`.
+
+After that write returns `AgentStatus::Done` (an unchanged hooks file counts) and the run is not a dry run, `ensure_grok_tui_prefs` merges two keys that are missing: `[terminal] alt_screen = "always"` into `~/.grok/pager.toml`, and `[ui] compact_mode = true` into `~/.grok/config.toml`. An existing value stays, including `never` and `false`. A missing file is created with only that section. The merge is a line scan — no `toml` crate. Comment lines and an inline `#` outside quotes do not count as a set key. A key in another table, or inside `[[terminal]]`, does not count; a root dotted `terminal.alt_screen` does. The assignment is inserted immediately after the first `[table]` header, else a new section is appended. CRLF is preserved. The write is atomic (`{filename}.ymux-tmp.{pid}` then rename). A toml error returns `AgentStatus::Error` after the hooks file is already in place; the next connect retries, because bootstrap runs setup-hooks on every connect. The same path runs on the local wizard, including Windows where the multiplexer is zellij. It does not create `~/.grok` when grok is not installed. It does not set `[scrollback.display] rtl_bidi`.
 
 **`Notification` is registered again as of hooks v1.5.0.** v0.4.4 had dropped it as
 observability-only; it is back with a different job — the CLI filters on
@@ -164,7 +202,7 @@ then failed silently, and the desktop simply never heard from that agent again. 
 with `ymux_entry_points_at`: an entry of ours whose executable is not the binary being
 installed is stale too. That is the winmux→ymux migration case seen live — four entries
 on `~/.winmux/bin/winmux` (exists, runs, has no `last.env` fallback) and a 1.5.0 stamp.
-Because the bootstrap runs `setup-hooks --source bundled` on **every connect**, this is
+Because the bootstrap runs `setup-hooks --source bundled` for claude and for grok on **every connect**, this is
 what makes every migrated install converge on the current CLI with no user action. The
 same rule rewrites an entry missing the spec's `timeout` (`ymux_entry_has_timeout`).
 
@@ -184,10 +222,16 @@ symlinked `settings.json` with a regular file and leaves the link's target untou
 is what the unix-only test observes.
 
 The hook spec used to be a hardcoded `&[(event, subcmd, matcher)]` slice. It now ships as
-JSON at the repo root — `hooks/claude-code.json`, `hooks/codex.json`,
+JSON at the repo root — `hooks/claude-code.json`, `hooks/grok.json`, `hooks/codex.json`,
 `hooks/gemini.json` — which the CLI fetches from raw.githubusercontent.com at install
 time, with `~/.ymux/cache/hooks/` as a fallback and the bundled spec as the final
 fallback. So a hook change reaches existing installs without a CLI rebuild.
+`hooks/grok.json` is version 1.0.0, independent of the Claude spec. Its PreToolUse
+matcher stays the Claude names (`Bash|Write|Edit|MultiEdit|NotebookEdit|Task`) with
+`timeout` 600: Grok maps those names onto its own tools, and its default PreToolUse
+timeout is 5s, shorter than a Gate wait. `--agent` accepts `claude` (the default),
+`grok` / `grok-build`, or `all`. `bundled_spec_for` has a real fallback for grok;
+the other agents still get an empty spec.
 
 ## `port_watch.rs` — the LISTEN watcher
 
@@ -287,7 +331,9 @@ from `CARGO_PKG_VERSION` — expected churn, committed as part of the release.
 - **Rule #1** — hook payloads carry user prompts and tool arguments. Log metadata only.
 - **Rule #8** — the tunnel HMAC token passes through here; never log it.
 - A new verb is: clap subcommand + a `dispatch` arm in `rpc_server.rs` + a line in
-  `docs/CLI.md`. Nothing generates one from another.
+  `docs/CLI.md`. Nothing generates one from another. The exception is `schedule`: its
+  other end is a daemon route in `server/internal/term/schedroutes.go`, not
+  `rpc_server.rs`.
 - The app no longer answers on the legacy `winmux-` pipe; the CLI's `default_pipe_name_legacy`
   dial is only a client-side fallback and now finds no listener.
 - `main()` no longer promotes `WINMUX_*` env to `YMUX_*` or folds `~/.winmux` into `~/.ymux`

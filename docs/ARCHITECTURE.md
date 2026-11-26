@@ -100,7 +100,7 @@ workspaces and their layouts are persisted.
   to a fresh client connection on the local RPC endpoint (pipe or socket, per above).
   Auth is **HMAC-SHA256 challenge-response** (Phase 6.4) — the shared token never
   travels in cleartext.
-- **Agent hooks:** the Linux CLI's `claude-hook <subcommand>` builds a `feed.push`
+- **Agent hooks:** Claude Code and Grok Build both invoke the Linux CLI's `claude-hook <subcommand>`, which builds a `feed.push`
   JSON-RPC request from stdin, sends it through the tunnel, and (for blocking kinds)
   waits for a server-side decision before returning an exit code.
 

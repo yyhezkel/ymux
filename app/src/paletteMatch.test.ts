@@ -3,7 +3,28 @@
 // (Excluded from the app tsconfig -- node tests, not browser code.)
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { matchesQuery } from "./paletteMatch.ts";
+
+// The session-history search (Orca idea #9) uses this matcher in the resume
+// picker, and the daemon has a Go copy (term/search.go matchTokens). Both
+// test suites read these cases, so the two cannot drift apart.
+interface SharedCase {
+  name: string;
+  query: string;
+  fields: string[];
+  want: boolean;
+}
+const shared = JSON.parse(
+  readFileSync(new URL("../src-tauri/server/internal/term/testdata/search_match.json", import.meta.url), "utf8"),
+) as SharedCase[];
+
+test("the cases shared with the daemon's matchTokens", () => {
+  assert.ok(shared.length > 0);
+  for (const c of shared) {
+    assert.equal(matchesQuery(c.query, c.fields), c.want, c.name);
+  }
+});
 
 const maximize = ["Pane: Toggle maximize", "Pane: Toggle maximize", "pane.maximize"];
 const hebrewClose = ["חלונית: סגור", "Pane: Close", "pane.close"];

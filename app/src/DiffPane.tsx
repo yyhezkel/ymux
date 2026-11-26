@@ -12,6 +12,9 @@
 // Anchors and the prompt text are in `diffNotes.ts` (pure, tested). The rows
 // are rebuilt on every diff event, so the editor and the send controls live
 // in a tray outside the rows and the keyboard cursor is held by anchor.
+//
+// PR status: `PrStatusCard` under the worktree strip shows the PR of the
+// pane's branch and offers "Fix broken checks". It shares the pane picker.
 
 import { createSelector, createSignal, createMemo, createEffect, on, For, onCleanup, onMount, Show } from "solid-js";
 import { backend, type UnlistenFn } from "./backend";
@@ -46,6 +49,8 @@ import {
   IconTrash,
 } from "./icons";
 import { createLogger } from "./logger";
+import { PaneTargetSelect } from "./PaneTargetSelect";
+import { PrStatusCard } from "./PrStatusCard";
 
 const log = createLogger("DIFF");
 
@@ -120,6 +125,7 @@ export function DiffPane(p: Props) {
   const [targetPane, setTargetPane] = createSignal<string>("");
   const [sending, setSending] = createSignal<boolean>(false);
   const [sendStatus, setSendStatus] = createSignal<{ ok: boolean; msg: string } | null>(null);
+  const [prNonce, setPrNonce] = createSignal<number>(0);
   let draftRef: HTMLTextAreaElement | undefined;
 
   const parsed = createMemo(() => parseDiff(diffText()));
@@ -246,6 +252,7 @@ export function DiffPane(p: Props) {
 
   const refresh = async () => {
     setBusy(true);
+    setPrNonce((n) => n + 1);
     try {
       await backend.call("diff_pane_refresh", { paneId: p.pane.pane_id });
     } catch {
@@ -462,6 +469,20 @@ export function DiffPane(p: Props) {
         </span>
       </div>
 
+      <Show when={backend.can("prStatus")}>
+        <PrStatusCard
+          paneId={p.pane.pane_id}
+          cwd={cwd()}
+          branch={branch()}
+          enabled={!error()}
+          refreshNonce={prNonce()}
+          sendTargets={p.sendTargets}
+          targetPane={targetPane()}
+          onTargetPane={setTargetPane}
+          onSendPrompt={p.onSendPrompt}
+        />
+      </Show>
+
       <Show when={refEditing()}>
         <div class="diff-pane-ref-row">
           <input
@@ -672,21 +693,7 @@ export function DiffPane(p: Props) {
             >{prompt()}</pre>
 
             <div class="diff-notes-row">
-              <label class="diff-notes-label">
-                {t("diff.notes.target")}{" "}
-                <select onChange={(e) => setTargetPane(e.currentTarget.value)}>
-                  <option value="" selected={!validTarget()}>
-                    {p.sendTargets.length > 0 ? t("diff.notes.choosePane") : t("diff.notes.noPanes")}
-                  </option>
-                  <For each={p.sendTargets}>
-                    {(x) => (
-                      <option value={x.paneId} selected={x.paneId === targetPane()}>
-                        {x.isAgent ? `${x.label} (${t("diff.notes.agentTag")})` : x.label}
-                      </option>
-                    )}
-                  </For>
-                </select>
-              </label>
+              <PaneTargetSelect targets={p.sendTargets} value={targetPane()} onChange={setTargetPane} />
               <button disabled={!canSend()} onClick={() => void send()}>{t("diff.notes.send")}</button>
             </div>
             <p class="diff-notes-hint">{t("diff.notes.sendHint")}</p>

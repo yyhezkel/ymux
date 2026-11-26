@@ -14,6 +14,7 @@ covers:
   - app/src/windowPaneName.ts
   - app/src/cwdShort.ts
   - app/src/wsTree.ts
+  - app/src/codingAgents.ts
   - app/src/BriefingCard.tsx
   - app/src/QueueRow.tsx
   - app/src/IntentEditor.tsx
@@ -67,7 +68,9 @@ try/caught and `log.warn`ed, so a quota error never prevents `popout_pane` from 
 ## `App.tsx` (5,916) — one component, ~50 signals
 
 `triggerHooksUpdate` runs `"$HOME/.ymux/bin/ymux" setup-hooks` through
-`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry). A
+`ssh_exec_in_workspace` (full path: a non-login exec does not load the rc PATH entry).
+The banner's `agent` picks the flag: `grok` runs `--agent grok`, anything else
+`--agent claude`. Both use `--force --source github`. A
 failure rejects into the catch, so the toast cannot claim success.
 
 There is a single `function App()` starting at line 142 and it holds essentially all
@@ -76,6 +79,11 @@ application state as `createSignal` pairs: `file` (the whole `WorkspacesFile`),
 `notes`, `paneStatus`, `agentRuns`, `portForwards`, `detectedPorts`, `sidebarWidth`,
 `zoomFactor`, the pending-credential signals (`pendingPwFor`, `pendingPassphraseFor`,
 `pendingHostTrust`), and the various modal/window toggles.
+
+`hibernatedPanes` (browser mode only) holds the panes whose idle claude the daemon
+stopped. It is seeded from `pane_hibernated` at boot and kept by `pane:hibernated`.
+`shownStatusText()` puts `t("pane.hibernated")` over the pane's status text, and
+`LayoutView` gets that map instead of `paneStatusText` — that is the whole marker.
 
 A `createEffect` after `focusPane` reports the focused **terminal** pane to the backend
 (`invoke("pane_set_active", { workspaceId, paneId })`, failures → `log.warn`); non-terminal
@@ -112,13 +120,20 @@ numeric family where 9 means *last*, and a `ParsedShortcut` holds exactly one ke
 Bare `Escape` is a contextual *dismissal* — it acts only when a fullscreen panel or a
 maximized pane exists and otherwise falls through so the escape sequence reaches the
 PTY; making it rebindable would let a user strand themselves in a maximized pane. Both
-run before the table so no rebind can shadow them. STT push-to-talk runs after it,
-because it is stored in `settings.stt` rather than `settings.shortcuts`. All three are
-listed read-only in Settings → Shortcuts so they are at least visible. Every
-push-to-talk outcome now lands in the unified log: success as `log.info` with backend +
-char count only (never the transcript — Rule #1; chars=0 catches the "pressed PTT,
-nothing happened" case), and every recorder rejection as `log.error` before the 5-second
-toast, so a missed toast is no longer a lost error.
+run before the table so no rebind can shadow them. STT push-to-talk is stored in
+`settings.stt` rather than `settings.shortcuts`, and it too runs **before** the table:
+it used to run after, so when Phase 87 moved `focus_zoom` onto `Ctrl+Shift+Z` a PTT
+already bound there went silently dead — no recording, no log line. An enabled PTT now
+wins the clash (an explicit choice beats a default that moved under it); a disabled one
+falls through to the table. `startPushToTalk` passes `stt.input_device_id` to
+`makeSttRecorder` so the Local backend records from the chosen microphone. All three are listed read-only in Settings → Shortcuts so
+they are at least visible. `warnShortcutConflicts` runs `conflictingAccels` (PTT
+included) on load and on every `settings:changed` and logs each duplicate as
+`log.warn`, so a clash is visible in the log and not only in red in Settings. Every
+push-to-talk step lands in the unified log: `stt start` / `stt stop requested` at debug,
+success as `log.info` with backend + char count only (never the transcript — Rule #1;
+chars=0 catches the "pressed PTT, nothing happened" case), and every recorder rejection
+as `log.error` before the 5-second toast, so a missed toast is no longer a lost error.
 
 **The workspace header keeps five buttons, not eight.** Browser, Files, the
 BRIEF Queue (badge = panes needing you across ALL workspaces — beta feedback:
@@ -389,6 +404,19 @@ editing, the persistence toggle, and the right-click menu. `paneCaps()` /
 based on its effective connection. The wizard's browse view renders `<DirPicker inline>`
 (`frontend-flows.md`) and keeps only a `browsePath` signal for the footer's "Use this";
 the directory listing itself no longer lives in `PaneView`.
+
+**The resume picker's search (Orca idea #9, history search).** The search box is
+debounced: `ncQuery` follows `ncSearch` 300 ms after the last key. A settled query
+refetches `pane_list_claude_sessions` with `query` and `limit: 200` (40 without a
+query); `ncLoadSeq` drops a reply that a newer fetch replaced. The filter is
+`matchesQuery` from `paletteMatch.ts` (token-AND, case-insensitive) over id, title,
+folder, branch, model and both previews — the daemon's `matchTokens` uses the same rule,
+and `term/testdata/search_match.json` pins both. A search with no rows shows
+`claude_picker.noMatch`, not `claude_picker.empty`. Rows show the branch and model as
+badges and the title above the preview. `ncSessionsLoaded` gates the auto-load: before
+it, an empty list read as "not loaded" and the effect fetched again in a loop.
+
+**The command menu is `connectCommands(connectAgents)`.** App computes `effectiveAgentsForWorkspace(settings()?.coding_agents, file().workspaces, activeWs id)` and passes `connectAgents` through LayoutView into PaneView. `codingAgents.ts` holds that logic: `enabledAgents` treats a missing `claude` as on and a missing `grok` as off; `effectiveAgents` offers only the default when the machine's `multi_agent` is false (if that default is unchecked, the one agent that is checked); `multi_agent` true offers every checked agent, Claude then Grok; none checked yields an empty list. `machineOf` walks the pane's workspace and `ancestorsOf` (nearest first) and skips folder and project-root headers. No machine ancestor counts as one agent. `connectCommands` always starts with `plain` and ends with `custom`. Claude adds `claude`, `--continue`, `--resume`, `--dangerously-skip-permissions`, and `from-list`. Grok adds `grok` and `grok-c` and does not add from-list. With neither agent, from-list stays (the session list is still there) and there is no agent launch row. `buildNewConnOpts` sets `mode: "cmd"` and `cmd` to the literal `grok` or `grok -c` for those two, before the Claude branch, so `tuiSignalOnConnect` stays off. A `createEffect` resets the picked command to `plain` when it leaves the menu. Labels are the command text; `plain` uses `connect.newConn.noneShell`. The unused `connect.runClaude` key stays unused.
 
 **The connect wizard probes for a live session before offering a command.**
 `openNewConnModal` calls `pane_target_session_state` and disables the command controls

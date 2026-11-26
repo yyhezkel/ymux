@@ -456,6 +456,15 @@ pub struct Workspace {
     // empty, so a workspace that never mirrored round-trips byte-identical.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub known_sessions: Vec<KnownSession>,
+    // A machine header that should offer every agent checked in Settings.
+    // False (the default, elided) offers only `coding_agents.default`.
+    // Lives on the machine, not on a folder or a screen: a screen reads
+    // it from its machine ancestor. Elided when false so an existing
+    // workspaces.json stays byte-identical. No schema bump — same shape
+    // as `tabs_mode`: an older build that drops a `true` just falls back
+    // to one agent until the flag is set again.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub multi_agent: bool,
 }
 
 /// Phase 91.C: a multiplexer session a root workspace has seen on its host.
@@ -935,6 +944,7 @@ mod tests {
         assert!(!w.is_collapsed);
         assert!(!w.tabs_mode);
         assert!(w.known_sessions.is_empty());
+        assert!(!w.multi_agent);
     }
 
     #[test]
@@ -950,7 +960,7 @@ mod tests {
         // written — they predate the skip_serializing_if convention and
         // are grandfathered. The three tree keys must NOT join them, and
         // neither must Phase 84.A's `tabs_mode`, nor Phase 91's
-        // `known_sessions`.
+        // `known_sessions`, nor `multi_agent`.
         let raw = json!({
             "id": "w1",
             "name": "legacy",
@@ -969,6 +979,7 @@ mod tests {
             "tmux_session",
             "intent",
             "known_sessions",
+            "multi_agent",
         ] {
             assert!(back.get(key).is_none(), "{key} must be elided, got {back}");
         }

@@ -70,6 +70,7 @@ var errUnknownMethod = &core.RPCError{Code: -32000, Message: "unknown method"}
 
 // DispatchHook implements core.HookTarget.
 func (t termHookTarget) DispatchHook(method string, raw json.RawMessage) (any, *core.RPCError) {
+	t.r.touch(t.e) // any hook restarts the idle clock (hibernate.go)
 	switch method {
 	case "ping":
 		return map[string]any{"ok": true}, nil

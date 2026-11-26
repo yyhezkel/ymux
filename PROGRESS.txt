@@ -8003,6 +8003,12 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   PR #51 branch: merged origin/main (conflicts lib.rs → ssh_handle_for_machine with lock_or_recover; SessionsOverviewWindow → backend.call; PROGRESS both; vault re-stamped). PR #81 (dependabot) not merged: CI red because of the same main break.
   Result: compiles-untested until CI; Go blobs still need the rebake from the PR's ci-windows artifact.
 
+[2026-11-05] Voice input (STT push-to-talk) silently dead.
+  Cause: settings had stt.push_to_talk_hotkey = Ctrl+Shift+Z, the same key Phase 87 gave focus_zoom. The key table ran first and returned, so startPushToTalk never ran, and the only STT log lines (result/failed) come after start, so nothing at all was logged.
+  Fix (app/src/App.tsx): PTT is checked BEFORE the table and wins a clash when enabled; warnShortcutConflicts logs every conflictingAccels duplicate (PTT included) as warn on load + settings:changed; debug lines for stt start / stop requested / disabled-hotkey. Vault frontend-shell.md + lock.
+  Side finding to FOLLOWUPS (P2): the app writes debug.log.1 and debug.log has been stale since 2026-10-07.
+  Result: compiles-untested until CI; not run live.
+
 [2026-11-09] pre-tool-use defers in `auto` mode; context.inject default budget 1000 ms (branch fix/hooks-auto-mode-context-timeout).
   Cause: hooks were removed from settings.json on 2026-10-26 because PreToolUse gated and denied commands in `auto` mode, which was not in the CLI's short-circuit list. SessionStart/UserPromptSubmit/Stop/SessionEnd went with them, so the Context Rail and injection stopped. Separately, context.inject takes 310-400 ms on a real tunnel, over the 300 ms budget.
   Fix: cli/src/main.rs prints nothing in `auto` mode; default budget 1000 ms. Docs: CONTEXT, CLI, PROTOCOLS, vault cli.md.
@@ -8036,3 +8042,48 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Not changed: D3 (already fixed on main by 3277fe80, entry archived), D11 (not a defect, the desktop twin behaves the same), D20 + D21 (deliberate, logged under Open in docs/DECISIONS.md).
   Files: cli/src/{main,hooks,port_watch}.rs, src/lib.rs, crates/ymux-core/src/log_writer.rs, crates/ymux-tunnel/src/lib.rs, server/internal/{chat,workspace,term,push,config}, docs/vault/{cli,crates,backend-core,backend-rpc,server-go}.md, FOLLOWUPS*, docs/DECISIONS.md.
   Result: compiles-untested until CI; nothing ran on a real machine (Rule #14). Smoke steps are the P1 entry in FOLLOWUPS.
+2026-11-09 | Backlog run merged
+  Task: merge the 2026-11-09 backlog and Orca PRs to main, in order, each with green CI.
+  Merged: #99 #91 #92 #101 #100 #93 #84 #85 #86 #87 #94 #88 #89 #90 #95 #96 #97.
+  Left open: #83 (not this run). Dependabot PRs and alerts were handled in a separate session (#105-#109).
+  #101 merged with `rust` cancelled during the GitHub Actions outage; docs only. The gate script was fixed after it.
+  Result: compiles on CI, untested live (Rule #14). No release cut. Steps: knowledge/research/ymux-2026-11-09-live-checks.md.
+
+2026-11-11 | Orca ideas 5, 7, 8, 9 merged
+  Task: implement the remaining Orca ideas and merge them in order, each with green CI.
+  Merged: #111 (PR status card), #112 (history search, daemon 2.21.0), #113 (hibernation, 2.22.0), #114 (scheduled prompts, 2.23.0).
+  Each daemon PR was re-bumped and its server blobs rebaked from its own CI run before merge.
+  Owner decision: #114 overlap rule option (a); see docs/DECISIONS.md.
+  Result: compiles on CI, untested live (Rule #14). No release cut. Orca #10 stays in BACKLOG.
+
+2026-11-15 | Grok Build as a first-class agent (branch feat/grok-build-agent)
+  Task: install, detect, hooks, permission gate, traffic light, and context inject for Grok Build beside Claude Code.
+  Files: hooks/grok.json (new, 1.0.0); cli hooks.rs + main.rs (Grok adapter writes ~/.grok/hooks/ymux.json, session_start_source new/load, phone forward sends canonical Bash); ymux-policy canonical_tool_name; provisioning InstallGrok on all-agents only; local_setup probe/install (binary is ~/.grok/bin, not ~/.local/bin); bootstrap + addons detect/install/uninstall; updater one banner, Claude then Grok; wizard UI + i18n en/he/ar/ru; manifest hooks.grok 1.0.0. Claude manifest version left at 1.6.0. No Go change.
+  Docs: vault cli, crates, backend-remote, backend-wizards, frontend-flows, frontend-shell; INSTALL_AGENTS; CLI; PROTOCOLS; ARCHITECTURE; DECISIONS (decided scope, open transcript/cost/resume).
+  Result: compiles-untested until CI. Not run live. Existing saved all-agents profiles are not rewritten. No server rebake.
+
+2026-11-16 | STT: microphone picker for the Local backend
+  Task: voice input "shows recording, types nothing". Causes found, in order: PTT hotkey shadowed by focus_zoom
+  (Ctrl+Shift+Z), Web Speech in WebView2 returns chars=0, then the Local backend recorded the muted laptop array
+  (Windows console default) instead of the JBL headset -> silent clips.
+  Change: settings.stt.input_device_id + mic picker (Local backend only), getUserMedia deviceId ideal;
+  whisperLanguage() strips BCP-47 region (whisper.cpp rejected 'he-IL').
+  Files: settings.rs, bindings/SttSettings.ts, settings.ts, stt.ts, App.tsx, SettingsModal.tsx, i18n x4, vault x4.
+  Result: compiles on CI pending, untested live (Rule #14).
+
+[2026-11-16] debug.log "silent since Oct 7" investigation: not a ymux bug. Claude desktop (MSIX) shells see %APPDATA%\ymux through a stale copy-on-write overlay (LocalCache\Roaming\ymux, frozen 2026-10-07); the real log is live (read via RPC dev.debug-log-tail). Files: CLAUDE.md (gotcha line). Result: doc only, no code change.
+
+[2026-11-18] Grok TUI compact + which agents the connect wizard offers (feat/grok-build-agent)
+  Task: when setup-hooks finishes for grok, write alt_screen=always and compact_mode=true only if those keys are missing. Settings coding_agents (Claude on, Grok off, default claude) plus a machine-header multi_agent flag decide the connect menu. grok / grok -c launch as mode cmd. No rtl_bidi. No schema bump. No probe of installed binaries. Transcript, cost, and resume stay Claude-only.
+  Files: cli/src/hooks.rs (41f94fba). settings.rs, ymux-types Workspace.multi_agent, lib.rs workspace_set_multi_agent, codingAgents.ts + test, bindings, settings.ts, SettingsModal, CreateWorkspaceModal, App/LayoutView/PaneView, web.ts META_KEYS, i18n en/he/ar/ru (32313d4f).
+  Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). A server without the flag should show only the default agent; with the flag, every agent checked in Settings. An existing pager.toml value must not change.
+
+[2026-11-22] PR #118 rust CI: InstallLocalHooks return type
+  Cause: the Windows arm sits inside run_local_setup, which returns (). `return Err` does not type-check (E0308, expected ()). The macOS arm is in run_step_unix and may return.
+  Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
+  Result: compiles-untested until CI. Not run live.
+
+[2026-11-26] PR #110: merge origin/main (7ac5849e)
+  Task: PR was CONFLICTING. Resolved: hooks.rs keeps write_settings_atomic and takes main's tmp name from the target file (Grok). hookreg.go keeps []*hookEntry and adds main's hadHib persist. hibernate.go (new on main) passes the entry to pendingFor. FOLLOWUPS: union, minus 3 items main archived. Server blobs: main's copy, rebake from CI next.
+  Files: hooks.rs, hookreg.go, hibernate.go, FOLLOWUPS*, PROGRESS, DECISIONS, vault server-go.md + lock.
+  Result: compiles-untested until CI.

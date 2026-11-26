@@ -161,9 +161,11 @@ of the sessions seen on its host, in first-seen order. `KnownSession { name, dis
 claude_session_id?, cwd?, last_seen }`: everything but `name` elided, so a plain shell
 session costs two keys. Merged by `workspace_remember_sessions` (backend-core.md); it is
 what lets a sidebar row for a session that vanished from the host be shown greyed and
-resumed with `claude --resume`. In the elision test's key list (seven keys), and adding
+resumed with `claude --resume`. In the elision test's key list, and adding
 it bumped `WORKSPACES_SCHEMA_VERSION` to 4 — a 0.5.1 save would drop it. (Round 1's
 `sessions_mode` flag was removed the same day, before any release.)
+
+**`Workspace.multi_agent: bool`** is the machine-header toggle for "more than one agent". Serde-default false and `skip_serializing_if = "is_false"`, so a legacy row stays byte-identical (`workspace_minimal_legacy_load` asserts it is false). The elision test's key list names nine skipped keys, `multi_agent` last. Adding it did **not** bump `WORKSPACES_SCHEMA_VERSION` — same rationale as `tabs_mode`: an older build that drops a `true` falls back to one agent. The wizard reads it on the machine, not on the screen (`screen_under` does not copy it).
 
 Deliberately **no business logic** — structs, enums, serde attrs, and the small helpers
 serde references by name (`default_true`, `is_true`, `is_terminal_kind`). ts-rs binding
@@ -225,6 +227,15 @@ string. `rpc_server::push_policy_audit` records the outcomes. The Block half als
 in Go (`server/internal/agent/policy.go`, 2026-11-09): **a change to `BLOCK_PATTERNS` must
 be made on both sides**, and `server/internal/agent/testdata/policy.json` is the shared test.
 
+`canonical_tool_name` runs at the start of `evaluate_with`. It maps Grok's tool names
+onto the Claude names this crate already knows, and a Claude name maps to itself.
+`run_terminal_command` and `Shell` become `Bash`, so `rm -rf /` is Block and a plain
+`sudo` is Gate. `search_replace`, `hashline_edit`, `StrReplace` and `EditNotebook`
+become `Edit`; `write` becomes `Write`; those stay Auto. `spawn_subagent` becomes
+`Task`. The CLI phone forward sends that canonical name. Go's `BlockedBy` still
+returns a pattern only for `Bash`, so the fixture gained no Grok row and `policy.go`
+did not change.
+
 ## `ymux-protocol` (327) — mobile/web wire types
 
 Shared between `ymux serve` and its clients (Android first, web later). Pure data.
@@ -253,7 +264,7 @@ character.** The desktop compares a remote's `ymux-server --version` against thi
 constant to decide whether to offer an update, so a mismatch is not cosmetic: the two
 had drifted to `2.2.0` here versus `2.2.1` there, which made every 2.2.1 remote look
 *newer* than the version the desktop ships and silently stopped the update offer.
-Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`, `context.inject` + Block rules on the daemon to `2.20.0`. Bump them together, in the same
+Phase 95 set both to `2.3.0`; Phase 96 to `2.4.0`; Phase 100 to `2.4.1`, its live-test fix to `2.4.2`, Phase 101 (B3) to `2.5.0`, Phase 102 (B4) to `2.6.0`, Phase 103 (B5) to `2.7.0`, Phase 104 (B6) to `2.8.0`, Phase 108 (C4) to `2.9.0`, Phase 109 (C5) to `2.10.0`, Phase 110 (C6) to `2.11.0`, Phase 111 to `2.12.0`, Phase 113 (D2) to `2.13.0`, Phase 114 (E) to `2.14.0`, its Android-push diagnostics + browser Hebrew font to `2.14.1`, Phase 115 (F1, the workspace tree in the browser) to `2.15.0`, Phase 116 (F2, the File Manager) to `2.16.0`, Phase 117 (F3, panes + Context Rail) to `2.17.0`, Phase 118 (F4, Diff pane + worktrees) to `2.18.0`, Phase 119 (F5, claude tools + presets) to `2.19.0`, `context.inject` + Block rules on the daemon to `2.20.0`, the session-history search (Orca idea #9) to `2.21.0`, hibernation of idle agents (Orca idea #8) to `2.22.0`, the scheduled prompts (Orca idea #5) to `2.23.0`. Bump them together, in the same
 commit, or the daemon you just rebaked never reaches a single server.
 
 ## `ymux-bootstrap` (628) — remote CLI deploy
@@ -277,6 +288,10 @@ It also runs the zombie `port-watch` reap from a prior session. Until Phase 86.B
 pattern was `[w]inmux-linux-x64$` — the pre-rename binary name, anchored at end of
 line — which never matched the real cmdline `…/ymux port-watch --workspace <id>`, so
 the reap had been a no-op since the rename. Now `/([w]inmux|[y]mux) port-watch `.
+
+`ensure_hooks_installed` runs `setup-hooks --agent claude --source bundled` and then
+`--agent grok`, each with `|| true` and without `--force`. A machine with no Grok
+exits 0 (`NotDetected`) and the connect continues.
 
 ## Invariants
 

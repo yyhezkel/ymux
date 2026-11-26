@@ -73,6 +73,7 @@ export const ALL_CAPABILITIES = [
   "fonts",
   "stt", // the local STT endpoint (Web Speech works anywhere)
   "portForward",
+  "prStatus", // the Diff pane's PR card: runs `gh` through the desktop's transports
 ] as const;
 
 export type Capability = (typeof ALL_CAPABILITIES)[number];

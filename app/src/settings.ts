@@ -17,6 +17,7 @@ import {
   type DirectionPolicy,
 } from "./terminalInstance";
 import type { RtlProfileKind } from "./types";
+import type { CodingAgentsSettings } from "./codingAgents.ts";
 import type { ITheme } from "@xterm/xterm";
 
 export interface AnsiPalette {
@@ -284,6 +285,13 @@ export const DEFAULT_BRIEF_SETTINGS: BriefSettings = {
   inject_protocol: true,
 };
 
+// Settings the ymux-server daemon reads from the browser's settings document
+// (server/internal/term/settings.go). hibernate_idle_minutes: stop an idle
+// claude after this many minutes and resume it on attach; 0 = off.
+export interface DaemonSettings {
+  hibernate_idle_minutes: number;
+}
+
 export interface I18nSettings {
   language: "en" | "he" | "ar" | "ru" | string;
   direction: "auto" | "ltr" | "rtl" | string;
@@ -301,6 +309,8 @@ export interface SttSettings {
   local_endpoint: string | null;
   language: string;
   push_to_talk_hotkey: string;
+  /** deviceId of the Local backend's microphone; null/absent = system default. */
+  input_device_id?: string | null;
 }
 
 export interface Settings {
@@ -322,6 +332,9 @@ export interface Settings {
   // via serde(default); this mirror MUST round-trip through SettingsModal
   // or settings_save wipes the group (the terminal.rtl incident).
   brief?: BriefSettings;
+  // Read by the ymux-server daemon only (browser mode); the desktop's
+  // Rust Settings has no such field. See DaemonSettings.
+  daemon?: DaemonSettings;
   hooks_updates?: HooksUpdatesSettings;
   // Phase 41: auto-connect a background SSH session on workspace select.
   // Backend defaults to true; always serialized.
@@ -361,6 +374,9 @@ export interface Settings {
   // every session on the server; "local" = only sessions this machine
   // created (origin-less sessions stay visible — fail-open).
   session_visibility?: SessionVisibility;
+  // Which agents the connect wizard offers. Backend defaults to Claude
+  // on, Grok off. Round-trip it: settings_save replaces the document.
+  coding_agents?: CodingAgentsSettings;
 }
 
 // Phase 81: multi-machine session picker scope.

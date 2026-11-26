@@ -11,6 +11,7 @@ package term
 //	                 {"type":"feed:item-resolved", "data":{"request_id","decision"}}
 //	                 {"type":"pane:agent-run",     "data":agent.AgentRunEvent}
 //	                 {"type":"pane:brief",         "data":{"pane_id","entry"}}
+//	                 {"type":"pane:hibernated",    "data":{"pane_id","session","hibernated","since_ms","rss_kb"}}
 //	client → server  {"type":"feed.decide", "request_id":…, "decision":"allow"|"deny"}
 //
 // `hello` is the hydration the desktop does with pane_agent_states /
@@ -133,6 +134,11 @@ type helloData struct {
 type paneInfo struct {
 	Session string `json:"session"`
 	Policy  string `json:"policy"`
+	// Hibernated (hibernate.go): claude in this pane is stopped. Since is
+	// when, as epoch-ms; null when not hibernated. The live change is the
+	// `pane:hibernated` event.
+	Hibernated      bool   `json:"hibernated"`
+	HibernatedSince *int64 `json:"hibernated_since"`
 }
 
 func (r *HookRegistry) hello(lang string) helloData {
@@ -150,7 +156,8 @@ func (r *HookRegistry) hello(lang string) helloData {
 		}
 		d.PaneAgentStates[e.paneID] = e.run.Event(e.paneID)
 		d.PaneBriefs[e.paneID] = e.brief
-		d.Panes[e.paneID] = paneInfo{Session: e.name, Policy: e.policy}
+		d.Panes[e.paneID] = paneInfo{Session: e.name, Policy: e.policy,
+			Hibernated: e.hib != nil, HibernatedSince: hibernatedSince(e)}
 		if e.status != "" {
 			d.PaneStatus[e.paneID] = e.status
 		}

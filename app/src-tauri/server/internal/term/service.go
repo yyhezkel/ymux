@@ -61,6 +61,8 @@ type Service struct {
 	webpush *webPusher
 	// claude holds the F5 tools' single-flight locks and the /usage cache.
 	claude *claudeTools
+	// sched runs the scheduled prompts (schedule.go); nil until SetDataDir.
+	sched *scheduler
 }
 
 // NewService wires the terminal API. token is the daemon's shared token; home
@@ -76,6 +78,7 @@ func NewService(token, home string) *Service {
 func (s *Service) attachHooks(r *HookRegistry) {
 	s.hooks = r
 	r.tmux = s.tmux
+	r.hib.home, r.hib.bin = s.home, s.claudeBinary
 	r.spawn = func(name, cwd, policy, workspaceID string) (hookEntry, error) {
 		e, hooks, err := s.spawnSession(name, cwd, policy, workspaceID, "")
 		if err == nil && !hooks {
@@ -93,14 +96,17 @@ func (s *Service) attachHooks(r *HookRegistry) {
 func (s *Service) Hooks() *HookRegistry { return s.hooks }
 
 // SetDataDir makes notes persistent in <dir>/notes.json (Phase 102). Without
-// it notes live in memory only. Call before serving.
+// it notes live in memory only. It also loads <dir>/schedules.json; the
+// scheduled prompts need a data dir. Call before serving.
 func (s *Service) SetDataDir(dir string) {
 	if s.hooks != nil {
 		s.hooks.notes = newNoteStore(filepath.Join(dir, "notes.json"))
 		s.hooks.webws = newWebWSStore(filepath.Join(dir, "web-workspaces.json"))
 		s.hooks.settings = newSettingsStore(filepath.Join(dir, "web-settings.json"))
 		s.hooks.context = newContextStore(filepath.Join(dir, "context", "sessions"))
+		s.hooks.hib.path = filepath.Join(dir, "hibernated.json")
 	}
+	s.sched = s.newServiceScheduler(dir)
 }
 
 // StartPortWatch starts listening-port detection for the box (Phase 102,
@@ -173,6 +179,14 @@ func (s *Service) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/term/history", s.gate(s.handleHistory))
 	mux.HandleFunc("POST /api/v2/term/history/{name}/resume", s.gate(s.handleResume))
 	mux.HandleFunc("GET /api/v2/claude/sessions/{id}/transcript", s.gate(s.handleTranscript))
+	// Scheduled prompts (Orca #5): cron-fired claude runs (schedroutes.go).
+	mux.HandleFunc("GET /api/v2/schedules", s.gate(s.handleSchedules))
+	mux.HandleFunc("POST /api/v2/schedules", s.gate(s.handleSchedules))
+	mux.HandleFunc("GET /api/v2/schedules/{id}", s.gate(s.handleSchedule))
+	mux.HandleFunc("DELETE /api/v2/schedules/{id}", s.gate(s.handleSchedule))
+	mux.HandleFunc("POST /api/v2/schedules/{id}/enable", s.gate(s.handleSchedule))
+	mux.HandleFunc("POST /api/v2/schedules/{id}/disable", s.gate(s.handleSchedule))
+	mux.HandleFunc("GET /api/v2/schedules/{id}/history", s.gate(s.handleScheduleHistory))
 	// Phase 97: the diagnostic page + its log sink, both public (page.go).
 	s.registerPageRoutes(mux)
 }

@@ -1,0 +1,14 @@
+[
+  { "name": "empty query matches", "query": "", "fields": ["fix login"], "want": true },
+  { "name": "whitespace query matches", "query": "  \t ", "fields": ["fix login"], "want": true },
+  { "name": "case-insensitive", "query": "LOGIN", "fields": ["Fix the login bug"], "want": true },
+  { "name": "every token must match", "query": "login payment", "fields": ["fix login"], "want": false },
+  { "name": "tokens may match different fields", "query": "main opus", "fields": ["fix login", "/srv/app", "main", "claude-opus-4"], "want": true },
+  { "name": "word order does not matter", "query": "bug fix", "fields": ["fix the bug"], "want": true },
+  { "name": "substring inside a word", "query": "srv/ap", "fields": ["/srv/app"], "want": true },
+  { "name": "Hebrew token", "query": "באג", "fields": ["תקן את הבאג"], "want": true },
+  { "name": "mixed-language query", "query": "באג login", "fields": ["תקן את הבאג", "fix login"], "want": true },
+  { "name": "no field holds the token", "query": "deploy", "fields": ["fix login", "/srv/app"], "want": false },
+  { "name": "no fields at all", "query": "x", "fields": [], "want": false },
+  { "name": "a token spanning two fields does not match", "query": "loginmain", "fields": ["login", "main"], "want": false }
+]

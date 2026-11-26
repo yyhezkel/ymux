@@ -85,6 +85,15 @@ When starting a session, scan **Open** first. Surface anything that's been pendi
 - **Status / Decision:** open, behaviour unchanged. A is the standing decision in the code;
   logged because the inventory raised it again and C would remove the class of bug.
 - **Outcome / Commit:** —
+### 2026-11-15 — Grok transcript mirror, cost, and resume stay Claude-only
+- **Context:** Grok Build now installs, detects, and drives the same hook gate as Claude (permission card, traffic light, context inject). Its on-disk sessions are not Claude jsonl.
+- **Not in this change:** mirroring those sessions into the transcript view, the cost / usage insights tab, and resuming a Grok session from disk. The statusline under `ymux-tools/statuslines/` was left as it is.
+- **Status:** open. Decide after a live Grok session whether a second parser is worth it.
+
+### 2026-11-11 — Hibernation limits (PR #113), decide after the live check
+- **MCP stdio children:** an agent with a stdio MCP server has child processes, so it never hibernates. Options: keep it so, or allow known MCP children.
+- **Attached client:** an open browser tab keeps the agent awake. Options: keep it so, or hibernate even when a client is attached.
+- **State:** feature merged, off by default. Not run live.
 
 ### 2026-09-24 — Browser access approved from inside ymux, on the mobile-pairing rails
 - **Context:** Yossi's proposal — an approval screen inside ymux that grants a browser
@@ -525,6 +534,26 @@ Deferred items out of the unified-logging overhaul (Phase 79) — each is a self
 ---
 
 ## Decided
+
+### 2026-11-18 — Compact Grok's TUI, and a manual agent list
+- **Context:** Grok's welcome chrome eats the pane. Alt-screen also drops under Zellij and tmux control mode. The connect wizard still hardcoded Claude, including an empty "launch Claude Code" row.
+- **Decision:** `ymux setup-hooks --agent grok` writes `[terminal] alt_screen = "always"` in `~/.grok/pager.toml` and `[ui] compact_mode = true` in `~/.grok/config.toml`, only when that key is missing. An existing `never` or `false` stays. Dry-run and a hooks error do not write. No `[scrollback.display] rtl_bidi` — both engines together double-reverse Hebrew. The connect menu comes from Settings `coding_agents` (Claude on, Grok off, wire key `default`) plus a machine-header `multi_agent` flag, not from probing binaries. Grok launches as `mode: cmd` (`grok` / `grok -c`), so `tui_owns_bidi` stays off. `multi_agent` false is elided and `WORKSPACES_SCHEMA_VERSION` stays 4.
+- **Outcome / Commit:** `41f94fba` (compact keys), `32313d4f` (settings, flag, wizard). Live smoke still open.
+
+### 2026-11-15 — Grok Build is a first-class agent for install, hooks, and the permission gate
+- **Decision:** reuse `claude-hook`. Register `~/.grok/hooks/ymux.json` (spec 1.0.0). No second parser. `canonical_tool_name` maps Grok's tool names onto Claude's before the policy judges them, and the phone forward sends `Bash`, so `policy.go` and `testdata/policy.json` stay untouched and the server blobs are not rebaked. SessionStart `new` / `load` map to `startup` / `resume` in the CLI, before `context.inject`.
+- **Scope:** local wizard, the `all-agents` profile, bootstrap, add-on detect / install / uninstall, the outdated-hooks banner. `default` and `hardened` stay Claude-only. A saved `all-agents` profile is not rewritten.
+- **Modes:** `plan` stays on the gate. `auto` still defers. `bypassPermissions` still auto-allows.
+- **Deferred:** transcript mirror, cost tab, resume-from-Grok-session. See Open.
+
+### 2026-11-11 — Scheduled prompts: when a run counts as finished (PR #114)
+- **Decision:** option (a). A scheduled run whose hook state is `done` or `failed` does not block the next firing. `running` and unknown block. The daemon never kills a finished session; the user reads it.
+- **Two refinements found while building it:** `needs-input` with no open turn counts as finished, because Claude sends `idle_prompt` about a minute after a turn. A session hibernated by #113 counts as `done`.
+
+### 2026-11-09 — Three owner decisions from the backlog merge run
+- **Smart bidi:** the pane-header button is gone. The per-profile setting `terminal.rtl.{local,remote}.smart_bidi` replaces it, default off (PR #89).
+- **`hooks.policy_enabled`:** the daemon keeps ignoring it. Under `none`, off would mean allow.
+- **`last.env`:** accepted. A plain `claude` over a separate SSH session while the tunnel is up borrows the pane and shows the brief block. The user can turn the block off with `brief.inject_protocol`. ymux's own `claude -p` calls set `YMUX_HEADLESS` and skip the hooks, so their JSON stays clean.
 
 ### 2026-11-09 — Block rules apply in the browser; the Block half of `ymux-policy` is ported
 - **Decided (Yossi):** a command that matches a Block rule is denied on the daemon too.

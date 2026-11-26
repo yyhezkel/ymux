@@ -1,6 +1,7 @@
 import { createEffect, createMemo, createSignal, ErrorBoundary, onCleanup, onMount, Show, untrack } from "solid-js";
 import type { RtlProfileKind, WorkspaceCardInfo } from "./types";
 import { ancestorsOf, rootIdOf as rootIdOfTree, screenOrSelf } from "./wsTree";
+import { effectiveAgentsForWorkspace } from "./codingAgents";
 import { backend, type Capability, type UnlistenFn } from "./backend";
 import { Sidebar } from "./Sidebar";
 import { CreateWorkspaceModal } from "./CreateWorkspaceModal";
@@ -96,6 +97,7 @@ import { applyI18nSettings, t, tEn } from "./i18n";
 import { isMac, isWindows } from "./platform";
 import {
   buildShortcutTable,
+  conflictingAccels,
   formatAccel,
   keyEq,
   matches,
@@ -356,6 +358,17 @@ function App() {
   const [paneStatus, setPaneStatus] = createSignal<Record<string, PaneStatus>>({});
   // Live pane status text (e.g. "bootstrapping ymux…") set by backend events.
   const [paneStatusText, setPaneStatusText] = createSignal<Record<string, string>>({});
+  // Browser mode: panes whose idle claude the daemon hibernated (pane id →
+  // true). Shown as the pane's status text until the claude resumes.
+  const [hibernatedPanes, setHibernatedPanes] = createSignal<Record<string, boolean>>({});
+  const shownStatusText = (): Record<string, string> => {
+    const h = hibernatedPanes();
+    const base = paneStatusText();
+    if (Object.keys(h).length === 0) return base;
+    const out = { ...base };
+    for (const pid of Object.keys(h)) out[pid] = t("pane.hibernated");
+    return out;
+  };
   // issue #4 (ymux-tools chrome Ticker): per-pane agent turn timing. The
   // backend emits pane:agent-run only on turn start/end; the label ticks
   // locally off `pulseTick` (see agentRunLabel). startedAt=null → no live turn.
@@ -831,7 +844,9 @@ function App() {
       // reaches the catch below, so the toast cannot claim success.
       await backend.call("ssh_exec_in_workspace", {
         workspaceId: b.workspace_id,
-        cmd: '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
+        cmd: b.agent === "grok"
+          ? '"$HOME/.ymux/bin/ymux" setup-hooks --agent grok --force --source github'
+          : '"$HOME/.ymux/bin/ymux" setup-hooks --agent claude --force --source github',
       });
       flashSummaryToast("ok", t("hooks_update.toast_done", { version: b.latest }));
       setHooksBanner(null);
@@ -3580,7 +3595,8 @@ function App() {
     const stt = settings()?.stt;
     if (!stt?.enabled) return;
     setSttError(null);
-    const rec = makeSttRecorder(stt.backend, stt.language || "auto");
+    log.debug(`stt start: backend=${stt.backend} lang=${stt.language || "auto"}`);
+    const rec = makeSttRecorder(stt.backend, stt.language || "auto", stt.input_device_id ?? null);
     sttRecorder = rec;
     setSttListening(true);
     rec
@@ -3606,10 +3622,22 @@ function App() {
   };
   const stopPushToTalk = () => {
     if (!sttRecorder) return;
+    log.debug("stt stop requested");
     try {
       sttRecorder.stop();
     } catch (e) {
       log.warn("stt stop failed", e);
+    }
+  };
+  // A clash between the PTT key and a table binding used to leave one of
+  // them silently dead with nothing in the log. Called on load and on every
+  // settings:changed; the Shortcuts tab shows the same set in red.
+  const warnShortcutConflicts = (s: Settings) => {
+    const dupes = conflictingAccels(s.shortcuts, {
+      push_to_talk: s.stt?.enabled ? s.stt.push_to_talk_hotkey : undefined,
+    });
+    for (const accel of dupes) {
+      log.warn(`shortcut conflict: ${accel} is bound more than once`);
     }
   };
 
@@ -3913,27 +3941,33 @@ function App() {
     // four modifiers AND the key exactly, so there is no prefix ambiguity
     // between entries: order only decides who wins a duplicate the user
     // created, which the Shortcuts tab flags in red.
+    //
+    // Phase 58: push-to-talk (down) runs BEFORE the table. It lives in
+    // settings.stt, not settings.shortcuts, so it is parsed on every press
+    // rather than read out of the table — cheap, and it lets the settings
+    // edit take effect without a relaunch. It wins a clash because a PTT key
+    // is an explicit choice of a user who turned voice on, while a table
+    // default can move under it: Phase 87 put focus_zoom on Ctrl+Shift+Z and
+    // silently killed a PTT already bound there. Repeats (and a held key
+    // while recording) are swallowed by the sttRecorder guard.
+    // conflictingAccels() still sees it, so the clash is flagged in Settings
+    // and logged by warnShortcutConflicts.
+    const stt = settings()?.stt;
+    const ptt = stt ? parseShortcut(stt.push_to_talk_hotkey) : null;
+    if (ptt && matches(e, ptt)) {
+      if (stt?.enabled) {
+        e.preventDefault();
+        if (!sttRecorder) startPushToTalk();
+        return;
+      }
+      log.debug("stt disabled — hotkey ignored");
+    }
     const sc = shortcutTable();
     for (const b of keyBindings) {
       if (!matches(e, sc[b.id])) continue;
       if (b.when && !b.when(e)) continue; // not mine — let the key through
       b.run(e);
       return;
-    }
-    // Phase 58: push-to-talk (down). Lives in settings.stt, not
-    // settings.shortcuts, so it is parsed on every press rather than read
-    // out of the table — cheap, and it lets the settings edit take effect
-    // without a relaunch. Repeats are suppressed by the sttRecorder guard.
-    // conflictingAccels() still sees it, so a clash with a table binding is
-    // reported in Settings even though the two live in different schemas.
-    const stt = settings()?.stt;
-    if (stt?.enabled) {
-      const accel = parseShortcut(stt.push_to_talk_hotkey);
-      if (accel && matches(e, accel) && !sttRecorder) {
-        e.preventDefault();
-        startPushToTalk();
-        return;
-      }
     }
   };
 
@@ -4041,6 +4075,7 @@ function App() {
         log.warn("notifications_list failed", e);
       }
       setShortcutTable(buildShortcutTable(s.shortcuts ?? DEFAULT_SHORTCUTS));
+      warnShortcutConflicts(s);
       setCtrlCCopyOnSelect(
         (s.shortcuts ?? DEFAULT_SHORTCUTS).copy_on_select_with_ctrl_c,
       );
@@ -4077,6 +4112,14 @@ function App() {
       setAgentRuns(seeded);
     } catch (e) {
       log.warn("pane_agent_states failed", e);
+    }
+
+    if (backend.kind === "web") {
+      try {
+        setHibernatedPanes(await backend.call<Record<string, boolean>>("pane_hibernated"));
+      } catch (e) {
+        log.warn("pane_hibernated failed", e);
+      }
     }
 
     // BRIEF: same reload story for the brief entries.
@@ -4477,6 +4520,15 @@ function App() {
         setPaneStatusText(next);
       })
     );
+    // Browser mode: the daemon stopped or resumed a pane's idle claude.
+    unlistens.push(
+      await backend.on<{ pane_id: string; hibernated: boolean }>("pane:hibernated", (e) => {
+        const next = { ...hibernatedPanes() };
+        if (e.payload.hibernated) next[e.payload.pane_id] = true;
+        else delete next[e.payload.pane_id];
+        setHibernatedPanes(next);
+      })
+    );
     // issue #4: per-pane agent turn timing for the chrome Ticker.
     unlistens.push(
       await backend.on<{
@@ -4542,6 +4594,7 @@ function App() {
         setShortcutTable(
           buildShortcutTable(e.payload.shortcuts ?? DEFAULT_SHORTCUTS),
         );
+        warnShortcutConflicts(e.payload);
         setCtrlCCopyOnSelect(
           (e.payload.shortcuts ?? DEFAULT_SHORTCUTS).copy_on_select_with_ctrl_c,
         );
@@ -5268,11 +5321,16 @@ function App() {
                     pendingPassphrase={pendingPassphraseFor()}
                     pendingHostTrust={pendingHostTrust()}
                     paneStatus={paneStatus()}
-                    paneStatusText={paneStatusText()}
+                    paneStatusText={shownStatusText()}
                     agentRuns={agentRuns()}
                     agentClockMs={agentClockMs}
                     panePersistence={panePersistence()}
                     boundSessions={boundSessions()}
+                    connectAgents={effectiveAgentsForWorkspace(
+                      settings()?.coding_agents,
+                      file().workspaces,
+                      activeWs()!.id,
+                    )}
                     ensureTerm={ensureTerm}
                     onFocus={focusPane}
                     onConnect={(pid, opts) => connectPane(pid, opts)}

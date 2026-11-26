@@ -328,7 +328,15 @@ func main() {
 	// back from their own tmux environment (same port, same token). After
 	// SetDataDir, so a recovered session's workspace can be checked.
 	termSvc.RecoverHooks()
+	// Hibernation of idle agents: the records need the recovered entries.
+	// The tick does nothing until the settings document turns it on.
+	termSvc.LoadHibernated()
+	termSvc.StartHibernation(context.Background())
 	termSvc.StartPortWatch(context.Background(), *port)
+	// Scheduled prompts: cron-fired claude runs in gate sessions. After
+	// hooks.Start and RecoverHooks, so a run gets hook routing and the
+	// overlap rule sees the sessions that survived a restart.
+	termSvc.StartScheduler(context.Background())
 
 	srv := api.NewServer(token, *port, api.Deps{
 		Insights: svc, Chat: chatAPI, Files: filesSvc, Logs: logsSvc,

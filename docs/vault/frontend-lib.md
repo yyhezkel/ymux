@@ -62,7 +62,7 @@ answers the same command names from the daemon's HTTP/WS API.
   `savePath`, `onDragDrop` (OS file drops, Tauri's payload and positions unchanged).
 - **`backend.can(cap)`** (Phase 107) — the host's capability set (`ALL_CAPABILITIES` in
   `types.ts`: localPanes, ssh, browserPane, popout, fileManagerLocal, diffPane, worktrees,
-  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward).
+  tickets, skills, addons, mobilePairingAdmin, updater, fonts, stt, portForward, prStatus).
   `TauriBackend` has them all, so the desktop renders exactly what it did. A browser
   host lacks the local-machine ones and the UI hides their entry points rather than
   failing on them (WEB-DESIGN §4.1). Gated today: the wizard's Server / Local cards,
@@ -70,7 +70,7 @@ answers the same command names from the daemon's HTTP/WS API.
   App.tsx) and the `open_diff` key, the header Browser button, ⋯ "+ diff" and Tickets,
   pane pop-out, the File Manager local column + toggle (`localVisible()`), the sidebar
   Add-ons item and Ports button, Settings → updates + VersionManager, AddonsTab,
-  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab.
+  YmuxToolsTab, the font installer, the local STT option, Monitor's Mobile tab, the Diff pane's PR card (`prStatus`).
 - **The rule is enforced:** `src/backendSeam.test.ts` fails when any file outside
   `src/backend/` imports anything from `@tauri-apps/*`.
 
@@ -91,7 +91,9 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `workspaces:changed` triggers a re-read and is re-emitted with the desktop's `()`
   payload. The first `hello` answers `pane_agent_states` / `pane_briefs` (filtered by `web/hello.ts` `touchedEntries` to hook-written `seq > 0` entries, since the daemon ships zero-value seq 0 entries for every live session) / `feed_list` /
   `notifications_list`; a reconnect's hello re-reads workspaces and emits
-  `backend:resync` (nothing listens yet).
+  `backend:resync` (nothing listens yet). `pane_hibernated` (browser only) answers
+  pane id → true from the hello's `panes[*].hibernated`; live changes arrive as
+  `pane:hibernated` (daemon 2.22.0).
 - **PTY** — `web/pty.ts` speaks the desktop's own contract (WEB-DESIGN §8.2 dropped C2):
   `pane_connect` opens `/api/v2/term/sessions/{name}/attach` and returns a sid;
   `pty_write` / `pty_resize` are frames on it; binary frames go through a streaming
@@ -148,7 +150,8 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   `sessions_kill_by_name` kills through a holding pane or the DELETE route;
   `pane_probe_tmux_sessions` is the plain list (one box). `pane_list_claude_sessions` and
   `session_context_list` read the daemon (`/api/v2/claude/sessions`,
-  `/api/v2/context/sessions`). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
+  `/api/v2/context/sessions`); a non-empty `query` arg becomes `q=`, so the daemon
+  filters before the limit (history search). **Smart bidi** runs in `web/bidiFilter.ts`, a port of
   `bidi_filter.rs` (its tests carried over in `bidiFilter.test.ts`): `PtySessions` holds
   one filter per attach and applies it after the streaming TextDecoder — the desktop's
   decode → filter order; `connect` sets it from `a.smartBidi`, the value `connectPane`
@@ -177,7 +180,7 @@ request → code → approve on the desktop → redeem; `no-shell` = signed in w
   insights:read), `clear_debug_log_cmd` is a no-op. Answered, not rejected:
   `clipboard_read_text` "" (the server's clipboard is never read),
   `workspace_secret_env_keys` [], `workspace_set_auto_port_forward` (returns the row),
-  `workspace_set_claude_separate_account`, `ssh_cancel_reconnect`. Tickets and skills stay
+  `workspace_set_claude_separate_account`, `workspace_set_multi_agent` (patches `{ multi_agent }` on the row's opaque `meta` — the key is in `META_KEYS` — and returns the row), `ssh_cancel_reconnect`. Tickets and skills stay
   out (`can()` off): ticket capture needs the in-app browser, skills install from the
   desktop's registry.
 - **Pop-out windows** — `popout_pane` opens `/?popout=<sid>` with `window.open` (a popup
@@ -459,7 +462,9 @@ is optional here: the Rust side omits an empty list, and the web backend never s
 **`settings.ts` (801)** — the typed settings mirror plus load/save and the CSS-variable
 apply. `src-tauri/src/settings.rs` owns the canonical schema; this follows it
 (`BriefSettings` gained `inject_context`, default true, in Phase 105.C, and
-`inject_protocol`, default true, later). Also
+`inject_protocol`, default true, later). `coding_agents?` (`CodingAgentsSettings` from `codingAgents.ts`) must round-trip on every save: Claude defaults on, Grok off, `default` `"claude"`. A Settings modal that omits it wipes the group, the same way a pre-`terminal.rtl` client erased that block. `daemon?: DaemonSettings`
+(`hibernate_idle_minutes`) has no Rust twin: only the daemon reads it, from the browser's
+settings document. Also
 carries the font-catalog bindings: `fontCatalog` (each item now reporting whether it is
 `installed`, read from the font directory on every call rather than from any record of
 past installs), `fontInstall`, and `fontUninstall`.
@@ -537,7 +542,14 @@ past installs), `fontInstall`, and `fontUninstall`.
 - **`stt.ts` (262)** — one recorder interface over two backends: `webspeech` uses
   `window.SpeechRecognition` directly (WebView2 ships it, but Chrome streams to Google's
   servers behind the scenes — which is exactly why the Local option exists), and `local`
-  records with MediaRecorder and POSTs through `stt_transcribe_local`.
+  records with MediaRecorder and POSTs through `stt_transcribe_local`. `local` opens the
+  mic with `deviceId: { ideal }` from `settings.stt.input_device_id` — `ideal`, so an
+  unplugged headset falls back to the default instead of failing every press — and sends
+  `whisperLanguage(language)`: the picker stores BCP-47 (`he-IL`) for Web Speech, but
+  whisper.cpp only knows ISO 639-1 and logs `unknown language 'he-IL'`, so the region is
+  stripped and `auto` becomes empty. In practice Web Speech inside WebView2 records and
+  then returns an empty transcript with no error (`stt result ... chars=0`); Local is the
+  backend that actually works on Windows.
 - **`download.ts` (55)**, **`fontProbe.ts` (121)** — OSC 8 / file-link downloads, and
   probing whether a font family is actually installed.
 - **`clipboardText.ts` (32)** — `copyText`. `navigator.clipboard.writeText` is the path

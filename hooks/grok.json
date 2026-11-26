@@ -1,0 +1,56 @@
+{
+  "ymux_hooks_version": "1.0.0",
+  "agent": "grok",
+  "min_ymux_version": "0.1.0",
+  "settings_file": "~/.grok/hooks/ymux.json",
+  "_notes": [
+    "v1.0.0: Grok Build is a first-class agent. Its hook contract matches",
+    "  Claude Code's (same events, same hookSpecificOutput.permissionDecision,",
+    "  snake_case aliases for tool_name / permission_mode / session_id /",
+    "  notification_type / error). The installed command is therefore the",
+    "  existing `claude-hook` handler, not a second parser.",
+    "  setup-hooks writes this file to ~/.grok/hooks/ymux.json. Grok loads",
+    "  every JSON file in that directory. It also loads ~/.claude/settings.json",
+    "  when Claude compatibility is on; identical commands run once.",
+    "  The PreToolUse matcher stays the Claude names. Grok maps Bash/Write/",
+    "  Edit/MultiEdit/NotebookEdit/Task onto its own tools before matching.",
+    "  timeout 600 is required: Grok's PreToolUse default is 5s, and the",
+    "  desktop Gate waits for the human.",
+    "  SessionStart source `new` / `load` is translated to Claude's `startup`",
+    "  / `resume` by the CLI before context.inject, so the Context Rail still",
+    "  injects. Shell calls arrive as run_terminal_command; the policy engine",
+    "  judges them as Bash, and the phone forward uses that canonical name",
+    "  so the daemon's Block half (which only knows Bash) still fires."
+  ],
+  "events": {
+    "Notification": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook notification"
+    },
+    "PreToolUse": {
+      "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Task",
+      "command": "${YMUX_BIN} claude-hook pre-tool-use",
+      "timeout": 600
+    },
+    "SessionEnd": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook session-end"
+    },
+    "SessionStart": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook session-start"
+    },
+    "StopFailure": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook stop-failure"
+    },
+    "Stop": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook stop"
+    },
+    "UserPromptSubmit": {
+      "matcher": "",
+      "command": "${YMUX_BIN} claude-hook user-prompt-submit"
+    }
+  }
+}

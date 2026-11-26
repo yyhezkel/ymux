@@ -3,6 +3,7 @@ import { backend } from "./backend";
 import { t } from "./i18n";
 import { isWindows } from "./platform";
 import { createLogger } from "./logger";
+import { isMachineHeader } from "./codingAgents";
 
 const log = createLogger("WORKSPACE");
 import { IconGitBranch } from "./icons";
@@ -55,6 +56,7 @@ export function CreateWorkspaceModal(p: Props) {
   const ssh = createSshFormState();
   // Phase 36 (#2.2): auto port-forward toggle (edit mode only).
   const [autoPortForward, setAutoPortForward] = createSignal(true);
+  const [multiAgent, setMultiAgent] = createSignal(false);
   // Phase 49-B: worktree creator (edit mode + local + cwd is git repo).
   // wtBusy guards against double-clicks while git is running; wtErr
   // surfaces the backend's git stderr verbatim so the user can react.
@@ -162,6 +164,15 @@ export function CreateWorkspaceModal(p: Props) {
     }).catch((e) => log.error("workspace_set_auto_port_forward failed", e));
   };
 
+  const onToggleMultiAgent = (enabled: boolean) => {
+    setMultiAgent(enabled);
+    if (!p.editing) return;
+    void backend.call("workspace_set_multi_agent", {
+      workspaceId: p.editing.id,
+      enabled,
+    }).catch((e) => log.error("workspace_set_multi_agent failed", e));
+  };
+
   // Phase 49-B: spawn `git worktree add` from the workspace's cwd. The
   // backend re-anchors the workspace's cwd to the new worktree path and
   // sets git_worktree, so new panes will spawn inside it.
@@ -202,6 +213,7 @@ export function CreateWorkspaceModal(p: Props) {
         .then(setStoredSecretKeys)
         .catch((e) => log.error("workspace_secret_env_keys failed", e));
       setAutoPortForward(w.auto_port_forward ?? true);
+      setMultiAgent(w.multi_agent === true);
       // Phase 37: connection fields are now editable (not read-only).
       const c = w.layout?.kind === "pane" ? w.layout.connection : w.connection;
       if (c?.type === "local") {
@@ -349,6 +361,18 @@ export function CreateWorkspaceModal(p: Props) {
             <span>{t("ws.autoPortForward.label")}</span>
           </label>
           <p class="settings-hint ws-autoport-hint">{t("ws.autoPortForward.hint")}</p>
+
+          <Show when={p.editing && isMachineHeader(p.editing)}>
+            <label class="ws-autoport">
+              <input
+                type="checkbox"
+                checked={multiAgent()}
+                onChange={(e) => onToggleMultiAgent(e.currentTarget.checked)}
+              />
+              <span>{t("ws.multiAgent.label")}</span>
+            </label>
+            <p class="settings-hint ws-autoport-hint">{t("ws.multiAgent.hint")}</p>
+          </Show>
 
           {/* Phase 49-B: worktree creator. Shown only for local
               workspaces. If a worktree already exists for this

@@ -296,6 +296,23 @@ fn normalize(s: &str) -> String {
     out.trim().to_string()
 }
 
+/// Map a peer agent's tool name onto the Claude name this policy knows.
+/// Unknown names pass through. Idempotent: a Claude name maps to itself.
+pub fn canonical_tool_name(tool: &str) -> &str {
+    match tool {
+        "run_terminal_command" | "Shell" => "Bash",
+        "search_replace" | "hashline_edit" | "StrReplace" | "EditNotebook" => "Edit",
+        "write" => "Write",
+        "spawn_subagent" => "Task",
+        "read_file" => "Read",
+        "grep" => "Grep",
+        "list_dir" => "LS",
+        "web_search" => "WebSearch",
+        "web_fetch" => "WebFetch",
+        other => other,
+    }
+}
+
 /// Evaluate one tool call. `bash_command` is the `tool_input.command`
 /// string for the `Bash` tool (the caller extracts it from its JSON);
 /// pass `None` for non-Bash tools.
@@ -318,6 +335,10 @@ pub fn evaluate_with(
     custom_block: &[String],
     custom_gate: &[String],
 ) -> Verdict {
+    // Grok Build (and the Cursor preset) send their own tool names.
+    // Judge the canonical Claude name so `run_terminal_command` is the
+    // shell policy, not an unknown tool that auto-approves `rm -rf /`.
+    let tool_name = canonical_tool_name(tool_name);
     if is_always_auto_tool(tool_name) {
         return Verdict::auto(format!("{tool_name} is a low-risk tool"));
     }
@@ -520,6 +541,31 @@ mod tests {
         assert_eq!(evaluate("Write", None).decision, Decision::Auto);
         assert_eq!(evaluate("Edit", None).decision, Decision::Auto);
         assert_eq!(evaluate("MultiEdit", None).decision, Decision::Auto);
+    }
+
+    #[test]
+    fn grok_tool_names_use_the_claude_policy() {
+        assert_eq!(canonical_tool_name("run_terminal_command"), "Bash");
+        assert_eq!(canonical_tool_name("Shell"), "Bash");
+        assert_eq!(canonical_tool_name("Bash"), "Bash");
+        assert_eq!(canonical_tool_name("search_replace"), "Edit");
+        assert_eq!(canonical_tool_name("write"), "Write");
+        assert_eq!(canonical_tool_name("spawn_subagent"), "Task");
+        assert_eq!(canonical_tool_name("read_file"), "Read");
+        // The whole point: a Grok shell wipe is a Block, not an unknown-tool Auto.
+        assert_eq!(
+            evaluate("run_terminal_command", Some("rm -rf /")).decision,
+            Decision::Block
+        );
+        assert_eq!(
+            evaluate("run_terminal_command", Some("sudo apt update")).decision,
+            Decision::Gate
+        );
+        // A file edit is not a shell, even if its payload mentions a wipe.
+        assert_eq!(
+            evaluate("search_replace", Some("rm -rf /")).decision,
+            Decision::Auto
+        );
     }
 
     #[test]

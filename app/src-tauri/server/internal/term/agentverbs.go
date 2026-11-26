@@ -154,12 +154,18 @@ func (t termHookTarget) agentVerb(method string, raw json.RawMessage) (any, *cor
 		if len(b) > sendMax {
 			return nil, rpcErr("data too large"), true
 		}
+		// A hibernated target gets claude back before the bytes (hibernate.go).
+		// The bytes wait in the pane's tty until the new claude reads them.
+		resumed, werr := r.wake(target.paneID, "send")
+		if werr != nil {
+			return nil, rpcErr("pane " + target.paneID + " is hibernated and did not resume"), true
+		}
 		if err := r.tmux.SendBytes(target.name, b); err != nil {
 			logger.Warn("send failed", "from", self.paneID, "to", target.paneID, "err", err)
 			return nil, rpcErr("pane " + target.paneID + " not connected"), true
 		}
 		logger.Info("agent send", "from", self.paneID, "to", target.paneID, "bytes", len(b))
-		return map[string]any{"ok": true, "bytes": len(b)}, nil, true
+		return map[string]any{"ok": true, "bytes": len(b), "resumed": resumed}, nil, true
 
 	case "set-pane-title", "set-pane-annotation":
 		target, rerr := t.scoped(p.pane(), self)

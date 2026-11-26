@@ -103,6 +103,7 @@ const META_KEYS = [
   "color",
   "emoji",
   "tmux_session",
+  "multi_agent",
 ] as const;
 
 /** The fields the daemon stores as named columns. */
@@ -446,6 +447,7 @@ export class WebBackend implements Backend {
       intent: w.intent ?? null,
       known_sessions: [],
       is_folder: m.is_folder === true,
+      multi_agent: m.multi_agent === true,
     };
   }
 
@@ -877,9 +879,11 @@ export class WebBackend implements Backend {
     pane_set_claude_running: (a) =>
       this.layoutOp(str(a.workspaceId), (l) => patchLeaf(l, str(a.paneId), { claude_running: a.running === true })),
     // The resume picker: the daemon reads ~/.claude/projects on its own box.
+    // `query` is the history search; the daemon filters before the limit.
     pane_list_claude_sessions: (a) => {
       const q = new URLSearchParams({ limit: String(num(a.limit, 30)) });
       if (str(a.projectPath)) q.set("project_path", str(a.projectPath));
+      if (str(a.query).trim()) q.set("q", str(a.query).trim());
       return api("GET", `/api/v2/claude/sessions?${q}`);
     },
     // The Context Rail: the daemon's per-session records (term/context.go);
@@ -931,6 +935,11 @@ export class WebBackend implements Backend {
     workspace_secret_env_keys: async () => [],
     workspace_set_auto_port_forward: async (a) => this.getRow(str(a.workspaceId)),
     workspace_set_claude_separate_account: async () => null,
+    workspace_set_multi_agent: async (a) => {
+      const id = str(a.workspaceId);
+      await this.patch(id, { multi_agent: a.enabled === true });
+      return this.getRow(id);
+    },
     ssh_cancel_reconnect: async () => null,
 
     // ── the Diff pane + worktrees (Phase 118, F4) ──
@@ -1118,6 +1127,13 @@ export class WebBackend implements Backend {
     // hydration (from the events socket's hello) + the ymux surfaces
     pane_agent_states: async () => touchedEntries(this.hello?.pane_agent_states),
     pane_briefs: async () => touchedEntries(this.hello?.pane_briefs),
+    // Browser only: pane id → true for each pane whose claude the daemon
+    // hibernated. The desktop has no such command.
+    pane_hibernated: async () => {
+      const out: Record<string, boolean> = {};
+      for (const [pid, p] of Object.entries(this.hello?.panes ?? {})) if (p.hibernated) out[pid] = true;
+      return out;
+    },
     feed_list: async () => this.hello?.feed ?? [],
     feed_decide: (a) =>
       api("POST", `/api/v2/feed/${encodeURIComponent(str(a.requestId))}/decide`, { decision: str(a.decision) }),

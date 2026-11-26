@@ -15,6 +15,9 @@ covers:
   - app/src/DiffPane.tsx
   - app/src/diffModel.ts
   - app/src/diffNotes.ts
+  - app/src/prChecks.ts
+  - app/src/PrStatusCard.tsx
+  - app/src/PaneTargetSelect.tsx
   - app/src/InsightsWindow.tsx
   - app/src/InsightsAnalytics.tsx
   - app/src/InsightsClaudeCost.tsx
@@ -364,7 +367,33 @@ Unverified limit: zellij is believed to keep that mode on for itself and to stri
 for an inner shell that did not ask for them; if so, the check cannot see that case. All text is stripped of C0, C1, DEL
 and bidi controls twice: when the prompt is built and at the last step before the PTY. Rule
 #1: the prompt is pane input and is never logged. `pty_write` exists on both hosts, so
-there is no capability gate beyond `diffPane`.
+there is no capability gate beyond `diffPane`. The pane picker is `PaneTargetSelect.tsx`, one
+component shared by the notes tray and the PR card, so both use one `targetPane` signal.
+
+**PR card.** `PrStatusCard.tsx` sits under the worktree strip, gated on `backend.can("prStatus")`
+(the desktop only: the browser build has no `diff_pane_pr_status`). It shows the PR of the
+pane's branch from `diff_pane_pr_status` (`backend-panes.md` § `pr_status.rs`): number (opens
+the URL through `backend.host.openUrl`, https only), title, state, and the passing / failing /
+pending counts. Each non-PR state (`gh_missing`, `not_authenticated`, `no_pr`, `not_github`,
+`timeout`, `no_session`, `error`) is one quiet dim line, never a toast. The card is hidden
+while the Diff pane shows an error, so "not a repo" stays the Diff pane's own message.
+**Polling:** a fetch on mount, on a cwd or branch change, on the card's refresh button and on
+the pane's Refresh (`refreshNonce`). Then a timer from `nextPollSecs`: 60 s for `ok` / `no_pr`,
+600 s for a state the user fixes outside the app, and a doubling back-off from 120 s to 900 s
+for `error` / `timeout` / `no_session`. A tick while `document.hidden` is skipped, and
+`visibilitychange` fetches at once when a poll is due. A sequence number drops a late reply.
+The pane unmounts with its workspace, which stops the poll. **Fix broken checks** shows only for
+an OPEN PR with a failing check. It opens a tray with the prompt preview, the picker and a
+send through the same `onSendPrompt` as the notes (bracketed paste, refused without
+bracketed-paste mode, no Enter). `prChecks.ts` (pure, node-tested) holds `checkBucket` (CheckRun:
+not COMPLETED → pending, SUCCESS/NEUTRAL/SKIPPED → pass, else fail; StatusContext: SUCCESS →
+pass, PENDING/EXPECTED → pending, else fail), `rollupCounts`, `failingChecks`, `runIdFromUrl`
+(`/actions/runs/<id>`), `safeUrl`, `buildFixChecksPrompt` and `nextPollSecs`. The prompt is
+English: PR number and URL, one line per failing check with its URL, one
+`gh run view <id> --log-failed` per distinct run id, and "open its URL" for an external CI.
+The desktop never fetches log content; the agent reads it on the host. Every gh string goes
+through `sanitizeInline` before it reaches the prompt. Rule #1: the frontend log line holds
+the pane id, state kind and counts only.
 
 **`HelpPane.tsx` (96)** — renders bundled markdown (currently ssh-key-setup) keyed by
 topic and UI language, with a Copy button on every fenced block.

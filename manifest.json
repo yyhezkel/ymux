@@ -24,6 +24,11 @@
     "gemini": {
       "version": "0.0.1",
       "url": "https://raw.githubusercontent.com/yyhezkel/ymux/main/hooks/gemini.json"
+    },
+    "grok": {
+      "version": "1.0.0",
+      "url": "https://raw.githubusercontent.com/yyhezkel/ymux/main/hooks/grok.json",
+      "min_ymux_version": "0.1.0"
     }
   }
 }

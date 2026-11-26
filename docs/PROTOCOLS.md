@@ -280,7 +280,7 @@ server is the same single server that handles local CLI calls.
 
 ## Agent hook contract
 
-A "Claude hook" or similar agent integration invokes the CLI as:
+Claude Code and Grok Build both invoke the CLI as:
 
 ```
 echo '<json-payload>' | ~/.ymux/bin/ymux claude-hook <subcommand>

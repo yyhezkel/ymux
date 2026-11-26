@@ -39,4 +39,10 @@ language: string,
  * helpers (Ctrl/Shift/Alt + key). Default Ctrl+Shift+M (M for
  * microphone).
  */
-push_to_talk_hotkey: string, };
+push_to_talk_hotkey: string,
+/**
+ * `MediaDeviceInfo.deviceId` of the microphone the Local backend
+ * records from. None = the Windows default recording device. The Web
+ * Speech backend cannot pick a device and always uses the default.
+ */
+input_device_id: string | null, };
