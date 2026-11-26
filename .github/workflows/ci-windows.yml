@@ -317,6 +317,27 @@ jobs:
           go-version-file: app/src-tauri/server/go.mod
           cache-dependency-path: app/src-tauri/server/go.sum
 
+      # The byte-compare gate below holds only for one exact compiler, so
+      # the go.mod `toolchain` line pins it and this step proves setup-go
+      # gave us that one. A red here is a toolchain mismatch, NOT a stale
+      # blob: fix the pin or the setup, do not rebake.
+      - name: Assert the pinned Go toolchain
+        working-directory: app/src-tauri/server
+        shell: bash
+        run: |
+          set -euo pipefail
+          want=$(awk '$1 == "toolchain" { print $2 }' go.mod)
+          got=$(go env GOVERSION)
+          if [ -z "$want" ]; then
+            echo "::error::go.mod has no toolchain line. The server-blob gate needs an exact Go version."
+            exit 1
+          fi
+          if [ "$want" != "$got" ]; then
+            echo "::error::Go toolchain is $got, go.mod pins $want. This is not a stale blob: fix the toolchain, do not rebake."
+            exit 1
+          fi
+          echo "Go toolchain $got matches the go.mod pin"
+
       - name: go vet
         working-directory: app/src-tauri/server
         run: go vet ./...
@@ -346,7 +367,7 @@ jobs:
             echo "--- linux/$goarch"
             # Go requires the output directory to already exist.
             mkdir -p "$RUNNER_TEMP/gobuild-$goarch"
-            GOARCH="$goarch" go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/gobuild-$goarch/" ./...
+            GOARCH="$goarch" go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/gobuild-$goarch/" ./...
             cp "$RUNNER_TEMP/gobuild-$goarch/ymux-server" "$out/ymux-server-linux-$name"
           done
           ls -l "$out"
@@ -363,52 +384,34 @@ jobs:
           if-no-files-found: error
 
       # THE STALENESS GATE. resources/ymux-server-linux-{x64,arm64} are
-      # committed blobs baked by hand (docs/ymux-server/README.md §Build,
-      # docs/DECISIONS.md:298). Nothing in the desktop build reads the Go
-      # source — src/addons.rs `include_bytes!`s the blobs — so a change
-      # under server/ that skips the rebake is green in every job and
-      # ships the OLD server to every remote. This is the only thing that
-      # says so.
+      # committed blobs. Nothing in the desktop build reads the Go source —
+      # src/addons.rs `include_bytes!`s the blobs — so a server change that
+      # skips the rebake is green in every job and ships the OLD server to
+      # every remote. This is the only thing that says so.
       #
-      # Deliberately NOT a byte-compare against the fresh cross-build
-      # above: Go output is reproducible only for a fixed toolchain patch
-      # version, and setup-go resolves `go 1.26` to whatever 1.26.x is
-      # current — that check would go red on a Go point release for a
-      # reason that has nothing to do with the change.
-      #
-      # Test files are excluded: they do not reach the binary.
-      - name: Assert the embedded server binaries were rebaked
-        if: github.event_name == 'pull_request' || github.event_name == 'push'
+      # A byte-compare against the cross-build above, on every event. It
+      # replaced a check that only asked whether the blobs CHANGED in the
+      # diff, which passed a blob taken from the wrong side of a merge
+      # (PR #110, 2026-11-26). It holds because the build is reproducible:
+      # the Go version is pinned and asserted above, `-trimpath` drops
+      # paths, and `-buildvcs=false` drops the commit stamp (with it, a
+      # blob could never equal a build of the commit that adds it).
+      - name: Assert the embedded server binaries match this source
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-          else
-            base="${{ github.event.before }}"
-          fi
-          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
-            echo "no usable base commit (new branch / force-push) — nothing to diff against"
-            exit 0
-          fi
-          # The checkout is shallow; fetch just the base commit so a
-          # two-dot diff has both trees. Three-dot would need the merge
-          # base, i.e. real history — and on a PR the checked-out ref is
-          # already base-merged, so two-dot IS the PR diff.
-          git fetch --no-tags --depth=1 origin "$base"
-          changed=$(git diff --name-only "$base" HEAD)
-          src=$(printf '%s\n' "$changed" | grep -E '^app/src-tauri/server/.*\.(go|mod|sum)$' | grep -v '_test\.go$' || true)
-          baked=$(printf '%s\n' "$changed" | grep -E '^app/src-tauri/resources/ymux-server-linux-(x64|arm64)$' || true)
-          if [ -n "$src" ] && [ -z "$baked" ]; then
-            echo "::error::Go server source changed but resources/ymux-server-linux-{x64,arm64} did not. The desktop embeds those blobs (src/addons.rs), so this change would ship the OLD server. Rebake: download the 'ymux-server-linux' artifact from this run into app/src-tauri/resources/ and commit, or build locally per docs/ymux-server/README.md § Build."
-            printf '%s\n' "$src" | sed 's/^/  changed: /'
-            exit 1
-          fi
-          if [ -n "$src" ]; then
-            echo "server source changed and the embedded binaries were rebaked alongside it — OK"
-          else
-            echo "no shipping Go source changed — nothing to rebake"
-          fi
+          out="$RUNNER_TEMP/server-out"
+          res=app/src-tauri/resources
+          bad=0
+          for name in x64 arm64; do
+            if cmp -s "$out/ymux-server-linux-$name" "$res/ymux-server-linux-$name"; then
+              echo "ymux-server-linux-$name matches the build of this commit"
+            else
+              echo "::error::resources/ymux-server-linux-$name is not the build of this commit's Go source. The desktop embeds it (src/addons.rs), so this would ship a different server. Rebake: download the 'ymux-server-linux' artifact from this run into app/src-tauri/resources/ and commit both files."
+              bad=1
+            fi
+          done
+          exit "$bad"
 
       - uses: actions/setup-node@v7
         with:

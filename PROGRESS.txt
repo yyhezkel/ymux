@@ -8076,3 +8076,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Cause: the Windows arm sits inside run_local_setup, which returns (). `return Err` does not type-check (E0308, expected ()). The macOS arm is in run_step_unix and may return.
   Files: app/src-tauri/src/local_setup.rs, docs/vault/backend-wizards.md.
   Result: compiles-untested until CI. Not run live.
+
+[2026-11-26] CI: server-blob gate is a byte-compare
+  Task: the old gate only checked that the blobs changed, so a blob from the wrong side of a merge passed. Pinned toolchain go1.26.10 in go.mod plus an assert step, added -buildvcs=false, replaced the diff gate with cmp against the build of the same commit. Blobs rebaked from this branch's CI run.
+  Files: ci-windows.yml, server/go.mod, resources/ymux-server-linux-{x64,arm64}, docs/ymux-server/README.md, CLAUDE.md, DECISIONS, vault server-go.md.
+  Result: proven on CI only if the first run fails the gate and the run after the rebake passes.
