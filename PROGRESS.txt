@@ -8081,3 +8081,8 @@ NOTES: split Hebrew char across SSH chunks no longer becomes U+FFFD when smart_b
   Task: finish the open item. Connect wizard grok-resume lists ~/.grok/sessions and launches grok --resume only for a one-token id, as mode cmd. Daemon transcript reads updates.jsonl when no Claude file exists. History resume uses grok in that case; hibernation stays Claude. Cost tab deltas cumulative turn_completed usage into the existing report (Go + Rust). Unknown models stay unpriced. Tests clear the Go grok root so a real ~/.grok cannot change Claude counts.
   Files: grok_sessions.rs, lib.rs, claude_usage_local.rs, term/grok.go, term/history.go, term/service.go, insights/grokusage.go, insights/claudeusage.go, codingAgents.ts, PaneView.tsx, web.ts, i18n, vault, DECISIONS, INSTALL_AGENTS.
   Result: compiles-untested until CI (Rule #17). Not run live (Rule #14). Server blobs need a rebake from the CI artifact before the PR can go green.
+
+[2026-11-26] Grok sessions: rebake server blobs
+  Task: PR #119 go job failed the rebake gate. Copied ymux-server-linux-{x64,arm64} from the ymux-server-linux artifact of run 45032179710 (built from 39e455be on main 7ac5849e).
+  Files: app/src-tauri/resources/ymux-server-linux-{x64,arm64}.
+  Result: compiles-untested until CI re-runs.
